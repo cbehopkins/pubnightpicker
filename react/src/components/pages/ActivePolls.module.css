@@ -1,0 +1,90 @@
+.description {
+  /* display: flex; */
+    /* justify-content: space-between; */
+    align-items: center;
+    /* font-weight: bold; */
+    font-size: 1.5rem;
+    margin: 1rem 0;
+  }
+.actions {
+  text-align: right;
+  }
+  
+  .actions button {
+    font: inherit;
+    cursor: pointer;
+    background-color: transparent;
+    border: 1px solid #8a2b06;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+  }
+  
+  .actions button:hover,
+  .actions button:active {
+    background-color: #5a1a01;
+    border-color: #5a1a01;
+    color: white;
+  }
+
+.actions .button {
+  background-color: #8a2b06;
+  color: white;
+}
+
+.poll {
+  font: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: 1px solid #8a2b06;
+  padding: 0.5rem 2rem;
+  border-radius: 25px;
+  margin-left: 1rem;
+}
+
+.poll button {
+  background-color: transparent;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+  }
+
+.poll button:hover {
+  background-color: blue;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+  }
+
+
+.poll_mobile {
+  font: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: 0px solid #8a2b06;
+  padding: 0.5rem 2rem;
+  border-radius: 1px;
+  margin-left: 0rem;
+}
+
+.poll_mobile button {
+  background-color: transparent;
+    color: white;
+    border: 1px solid yellow;
+    padding: 0rem 0.1rem;
+    border-radius: 1px;
+    margin-left: 1rem;
+  }
+
+.poll_mobile button:hover {
+  background-color: blue;
+    color: white;
+    border: 1px solid green;
+    padding: 0rem 0.1rem;
+    border-radius: 1px;
+    margin-left: 1rem;
+  }

@@ -1,0 +1,24 @@
+.content {
+    background-color: #2d3942;
+    border-radius: 0 4px 4px 4px;
+    padding: 1rem;
+  }
+  
+
+.navigate {
+  background: green;
+  color: white;
+}
+.delete{
+  background: #4c6070;
+}
+
+.navlink a {
+  color: white;
+}
+
+.navlink a:hover,
+.navlink a:active,
+.navlink a.active {
+  background-color: purple;
+}

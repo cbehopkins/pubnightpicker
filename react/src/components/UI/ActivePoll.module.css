@@ -1,0 +1,66 @@
+.poll {
+  font: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  padding: 0rem 0rem;
+  border-radius: 25px;
+  margin-left: 1rem;
+}
+.poll button {
+  background-color: transparent;
+  color: white;
+  border: 1px solid green;
+  padding: 0.5rem 2rem;
+  border-radius: 25px;
+  margin-left: 1rem;
+}
+.poll .button--alt:hover {
+  background-color: red;
+  color: white;
+  border: 1px solid green;
+  padding: 0.5rem 2rem;
+  border-radius: 25px;
+  margin-left: 1rem;
+}
+.poll button:hover {
+  background-color: blue;
+  color: white;
+  border: 1px solid green;
+  padding: 0.5rem 2rem;
+  border-radius: 25px;
+  margin-left: 1rem;
+}
+
+.poll_mobile {
+  font: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: 0px solid #8a2b06;
+  padding: 0.5rem 2rem;
+  border-radius: 1px;
+  margin-left: 0rem;
+}
+.poll_mobile button {
+  background-color: transparent;
+  color: white;
+  border: 1px solid yellow;
+  padding: 0rem 0.1rem;
+  border-radius: 1px;
+  margin-left: 1rem;
+}
+.poll_mobile .button--alt:hover {
+  background-color: red;
+  color: white;
+  border: 1px solid green;
+  padding: 0rem 0.1rem;
+  border-radius: 1px;
+  margin-left: 1rem;
+}
+.poll_mobile button:hover {
+  background-color: blue;
+  color: white;
+  border: 1px solid green;
+  padding: 0rem 0.1rem;
+  border-radius: 1px;
+  margin-left: 1rem;
+}

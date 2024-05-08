@@ -1,0 +1,60 @@
+.title {
+    font-size: 14;
+    color: green;
+}
+
+.detail {
+    font-size: 10;
+    color: green;
+}
+
+.text_box {
+    border: 5px red;
+    padding: 0.5rem 2rem;
+    margin-left: 1rem;
+    box-shadow: 1px;
+    left: 5%;
+    width: 90%;
+    background-color: #444;
+    border-radius: 25px;
+}
+
+
+.ok_button {
+    cursor: pointer;
+    background-color: transparent;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+}
+
+.ok_button:hover {
+    background-color: blue;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+}
+
+
+.cancel {
+    cursor: pointer;
+    background-color: transparent;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+}
+
+.cancel:hover {
+    background-color: red;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+}

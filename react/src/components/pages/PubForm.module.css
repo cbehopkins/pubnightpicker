@@ -1,0 +1,19 @@
+.form input {
+    width: 40%
+}
+
+.pubImage {
+    width: 80%
+}
+
+.checkboxes {
+    display: flex;
+    width: auto;
+    left: 0px;
+    justify-content: left;
+}
+
+.checkboxes input[type="checkbox"] {
+    width: 15px;
+    margin: 0px;
+}

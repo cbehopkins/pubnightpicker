@@ -1,0 +1,4 @@
+*.pyc
+.vscode
+*_venv
+token.json

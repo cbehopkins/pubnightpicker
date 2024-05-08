@@ -1,0 +1,30 @@
+  .deleter {
+    background-color: red;
+    border:red;
+  }
+
+  .show_votes {
+    font: inherit;
+    cursor: pointer;
+    color: white;
+    border-radius: 14px;
+    background-color: #282c34;
+    padding: 0rem 0rem;
+    margin-left: 0rem;
+  }
+  .show_votes button {
+    background-color: transparent;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+  }
+  .show_votes button:hover {
+    background-color: blue;
+    color: white;
+    border: 1px solid green;
+    padding: 0.5rem 2rem;
+    border-radius: 25px;
+    margin-left: 1rem;
+  }
