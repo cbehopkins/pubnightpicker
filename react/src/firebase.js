@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import {
+  connectAuthEmulator,
   GoogleAuthProvider,
   // FacebookAuthProvider,
   getAuth,
@@ -10,6 +11,7 @@ import {
   signOut,
 } from "firebase/auth";
 import {
+  connectFirestoreEmulator,
   getFirestore,
   query,
   getDocs,
@@ -23,6 +25,12 @@ import { firebaseConfig } from "./firebase_config";
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+// Connect to Firestore emulator
+if (window.location.hostname === "localhost") {
+  connectAuthEmulator(auth, "http://127.0.0.1:9099");
+  connectFirestoreEmulator(db, "localhost", 8080);
+}
+
 const googleProvider = new GoogleAuthProvider();
 export async function addUserDoc(uid, name, authProvider, email) {
   return addDoc(collection(db, "users"), {
