@@ -21,7 +21,6 @@ import { redirect } from "react-router-dom";
 import { firebaseConfig } from "./firebase_config";
 
 const app = initializeApp(firebaseConfig);
-console.log(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
