@@ -1,4 +1,5 @@
 # Pubnight picker
+npm install react-scripts
 ## Start the development Server
 npm start run
 
