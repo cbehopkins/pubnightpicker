@@ -2,7 +2,6 @@ from enum import StrEnum, auto
 
 
 class ActionType(StrEnum):
-    TOOT = auto()
     EMAIL = auto()
     PEMAIL = auto()
 

@@ -9,7 +9,6 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from firebase_sub.action_track import ActionMan, ActionType
-from firebase_sub.masto import toot_for_me
 from firebase_sub.poll_manager import PollManager
 from firebase_sub.pubs_list import PubsList
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
@@ -87,7 +86,6 @@ def poll_open_actions(dummy_run):
 def poll_complete_actions(dummy_run):
     send_personal_email = partial(send_ampub_email, emails_src=query_personal_emails)
     complete_am = ActionMan(dummy_run)
-    complete_am.bind(ActionType.TOOT, toot_for_me)
     complete_am.bind(ActionType.EMAIL, send_ampub_email)
     complete_am.bind(ActionType.PEMAIL, send_personal_email)
     return complete_am

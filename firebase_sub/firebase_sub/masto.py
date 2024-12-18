@@ -44,15 +44,3 @@ def toot_for_me(poll_dict, pub_dict, previously_actioned=False, dummy_run=False)
     if dummy_run:
         return
     mastodon.status_post(msg)
-
-
-# if __name__ == "__main__":
-#     while True:
-#         logging.basicConfig(level=logging.INFO)
-#         doc = q.get()
-#         id = doc.id
-#         _log.debug(f"Got a pub ID of {id=}")
-#         docs_ref = db.collection("polls").document(id)
-#         poll_dict = docs_ref.get().to_dict()
-#         toot_for_me(docs_ref, poll_dict)
-#         time.sleep(1)
