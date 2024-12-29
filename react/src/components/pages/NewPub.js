@@ -37,7 +37,7 @@ export async function action({ request, params }) {
     address: data.get("address"),
     pubImage: data.get("pubImage")
   };
-  console.log("data", data, "pubParams", pubParams)
+  console.log("Pub action data", data, "pubParms", pubParams);
   for (const key of Object.keys(PubParams)) {
     pubParams[key] = Boolean(data.get(key));
   }
@@ -48,7 +48,7 @@ export async function action({ request, params }) {
     addNewPub(pubParams);
   }
   if (method === "PATCH") {
-    console.log("Modifying pub", pub_id, "with", pubParams);
+    console.log("Modifying pub", pub_id, "with", pubParams, "data", data);
     modifyPub(pub_id, pubParams);
   }
   return redirect("/pubs");

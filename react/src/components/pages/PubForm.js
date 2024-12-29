@@ -26,7 +26,6 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
   // However a label attaches to any checkbox with the same name
   // So we need a different name on the label/checkbox in those different contexts
   const label_value = `${label_mod || ''}${name}`;
-  console.log("name", name, "label_value", label_value)
   return (
     <tr>
       <td>
@@ -56,7 +55,6 @@ function PubForm({ method, pub_object }) {
   function cancelHandler() {
     navigate("..");
   }
-  console.log("method:", method, "pub_object:", pub_object);
   return (
     <Form method={method} className={styles.form}>
       <div>
@@ -140,7 +138,6 @@ function PubForm({ method, pub_object }) {
         Cancel
       </button>
       <button type="submit" disabled={isSubmitting} >
-        {console.log("isSubmitting", isSubmitting)}
         {isSubmitting ? "Submitting..." : "Save"}
       </button>
     </Form>
