@@ -27,7 +27,6 @@ function Homepage() {
         <li>Opt in to known users being able to see that you voted for that pub when the poll
           closes - note this information is publically available to a well informed user who
           can reverse engineer the database...</li>
-        <li>Mastodon bot available <a href="https://botsin.space/@ampubnight">here</a></li>
       </ul>
       <h1>Known User Features</h1>
       <p>To be added as a known user, an admin has to have approved you...</p>
