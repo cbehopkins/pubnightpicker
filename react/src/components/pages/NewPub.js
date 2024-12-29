@@ -37,15 +37,18 @@ export async function action({ request, params }) {
     address: data.get("address"),
     pubImage: data.get("pubImage")
   };
+  console.log("data", data, "pubParams", pubParams)
   for (const key of Object.keys(PubParams)) {
     pubParams[key] = Boolean(data.get(key));
   }
+  console.log("Submitted parameters", pubParams)
   if (method === "POST") {
     // If one awaits these (as one should)
     // The the redirect doesn't work
     addNewPub(pubParams);
   }
   if (method === "PATCH") {
+    console.log("Modifying pub", pub_id, "with", pubParams);
     modifyPub(pub_id, pubParams);
   }
   return redirect("/pubs");

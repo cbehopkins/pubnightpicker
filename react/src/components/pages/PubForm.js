@@ -2,6 +2,7 @@ import { Form, useNavigate, useNavigation } from "react-router-dom";
 
 import styles from "./PubForm.module.css";
 
+// Positive parameters about a pub - things you want to search for
 const PubParams = {
   parking: "Parking",
   food: "Food",
@@ -9,8 +10,11 @@ const PubParams = {
   beer_gerden: "Beer Garden",
   out_of_town: "Out Of Town (Cambridge)",
 };
+
+// Bad things about a pub, things you want to search for the absence of
 const AntiPubParams = { out_of_town: PubParams.out_of_town }
 
+// Generic checkbox component for pub parameters
 function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
   const value =
     pub_object &&
@@ -21,7 +25,8 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
   // So multiple labels attached to checkboxes representing different state
   // However a label attaches to any checkbox with the same name
   // So we need a different name on the label/checkbox in those different contexts
-  const label_value = `${label_mod}${name}`
+  const label_value = `${label_mod || ''}${name}`;
+  console.log("name", name, "label_value", label_value)
   return (
     <tr>
       <td>
@@ -51,6 +56,7 @@ function PubForm({ method, pub_object }) {
   function cancelHandler() {
     navigate("..");
   }
+  console.log("method:", method, "pub_object:", pub_object);
   return (
     <Form method={method} className={styles.form}>
       <div>
@@ -133,7 +139,8 @@ function PubForm({ method, pub_object }) {
       <button type="button" onClick={cancelHandler} disabled={isSubmitting}>
         Cancel
       </button>
-      <button disabled={isSubmitting}>
+      <button type="submit" disabled={isSubmitting} >
+        {console.log("isSubmitting", isSubmitting)}
         {isSubmitting ? "Submitting..." : "Save"}
       </button>
     </Form>
