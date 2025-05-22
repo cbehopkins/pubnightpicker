@@ -4,7 +4,11 @@ import textwrap
 import logging
 import mailtrap
 
-token = "edccbc32034e76727f924298a632158e"
+from os import getenv
+MAILTRAP_TOKEN: str = getenv("MAILTRAP_TOKEN", "")
+assert MAILTRAP_TOKEN, "MAILTRAP_TOKEN environment variable not set"
+
+
 _log = logging.getLogger("SendEmail")
 GOOGLEGROUPS_ADDR = "ampubnight@googlegroups.com"
 BASE_TEMPLATE = textwrap.dedent(
@@ -40,7 +44,7 @@ def render_template(*_, **kwargs):
     return result
 
 
-def send_poll_open_email(previously_actioned, emails_src, dummy_run=False):
+def send_poll_open_email(previously_actioned: bool, emails_src, dummy_run=False):
     for email, _ in emails_src():
         _log.info(f"Poll open email to send to {email}")
         if dummy_run:
@@ -54,12 +58,12 @@ def send_poll_open_email(previously_actioned, emails_src, dummy_run=False):
             text=OPEN_TEMPLATE,
             category="Pub notification",
         )
-        client = mailtrap.MailtrapClient(token=token)
+        client = mailtrap.MailtrapClient(token=MAILTRAP_TOKEN)
         client.send(mail)
 
 
 def send_ampub_email(
-    poll_dict, pub_dict, previously_actioned=False, emails_src=None, dummy_run=False
+    poll_dict, pub_dict, *, previously_actioned=False, emails_src=None, dummy_run=False
 ):
     selected_pub_id = poll_dict["selected"]
     pub_name = pub_dict[selected_pub_id]["name"]
@@ -74,6 +78,9 @@ def send_ampub_email(
         address = pub_dict[selected_pub_id]["address"]
 
     event_date = poll_dict["date"]
+    _log.info("Generating ampub email: {pub_name=}, {event_date=}, {web_site=}, {address=}, {map=}")    
+
+
     if emails_src is None:
         src = [(GOOGLEGROUPS_ADDR, None)]
     else:
@@ -107,7 +114,7 @@ def send_ampub_email(
             ),
             category="Pub notification",
         )
-        client = mailtrap.MailtrapClient(token=token)
+        client = mailtrap.MailtrapClient(token=MAILTRAP_TOKEN)
         client.send(mail)
 
 

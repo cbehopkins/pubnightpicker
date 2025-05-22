@@ -4,8 +4,16 @@ from typing import Callable
 from firebase_sub.my_types import ActionDict, ActionType, DocumentId
 
 _log = logging.getLogger("ActionTrack")
-ActionCallback = Callable[[], None]
+from typing import Protocol, Any
 
+class ActionCallbackProtocol(Protocol):
+    def __call__(
+        self, 
+        *args: Any, 
+        previously_actioned: bool, 
+        dummy_run: bool, 
+        **kwargs: Any
+    ) -> None: ...
 
 class _CallbackException(Exception):
     ...
@@ -19,7 +27,7 @@ class CallbackExceptionRetry(_CallbackException):
     """An exception in the callback to retry later - leave the action unhappened"""
 
 
-class ActionTrack(dict[ActionType, set[DocumentId]]):
+class ActionTrack(dict[str, set[DocumentId]]):
     def __init__(self, obj=None):
         super().__init__()
         if obj is None:
@@ -48,16 +56,16 @@ class ActionTrack(dict[ActionType, set[DocumentId]]):
 class ActionMan:
 
     def __init__(self, dummy_run: bool = False):
-        self._callbacks: dict[ActionType, ActionCallback] = {}
+        self._callbacks: dict[ActionType, ActionCallbackProtocol] = {}
         self.dummy_run = dummy_run
 
-    def bind(self, action: ActionType, callback: ActionCallback):
+    def bind(self, action: ActionType, callback: ActionCallbackProtocol):
         """Bind an action type against callbacks"""
         self._callbacks[action] = callback
 
     def run(
         self, action_dict: ActionDict, action_key: DocumentId, *args, **kwargs
-    ) -> None:
+    ) -> tuple[ActionDict, bool]:
         """Run all pending action callbacks"""
         ad = ActionTrack(action_dict)
         anything_actioned = False
@@ -82,7 +90,7 @@ class ActionMan:
                     _log.exception(
                         f"got an retry exception running {action_type}:{exc}"
                     )
-        return dict(ad), anything_actioned
+        return ad, anything_actioned
 
     def action_event(self, *args, **kwargs):
         new_action_dict, actioned = self.run(*args, **kwargs)

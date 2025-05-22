@@ -1,17 +1,22 @@
 import argparse
+import enum
 from functools import partial
 import logging
 from pathlib import Path
 import queue
 import time
+from typing import cast
 import firebase_admin
-from firebase_admin import credentials, firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
+from firebase_admin import credentials
+from dataclasses import dataclass
 
-from firebase_sub.action_track import ActionMan, ActionType
+from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
+from firebase_sub.handlers import DbHandler
 from firebase_sub.poll_manager import PollManager
 from firebase_sub.pubs_list import PubsList
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
+# from google.cloud.firestore_v1.watch import DocumentChange
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 _log = logging.getLogger(__name__)
 # Based on https://firebase.google.com/docs/firestore/query-data/listen#python_5
@@ -20,83 +25,30 @@ CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent / "cred.json"
 cred = credentials.Certificate(CRED_PATH)
 app = firebase_admin.initialize_app(cred)
-db = firestore.client()
+
+DB_HANDLER = DbHandler()
 
 
-def query_personal_emails():
-    docs_query = db.collection("users").where(
-        filter=FieldFilter("notificationEmailEnabled", "==", True)
-    )
-    _log.info("Generating personal email addresses")
-    for doc in docs_query.stream():
-        record = doc.to_dict()
-        pemail = record["notificationEmail"]
-        _log.debug(f"{pemail}")
-        yield pemail, record["uid"]
-
-
-def query_open_emails():
-    docs_query = db.collection("users").where(
-        filter=FieldFilter("openPollEmailEnabled", "==", True)
-    )
-    _log.info("Generating personal email addresses")
-    for doc in docs_query.stream():
-        record = doc.to_dict()
-        pemail = record["notificationEmail"]
-        _log.debug(f"{pemail}")
-        yield pemail, record["uid"]
-
-
-def new_poll_event_handler(am: ActionMan, poll_id):
-    action_document = db.collection("open_actions").document(poll_id)
-    new_action_dict = am.action_event(
-        action_dict=action_document.get().to_dict(),
-        action_key=poll_id,
-    )
-    if new_action_dict:
-        action_document.set(new_action_dict, merge=True)
-
-
-def complete_poll_event_handler(pubs_list, am: ActionMan, poll_id):
-    polls_document = db.collection("polls").document(poll_id)
-    action_document = db.collection("comp_actions").document(poll_id)
-
-    poll_dict = polls_document.get().to_dict()
-    pub_id = poll_dict["selected"]
-    assert (
-        pub_id in pubs_list
-    ), f"Someone selected a pub that's not in the pub dict, {pub_id=}"
-    new_action_dict = am.action_event(
-        action_dict=action_document.get().to_dict(),
-        action_key=pub_id,
-        poll_dict=poll_dict,
-        pub_dict=pubs_list,
-    )
-    if new_action_dict:
-        action_document.set(new_action_dict, merge=True)
-
-
-def poll_open_actions(dummy_run):
-    send_poll_open_email_i = partial(send_poll_open_email, emails_src=query_open_emails)
+def poll_open_actions(dummy_run: bool) -> ActionMan:
+    send_poll_open_email_i  = cast(ActionCallbackProtocol, partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails))
     open_am = ActionMan(dummy_run)
     open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
     return open_am
 
 
-def poll_complete_actions(dummy_run):
-    send_personal_email = partial(send_ampub_email, emails_src=query_personal_emails)
+def poll_complete_actions(dummy_run: bool) -> ActionMan:
+    send_personal_email  = cast(ActionCallbackProtocol,partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails))
     complete_am = ActionMan(dummy_run)
     complete_am.bind(ActionType.EMAIL, send_ampub_email)
     complete_am.bind(ActionType.PEMAIL, send_personal_email)
     return complete_am
 
 
-def log_level_to_int(level):
+def log_level_to_int(level: str | int) -> int:
     try:
-        level = int(level)
+        return int(level)
     except ValueError:
-        level = logging.getLevelName(level)
-    return level
+        return int(logging.getLevelName(level))
 
 
 def arg_parser_setup(log_level_to_int):
@@ -122,7 +74,25 @@ def configure_logging(log_level, logfile):
         logging_config["encoding"] = "utf-8"
 
     logging.basicConfig(**logging_config)
+    logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
+class EventType(enum.Enum):
+    NEW_POLL = "new_poll"
+    COMP_POLL = "comp_poll"
+
+@dataclass
+class Event:
+    type: EventType
+    doc: DocumentSnapshot
+
+    def handle_queue_item(self, DB_HANDLER: DbHandler, pubs_list: PubsList, open_am: ActionMan, complete_am: ActionMan):
+        match self.type:
+            case EventType.NEW_POLL:
+                DB_HANDLER.new_poll_event_handler(open_am, poll_id=self.doc.id)
+            case EventType.COMP_POLL:
+                DB_HANDLER.complete_poll_event_handler(
+                    pubs_list, complete_am, poll_id=self.doc.id
+                )
 
 if __name__ == "__main__":
     args = arg_parser_setup(log_level_to_int)
@@ -131,43 +101,33 @@ if __name__ == "__main__":
     dummy_run = args.dummy
     q = queue.Queue()
 
-    def open_poll_event_callback(document):
-        q.put(
-            {
-                "type": "new_poll",
-                "doc": document,
-            }
-        )
+    def open_poll_event_callback(document: DocumentSnapshot) -> None:
+        q.put(Event(type=EventType.NEW_POLL, doc=document))
 
-    def comp_poll_event_callback(document):
-        q.put(
-            {
-                "type": "comp_poll",
-                "doc": document,
-            }
-        )
+    def comp_poll_event_callback(document: DocumentSnapshot) -> None:
+        q.put(Event(type=EventType.COMP_POLL, doc=document))
 
     with PollManager(
-        db.collection("polls").where(filter=FieldFilter("completed", "==", False)),
+        DB_HANDLER.query_completed_false,
         add=open_poll_event_callback,
     ), PollManager(
-        db.collection("polls").where(filter=FieldFilter("completed", "==", True)),
+        DB_HANDLER.query_completed_true,
         add=comp_poll_event_callback,
         modify=comp_poll_event_callback,
     ), PubsList(
-        db
+        DB_HANDLER.pub_collection,
     ) as pubs_list:
         open_am = poll_open_actions(dummy_run)
         complete_am = poll_complete_actions(dummy_run)
 
         while True:
-            event = q.get()
-            _log.debug(f"New Event: {event}")
-            if event["type"] == "new_poll":
-                new_poll_event_handler(open_am, poll_id=event["doc"].id)
-            if event["type"] == "comp_poll":
-                complete_poll_event_handler(
-                    pubs_list, complete_am, poll_id=event["doc"].id
-                )
+            event: Event = q.get()
+            doc = event.doc.to_dict()
+            assert doc
+            date = doc["date"]
+            completed: bool = doc.get("completed", False)
+            _log.info(f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}")
+            event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
+            _log.info(f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}")
 
             time.sleep(1)

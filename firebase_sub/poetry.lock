@@ -633,6 +633,20 @@ files = [
 all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2)"]
 
 [[package]]
+name = "mailtrap"
+version = "2.0.1"
+description = "Official mailtrap.io API client"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "mailtrap-2.0.1-py3-none-any.whl", hash = "sha256:d03d6a9ca8ea9869acf75503028cbc993d77e0c1dbe6f66fdf12b23f5c5f9dc3"},
+    {file = "mailtrap-2.0.1.tar.gz", hash = "sha256:c043f06c46abebdb8e71547d04c228b9a3ac51172b91ff584374e0f9c01bf5f0"},
+]
+
+[package.dependencies]
+requests = ">=2.26.0"
+
+[[package]]
 name = "msgpack"
 version = "1.1.0"
 description = "MessagePack serializer"
@@ -878,4 +892,4 @@ zstd = ["zstandard (>=0.18.0)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "52c60a4ea585782b503cff335b7e32a44de8cc7e66cf6401aa8f79f229d8c5b2"
+content-hash = "2459c44543cd64285638b07369bf2e76029b1967e4744e21df61e69d8484fcb2"
