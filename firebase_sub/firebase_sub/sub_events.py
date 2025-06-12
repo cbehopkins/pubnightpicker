@@ -15,6 +15,7 @@ from firebase_sub.handlers import DbHandler
 from firebase_sub.poll_manager import PollManager
 from firebase_sub.pubs_list import PubsList
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
+
 # from google.cloud.firestore_v1.watch import DocumentChange
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -30,14 +31,20 @@ DB_HANDLER = DbHandler()
 
 
 def poll_open_actions(dummy_run: bool) -> ActionMan:
-    send_poll_open_email_i  = cast(ActionCallbackProtocol, partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails))
+    send_poll_open_email_i = cast(
+        ActionCallbackProtocol,
+        partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails),
+    )
     open_am = ActionMan(dummy_run)
     open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
     return open_am
 
 
 def poll_complete_actions(dummy_run: bool) -> ActionMan:
-    send_personal_email  = cast(ActionCallbackProtocol,partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails))
+    send_personal_email = cast(
+        ActionCallbackProtocol,
+        partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails),
+    )
     complete_am = ActionMan(dummy_run)
     complete_am.bind(ActionType.EMAIL, send_ampub_email)
     complete_am.bind(ActionType.PEMAIL, send_personal_email)
@@ -76,23 +83,32 @@ def configure_logging(log_level, logfile):
     logging.basicConfig(**logging_config)
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
-class EventType(enum.Enum):
+
+class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"
+
 
 @dataclass
 class Event:
     type: EventType
     doc: DocumentSnapshot
 
-    def handle_queue_item(self, DB_HANDLER: DbHandler, pubs_list: PubsList, open_am: ActionMan, complete_am: ActionMan):
+    def handle_queue_item(
+        self,
+        db_handler: DbHandler,
+        pubs_list: PubsList,
+        open_am: ActionMan,
+        complete_am: ActionMan,
+    ):
         match self.type:
             case EventType.NEW_POLL:
-                DB_HANDLER.new_poll_event_handler(open_am, poll_id=self.doc.id)
+                db_handler.new_poll_event_handler(open_am, poll_id=self.doc.id)
             case EventType.COMP_POLL:
-                DB_HANDLER.complete_poll_event_handler(
+                db_handler.complete_poll_event_handler(
                     pubs_list, complete_am, poll_id=self.doc.id
                 )
+
 
 if __name__ == "__main__":
     args = arg_parser_setup(log_level_to_int)
@@ -107,16 +123,20 @@ if __name__ == "__main__":
     def comp_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.COMP_POLL, doc=document))
 
-    with PollManager(
-        DB_HANDLER.query_completed_false,
-        add=open_poll_event_callback,
-    ), PollManager(
-        DB_HANDLER.query_completed_true,
-        add=comp_poll_event_callback,
-        modify=comp_poll_event_callback,
-    ), PubsList(
-        DB_HANDLER.pub_collection,
-    ) as pubs_list:
+    with (
+        PollManager(
+            DB_HANDLER.query_completed_false,
+            add=open_poll_event_callback,
+        ),
+        PollManager(
+            DB_HANDLER.query_completed_true,
+            add=comp_poll_event_callback,
+            modify=comp_poll_event_callback,
+        ),
+        PubsList(
+            DB_HANDLER.pub_collection,
+        ) as pubs_list,
+    ):  # FIXME can we integrate pubs_list into the DB_Handler?
         open_am = poll_open_actions(dummy_run)
         complete_am = poll_complete_actions(dummy_run)
 
@@ -126,8 +146,12 @@ if __name__ == "__main__":
             assert doc
             date = doc["date"]
             completed: bool = doc.get("completed", False)
-            _log.info(f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}")
+            _log.info(
+                f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+            )
             event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
-            _log.info(f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}")
+            _log.info(
+                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+            )
 
             time.sleep(1)

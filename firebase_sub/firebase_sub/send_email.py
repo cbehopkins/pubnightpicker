@@ -5,6 +5,7 @@ import logging
 import mailtrap
 
 from os import getenv
+
 MAILTRAP_TOKEN: str = getenv("MAILTRAP_TOKEN", "")
 assert MAILTRAP_TOKEN, "MAILTRAP_TOKEN environment variable not set"
 
@@ -78,8 +79,14 @@ def send_ampub_email(
         address = pub_dict[selected_pub_id]["address"]
 
     event_date = poll_dict["date"]
-    _log.info("Generating ampub email: {pub_name=}, {event_date=}, {web_site=}, {address=}, {map=}")    
-
+    _log.info(
+        "Generating ampub email: pub_name=%r, event_date=%r, web_site=%r, address=%r, map=%r",
+        pub_name,
+        event_date,
+        web_site,
+        address,
+        map,
+    )
 
     if emails_src is None:
         src = [(GOOGLEGROUPS_ADDR, None)]

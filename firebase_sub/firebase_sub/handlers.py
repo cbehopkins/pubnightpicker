@@ -1,11 +1,10 @@
-
 import logging
 
 from typing import Generator, cast
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
-from firebase_sub.action_track import  ActionMan
+from firebase_sub.action_track import ActionMan
 from google.cloud.firestore_v1.query import Query
 from firebase_sub.my_types import EmailAddr, PollId, UserId
 from firebase_admin import firestore
@@ -13,14 +12,14 @@ from firebase_admin import firestore
 _log = logging.getLogger(__name__)
 
 
-
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
+
     @property
     def pub_collection(self) -> CollectionReference:
         return self.db.collection("pubs")
-    
+
     @property
     def polls_collection(self) -> CollectionReference:
         return self.db.collection("polls")
@@ -36,7 +35,6 @@ class DbHandler:
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
 
-
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         docs_query = self.db.collection("users").where(
             filter=FieldFilter("openPollEmailEnabled", "==", True)
@@ -48,7 +46,6 @@ class DbHandler:
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
 
-
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
         new_action_dict = am.action_event(
@@ -58,8 +55,9 @@ class DbHandler:
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
 
-
-    def complete_poll_event_handler(self, pubs_list, am: ActionMan, poll_id: PollId) -> None:
+    def complete_poll_event_handler(
+        self, pubs_list, am: ActionMan, poll_id: PollId
+    ) -> None:
         polls_document = self.polls_collection.document(poll_id)
         action_document = self.db.collection("comp_actions").document(poll_id)
 
@@ -83,7 +81,7 @@ class DbHandler:
     @property
     def query_completed_true(self) -> Query:
         return self.polls_collection.where(filter=FieldFilter("completed", "==", True))
+
     @property
     def query_completed_false(self) -> Query:
         return self.polls_collection.where(filter=FieldFilter("completed", "==", False))
-    
