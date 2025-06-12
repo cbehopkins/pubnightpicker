@@ -1,17 +1,23 @@
 import logging
-from typing import  Sequence
+from typing import Sequence
 from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange
 from datetime import datetime as Datetime
 
 from firebase_sub.my_types import Callback, DocCallback
+
 _log = logging.getLogger("PollManager")
 
 
-
 class PollManager:
-    def __init__(self, query: Query, add: DocCallback=None, modify: DocCallback=None, rm: DocCallback=None):
+    def __init__(
+        self,
+        query: Query,
+        add: DocCallback = None,
+        modify: DocCallback = None,
+        rm: DocCallback = None,
+    ):
         self.add = add
         self.modify = modify
         self.rm = rm
@@ -26,7 +32,12 @@ class PollManager:
         self.unsubscribe()
         self.unsubscribe = None
 
-    def _poll_updater(self, doc_snapshot: DocumentSnapshot, changes: Sequence[DocumentChange], read_time: Datetime):
+    def _poll_updater(
+        self,
+        doc_snapshot: DocumentSnapshot,
+        changes: Sequence[DocumentChange],
+        read_time: Datetime,
+    ):
         for change in changes:
             if change.type.name == "ADDED":
                 if self.add is None:

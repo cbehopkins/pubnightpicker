@@ -6,17 +6,14 @@ from firebase_sub.my_types import ActionDict, ActionType, DocumentId
 _log = logging.getLogger("ActionTrack")
 from typing import Protocol, Any
 
+
 class ActionCallbackProtocol(Protocol):
     def __call__(
-        self, 
-        *args: Any, 
-        previously_actioned: bool, 
-        dummy_run: bool, 
-        **kwargs: Any
+        self, *args: Any, previously_actioned: bool, dummy_run: bool, **kwargs: Any
     ) -> None: ...
 
-class _CallbackException(Exception):
-    ...
+
+class _CallbackException(Exception): ...
 
 
 class CallbackExceptionIgnore(_CallbackException):
