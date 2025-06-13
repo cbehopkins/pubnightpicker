@@ -1,7 +1,7 @@
 from enum import StrEnum, auto
+import enum
 from typing import Callable
 
-# from google.cloud.firestore_v1.watch import DocumentChange
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 ActionTypeKey = str

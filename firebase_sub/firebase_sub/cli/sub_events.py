@@ -1,5 +1,4 @@
 import argparse
-import enum
 from functools import partial
 import logging
 from pathlib import Path
@@ -8,15 +7,13 @@ import time
 from typing import cast
 import firebase_admin
 from firebase_admin import credentials
-from dataclasses import dataclass
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
-from firebase_sub.handlers import DbHandler
-from firebase_sub.poll_manager import PollManager
-from firebase_sub.pubs_list import PubsList
+from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.poll_manager import PollManager
+from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
-
-# from google.cloud.firestore_v1.watch import DocumentChange
+from firebase_sub.event import Event, EventType
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 _log = logging.getLogger(__name__)
@@ -84,30 +81,6 @@ def configure_logging(log_level, logfile):
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
-class EventType(enum.StrEnum):
-    NEW_POLL = "new_poll"
-    COMP_POLL = "comp_poll"
-
-
-@dataclass
-class Event:
-    type: EventType
-    doc: DocumentSnapshot
-
-    def handle_queue_item(
-        self,
-        db_handler: DbHandler,
-        pubs_list: PubsList,
-        open_am: ActionMan,
-        complete_am: ActionMan,
-    ):
-        match self.type:
-            case EventType.NEW_POLL:
-                db_handler.new_poll_event_handler(open_am, poll_id=self.doc.id)
-            case EventType.COMP_POLL:
-                db_handler.complete_poll_event_handler(
-                    pubs_list, complete_am, poll_id=self.doc.id
-                )
 
 
 if __name__ == "__main__":
