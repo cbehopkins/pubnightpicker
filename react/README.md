@@ -44,7 +44,7 @@ In another window the database/authentication emulation
 `firebase emulators:start --import=./db_dir`
 You should now be able to create and run without worry of triggering the main runners
 
-If you want the data to persist. While the database is running, run the folloeing command in an appropriate terminal:
+If you want the data to persist. While the database is running, run the following command in an appropriate terminal:
 `firebase emulators:export ./db_dir`
 This will store the curtent state.
 

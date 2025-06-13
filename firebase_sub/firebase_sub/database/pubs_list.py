@@ -4,23 +4,30 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange
 from google.cloud.firestore_v1.collection import CollectionReference
 
-from datetime import datetime as Datetime
-from firebase_sub.my_types import Callback, DocumentId
+from datetime import datetime
+from firebase_sub.my_types import Callback, CollectionSnapshotCallback, DocumentId
 
 
 class PubsList(dict[DocumentId, dict[str, Any]]):
-    def __init__(self, pub_collection: CollectionReference, *args, **kwargs):
+    def __init__(
+        self,
+        pub_collection: CollectionReference,
+        *args,
+        update_callback: CollectionSnapshotCallback | None = None,
+        **kwargs
+    ):
         self.pub_collection = pub_collection
         self.unsubscribe: Callback = None
+        self.update_callback = update_callback
         super().__init__(*args, **kwargs)
 
-    def __enter__(self):
+    def __enter__(self) -> "PubsList":
         self.unsubscribe = self.pub_collection.on_snapshot(
             self._pub_updater
         ).unsubscribe
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         assert self.unsubscribe
         self.unsubscribe()
         self.unsubscribe = None
@@ -33,10 +40,12 @@ class PubsList(dict[DocumentId, dict[str, Any]]):
 
     def _pub_updater(
         self,
-        doc_snapshot: DocumentSnapshot,
+        doc_snapshot: Sequence[DocumentSnapshot],
         changes: Sequence[DocumentChange],
-        read_time: Datetime,
-    ):
+        read_time: datetime,
+    ) -> None:
+        if self.update_callback:
+            self.update_callback(doc_snapshot, changes, read_time)
         for change in changes:
             if change.type.name == "ADDED":
                 self[change.document.id] = change.document.to_dict()

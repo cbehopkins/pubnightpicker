@@ -85,3 +85,8 @@ class DbHandler:
     @property
     def query_completed_false(self) -> Query:
         return self.polls_collection.where(filter=FieldFilter("completed", "==", False))
+
+    @property
+    def query_all(self) -> Query:
+        """Return a query for all polls (no filters)."""
+        return cast(Query, self.polls_collection)

@@ -20,7 +20,7 @@ _log = logging.getLogger(__name__)
 # Based on https://firebase.google.com/docs/firestore/query-data/listen#python_5
 
 CWD = Path(__file__).resolve().parent
-CRED_PATH = CWD.parent / "cred.json"
+CRED_PATH = CWD.parent.parent / "cred.json"
 cred = credentials.Certificate(CRED_PATH)
 app = firebase_admin.initialize_app(cred)
 
@@ -55,7 +55,7 @@ def log_level_to_int(level: str | int) -> int:
         return int(logging.getLevelName(level))
 
 
-def arg_parser_setup(log_level_to_int):
+def arg_parser_setup():
     parser = argparse.ArgumentParser(description="ampubnight notification server")
     parser.add_argument("--dummy", action=argparse.BooleanOptionalAction)
     parser.add_argument(
@@ -81,10 +81,8 @@ def configure_logging(log_level, logfile):
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
-
-
 if __name__ == "__main__":
-    args = arg_parser_setup(log_level_to_int)
+    args = arg_parser_setup()
     configure_logging(args.loglevel, args.logfile)
 
     dummy_run = args.dummy
