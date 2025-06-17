@@ -6,16 +6,21 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
+from google.cloud.firestore_v1 import watch
 
 from firebase_sub.action_track import ActionMan
 from firebase_sub.my_types import EmailAddr, PollId, UserId
 
 _log = logging.getLogger(__name__)
 
+def my_watch_close_callback(reason):
+    _log.error(f"Firestore Watch closed! Reason: {reason}")
+    raise SystemExit("Exiting due to watch close.")
 
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
+        patch_watch_close(my_watch_close_callback)
 
     @property
     def pub_collection(self) -> CollectionReference:
@@ -91,3 +96,15 @@ class DbHandler:
     def query_all(self) -> Query:
         """Return a query for all polls (no filters)."""
         return cast(Query, self.polls_collection)
+
+
+def patch_watch_close(callback):
+    orig_close = watch.Watch.close
+
+    def new_close(self, reason=None):
+        # Call your callback with the reason (exception or None)
+        callback(reason)
+        # Call the original close
+        return orig_close(self, reason)
+
+    watch.Watch.close = new_close
