@@ -7,6 +7,7 @@ from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.pubs_list import PubsList
 
+
 class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"

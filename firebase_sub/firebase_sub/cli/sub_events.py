@@ -82,11 +82,13 @@ def configure_logging(log_level, logfile):
     logging.basicConfig(**logging_config)
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
+
 def heartbeat_publisher(queue):
     while True:
         event = Event(type=EventType.HEARTBEAT, doc=None)
         queue.put(event)
         time.sleep(10)
+
 
 if __name__ == "__main__":
     args = arg_parser_setup()
@@ -94,7 +96,9 @@ if __name__ == "__main__":
 
     dummy_run = args.dummy
     q = queue.Queue()
-    heartbeat_thread = threading.Thread(target=heartbeat_publisher, args=(q,), daemon=True)
+    heartbeat_thread = threading.Thread(
+        target=heartbeat_publisher, args=(q,), daemon=True
+    )
     heartbeat_thread.start()
 
     def open_poll_event_callback(document: DocumentSnapshot) -> None:

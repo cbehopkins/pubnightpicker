@@ -28,13 +28,18 @@ DB_HANDLER = DbHandler()
 class OutputFile:
     def __init__(self, path: Path):
         self.path = path
-        self.file = open(self.path, "a", encoding="utf-8")
+        self.file = open(self.path, "w", encoding="utf-8")
         self.separator = ""
 
-    def write_dict(self, data: dict):
-        json_str = json.dumps(data, ensure_ascii=False)
-        self.file.write(self.separator + json_str + "\n")
-        self.separator = ","
+    def write_dict(self, collection: str, doc_id: str, data: dict):
+        record = {
+            "collection": collection,
+            "id": doc_id,
+            "data": data,
+        }
+        json_str = json.dumps(record, ensure_ascii=False)
+        self.file.write(self.separator + json_str)
+        self.separator = ",\n"
         self.file.flush()
 
     def close(self):
@@ -88,34 +93,18 @@ def main(loglevel: int, logfile: Path | None, outfile: Path) -> None:
 
     with OutputFile(outfile) as out:
 
-        def poll_add_callback(document: DocumentSnapshot) -> None:
+        def backup_item(collection_name, document: DocumentSnapshot) -> None:
             dct: dict[str, Any] | None = document.to_dict()
             assert dct
-            out.write_dict(dct)
-            _log.info(f"New add poll event: {document.id} written to {outfile}")
+            out.write_dict(collection_name, document.id, dct)
 
-        def pub_update_callback(
-            doc_snapshot: Sequence[DocumentSnapshot],
-            changes: Sequence[DocumentChange],
-            read_time: datetime.datetime,
-        ) -> None:
-            for change in changes:
-                if change.type.name == "ADDED":
-                    pub_data = change.document.to_dict()
-                    out.write_dict(pub_data)
-                    _log.info(
-                        f"New pub event: {change.document.id} written to {outfile}"
-                    )
+        DB_HANDLER.all_events_except_users(backup_item)
 
-        with (
-            PollManager(
-                DB_HANDLER.query_all,
-                add=poll_add_callback,
-            ),
-            PubsList(DB_HANDLER.pub_collection, update_callback=pub_update_callback),
-        ):
+        try:
             while True:
                 time.sleep(1)
+        except KeyboardInterrupt:
+            _log.info("Backup interrupted by user. Closing output file cleanly.")
 
 
 if __name__ == "__main__":
