@@ -1,6 +1,5 @@
 import enum
 from dataclasses import dataclass
-import logging
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -8,7 +7,6 @@ from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.pubs_list import PubsList
 
-_log = logging.getLogger(__name__)
 class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"
@@ -39,4 +37,3 @@ class Event:
             case EventType.HEARTBEAT:
                 if not db_handler.okay:
                     raise SystemExit("Exiting due to db is not okay")
-                _log.info("Heartbeat received, db is okay")
