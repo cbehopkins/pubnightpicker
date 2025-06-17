@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 import enum
+from dataclasses import dataclass
+
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionMan

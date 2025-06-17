@@ -1,18 +1,18 @@
 import datetime
 import json
 import logging
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any, Sequence
+
+import click
 import firebase_admin
 from firebase_admin import credentials
-import click
-
-from firebase_sub.database.handlers import DbHandler
-from firebase_sub.database.poll_manager import PollManager
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange
 
+from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 
 _log = logging.getLogger(__name__)
@@ -38,9 +38,11 @@ class OutputFile:
         self.file.flush()
 
     def close(self):
+        self.file.write("\n]\n")
         self.file.close()
 
     def __enter__(self):
+        self.file.write("[\n")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -85,8 +87,9 @@ def main(loglevel: int, logfile: Path | None, outfile: Path) -> None:
     configure_logging(loglevel, logfile)
 
     with OutputFile(outfile) as out:
+
         def poll_add_callback(document: DocumentSnapshot) -> None:
-            dct : dict[str, Any] | None = document.to_dict()
+            dct: dict[str, Any] | None = document.to_dict()
             assert dct
             out.write_dict(dct)
             _log.info(f"New add poll event: {document.id} written to {outfile}")

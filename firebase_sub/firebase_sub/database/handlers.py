@@ -1,13 +1,14 @@
 import logging
-
 from typing import Generator, cast
+
+from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
-from firebase_sub.action_track import ActionMan
 from google.cloud.firestore_v1.query import Query
+
+from firebase_sub.action_track import ActionMan
 from firebase_sub.my_types import EmailAddr, PollId, UserId
-from firebase_admin import firestore
 
 _log = logging.getLogger(__name__)
 

@@ -1,10 +1,11 @@
 import time
-from typing import Any, Sequence
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.watch import DocumentChange
-from google.cloud.firestore_v1.collection import CollectionReference
-
 from datetime import datetime
+from typing import Any, Sequence
+
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.collection import CollectionReference
+from google.cloud.firestore_v1.watch import DocumentChange
+
 from firebase_sub.my_types import Callback, CollectionSnapshotCallback, DocumentId
 
 

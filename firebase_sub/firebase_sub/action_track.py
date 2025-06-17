@@ -4,7 +4,7 @@ from typing import Callable
 from firebase_sub.my_types import ActionDict, ActionType, DocumentId
 
 _log = logging.getLogger("ActionTrack")
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 class ActionCallbackProtocol(Protocol):

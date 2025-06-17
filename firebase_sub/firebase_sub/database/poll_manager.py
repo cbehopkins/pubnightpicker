@@ -1,9 +1,10 @@
 import logging
-from typing import Sequence
-from google.cloud.firestore_v1.query import Query
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.watch import DocumentChange
 from datetime import datetime as Datetime
+from typing import Sequence
+
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.query import Query
+from google.cloud.firestore_v1.watch import DocumentChange
 
 from firebase_sub.my_types import Callback, DocCallback
 

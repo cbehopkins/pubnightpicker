@@ -1,20 +1,21 @@
 import argparse
-from functools import partial
 import logging
-from pathlib import Path
 import queue
 import time
+from functools import partial
+from pathlib import Path
 from typing import cast
+
 import firebase_admin
 from firebase_admin import credentials
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
-from firebase_sub.send_email import send_ampub_email, send_poll_open_email
 from firebase_sub.event import Event, EventType
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from firebase_sub.send_email import send_ampub_email, send_poll_open_email
 
 _log = logging.getLogger(__name__)
 # Based on https://firebase.google.com/docs/firestore/query-data/listen#python_5
