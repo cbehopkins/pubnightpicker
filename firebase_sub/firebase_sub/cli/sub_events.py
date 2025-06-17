@@ -131,7 +131,6 @@ if __name__ == "__main__":
                     f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
                 )
             else:
-                _log.info(f"New Event: Type:{event.type}, No Document")
                 date = None
                 completed = False
 
