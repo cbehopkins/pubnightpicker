@@ -135,8 +135,9 @@ if __name__ == "__main__":
                 completed = False
 
             event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
-            _log.info(
-                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-            )
+            if event.type != EventType.HEARTBEAT:
+                _log.info(
+                    f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+                )
 
             time.sleep(1)
