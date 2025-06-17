@@ -1,6 +1,7 @@
 import argparse
 import logging
 import queue
+import threading
 import time
 from functools import partial
 from pathlib import Path
@@ -81,6 +82,11 @@ def configure_logging(log_level, logfile):
     logging.basicConfig(**logging_config)
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
+def heartbeat_publisher(queue):
+    while True:
+        event = Event(type=EventType.HEARTBEAT, doc=None)
+        queue.put(event)
+        time.sleep(10)
 
 if __name__ == "__main__":
     args = arg_parser_setup()
@@ -88,6 +94,8 @@ if __name__ == "__main__":
 
     dummy_run = args.dummy
     q = queue.Queue()
+    heartbeat_thread = threading.Thread(target=heartbeat_publisher, args=(q,), daemon=True)
+    heartbeat_thread.start()
 
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.NEW_POLL, doc=document))
@@ -114,13 +122,19 @@ if __name__ == "__main__":
 
         while True:
             event: Event = q.get()
-            doc = event.doc.to_dict()
-            assert doc
-            date = doc["date"]
-            completed: bool = doc.get("completed", False)
-            _log.info(
-                f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-            )
+            if event.doc:
+                doc = event.doc.to_dict()
+                assert doc
+                date = doc["date"]
+                completed: bool = doc.get("completed", False)
+                _log.info(
+                    f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+                )
+            else:
+                _log.info(f"New Event: Type:{event.type}, No Document")
+                date = None
+                completed = False
+
             event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
             _log.info(
                 f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"

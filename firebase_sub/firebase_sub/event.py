@@ -1,5 +1,6 @@
 import enum
 from dataclasses import dataclass
+import logging
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -7,16 +8,17 @@ from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.pubs_list import PubsList
 
-
+_log = logging.getLogger(__name__)
 class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"
+    HEARTBEAT = "heartbeat"
 
 
 @dataclass
 class Event:
     type: EventType
-    doc: DocumentSnapshot
+    doc: DocumentSnapshot | None
 
     def handle_queue_item(
         self,
@@ -27,8 +29,14 @@ class Event:
     ):
         match self.type:
             case EventType.NEW_POLL:
+                assert self.doc
                 db_handler.new_poll_event_handler(open_am, poll_id=self.doc.id)
             case EventType.COMP_POLL:
+                assert self.doc
                 db_handler.complete_poll_event_handler(
                     pubs_list, complete_am, poll_id=self.doc.id
                 )
+            case EventType.HEARTBEAT:
+                if not db_handler.okay:
+                    raise SystemExit("Exiting due to db is not okay")
+                _log.info("Heartbeat received, db is okay")

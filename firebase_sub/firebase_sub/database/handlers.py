@@ -13,15 +13,19 @@ from firebase_sub.my_types import EmailAddr, PollId, UserId
 
 _log = logging.getLogger(__name__)
 
-def my_watch_close_callback(reason):
-    _log.error(f"Firestore Watch closed! Reason: {reason}")
-    raise SystemExit("Exiting due to watch close.")
 
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
-        patch_watch_close(my_watch_close_callback)
+        patch_watch_close(self.my_watch_close_callback)
+        self.okay = True
 
+    def my_watch_close_callback(self, reason):
+        _log.error(f"Firestore Watch closed! Reason: {reason}")
+        self.okay = False
+        # This happens in a different thread - so we are blocked unable to exit
+        # https://github.com/googleapis/python-firestore/issues/882
+        raise SystemExit("Exiting due to watch close.")
     @property
     def pub_collection(self) -> CollectionReference:
         return self.db.collection("pubs")
@@ -40,6 +44,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
+        _log.error("Steam closed in query_personal_emails")
 
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         docs_query = self.db.collection("users").where(
@@ -51,6 +56,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
+        _log.error("Steam closed in query_open_emails")
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
@@ -102,7 +108,6 @@ def patch_watch_close(callback):
     orig_close = watch.Watch.close
 
     def new_close(self, reason=None):
-        # Call your callback with the reason (exception or None)
         callback(reason)
         # Call the original close
         return orig_close(self, reason)
