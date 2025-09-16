@@ -1,13 +1,19 @@
 import logging
+from datetime import datetime
+from functools import partial
+from typing import Callable, Generator, Sequence, cast
 
-from typing import Generator, cast
+from firebase_admin import firestore
+from google.cloud.firestore_v1 import watch
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
-from firebase_sub.action_track import ActionMan
 from google.cloud.firestore_v1.query import Query
+from google.cloud.firestore_v1.watch import DocumentChange
+
+from firebase_sub.action_track import ActionMan
 from firebase_sub.my_types import EmailAddr, PollId, UserId
-from firebase_admin import firestore
 
 _log = logging.getLogger(__name__)
 
@@ -15,6 +21,18 @@ _log = logging.getLogger(__name__)
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
+        # patch_watch_close(self.my_watch_close_callback)
+        self.okay = True
+
+    def my_watch_close_callback(self, reason):
+        # This is no longer called as we often close a watch
+        # At the moment we restart the watch regularly
+        # to make sure we keep a live connection
+        _log.error(f"Firestore Watch closed! Reason: {reason}")
+        self.okay = False
+        # This happens in a different thread - so we are blocked unable to exit
+        # https://github.com/googleapis/python-firestore/issues/882
+        raise SystemExit("Exiting due to watch close.")
 
     @property
     def pub_collection(self) -> CollectionReference:
@@ -34,6 +52,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
+        _log.info("Stream closed in query_personal_emails")
 
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         docs_query = self.db.collection("users").where(
@@ -45,6 +64,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
+        _log.info("Stream closed in query_open_emails")
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
@@ -85,3 +105,49 @@ class DbHandler:
     @property
     def query_completed_false(self) -> Query:
         return self.polls_collection.where(filter=FieldFilter("completed", "==", False))
+
+    @property
+    def query_all_polls(self) -> Query:
+        """Return a query for all polls (no filters)."""
+        return cast(Query, self.polls_collection)
+
+    @staticmethod
+    def wrapped_callback(
+        doc_snapshot: Sequence[DocumentSnapshot],
+        changes: Sequence[DocumentChange],
+        read_time: datetime,
+        callback: Callable[[str, DocumentSnapshot], None],
+        collection: CollectionReference,
+    ) -> None:
+        assert collection.id != "users", "Users collection should not be watched here."
+        for change in changes:
+            if change.type.name == "ADDED":
+                callback(collection.id, change.document)
+            elif change.type.name == "MODIFIED":
+                callback(collection.id, change.document)
+            elif change.type.name == "REMOVED":
+                pass
+
+    def all_events_except_users(
+        self, callback: Callable[[str, DocumentSnapshot], None]
+    ) -> None:
+        collections = self.db.collections()
+        collection: CollectionReference
+        for collection in collections:
+            if collection.id in ["users", "roles"]:
+                continue
+            bound_callback = partial(
+                self.wrapped_callback, callback=callback, collection=collection
+            )
+            collection.on_snapshot(bound_callback)
+
+
+def patch_watch_close(callback):
+    orig_close = watch.Watch.close
+
+    def new_close(self, reason=None):
+        callback(reason)
+        # Call the original close
+        return orig_close(self, reason)
+
+    watch.Watch.close = new_close

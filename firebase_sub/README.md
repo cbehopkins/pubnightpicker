@@ -8,8 +8,8 @@ to create a venv
 
 
 # Running/Building the docker
-To build/run the docker n the pi:
-cd ~/home/backup/pubnightpicker/firebase_sub
+To build/run the docker on the pi:
+cd ~/home/git/src/github.com/cbehopkins/pubnightpicker
 sudo docker build -t sub_events .
 
 For debug:

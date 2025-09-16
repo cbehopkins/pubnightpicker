@@ -2,3 +2,5 @@
 .vscode
 *_venv
 token.json
+cred.json
+.tox

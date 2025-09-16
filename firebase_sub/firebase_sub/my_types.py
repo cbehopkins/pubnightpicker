@@ -1,10 +1,14 @@
+import datetime
 from enum import StrEnum, auto
-from typing import Callable
+from typing import Callable, Sequence
 
-# from google.cloud.firestore_v1.watch import DocumentChange
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.watch import DocumentChange
 
 ActionTypeKey = str
+CollectionSnapshotCallback = Callable[
+    [Sequence[DocumentSnapshot], Sequence[DocumentChange], datetime.datetime], None
+]
 
 
 class ActionType(StrEnum):

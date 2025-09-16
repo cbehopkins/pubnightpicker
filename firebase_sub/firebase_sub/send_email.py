@@ -1,10 +1,10 @@
 import contextlib
 import html
-import textwrap
 import logging
-import mailtrap
-
+import textwrap
 from os import getenv
+
+import mailtrap
 
 MAILTRAP_TOKEN: str = getenv("MAILTRAP_TOKEN", "")
 assert MAILTRAP_TOKEN, "MAILTRAP_TOKEN environment variable not set"

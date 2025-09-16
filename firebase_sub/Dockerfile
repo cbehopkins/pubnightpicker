@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD [ "python", "-m", "firebase_sub.sub_events" ]
+CMD [ "python", "-m", "firebase_sub.cli.sub_events" ]

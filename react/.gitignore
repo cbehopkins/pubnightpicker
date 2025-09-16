@@ -25,3 +25,5 @@ yarn-error.log*
 .env
 db_dir/
 *.log
+
+react/public/app_logo.png
