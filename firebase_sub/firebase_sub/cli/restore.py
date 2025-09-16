@@ -38,19 +38,13 @@ def main(loglevel: str, logfile: Path | None, infile: Path) -> None:
     configure_logging(loglevel, logfile)
 
     with open(infile, "r", encoding="utf-8") as f:
-        # Skip the opening '['
-        first_line = f.readline()
-        if not first_line.strip().startswith("["):
-            raise ValueError("Input file does not start with '['")
+        try:
+            records = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Failed to load JSON from {infile}: {e}") from e
 
-        for line in f:
-            line = line.strip()
-            if line in ("]", ",", ""):
-                continue
-            if line.endswith(","):
-                line = line[:-1]
+        for record in records:
             try:
-                record = json.loads(line)
                 collection = record["collection"]
                 doc_id = record["id"]
                 data = restore_datetimes(record["data"])
@@ -61,7 +55,7 @@ def main(loglevel: str, logfile: Path | None, infile: Path) -> None:
                 db.collection(collection).document(doc_id).set(data)
                 _log.info(f"Restored document {doc_id} to collection {collection}")
             except Exception as e:
-                _log.error(f"Failed to restore record: {e}")
+                _log.exception(f"Failed to restore record: {record}", exc_info=e)
 
 
 if __name__ == "__main__":
