@@ -6,29 +6,29 @@ def test_empty_check():
     ad = ActionTrack({})
     # When we check for the action
     # Then it hadn't happened, and we need to action
-    assert ad.to_action(ActionType.TOOT, "some_value")
+    assert ad.to_action(ActionType.EMAIL, "some_value")
 
 
 def test_set_check():
     # Given an empty action dict
     ad = ActionTrack({})
     # That we set an action on
-    ad.action(ActionType.TOOT, "some_value")
+    ad.action(ActionType.EMAIL, "some_value")
     # When we check for the action
     # Then it happened, and we don't need to action
-    assert not ad.to_action(ActionType.TOOT, "some_value")
+    assert not ad.to_action(ActionType.EMAIL, "some_value")
 
 
 def test_permiance_check():
     # Given an empty action dict
     ad = ActionTrack({})
     # That we set an action on
-    ad.action(ActionType.TOOT, "some_value")
+    ad.action(ActionType.EMAIL, "some_value")
     tmp = dict(ad)
     new_me = ActionTrack(tmp)
     # When we check for the action
     # Then it happened
-    assert not new_me.to_action(ActionType.TOOT, "some_value")
+    assert not new_me.to_action(ActionType.EMAIL, "some_value")
 
 
 def test_action_runner():
@@ -39,7 +39,7 @@ def test_action_runner():
         nonlocal run_count
         run_count += 1
 
-    am.bind(ActionType.TOOT, my_callback)
+    am.bind(ActionType.EMAIL, my_callback)
     ad, actioned = am.run(action_dict={}, action_key="some_value")
     assert run_count == 1
     assert actioned
@@ -47,4 +47,4 @@ def test_action_runner():
     assert run_count == 1
     assert not actioned
 
-    assert "toot" in ad
+    assert "email" in ad

@@ -9,9 +9,16 @@ readme = "README.md"
 python = "^3.11"
 firebase-admin = "^6.3.0"
 mailtrap = "2.0.1"
-black = "^25.1.0"
 click = "^8.2.1"
-isort = "^6.0.1"
+pytest = { version = "^7.0", optional = true }
+black = { version = "^24.0", optional = true }
+isort = { version = "^5.10", optional = true }
+tox = { version = "^3.24", optional = true }
+pydantic = "^2.11.7"
+pyserial = "^3.5"
+
+[tool.poetry.extras]
+dev = ["pytest", "black", "isort", "tox"]
 
 
 [build-system]

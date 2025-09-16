@@ -1,14 +1,15 @@
-from functools import partial
 import logging
-from typing import Callable, Generator, Sequence, cast
 from datetime import datetime
+from functools import partial
+from typing import Callable, Generator, Sequence, cast
+
 from firebase_admin import firestore
+from google.cloud.firestore_v1 import watch
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
-from google.cloud.firestore_v1 import watch
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange
 
 from firebase_sub.action_track import ActionMan
@@ -20,10 +21,13 @@ _log = logging.getLogger(__name__)
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
-        patch_watch_close(self.my_watch_close_callback)
+        # patch_watch_close(self.my_watch_close_callback)
         self.okay = True
 
     def my_watch_close_callback(self, reason):
+        # This is no longer called as we often close a watch
+        # At the moment we restart the watch regularly
+        # to make sure we keep a live connection
         _log.error(f"Firestore Watch closed! Reason: {reason}")
         self.okay = False
         # This happens in a different thread - so we are blocked unable to exit
@@ -48,7 +52,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
-        _log.error("Steam closed in query_personal_emails")
+        _log.info("Stream closed in query_personal_emails")
 
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         docs_query = self.db.collection("users").where(
@@ -60,7 +64,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
-        _log.error("Steam closed in query_open_emails")
+        _log.info("Stream closed in query_open_emails")
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)

@@ -111,12 +111,12 @@ if __name__ == "__main__":
         PollManager(
             DB_HANDLER.query_completed_false,
             add=open_poll_event_callback,
-        ),
+        ).start_periodic_restart(1),
         PollManager(
             DB_HANDLER.query_completed_true,
             add=comp_poll_event_callback,
             modify=comp_poll_event_callback,
-        ),
+        ).start_periodic_restart(1),
         PubsList(
             DB_HANDLER.pub_collection,
         ) as pubs_list,
