@@ -1,56 +1,43 @@
 import time
-from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.collection import CollectionReference
-from google.cloud.firestore_v1.watch import DocumentChange
+from google.cloud.firestore_v1.query import Query
 
-from firebase_sub.my_types import Callback, CollectionSnapshotCallback, DocumentId
+from firebase_sub.database.poll_manager import PollManager
+from firebase_sub.my_types import Callback
 
 
-class PubsList(dict[DocumentId, dict[str, Any]]):
+class PubsList(PollManager):
     def __init__(
         self,
-        pub_collection: CollectionReference,
-        *args,
-        update_callback: CollectionSnapshotCallback | None = None,
-        **kwargs
+        collection: CollectionReference,
     ):
-        self.pub_collection = pub_collection
+        self.pub_collection = collection
         self.unsubscribe: Callback = None
-        self.update_callback = update_callback
-        super().__init__(*args, **kwargs)
-
-    def __enter__(self) -> "PubsList":
-        self.unsubscribe = self.pub_collection.on_snapshot(
-            self._pub_updater
-        ).unsubscribe
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        assert self.unsubscribe
-        self.unsubscribe()
-        self.unsubscribe = None
+        self._dict = {}
+        super().__init__(
+            query=cast(Query, collection),
+            add=self._add,
+            modify=self._add,
+            rm=self._remove,
+        )
 
     def __getitem__(self, key: Any) -> Any:
-        if key not in self:
+        if key not in self._dict:
             # Just in case the database hasn't populated yet
-            time.sleep(1)
-        return super().__getitem__(key)
+            time.sleep(5)
+        return self._dict[key]
 
-    def _pub_updater(
-        self,
-        doc_snapshot: Sequence[DocumentSnapshot],
-        changes: Sequence[DocumentChange],
-        read_time: datetime,
-    ) -> None:
-        if self.update_callback:
-            self.update_callback(doc_snapshot, changes, read_time)
-        for change in changes:
-            if change.type.name == "ADDED":
-                self[change.document.id] = change.document.to_dict()
-            elif change.type.name == "MODIFIED":
-                self[change.document.id] = change.document.to_dict()
-            elif change.type.name == "REMOVED":
-                del self[change.document.id]
+    def __contains__(self, key: object) -> bool:
+        if key not in self._dict:
+            # Just in case the database hasn't populated yet
+            time.sleep(5)
+        return key in self._dict
+
+    def _add(self, document: DocumentSnapshot) -> None:
+        self._dict[document.id] = document.to_dict()
+
+    def _remove(self, document: DocumentSnapshot) -> None:
+        del self._dict[document.id]

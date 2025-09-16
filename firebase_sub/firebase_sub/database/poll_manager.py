@@ -1,8 +1,8 @@
 import logging
 import threading
 from datetime import datetime as Datetime
-from enum import StrEnum
-from typing import Self, Sequence
+from collections.abc import Sequence
+from typing import Self
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.query import Query
@@ -31,8 +31,9 @@ class PollManager:
         self._lock = threading.Lock()
         self._last_document: DocumentSnapshot | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self._restart()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         assert self.unsubscribe

@@ -1,4 +1,3 @@
-import argparse
 import logging
 import queue
 import threading
@@ -7,11 +6,13 @@ from functools import partial
 from pathlib import Path
 from typing import cast
 
+import click
 import firebase_admin
 from firebase_admin import credentials
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
+from firebase_sub.common.logging import log_level_to_int
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
@@ -50,51 +51,27 @@ def poll_complete_actions(dummy_run: bool) -> ActionMan:
     return complete_am
 
 
-def log_level_to_int(level: str | int) -> int:
-    try:
-        return int(level)
-    except ValueError:
-        return int(logging.getLevelName(level))
-
-
-def arg_parser_setup():
-    parser = argparse.ArgumentParser(description="ampubnight notification server")
-    parser.add_argument("--dummy", action=argparse.BooleanOptionalAction)
-    parser.add_argument(
-        "--loglevel",
-        default=logging.INFO,
-        help="set the log level",
-        type=log_level_to_int,
-    )
-    parser.add_argument("--logfile", type=Path)
-
-    args = parser.parse_args()
-    return args
-
-
-def configure_logging(log_level, logfile):
-    logging_config = {"level": log_level}
+def configure_logging(log_level: int, logfile: Path | None) -> None:
     if logfile:
         print(f"Logging to {logfile}")
-        logging_config["filename"] = logfile
-        logging_config["encoding"] = "utf-8"
-
-    logging.basicConfig(**logging_config)
+        logging.basicConfig(level=log_level, filename=str(logfile), encoding="utf-8")
+    else:
+        logging.basicConfig(level=log_level)
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
-def heartbeat_publisher(queue):
+def heartbeat_publisher(queue: queue.Queue) -> None:
     while True:
         event = Event(type=EventType.HEARTBEAT, doc=None)
         queue.put(event)
         time.sleep(10)
 
 
-if __name__ == "__main__":
-    args = arg_parser_setup()
-    configure_logging(args.loglevel, args.logfile)
-
-    dummy_run = args.dummy
+def sub_events(
+    dummy: bool, loglevel: int, logfile: Path | None, restart_interval: int
+) -> None:
+    configure_logging(loglevel, logfile)
+    dummy_run = dummy
     q = queue.Queue()
     heartbeat_thread = threading.Thread(
         target=heartbeat_publisher, args=(q,), daemon=True
@@ -111,16 +88,17 @@ if __name__ == "__main__":
         PollManager(
             DB_HANDLER.query_completed_false,
             add=open_poll_event_callback,
-        ).start_periodic_restart(1),
+        ).start_periodic_restart(restart_interval),
         PollManager(
             DB_HANDLER.query_completed_true,
             add=comp_poll_event_callback,
             modify=comp_poll_event_callback,
-        ).start_periodic_restart(1),
+        ).start_periodic_restart(restart_interval),
         PubsList(
             DB_HANDLER.pub_collection,
         ) as pubs_list,
-    ):  # FIXME can we integrate pubs_list into the DB_Handler?
+    ):
+        pubs_list.start_periodic_restart(restart_interval)
         open_am = poll_open_actions(dummy_run)
         complete_am = poll_complete_actions(dummy_run)
 
@@ -145,3 +123,27 @@ if __name__ == "__main__":
                 )
 
             time.sleep(1)
+
+
+@click.command()
+@click.option("--dummy/--no-dummy", default=False, help="Run in dummy mode")
+@click.option(
+    "--loglevel", default=logging.INFO, type=log_level_to_int, help="Set the log level"
+)
+@click.option(
+    "--logfile", type=click.Path(path_type=Path), default=None, help="Log file path"
+)
+@click.option(
+    "--restart-interval",
+    type=int,
+    default=60*24,
+    help="Restart interval in minutes (default: 1 day)",
+)
+def cli(
+    dummy: bool, loglevel: int, logfile: Path | None, restart_interval: int
+) -> None:
+    sub_events(dummy, loglevel, logfile, restart_interval)
+
+
+if __name__ == "__main__":
+    cli()
