@@ -152,7 +152,12 @@ export async function action({ request, params }) {
   };
   if (method === "POST") {
     try {
-      updateDoc(doc.ref, notificationParams);
+      // Firestore rejects fields with value `undefined`. Remove any undefined
+      // values before calling updateDoc.
+      const cleaned = Object.fromEntries(
+        Object.entries(notificationParams).filter(([, v]) => v !== undefined)
+      );
+      await updateDoc(doc.ref, cleaned);
     } catch (err) {
       console.error(err);
       alert(err.message);
