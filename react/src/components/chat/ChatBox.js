@@ -10,7 +10,7 @@ import { db } from "../../firebase";
 import Message from "./Message";
 import SendMessage from "./SendMessage";
 import useUsers from "../../hooks/useUsers";
-import "./chat.css"
+import styles from "./chat.module.css"
 
 
 const ChatBox = () => {
@@ -38,8 +38,8 @@ const ChatBox = () => {
         return unsubscribe;
     }, []);
 
-    return (<div className="chat-box">
-        <div className="messages-wrapper">
+    return (<div className={styles.chatBox}>
+        <div className={styles.messagesWrapper}>
             <div >
             {messages?.map((message) => (
                 <Message key={message.id} message={message} users={users} />
@@ -48,7 +48,7 @@ const ChatBox = () => {
         {/* when a new message enters the chat, the screen scrolls down to the scroll div */}
         <span ref={scroll}></span>
         </div>
-        <div><SendMessage scroll={scroll} className="send-message" /></div>
+        <div><SendMessage scroll={scroll} /></div>
     </div>
     );
 };

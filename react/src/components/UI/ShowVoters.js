@@ -1,13 +1,13 @@
 import Modal from "./Modal";
 import useUsers from "../../hooks/useUsers";
-import styling from "./PollVote.module.css";
+import styles from "./PollVote.module.css";
 
 export default function ShowVoters(params) {
     const users = useUsers();
     const voterList = params.votes || [];
 
     return <Modal>
-        <div className={styling.show_votes}>
+        <div className={styles.show_votes}>
             <h3>Current Voters</h3>
             <table >
                 <tbody>

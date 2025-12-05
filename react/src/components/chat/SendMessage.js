@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { db } from "../../firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import "./chat.css"
+import styles from "./chat.module.css"
 import { useSelector } from "react-redux";
 
 const SendMessage = ({ scroll }) => {
@@ -26,7 +26,7 @@ const SendMessage = ({ scroll }) => {
     setTimeout(() => { scroll.current.scrollIntoView({ behavior: "smooth" }); }, 100);
   }
   return (
-    <form onSubmit={(event) => sendMessage(event)} className="send-message">
+    <form onSubmit={(event) => sendMessage(event)} className={styles.sendMessage}>
       <label htmlFor="messageInput" hidden>
         Enter Message
       </label>

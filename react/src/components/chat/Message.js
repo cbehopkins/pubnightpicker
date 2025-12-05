@@ -5,8 +5,8 @@ import { db } from "../../firebase";
 import UnknownUser from "../../img/unknown_user.png";
 import DeleteIcon from "../../img/x-close-delete.svg";
 import useAdmin from "../../hooks/useAdmin";
+import styles from "./chat.module.css"
 
-import "./chat.css"
 const Message = ({ message, users }) => {
     const admin = useAdmin();
     const uid = useSelector((state) => state.auth.uid);
@@ -22,16 +22,16 @@ const Message = ({ message, users }) => {
     }
 
     return (
-        <div className={`chat-bubble ${messageFromMe ? "right" : ""}`}>
+        <div className={`${styles.chatBubble} ${messageFromMe ? styles.right : ""}`}>
             <img
-                className="chat-bubble__left"
+                className={styles.chatBubbleLeft}
                 src={avatar}
                 alt="user avatar"
                 referrerPolicy="no-referrer"
             />
             <div className="chat-bubble__right">
-                <p className="user-name">{name}</p>
-                <p className="user-message">{message.text}</p>
+                <p className={styles.userName}>{name}</p>
+                <p className={styles.userMessage}>{message.text}</p>
             </div>
             {deleteAllowed && <img src={DeleteIcon} onClick={deleteMessage} alt="Delete Message" />}
         </div>

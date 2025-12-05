@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import styling from "./ActivePolls.module.css";
+import styles from "./ActivePolls.module.css";
 import usePolls from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";
 import ConfirmModal from "../UI/ConfirmModal";
@@ -54,7 +54,7 @@ function ActivePolls() {
   }, [key, poll_id, admin]);
 
   const completingPollBusy = completingPoll.length !== 0;
-  const styleToUse = mobile ? styling.poll_mobile : styling.poll;
+  const styleToUse = mobile ? styles.poll_mobile : styles.poll;
 
   // Change line numbers
   return (

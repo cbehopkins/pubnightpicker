@@ -1,33 +1,86 @@
 .register {
-    height: 100vh;
-    width: 100vw;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-md);
+}
+
+.registerContainer {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+  background-color: #dcdcdc;
+  padding: var(--spacing-lg);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.registerContainer h2 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--spacing-md);
+}
+
+.registerTextBox {
+  padding: var(--spacing-md);
+  font-size: var(--font-size-base);
+  margin-bottom: var(--spacing-md);
+  border: 1px solid #999;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.registerBtn {
+  padding: var(--spacing-md);
+  font-size: var(--font-size-base);
+  margin-bottom: var(--spacing-md);
+  border: none;
+  color: white;
+  background-color: black;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.registerBtn:hover {
+  background-color: #333;
+}
+
+.registerGoogle {
+  background-color: #4285f4;
+}
+
+.register div {
+  margin-top: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.register a {
+  color: #0066cc;
+  text-decoration: none;
+}
+
+.register a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+  .register {
+    padding: var(--spacing-sm);
   }
-  .register__container {
-    display: flex;
-    flex-direction: column;
-    text-align: center;
-    background-color: #dcdcdc;
-    padding: 30px;
+
+  .registerContainer {
+    padding: var(--spacing-md);
+    max-width: 100%;
   }
-  .register__textBox {
-    padding: 10px;
-    font-size: 18px;
-    margin-bottom: 10px;
+
+  .registerTextBox,
+  .registerBtn {
+    font-size: var(--font-size-sm);
   }
-  .register__btn {
-    padding: 10px;
-    font-size: 18px;
-    margin-bottom: 10px;
-    border: none;
-    color: white;
-    background-color: black;
-  }
-  .register__google {
-    background-color: #4285f4;
-  }
-  .register div {
-    margin-top: 7px;
-  }
+}

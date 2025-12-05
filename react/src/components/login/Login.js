@@ -7,7 +7,7 @@ import {
 } from "../../firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
 import GoogleSignin from "../../img/btn_google_signin_dark_pressed_web.png";
-import "./Login.module.css";
+import styles from "./Login.module.css";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -22,10 +22,10 @@ function Login() {
     if (user) navigate("/");
   }, [user, loading, navigate]);
   return (
-    <div className="login">
-      <div className="login__container">
+    <div className={styles.login}>
+      <div className={styles.loginContainer}>
         <h2>Auth Providers</h2>
-        {/* <button className="login__btn login__google" onClick={signInWithGoogle}>
+        {/* <button className={`${styles.loginBtn} ${styles.loginGoogle}`} onClick={signInWithGoogle}>
           Login with Google
         </button> */}
         <img
@@ -34,28 +34,28 @@ function Login() {
           alt="sign in with google"
           type="button"
         />
-        {/* <button className="login__btn login__google" onClick={signInWithFacebook}>
+        {/* <button className={`${styles.loginBtn} ${styles.loginGoogle}`} onClick={signInWithFacebook}>
           Login with Facebook
         </button> */}
       </div>
-      <div className="login__container">
+      <div className={styles.loginContainer}>
         <h2>Login with email</h2>
         <input
           type="text"
-          className="login__textBox"
+          className={styles.loginTextBox}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="E-mail Address"
         />
         <input
           type="password"
-          className="login__textBox"
+          className={styles.loginTextBox}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
         />
         <button
-          className="login__btn"
+          className={styles.loginBtn}
           onClick={() => logInWithEmailAndPassword(email, password)}
         >
           Login

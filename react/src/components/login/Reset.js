@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { auth } from "../../firebase";
 import { sendPasswordResetEmail } from "firebase/auth";
 import ConfirmModal from "../UI/ConfirmModal";
-import "./Reset.module.css";
+import styles from "./Reset.module.css";
 function Reset() {
   const [email, setEmail] = useState("");
   const [user, loading] = useAuthState(auth);
@@ -19,8 +19,8 @@ function Reset() {
   const resetString = `Reset email sent to ${email}`
 
   return (
-    <div className="reset">
-      <div className="reset__container">
+    <div className={styles.reset}>
+      <div className={styles.resetContainer}>
         {sentBusy && (
           <ConfirmModal
             title="Reset Send"
@@ -39,13 +39,13 @@ function Reset() {
         />}
         <input
           type="text"
-          className="reset__textBox"
+          className={styles.resetTextBox}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="E-mail Address"
         />
         <button
-          className="reset__btn"
+          className={styles.resetBtn}
           onClick={async () => {
             try {
               await sendPasswordResetEmail(auth, email)

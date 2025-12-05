@@ -1,5 +1,5 @@
 import { useSelector } from "react-redux";
-import styling from "./PollVote.module.css";
+import styles from "./PollVote.module.css";
 import useAdmin from "../../hooks/useAdmin";
 import useVotes from "../../hooks/useVotes";
 import { useCallback } from "react";
@@ -45,7 +45,7 @@ function VotablePub(params) {
       {allow_delete ? (
         <td>
           <button
-            className={styling.deleter}
+            className={styles.deleter}
             onClick={deleteHandler}
           >
             Delete
@@ -92,7 +92,7 @@ function VotablePub(params) {
         </td>
       )}
       {known && <td><QuestionRender
-        className={styling.button}
+        className={styles.button}
         question="Show Voters"
       >
         <ShowVoters votes={votes[pubId]} />

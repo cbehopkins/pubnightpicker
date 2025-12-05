@@ -1,40 +1,73 @@
 .backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100vh;
-    z-index: 20;
-    background-color: rgba(0, 0, 0, 0.75);
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  z-index: 20;
+  background-color: rgba(0, 0, 0, 0.75);
+  animation: fade-in 200ms ease-out;
+}
+
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: clamp(300px, 90vw, 600px);
+  background-color: rgba(173, 173, 173, 0.95);
+  padding: var(--spacing-lg);
+  border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  z-index: 30;
+  animation: slide-down 300ms ease-out forwards;
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+
+.content {
+  padding: var(--spacing-md) 0;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
   }
-  
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -55%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Mobile - full width with less padding */
+@media (max-width: 480px) {
   .modal {
-    position: fixed;
-    top: 20vh;
-    left: 0%;
-    width: 100%;
-    background-color: rgba(173, 173, 173, 0.25);
-    padding: 0rem;
-    border-radius: 14px;
-    box-shadow: 0 0px 0px rgba(0, 0, 0, 0.25);
-    z-index: 30;
-    animation: slide-down 300ms ease-out forwards;
+    width: calc(100vw - var(--spacing-md));
+    width: calc(100dvw - var(--spacing-md));
+    padding: var(--spacing-md);
+    top: 40%;
   }
-  
-  @media (min-width: 768px) {
-    .modal {
-      width: 40rem;
-      left: calc(50% - 20rem);
-    }
+
+  .content {
+    padding: var(--spacing-sm) 0;
   }
-  
-  @keyframes slide-down {
-    from {
-      opacity: 0;
-      transform: translateY(-3rem);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+}
+
+/* Tablet */
+@media (min-width: 768px) {
+  .modal {
+    width: 40rem;
   }
+}
