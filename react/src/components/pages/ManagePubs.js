@@ -1,4 +1,3 @@
-import { useSelector } from "react-redux";
 import { NavLink } from "react-router-dom";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase";
