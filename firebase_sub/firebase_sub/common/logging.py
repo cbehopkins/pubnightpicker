@@ -3,7 +3,6 @@ import logging.config
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger("fred")
 
 def log_level_to_int(level: str | int) -> int:
     try:
@@ -33,6 +32,5 @@ def configure_logging(log_level: str | int, logfile: str | Path | None):
         print(f"Logging to {logfile}")
         logging_config["filename"] = logfile
         logging_config["encoding"] = "utf-8"
-    logging.config.dictConfig(DEFAULT_LOGGING_CONFIG)
     logging.basicConfig(**logging_config)
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)

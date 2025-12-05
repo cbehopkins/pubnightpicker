@@ -1,5 +1,5 @@
-import { useSelector } from "react-redux";
+import useRole from "./useRole";
+
 export default function useAdmin() {
-  const admin = useSelector((state) => state.auth.admin);
-  return admin;
+  return useRole("admin");
 }

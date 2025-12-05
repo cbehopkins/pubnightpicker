@@ -2,15 +2,14 @@ import { createSlice } from "@reduxjs/toolkit";
 
 const authSlice = createSlice({
   name: "auth",
-  initialState: { name: "", uid: 0, loggedIn: false, email: "", admin: false, known: false, photoUrl: null },
+  initialState: { name: "", uid: 0, loggedIn: false, email: "", roles: {}, photoUrl: null },
   reducers: {
     authAdded(state, action) {
       state.name = action.payload.name;
       state.uid = action.payload.uid;
       state.loggedIn = Boolean(action.payload.uid);
       state.email = action.payload.email;
-      state.admin = false;
-      state.known = false;
+      state.roles = {};
       state.photoUrl = action.payload.photoUrl
     },
     clearAuth(state) {
@@ -18,17 +17,13 @@ const authSlice = createSlice({
       state.uid = 0;
       state.loggedIn = false;
       state.email = "";
-      state.admin = false;
-      state.known = false;
+      state.roles = {};
       state.photoUrl = null;
     },
     setRoles(state, action) {
-      if ("admin" in action.payload) {
-        state.admin = action.payload.admin;
-      }
-      if ("known" in action.payload) {
-        state.known = action.payload.known;
-      }
+      // Store the full roles object from Firebase
+      // action.payload = { admin: { userId: true, ... }, known: { userId: true, ... } }
+      state.roles = action.payload;
     },
   },
 });

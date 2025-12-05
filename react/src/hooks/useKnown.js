@@ -1,5 +1,5 @@
-import { useSelector } from "react-redux";
+import useRole from "./useRole";
+
 export default function useKnown() {
-    const known = useSelector((state) => state.auth.known);
-    return known;
+    return useRole("known");
 }

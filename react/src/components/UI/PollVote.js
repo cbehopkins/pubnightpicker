@@ -103,9 +103,8 @@ function VotablePub(params) {
 
 function PollVote(props) {
   const admin = useAdmin();
-  const loggedIn = useSelector((state) => state.auth.loggedIn);
   const currUserId = useSelector((state) => state.auth.uid);
-  const allowDelete = loggedIn && admin;
+  const allowDelete = admin;
   const dummyAnyPub = (props.poll_data.pubs &&
     "any" in props.poll_data.pubs &&
     props.poll_data.pubs["any"]) || { name: "All Pubs" };
