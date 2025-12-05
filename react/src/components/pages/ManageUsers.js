@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import useUsers from "../../hooks/useUsers";
 import { useAllRoles } from "../../hooks/useRoles";
 import { db } from "../../firebase";
-import { doc, deleteField, updateDoc } from "firebase/firestore";
+import { doc, deleteField, updateDoc, setDoc } from "firebase/firestore";
 import Modal from "../UI/Modal";
 
 
@@ -34,7 +34,7 @@ async function clearKnown(uid) {
 async function setCanChat(uid) {
     console.log("Setting canChat status for:", uid);
     const canChatRef = doc(db, "roles", "canChat")
-    await updateDoc(canChatRef, { [uid]: true })
+    await setDoc(canChatRef, { [uid]: true }, { merge: true })
 }
 
 async function clearCanChat(uid) {
@@ -259,7 +259,7 @@ export default function ManageUsers() {
                             <input
                                 type="checkbox"
                                 name="admin"
-                                defaultChecked={userIsAdmin}
+                                checked={userIsAdmin}
                                 onChange={(event) => {
                                     handleAdminClick(key, event.target.checked)
                                 }}
@@ -269,7 +269,7 @@ export default function ManageUsers() {
                             <input
                                 type="checkbox"
                                 name="known"
-                                defaultChecked={userIsKnown}
+                                checked={userIsKnown}
                                 onChange={(event) => {
                                     handleKnownClick(key, event.target.checked)
                                 }}
@@ -279,7 +279,7 @@ export default function ManageUsers() {
                             <input
                                 type="checkbox"
                                 name="canChat"
-                                defaultChecked={userCanChat}
+                                checked={userCanChat}
                                 onChange={(event) => {
                                     handleCanChatClick(key, event.target.checked)
                                 }}

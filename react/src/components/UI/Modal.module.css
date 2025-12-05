@@ -16,7 +16,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   width: clamp(300px, 90vw, 600px);
-  background-color: rgba(173, 173, 173, 0.95);
+  background-color: transparent;
   padding: var(--spacing-lg);
   border-radius: 14px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
@@ -35,6 +35,7 @@
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -45,6 +46,7 @@
     opacity: 0;
     transform: translate(-50%, -55%);
   }
+
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
