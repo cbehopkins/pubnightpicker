@@ -1,8 +1,4 @@
 # Pubnight picker
-First of all, install the scripts.
-
-`npm install react-scripts`
-
 
 ## Setting Up Firebase
 
@@ -24,29 +20,36 @@ To develop this app using your own Firebase database, follow these steps:
    - Replace the existing values with your new Firebase configuration values. The `.env` file should look like this:
 
 ```properties
-REACT_APP_FIREBASE_API_KEY="your-new-api-key"
-REACT_APP_FIREBASE_AUTH_DOMAIN="your-new-auth-domain"
-REACT_APP_FIREBASE_PROJECT_ID="your-new-project-id"
-REACT_APP_FIREBASE_STORAGE_BUCKET="your-new-storage-bucket"
-REACT_APP_FIREBASE_MESSAGING_SENDER_ID="your-new-messaging-sender-id"
-REACT_APP_FIREBASE_APP_ID="your-new-app-id"
+VITE_FIREBASE_API_KEY="your-new-api-key"
+VITE_FIREBASE_AUTH_DOMAIN="your-new-auth-domain"
+VITE_FIREBASE_PROJECT_ID="your-new-project-id"
+VITE_FIREBASE_STORAGE_BUCKET="your-new-storage-bucket"
+VITE_FIREBASE_MESSAGING_SENDER_ID="your-new-messaging-sender-id"
+VITE_FIREBASE_APP_ID="your-new-app-id"
 ```
 
 
 ## Development Servers
 
-<!-- npm install -g firebase-tools
-firebase init -->
-Do all of this under the react directory
-In one window start the server for the react app
-`npm start run`
-In another window the database/authentication emulation
-`firebase emulators:start --import=./db_dir`
-You should now be able to create and run without worry of triggering the main runners
+Do all of this under the react directory.
 
-If you want the data to persist. While the database is running, run the following command in an appropriate terminal:
-`firebase emulators:export ./db_dir`
-This will store the curtent state.
+In one terminal, start the Vite dev server:
+```
+npm start
+```
+
+In another terminal, start the Firebase emulators:
+```
+npx firebase-tools emulators:start --import=./db_dir
+```
+
+You should now be able to develop without affecting the production database.
+
+If you want the data to persist, while the emulators are running, run this in another terminal:
+```
+npx firebase-tools emulators:export ./db_dir
+```
+This will save the current state.
 
 ## Deployment
 Deployment is now handled by the github runners.
