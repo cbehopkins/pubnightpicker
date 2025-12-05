@@ -1,0 +1,72 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             request.auth.uid in get(/databases/$(database)/documents/roles/admin).data;
+    }
+    
+    // Helper function to check if user is known
+    function isKnown() {
+      return request.auth != null && 
+             request.auth.uid in get(/databases/$(database)/documents/roles/known).data;
+    }
+    
+    // Polls collection - read for all, update for known users, create/delete for admins
+    match /polls/{poll} {
+      allow read: if true;
+      allow update: if isKnown() || isAdmin();
+      allow create, delete: if isAdmin();
+    }
+    
+    // Votes collection - read/update for logged in users, full access for admins
+    match /votes/{poll} {
+      allow read, update: if request.auth != null;
+      allow create, delete: if isAdmin();
+    }
+    
+    // Completed actions collection - admin only
+    match /comp_actions/{poll} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Open actions collection - admin only
+    match /open_actions/{poll} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Pubs collection - read for all, write for admins only
+    match /pubs/{pubId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // Roles collection - read for logged in users, write only for admins
+    match /roles/{role} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Users collection - read for logged in users, write only your own document
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Messages collection - known users can read/create, admins have full access, users can delete their own
+    match /messages/{messageId} {
+      allow read: if isKnown() || isAdmin();
+      allow create: if isKnown() || isAdmin();
+      allow delete: if isAdmin() || 
+                      (request.auth != null && resource.data.uid == request.auth.uid);
+    }
+    
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

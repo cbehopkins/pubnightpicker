@@ -3,7 +3,7 @@ import { useSelector } from "react-redux";
 import styles from "./MainNavigation.module.css";
 import { logout } from "../../firebase";
 import useAdmin from "../../hooks/useAdmin";
-import useKnown from "../../hooks/useKnown";
+import useRole from "../../hooks/useRole";
 const LoggedInElement = (params) => {
   return (
     <div className={styles.logged_in}>
@@ -21,7 +21,7 @@ function MainNavigation() {
   const name = useSelector((state) => state.auth.name);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
   const admin = useAdmin();
-  const known = useKnown();
+  const canChat = useRole("canChat");
   const email = useSelector((state) => state.auth.email);
 
   return (
@@ -36,7 +36,7 @@ function MainNavigation() {
               Home Page
             </NavLink>
           </li>
-          {known && <li>
+          {canChat && <li>
             <NavLink
               to="/chat"
               className={styles.active}

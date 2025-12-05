@@ -1,4 +1,3 @@
-import { useSelector } from "react-redux";
 import { NavLink } from "react-router-dom";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase";
@@ -7,7 +6,6 @@ import usePubs from "../../hooks/usePubs";
 import useAdmin from "../../hooks/useAdmin";
 
 const ManagePubs = (params) => {
-  const loggedIn = useSelector((state) => state.auth.loggedIn);
   const deletePub = async (id, name) => {
     await deleteDoc(doc(db, "pubs", id));
   };
@@ -22,7 +20,7 @@ const ManagePubs = (params) => {
     })
     .sort();
 
-  const admin = useAdmin() && loggedIn;
+  const admin = useAdmin();
   return (
     <div className={styles.navlink}>
       {admin && (

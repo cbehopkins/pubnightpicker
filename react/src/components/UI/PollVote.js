@@ -84,9 +84,8 @@ function VotablePub(params) {
 
 function PollVote(props) {
   const admin = useAdmin();
-  const loggedIn = useSelector((state) => state.auth.loggedIn);
   const currUserId = useSelector((state) => state.auth.uid);
-  const allowDelete = loggedIn && admin;
+  const allowDelete = admin;
   const sortedPubsByName = props.poll_data.pubs && Object.entries(props.poll_data.pubs)
     .map(([id, pub]) => {
       const sortBy = pub.name;

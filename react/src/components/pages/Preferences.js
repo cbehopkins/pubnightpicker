@@ -1,6 +1,7 @@
 import PreferencesForm from "./PreferencesForm";
 import { redirect, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSelector } from "react-redux";
 import { store } from "../../store";
 import {
   updateDoc,
@@ -12,6 +13,7 @@ import {
 } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
 import getUserDoc from "../../dbtools/getUserDoc";
+import styles from "./Preferences.module.css";
 
 async function ReauthenticateUser(auth, userProvidedPassword) {
   const credential = EmailAuthProvider.credential(
@@ -21,6 +23,53 @@ async function ReauthenticateUser(auth, userProvidedPassword) {
   return reauthenticateWithCredential(
     auth.currentUser,
     credential
+  )
+}
+
+function formatRoleName(roleName) {
+  return roleName
+    .split(/(?=[A-Z])/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
+}
+
+function MyRoles() {
+  const roles = useSelector((state) => state.auth.roles)
+
+  const rolesList = useMemo(() => {
+    if (!roles) return []
+    return Object.entries(roles)
+      .filter(([, value]) => value === true || (typeof value === "object" && Object.keys(value).length > 0))
+      .map(([roleName]) => roleName)
+      .sort()
+  }, [roles])
+
+  return (
+    <div className={styles.rolesSection}>
+      <h3>Your Roles</h3>
+      {rolesList.length > 0 ? (
+        <table className={styles.rolesTable}>
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rolesList.map((roleName) => (
+              <tr key={roleName}>
+                <td className={styles.roleName}>{formatRoleName(roleName)}</td>
+                <td className={styles.status}>
+                  <span className={styles.badge}>✓ Active</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className={styles.noRoles}>You don't have any special roles yet.</p>
+      )}
+    </div>
   )
 }
 
@@ -109,11 +158,12 @@ function Preferences(params) {
   }, [user, loading, navigate]);
   // FIXME, this feels hacky!
   const isPassword = !loading && user && auth && (auth.currentUser.providerData[0].providerId === "password")
-  return <>
+  return <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
     <PreferencesForm method="post" />
-  </>
+    <MyRoles />
+  </div>
 }
 
 export default Preferences;
