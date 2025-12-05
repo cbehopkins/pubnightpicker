@@ -1,16 +1,16 @@
 import { NavLink } from "react-router-dom";
 import { useSelector } from "react-redux";
-import classes from "./MainNavigation.module.css";
+import styles from "./MainNavigation.module.css";
 import { logout } from "../../firebase";
 import useAdmin from "../../hooks/useAdmin";
 import useKnown from "../../hooks/useKnown";
 const LoggedInElement = (params) => {
   return (
-    <div className={classes.logged_in}>
+    <div className={styles.logged_in}>
       Logged in as
       <div>{params.name}</div>
       <div>{params.email}</div>
-      <button className={classes.logged_in__btn} onClick={logout}>
+      <button className={styles.logged_in__btn} onClick={logout}>
         Logout
       </button>
     </div>
@@ -25,9 +25,9 @@ function MainNavigation() {
   const email = useSelector((state) => state.auth.email);
 
   return (
-    <header className={classes.header}>
-      <nav className={classes.nav}>
-        <ul className={classes.list}>
+    <header className={styles.header}>
+      <nav className={styles.nav}>
+        <ul className={styles.list}>
           <li>
             <NavLink
               to="/"
@@ -39,7 +39,7 @@ function MainNavigation() {
           {known && <li>
             <NavLink
               to="/chat"
-              className={classes.active}
+              className={styles.active}
               end
             >
               Chat Page
@@ -49,7 +49,7 @@ function MainNavigation() {
             <NavLink
               to="/pubs"
               className={({ isActive }) =>
-                isActive ? classes.active : undefined
+                isActive ? styles.active : undefined
               }
               end
             >
@@ -60,7 +60,7 @@ function MainNavigation() {
             <NavLink
               to="/manage_users"
               className={({ isActive }) =>
-                isActive ? classes.active : undefined
+                isActive ? styles.active : undefined
               }
               end
             >
@@ -72,7 +72,7 @@ function MainNavigation() {
               <NavLink
                 to="/login"
                 className={({ isActive }) =>
-                  isActive ? classes.active : undefined
+                  isActive ? styles.active : undefined
                 }
                 end
               >
@@ -85,7 +85,7 @@ function MainNavigation() {
               <NavLink
                 to="/active_polls"
                 className={({ isActive }) =>
-                  isActive ? classes.active : undefined
+                  isActive ? styles.active : undefined
                 }
                 end
               >
@@ -97,7 +97,7 @@ function MainNavigation() {
             <NavLink
               to="/current_events"
               className={({ isActive }) =>
-                isActive ? classes.active : undefined
+                isActive ? styles.active : undefined
               }
               end
             >
@@ -108,7 +108,7 @@ function MainNavigation() {
             <NavLink
               to="/past_events"
               className={({ isActive }) =>
-                isActive ? classes.active : undefined
+                isActive ? styles.active : undefined
               }
               end
             >
@@ -120,7 +120,7 @@ function MainNavigation() {
               <NavLink
                 to="/preferences"
                 className={({ isActive }) =>
-                  isActive ? classes.active : undefined
+                  isActive ? styles.active : undefined
                 }
                 end
               > 

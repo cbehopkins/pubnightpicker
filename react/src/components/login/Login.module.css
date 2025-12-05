@@ -5,19 +5,19 @@
     align-items: center;
     justify-content: center;
   }
-  .login__container {
+  .loginContainer {
     display: flex;
     flex-direction: column;
     text-align: center;
     background-color: #dcdcdc;
     padding: 30px;
   }
-  .login__textBox {
+  .loginTextBox {
     padding: 10px;
     font-size: 18px;
     margin-bottom: 10px;
   }
-  .login__btn {
+  .loginBtn {
     padding: 10px;
     font-size: 18px;
     margin-bottom: 10px;
@@ -25,7 +25,7 @@
     color: white;
     background-color: black;
   }
-  .login__google {
+  .loginGoogle {
     background-color: #4285f4;
   }
   .login div {

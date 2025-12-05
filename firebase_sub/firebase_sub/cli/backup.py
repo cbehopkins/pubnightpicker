@@ -1,4 +1,3 @@
-import json
 import logging
 import threading
 from pathlib import Path
@@ -13,7 +12,7 @@ from firebase_sub.common.logging import configure_logging, log_level_to_int
 from firebase_sub.common.output_file import OutputFile
 from firebase_sub.database.handlers import DbHandler
 
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("bob")
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"

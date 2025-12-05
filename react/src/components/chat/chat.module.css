@@ -1,0 +1,111 @@
+/* chat component */
+.chatPage {
+  display: flex;
+  flex-direction: column;
+}
+
+.chatPage h1 {
+  text-shadow: 2px 2px 8px #ccc;
+}
+
+.chatBox {
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.messagesWrapper {
+  padding: 0px;
+  box-sizing: border-box;
+  height: calc(100% - 80px);
+  overflow-y: scroll;
+}
+
+.chatBubble {
+  border-radius: 20px 20px 20px 0;
+  padding: 15px;
+  background-color: #7cc5d9;
+  color: #1c2c4c;
+  width: max-content;
+  max-width: calc(100% - 50px);
+  box-shadow: -2px 2px 1px 1px #4c768d;
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.chatBubble.right {
+  margin-left: auto;
+  border-radius: 20px 20px 0 20px;
+  background-color: #fff;
+  box-shadow: -2px 2px 1px 1px #88dded;
+}
+
+.chatBubbleLeft {
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  margin-right: 10px;
+}
+
+.userName {
+  font-weight: bold;
+  margin-bottom: 5px;
+  font-size: 0.9rem;
+  color: #1c2c4c;
+}
+
+.userMessage {
+  word-break: normal;
+}
+
+.messageTime {
+  display: block;
+  text-align: right;
+}
+
+/* send message */
+.sendMessage {
+  width: 100%;
+  padding: 20px 30px;
+  background-color: #4c768d;
+  display: flex;
+  align-self: flex-end;
+}
+
+.sendMessage input {
+  height: 40px;
+  padding: 10px 10px;
+  border-radius: 5px 0 0 5px;
+  border: none;
+  flex-grow: 1;
+  background-color: white;
+  color: #1c2c4c;
+  font-size: 1rem;
+}
+
+.sendMessage input::placeholder {
+  color: #ddd;
+}
+
+.sendMessage img {
+  max-width: 60px;
+  max-height: 60px;
+}
+
+.sendMessage input:focus,
+.sendMessage button:focus {
+  outline: none;
+  border-bottom: 1px solid #7cc5d9;
+}
+
+.sendMessage button {
+  width: 70px;
+  height: 40px;
+  padding: 5px 10px;
+  border-radius: 0 5px 5px 0;
+  color: #242443;
+  border: 1px solid #7cc5d9;
+  background-color: #7cc5d9;
+  font-weight: 600;
+}

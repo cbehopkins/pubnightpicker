@@ -6,7 +6,7 @@ import {
   registerWithEmailAndPassword,
   signInWithGoogle,
 } from "../../firebase";
-import "./Register.module.css";
+import styles from "./Register.module.css";
 function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,34 +22,34 @@ function Register() {
     if (user) navigate("/");
   }, [user, loading, navigate]);
   return (
-    <div className="register">
-      <div className="register__container">
+    <div className={styles.register}>
+      <div className={styles.registerContainer}>
         <input
           type="text"
-          className="register__textBox"
+          className={styles.registerTextBox}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Full Name"
         />
         <input
           type="text"
-          className="register__textBox"
+          className={styles.registerTextBox}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="E-mail Address"
         />
         <input
           type="password"
-          className="register__textBox"
+          className={styles.registerTextBox}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
         />
-        <button className="register__btn" onClick={register}>
+        <button className={styles.registerBtn} onClick={register}>
           Register
         </button>
         <button
-          className="register__btn register__google"
+          className={`${styles.registerBtn} ${styles.registerGoogle}`}
           onClick={signInWithGoogle}
         >
           Register with Google
