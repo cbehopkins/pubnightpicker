@@ -158,12 +158,12 @@ function Preferences(params) {
   }, [user, loading, navigate]);
   // FIXME, this feels hacky!
   const isPassword = !loading && user && auth && (auth.currentUser.providerData[0].providerId === "password")
-  return <>
-    <MyRoles />
+  return <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
     <PreferencesForm method="post" />
-  </>
+    <MyRoles />
+  </div>
 }
 
 export default Preferences;
