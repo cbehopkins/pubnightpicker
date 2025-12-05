@@ -2,7 +2,6 @@ import PreferencesForm from "./PreferencesForm";
 import { redirect, useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react"
 import { store } from "../../store";
-import { useSelector } from "react-redux";
 import {
   updateDoc,
 } from "firebase/firestore";
