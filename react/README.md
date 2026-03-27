@@ -35,8 +35,10 @@ Do all of this under the react directory.
 
 In one terminal, start the Vite dev server:
 ```
-npm start
+npm run dev
 ```
+
+(`npm start` is still an alias, but `npm run dev` is the standard Vite command.)
 
 In another terminal, start the Firebase emulators:
 ```
@@ -50,6 +52,26 @@ If you want the data to persist, while the emulators are running, run this in an
 npx firebase-tools emulators:export ./db_dir
 ```
 This will save the current state.
+
+## Auth Troubleshooting (Unauthorized Domain)
+
+If you see an unauthorized-domain error during sign-in:
+
+1. Make sure you are running the app on `localhost` or `127.0.0.1`.
+2. This app now uses Firebase emulators by default in local dev.
+3. Google popup sign-in is disabled while the Auth emulator is active.
+
+For local emulator login, use email/password accounts from the imported emulator data.
+
+If you need to test Google popup sign-in against your real Firebase project instead:
+
+1. Add this to your `.env`:
+```properties
+VITE_USE_FIREBASE_EMULATORS="false"
+```
+2. In Firebase Console -> Authentication -> Settings -> Authorized domains, add:
+   - `localhost`
+   - `127.0.0.1`
 
 ## Deployment
 Deployment is now handled by the github runners.

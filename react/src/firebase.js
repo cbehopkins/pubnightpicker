@@ -13,6 +13,8 @@ import {
 import {
   connectFirestoreEmulator,
   getFirestore,
+  doc,
+  setDoc,
   query,
   getDocs,
   collection,
@@ -25,23 +27,37 @@ import { firebaseConfig } from "./firebase_config";
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-// Connect to Firestore emulator
-if (window.location.hostname === "localhost") {
+const isLocalDevHost = ["localhost", "127.0.0.1", "[::1]"].includes(
+  window.location.hostname,
+);
+const useFirebaseEmulators =
+  isLocalDevHost && import.meta.env.VITE_USE_FIREBASE_EMULATORS !== "false";
+
+if (useFirebaseEmulators) {
   connectAuthEmulator(auth, "http://127.0.0.1:9099");
-  connectFirestoreEmulator(db, "localhost", 8080);
+  connectFirestoreEmulator(db, "127.0.0.1", 8080);
 }
 
 const googleProvider = new GoogleAuthProvider();
 export async function addUserDoc(uid, name, authProvider, email) {
-  return addDoc(collection(db, "users"), {
+  return setDoc(doc(db, "users", uid), {
     uid: uid,
     name: name,
     authProvider: authProvider,
     email: email,
+  }, {
+    merge: true,
   });
 }
 
 const signInWithGoogle = async () => {
+  if (useFirebaseEmulators) {
+    alert(
+      "Google sign-in is disabled while Firebase Auth emulator is enabled. Use email/password locally, or set VITE_USE_FIREBASE_EMULATORS=false to test against your Firebase project.",
+    );
+    return;
+  }
+
   try {
     const res = await signInWithPopup(auth, googleProvider);
     const user = res.user;

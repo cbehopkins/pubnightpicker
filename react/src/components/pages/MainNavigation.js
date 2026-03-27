@@ -39,7 +39,9 @@ function MainNavigation() {
           {canChat && <li>
             <NavLink
               to="/chat"
-              className={styles.active}
+              className={({ isActive }) =>
+                isActive ? styles.active : undefined
+              }
               end
             >
               Chat Page
