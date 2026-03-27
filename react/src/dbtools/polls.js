@@ -7,9 +7,11 @@ export async function deletePoll(pollId) {
     const pollsDocRef = deleteDoc(doc(db, "polls", pollId));
     const openActionsDocRef = deleteDoc(doc(db, "open_actions", pollId));
     const votesDocRef = deleteDoc(doc(db, "votes", pollId));
+    const attendanceDocRef = deleteDoc(doc(db, "attendance", pollId));
     await pollsDocRef;
     await openActionsDocRef;
     await votesDocRef;
+    await attendanceDocRef;
 }
 export async function reschedule_a_poll(poll_id, current_pub_id, new_pub_id) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "rescheduling a poll");

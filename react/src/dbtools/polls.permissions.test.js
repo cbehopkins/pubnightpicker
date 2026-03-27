@@ -69,7 +69,7 @@ describe("poll dbtools permission guards", () => {
             "canCreatePoll",
             "deleting a poll",
         );
-        expect(deleteDocMock).toHaveBeenCalledTimes(3);
+        expect(deleteDocMock).toHaveBeenCalledTimes(4);
     });
 
     it("guards reschedule and complete with canCompletePoll", async () => {
