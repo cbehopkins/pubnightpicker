@@ -3,6 +3,7 @@ import { db } from "../../firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import styles from "./chat.module.css"
 import { useSelector } from "react-redux";
+import { notifyError } from "../../utils/notify";
 
 const SendMessage = ({ scroll }) => {
   const [message, setMessage] = useState("");
@@ -13,7 +14,7 @@ const SendMessage = ({ scroll }) => {
   const sendMessage = async (event) => {
     event.preventDefault();
     if (message.trim() === "") {
-      alert("Enter valid message");
+      notifyError("Enter valid message");
       return;
     }
     await addDoc(collection(db, "messages"), {

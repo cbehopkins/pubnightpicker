@@ -2,18 +2,12 @@ import { useSelector } from "react-redux";
 
 /**
  * Generic hook to check if the current user has a specific role.
- * Admins automatically have all roles.
  * @param {string} roleName - The name of the role to check (e.g., 'admin', 'known', 'moderator')
  * @returns {boolean} - True if the user has the specified role, false otherwise
  */
 export default function useRole(roleName) {
     const uid = useSelector((state) => state.auth.uid);
     const roles = useSelector((state) => state.auth.roles);
-
-    // Admins automatically have all roles
-    if (roles && roles["admin"] === true) {
-        return true;
-    }
 
     // The roles object from useRoles hook is filtered to only include roles the user has
     // Structure: { admin: true, known: true } or { admin: { userId: true }, ... }

@@ -14,6 +14,7 @@ import {
 import { useAuthState } from "react-firebase-hooks/auth";
 import getUserDoc from "../../dbtools/getUserDoc";
 import styles from "./Preferences.module.css";
+import { notifyError } from "../../utils/notify";
 
 async function ReauthenticateUser(auth, userProvidedPassword) {
   const credential = EmailAuthProvider.credential(
@@ -210,7 +211,7 @@ export async function action({ request, params }) {
       await updateDoc(doc.ref, cleaned);
     } catch (err) {
       console.error(err);
-      alert(err.message);
+      notifyError(err.message);
     }
   }
   return redirect("/");

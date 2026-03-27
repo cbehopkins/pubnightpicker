@@ -1,15 +1,16 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
-import useAdmin from "../../hooks/useAdmin";
 import useVotes from "../../hooks/useVotes";
 import { useCallback } from "react";
-import useKnown from "../../hooks/useKnown";
+import useRole from "../../hooks/useRole";
 import ShowVoters from "./ShowVoters";
 import { QuestionRender } from "./ConfirmModal";
 import { deletePubFromPoll } from "../../dbtools/polls";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 function VotablePub(params) {
-  const known = useKnown();
+  const canShowVoters = useRole("canShowVoters");
   const pubName = params.pub_name;
   const currUserId = params.user_id;
   const pubId = params.pub_id;
@@ -36,7 +37,11 @@ function VotablePub(params) {
   }, [makeVote, clearVote, pubId, currUserId, votedFor]);
 
   const deleteHandler = useCallback(async () => {
-    await deletePubFromPoll(pollId, pubId);
+    try {
+      await deletePubFromPoll(pollId, pubId);
+    } catch (error) {
+      notifyError(getUserFacingErrorMessage(error, "Unable to remove this pub from the poll."));
+    }
   }, [pollId, pubId]);
   return (
     <tr>
@@ -72,7 +77,7 @@ function VotablePub(params) {
           </button>
         </td>
       )}
-      {known && <td><QuestionRender
+      {canShowVoters && <td><QuestionRender
         className={styles.button}
         question="Show Voters"
       >
@@ -83,9 +88,9 @@ function VotablePub(params) {
 }
 
 function PollVote(props) {
-  const admin = useAdmin();
   const currUserId = useSelector((state) => state.auth.uid);
-  const allowDelete = admin;
+  const allowDelete = useRole("canAddPubToPoll");
+  const allowCompletePoll = useRole("canCompletePoll");
   const sortedPubsByName = props.poll_data.pubs && Object.entries(props.poll_data.pubs)
     .map(([id, pub]) => {
       const sortBy = pub.name;
@@ -124,7 +129,7 @@ function PollVote(props) {
                 poll_id={props.poll_id}
                 user_id={currUserId}
                 allow_delete={allowDelete}
-                allow_complete={allowDelete}
+                allow_complete={allowCompletePoll}
                 complete_handler={() => {
                   props.on_complete(key, pubName, props.poll_id);
                 }}

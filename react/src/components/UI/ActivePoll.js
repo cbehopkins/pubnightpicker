@@ -3,10 +3,11 @@ import PollVote from "./PollVote";
 import PubOptions from "./PubOptions";
 import PubFilter from "./PubFilter";
 import styles from "./ActivePoll.module.css";
-import useAdmin from "../../hooks/useAdmin";
-import useKnown from "../../hooks/useKnown";
+import useRole from "../../hooks/useRole";
 import { AntiPubParams } from "../pages/PubForm"
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls"
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 function anyEntryTrue(anObject) {
   for (const [, value] of Object.entries(anObject)) {
@@ -56,8 +57,8 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters) 
 }
 
 function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile }) {
-  const admin = useAdmin();
-  const known = useKnown() || admin;
+  const canDeletePoll = useRole("canCreatePoll");
+  const canAddPub = useRole("canAddPubToPoll");
   const [pubFilters, setPubFilters] = useState({});
   const [pubAntiFilters, setPubAntiFilters] = useState({});
 
@@ -73,14 +74,22 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
   const addNewPubToPoll = useCallback(
     async (event) => {
       event.preventDefault();
-      add_new_pub_to_poll(selectedPub, poll_id, pub_parameters)
+      try {
+        await add_new_pub_to_poll(selectedPub, poll_id, pub_parameters)
+      } catch (error) {
+        notifyError(getUserFacingErrorMessage(error, "Unable to add the pub to this poll."));
+      }
     },
     [selectedPub, poll_id, pub_parameters]
   );
   const deletePollHandler = useCallback(
     async (event) => {
       event.preventDefault();
-      await deletePoll(poll_id)
+      try {
+        await deletePoll(poll_id)
+      } catch (error) {
+        notifyError(getUserFacingErrorMessage(error, "Unable to delete this poll."));
+      }
     },
     [poll_id]
   );
@@ -92,15 +101,15 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
   return (
     <div className={styleToUse}>
       <h2>{poll_data.date}</h2>
-      {known && <PubFilter title="Filter pub list to contain only items that have:" set_pub_filters={setPubFilters} />}
-      {known && <PubFilter title="Filter pub list to contain only items that do not have:" set_pub_filters={setPubAntiFilters} pub_params={antiParams} />}
+      {canAddPub && <PubFilter title="Filter pub list to contain only items that have:" set_pub_filters={setPubFilters} />}
+      {canAddPub && <PubFilter title="Filter pub list to contain only items that do not have:" set_pub_filters={setPubAntiFilters} pub_params={antiParams} />}
       <div>
-        {admin && (
+        {canDeletePoll && (
           <button className={styles["button--alt"]} onClick={deletePollHandler}>
             Delete Poll
           </button>
         )}
-        {known && <>
+        {canAddPub && <>
           <PubOptions
             pub_parameters={newObj}
             selectPubHandler={selectPubHandler}

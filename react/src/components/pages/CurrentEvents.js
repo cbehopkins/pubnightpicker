@@ -3,13 +3,14 @@ import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePol
 import Modal from "../UI/Modal";
 import PubOptions from "../UI/PubOptions";
 import usePubs from "../../hooks/usePubs";
-import useAdmin from "../../hooks/useAdmin";
 import useVotes from "../../hooks/useVotes";
-import useKnown from "../../hooks/useKnown";
+import useRole from "../../hooks/useRole";
 import styles from "./CurrentEvents.module.css";
 import ShowVoters from "../UI/ShowVoters";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
 import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
@@ -99,7 +100,7 @@ function ChangePubModal(params) {
 }
 
 
-function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_reschedule, show_voters }) {
+function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
   const [votes] = useVotes(poll_id);
   const pubWasVotedFor = current_pub_id in votes || Boolean(votes["any"]);
   const pubName = pub_parameters[current_pub_id].name;
@@ -115,7 +116,11 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
   }
   const allowShowVoters = show_voters && pubWasVotedFor;
   const rescheduleHandler = async (pubId) => {
-    return reschedule_a_poll(poll_id, current_pub_id, pubId);
+    try {
+      return await reschedule_a_poll(poll_id, current_pub_id, pubId);
+    } catch (error) {
+      notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
+    }
   };
   return (
     <>
@@ -139,7 +144,7 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
         </QuestionRender>
       )}
       {/* Note confirm and cancel look back to front to get the correct button colouring */}
-      <QuestionRender
+      {can_delete_event && <QuestionRender
         className={styles.button}
         question="Delete This Event"
       >
@@ -148,10 +153,14 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
           confirm_text="Do Nothing"
           cancel_text="Delete it"
           on_cancel={async () => {
-            await deletePoll(poll_id)
+            try {
+              await deletePoll(poll_id)
+            } catch (error) {
+              notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
+            }
           }}
         />
-      </QuestionRender>
+      </QuestionRender>}
       {allowShowVoters && <QuestionRender className={styles.button} question="Show Voters">
         <ShowVoters votes={currentVotes} />
       </QuestionRender>}
@@ -163,8 +172,9 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
 function CurrentEvents() {
   const pollData = useFutureCompletePolls();
   const pub_parameters = usePubs();
-  const canReschedule = useAdmin();
-  const showVotes = useKnown();
+  const canReschedule = useRole("canCompletePoll");
+  const canDeleteEvent = useRole("canCreatePoll");
+  const canShowVoters = useRole("canShowVoters");
   return (
     <div>
       <h1>Current Events</h1>
@@ -177,7 +187,8 @@ function CurrentEvents() {
             date={value.date}
             pub_parameters={pub_parameters}
             can_reschedule={canReschedule}
-            show_voters={showVotes}
+            can_delete_event={canDeleteEvent}
+            show_voters={canShowVoters}
           />
         );
       })}

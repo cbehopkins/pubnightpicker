@@ -1,30 +1,25 @@
-import { redirect } from "react-router-dom";
-import { db } from "../../firebase";
-import { collection, addDoc, doc, updateDoc } from "firebase/firestore";
+import { redirect, useNavigate } from "react-router-dom";
 import PubForm, { PubParams } from "./PubForm";
+import useRole from "../../hooks/useRole";
+import { useEffect } from "react";
+import { addNewPub, modifyPub } from "../../dbtools/pubs";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 function NewPubPage() {
-  return <PubForm method="post"/>;
+  const navigate = useNavigate();
+  const canManagePubs = useRole("canManagePubs");
+
+  useEffect(() => {
+    if (!canManagePubs) {
+      navigate("/");
+    }
+  }, [canManagePubs, navigate]);
+
+  return <PubForm method="post" />;
 }
 
 export default NewPubPage;
-
-const addNewPub = async (pubParams) => {
-  try {
-    await addDoc(collection(db, "pubs"), pubParams);
-  } catch (err) {
-    console.error("Error adding document: ", err);
-  }
-};
-
-const modifyPub = async (id, pubParams) => {
-  try {
-    const docRef = doc(db, "pubs", id);
-    await updateDoc(docRef, pubParams);
-  } catch (err) {
-    console.error("Error modifying document: ", err);
-  }
-};
 
 export async function action({ request, params }) {
   const method = request.method;
@@ -42,14 +37,17 @@ export async function action({ request, params }) {
     pubParams[key] = Boolean(data.get(key));
   }
   console.log("Submitted parameters", pubParams)
-  if (method === "POST") {
-    // If one awaits these (as one should)
-    // The the redirect doesn't work
-    addNewPub(pubParams);
-  }
-  if (method === "PATCH") {
-    console.log("Modifying pub", pub_id, "with", pubParams, "data", data);
-    modifyPub(pub_id, pubParams);
+  try {
+    if (method === "POST") {
+      await addNewPub(pubParams);
+    }
+    if (method === "PATCH") {
+      console.log("Modifying pub", pub_id, "with", pubParams, "data", data);
+      await modifyPub(pub_id, pubParams);
+    }
+  } catch (error) {
+    notifyError(getUserFacingErrorMessage(error, "Unable to save this pub."));
+    return null;
   }
   return redirect("/pubs");
 }

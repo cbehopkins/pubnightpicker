@@ -4,21 +4,27 @@ import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import UnknownUser from "../../img/unknown_user.png";
 import DeleteIcon from "../../img/x-close-delete.svg";
-import useAdmin from "../../hooks/useAdmin";
+import useRole from "../../hooks/useRole";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 import styles from "./chat.module.css"
 
 const Message = ({ message, users }) => {
-    const admin = useAdmin();
+    const canDeleteAnyMessage = useRole("canDeleteAnyMessage");
     const uid = useSelector((state) => state.auth.uid);
     const avatar = users[message.uid]?.photoUrl || UnknownUser;
     const name = message.name || "Name not set"
     const messageFromMe = message.uid === uid
-    const deleteAllowed = admin || messageFromMe
+    const deleteAllowed = canDeleteAnyMessage || messageFromMe
     const deleteMessage = async () => {
         if (!deleteAllowed) {
             return
         }
-        await deleteDoc(doc(db, "messages", message.id));
+        try {
+            await deleteDoc(doc(db, "messages", message.id));
+        } catch (error) {
+            notifyError(getUserFacingErrorMessage(error, "Unable to delete this message."));
+        }
     }
 
     return (

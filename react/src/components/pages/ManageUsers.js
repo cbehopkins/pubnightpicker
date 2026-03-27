@@ -6,6 +6,11 @@ import { useAllRoles } from "../../hooks/useRoles";
 import { db } from "../../firebase";
 import { doc, deleteField, updateDoc, setDoc } from "firebase/firestore";
 import Modal from "../UI/Modal";
+import {
+    ADMIN_DEFAULT_PERMISSIONS,
+    CONSOLIDATED_PERMISSION_COLUMNS,
+    KNOWN_DEFAULT_PERMISSIONS,
+} from "../../permissions";
 
 
 async function setAdmin(uid) {
@@ -31,16 +36,22 @@ async function clearKnown(uid) {
     await updateDoc(knownRef, { [uid]: deleteField() })
 }
 
-async function setCanChat(uid) {
-    console.log("Setting canChat status for:", uid);
-    const canChatRef = doc(db, "roles", "canChat")
-    await setDoc(canChatRef, { [uid]: true }, { merge: true })
+function userHasRole(roles, roleName, uid) {
+    if (!roles || !uid) {
+        return false;
+    }
+    const roleDict = roles[roleName];
+    return Boolean(roleDict && uid in roleDict && roleDict[uid]);
 }
 
-async function clearCanChat(uid) {
-    console.log("Clearing canChat status for:", uid);
-    const canChatRef = doc(db, "roles", "canChat")
-    await updateDoc(canChatRef, { [uid]: deleteField() })
+async function setRole(roleName, uid) {
+    const roleRef = doc(db, "roles", roleName);
+    await setDoc(roleRef, { [uid]: true }, { merge: true });
+}
+
+async function clearRole(roleName, uid) {
+    const roleRef = doc(db, "roles", roleName);
+    await setDoc(roleRef, { [uid]: deleteField() }, { merge: true });
 }
 
 function UIDModal({ uid, onClose }) {
@@ -132,17 +143,14 @@ export default function ManageUsers() {
     }, [users]);
     const roles = useAllRoles();
     const isAdmin = useCallback((uid) => {
-        const adminDict = roles["admin"]
-        return roles && adminDict && uid in adminDict && adminDict[uid]
+        return userHasRole(roles, "admin", uid);
     }, [roles]);
     const isKnown = useCallback((uid) => {
-        const knownDict = roles["known"]
-        return roles && knownDict && uid in knownDict && knownDict[uid]
+        return userHasRole(roles, "known", uid);
     }, [roles]);
-    
-    const isCanChat = useCallback((uid) => {
-        const canChatDict = roles["canChat"]
-        return roles && canChatDict && uid in canChatDict && canChatDict[uid]
+
+    const hasRole = useCallback((uid, roleName) => {
+        return userHasRole(roles, roleName, uid);
     }, [roles]);
 
     const handleAdminClick = useCallback(async (uid, value) => {
@@ -177,46 +185,64 @@ export default function ManageUsers() {
         }
     }, [isKnown]);
 
-    const handleCanChatClick = useCallback(async (uid, value) => {
-        const currentlyCanChat = isCanChat(uid);
-        if (currentlyCanChat === value) {
-            console.log("Already what it should be, so no change needed")
-            return
-        }
-        if (currentlyCanChat && !value) {
-            console.log("Removing canChat field for", uid)
-            await clearCanChat(uid);
-        }
-        if (!currentlyCanChat && value) {
-            console.log("Adding canChat field for", uid)
-            await setCanChat(uid);
-        }
-    }, [isCanChat]);
-
-    const handleAutoSyncKnownToChat = useCallback(async () => {
-        console.log("Auto-syncing known users to canChat role");
-        const knownDict = roles["known"];
-        if (!knownDict) {
-            console.log("No known users to sync");
+    const handleRoleClick = useCallback(async (uid, roleName, value) => {
+        const currentlyHasRole = hasRole(uid, roleName);
+        if (currentlyHasRole === value) {
             return;
         }
-        
-        for (const [uid] of Object.entries(knownDict)) {
-            if (knownDict[uid] && !isCanChat(uid)) {
-                console.log(`Auto-syncing canChat for user: ${uid}`);
-                await setCanChat(uid);
+        if (value) {
+            await setRole(roleName, uid);
+            return;
+        }
+        await clearRole(roleName, uid);
+    }, [hasRole]);
+
+    const handleAutoSyncKnownToChat = useCallback(async () => {
+        const knownDict = roles["known"] || {};
+        const adminDict = roles["admin"] || {};
+
+        const updates = {
+            knownUsersScanned: 0,
+            adminUsersScanned: 0,
+            roleWrites: 0,
+        };
+
+        for (const [uid, isKnownUser] of Object.entries(knownDict)) {
+            if (!isKnownUser) {
+                continue;
+            }
+            updates.knownUsersScanned += 1;
+            for (const roleName of KNOWN_DEFAULT_PERMISSIONS) {
+                if (!hasRole(uid, roleName)) {
+                    await setRole(roleName, uid);
+                    updates.roleWrites += 1;
+                }
             }
         }
-        console.log("Auto-sync complete");
-    }, [roles, isCanChat]);
+
+        for (const [uid, isAdminUser] of Object.entries(adminDict)) {
+            if (!isAdminUser) {
+                continue;
+            }
+            updates.adminUsersScanned += 1;
+            for (const roleName of ADMIN_DEFAULT_PERMISSIONS) {
+                if (!hasRole(uid, roleName)) {
+                    await setRole(roleName, uid);
+                    updates.roleWrites += 1;
+                }
+            }
+        }
+
+        console.log("Permission backfill complete", updates);
+    }, [hasRole, roles]);
 
     return (<div style={{ padding: "1rem" }}>
         <h1>Manage Users</h1>
-        <button 
+        <button
             onClick={handleAutoSyncKnownToChat}
             style={{
                 padding: "0.6rem 1.2rem",
-                backgroundColor: "#FF9800",
+                backgroundColor: "#1d3557",
                 color: "white",
                 border: "none",
                 borderRadius: "4px",
@@ -225,7 +251,7 @@ export default function ManageUsers() {
                 marginBottom: "1rem"
             }}
         >
-            Auto-sync Known Users to Chat
+            Auto-sync Known/Admin to Consolidated Permissions
         </button>
         <table>
             <thead>
@@ -235,14 +261,19 @@ export default function ManageUsers() {
                     <th>Email</th>
                     <th>Admin</th>
                     <th>Known User</th>
-                    <th>Can Chat</th>
+                    {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => {
+                        return <th key={column.key}>{column.label}</th>
+                    })}
                 </tr>
             </thead>
             <tbody>
                 {sortedUsers.map(([key, value]) => {
                     const userIsAdmin = isAdmin(key)
                     const userIsKnown = isKnown(key)
-                    const userCanChat = isCanChat(key)
+                    const userPermissions = CONSOLIDATED_PERMISSION_COLUMNS.reduce((acc, column) => {
+                        acc[column.key] = hasRole(key, column.key);
+                        return acc;
+                    }, {});
                     return <tr key={key}>
                         <td>
                             <button
@@ -282,16 +313,20 @@ export default function ManageUsers() {
                                 }}
                             />
                         </td>
-                        <td>
-                            <input
-                                type="checkbox"
-                                name="canChat"
-                                checked={userCanChat}
-                                onChange={(event) => {
-                                    handleCanChatClick(key, event.target.checked)
-                                }}
-                            />
-                        </td>
+                        {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => {
+                            return (
+                                <td key={column.key}>
+                                    <input
+                                        type="checkbox"
+                                        name={column.key}
+                                        checked={userPermissions[column.key]}
+                                        onChange={(event) => {
+                                            handleRoleClick(key, column.key, event.target.checked)
+                                        }}
+                                    />
+                                </td>
+                            );
+                        })}
                     </tr>
                 })}
             </tbody>
