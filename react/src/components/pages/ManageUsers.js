@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useAdmin from "../../hooks/useAdmin";
 import { useNavigate } from "react-router-dom";
 import useUsers from "../../hooks/useUsers";
@@ -123,6 +123,13 @@ export default function ManageUsers() {
     }, [admin, navigate]);
 
     const users = useUsers();
+    const sortedUsers = useMemo(() => {
+        return Object.entries(users).sort(([, a], [, b]) => {
+            const nameA = (a?.name || a?.email || "").trim();
+            const nameB = (b?.name || b?.email || "").trim();
+            return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+        });
+    }, [users]);
     const roles = useAllRoles();
     const isAdmin = useCallback((uid) => {
         const adminDict = roles["admin"]
@@ -232,7 +239,7 @@ export default function ManageUsers() {
                 </tr>
             </thead>
             <tbody>
-                {Object.entries(users).map(([key, value]) => {
+                {sortedUsers.map(([key, value]) => {
                     const userIsAdmin = isAdmin(key)
                     const userIsKnown = isKnown(key)
                     const userCanChat = isCanChat(key)

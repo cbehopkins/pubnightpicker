@@ -14,15 +14,21 @@ export function useAllRoles(error_handler = null) {
 }
 
 function useRoles(user, loading, error_handler = null) {
+  const emptyRoles = useMemo(() => ({}), []);
   const userId = !loading && user && user.uid;
   const errorHandler = error_handler || defaultErrorHandler;
   const precondition = useCallback((role) => {
+    if (!userId) {
+      return false;
+    }
     return userId in role
   }, [userId]);
 
   const q = useMemo(() => query(collection(db, "roles")), []);
-  var roles = {}
-  roles = useQueryDb(q, errorHandler, precondition);
+  const roles = useQueryDb(q, errorHandler, precondition, Boolean(userId));
+  if (loading || !userId) {
+    return emptyRoles;
+  }
   return roles;
 }
 export default useRoles;

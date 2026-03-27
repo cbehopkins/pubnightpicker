@@ -3,6 +3,8 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { useSelector, useDispatch } from "react-redux";
 import { userAdded, clearUser } from "../store/usersSlice";
+import { useAuthState } from "react-firebase-hooks/auth";
+import { auth } from "../firebase";
 
 function userSubscription(add_callback, mod_callback, rm_callback) {
   return onSnapshot(collection(db, "users"), (snapshot) => {
@@ -21,6 +23,7 @@ function userSubscription(add_callback, mod_callback, rm_callback) {
 }
 
 export function useUsersSource() {
+  const [user, loading] = useAuthState(auth);
   const dispatch = useDispatch();
   const addCallback = useCallback(
     (id, doc) => {
@@ -63,9 +66,12 @@ export function useUsersSource() {
   );
 
   useEffect(() => {
+    if (loading || !user) {
+      return;
+    }
     const unsubscribe = userSubscription(addCallback, modCallback, rmCallback);
     return unsubscribe;
-  }, [addCallback, modCallback, rmCallback]);
+  }, [user, loading, addCallback, modCallback, rmCallback]);
 }
 
 function useUsers() {
