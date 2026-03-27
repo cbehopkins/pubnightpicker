@@ -106,7 +106,7 @@ function MainNavigation() {
               Current Events
             </NavLink>
           </li>
-          { loggedIn && <li>
+          {loggedIn && <li>
             <NavLink
               to="/past_events"
               className={({ isActive }) =>
@@ -125,7 +125,7 @@ function MainNavigation() {
                   isActive ? styles.active : undefined
                 }
                 end
-              > 
+              >
                 My Preferences
               </NavLink>
             </li>

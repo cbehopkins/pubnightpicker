@@ -139,7 +139,7 @@ export default function ManageUsers() {
         const knownDict = roles["known"]
         return roles && knownDict && uid in knownDict && knownDict[uid]
     }, [roles]);
-    
+
     const isCanChat = useCallback((uid) => {
         const canChatDict = roles["canChat"]
         return roles && canChatDict && uid in canChatDict && canChatDict[uid]
@@ -200,7 +200,7 @@ export default function ManageUsers() {
             console.log("No known users to sync");
             return;
         }
-        
+
         for (const [uid] of Object.entries(knownDict)) {
             if (knownDict[uid] && !isCanChat(uid)) {
                 console.log(`Auto-syncing canChat for user: ${uid}`);
@@ -212,7 +212,7 @@ export default function ManageUsers() {
 
     return (<div style={{ padding: "1rem" }}>
         <h1>Manage Users</h1>
-        <button 
+        <button
             onClick={handleAutoSyncKnownToChat}
             style={{
                 padding: "0.6rem 1.2rem",
