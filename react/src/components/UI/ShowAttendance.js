@@ -2,42 +2,58 @@ import Modal from "./Modal";
 import useUsers from "../../hooks/useUsers";
 import styles from "./PollVote.module.css";
 
-function AttendanceSection({ title, userIds, users }) {
-    if (userIds.length === 0) {
-        return null;
-    }
-
-    return (
-        <div>
-            <h3>{title}</h3>
-            <table>
-                <tbody>
-                    {userIds.map((userId) => {
-                        const userName = (userId in users && users[userId].name) || "No Name Recorded";
-                        return (
-                            <tr key={`${title}-${userId}`}>
-                                <td>{userName}</td>
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
 export default function ShowAttendance(params) {
     const users = useUsers();
     const voters = params.voters || [];
     const canCome = params.canCome || [];
     const cannotCome = params.cannotCome || [];
 
-    return <Modal>
-        <div className={styles.show_votes}>
-            <AttendanceSection title="Current Voters" userIds={voters} users={users} />
-            <AttendanceSection title="Can Come" userIds={canCome} users={users} />
-            <AttendanceSection title="Cannot Come" userIds={cannotCome} users={users} />
-            <button onClick={params.on_cancel}>Close</button>
-        </div>
-    </Modal>;
+    const allUserIds = [...new Set([...voters, ...canCome, ...cannotCome])];
+    const sortedUsers = allUserIds
+        .map((id) => ({ id, name: (id in users && users[id].name) || "No Name Recorded" }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    const showVoters = voters.length > 0;
+    const showCanCome = canCome.length > 0;
+    const showCannotCome = cannotCome.length > 0;
+
+    return (
+        <Modal>
+            <div className={styles.show_votes}>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            {showVoters && <th>Voted</th>}
+                            {showCanCome && <th>Can Come</th>}
+                            {showCannotCome && <th>Cannot Come</th>}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sortedUsers.map(({ id, name }) => (
+                            <tr key={id}>
+                                <td>{name}</td>
+                                {showVoters && (
+                                    <td className={voters.includes(id) ? styles.attendanceCheckYes : ""}>
+                                        {voters.includes(id) ? "✓" : ""}
+                                    </td>
+                                )}
+                                {showCanCome && (
+                                    <td className={canCome.includes(id) ? styles.attendanceCheckYes : ""}>
+                                        {canCome.includes(id) ? "✓" : ""}
+                                    </td>
+                                )}
+                                {showCannotCome && (
+                                    <td className={cannotCome.includes(id) ? styles.attendanceCheckNo : ""}>
+                                        {cannotCome.includes(id) ? "✓" : ""}
+                                    </td>
+                                )}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                <button onClick={params.on_cancel}>Close</button>
+            </div>
+        </Modal>
+    );
 }

@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { arrayRemove, arrayUnion, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
+import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 
 function useAttendance(pollId) {
     const [attendance, setAttendance] = useState({});
     const docRef = doc(db, "attendance", pollId);
 
     useEffect(() => {
+        const snapshotErrorHandler = createFirestoreSnapshotErrorHandler("Attendance");
         return onSnapshot(docRef, (snapshot) => {
             setAttendance(snapshot.data() || {});
-        });
+        }, snapshotErrorHandler);
     }, [docRef]);
 
     const setAttendanceStatus = useCallback(async (pubId, userId, status) => {

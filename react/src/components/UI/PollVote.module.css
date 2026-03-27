@@ -164,27 +164,141 @@
   transform: scale(1.03);
 }
 
+.labelDesktop {
+  display: inline;
+}
+
+.labelMobile {
+  display: none;
+}
+
+.respondMenu {
+  display: inline-block;
+  position: relative;
+}
+
+.respondSummary {
+  list-style: none;
+  background-color: #2f7d32;
+  color: white;
+  border: 2px solid #2f7d32;
+  border-radius: 6px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  min-width: 110px;
+  text-align: center;
+}
+
+.respondSummaryActive {
+  background-color: #25672a;
+  border-color: #25672a;
+}
+
+.respondPanel {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  min-width: 156px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #1f2937;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.respondPanelBelow {
+  left: 0;
+  top: calc(100% + 0.3rem);
+}
+
+.respondPanelAbove {
+  left: 0;
+  bottom: calc(100% + 0.3rem);
+}
+
+.respondPanelRight {
+  left: calc(100% + 0.3rem);
+  top: 0;
+}
+
+.respondPanel .voteButton,
+.respondPanel .attendanceButton,
+.respondPanel .comingAllButton,
+.respondPanel .cannotComeAllButton {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  text-align: center;
+}
+
+.panelDivider {
+  width: 100%;
+  height: 1px;
+  background: #475569;
+  margin: 0.1rem 0 0.2rem;
+}
+
+.attendanceIndicator {
+  text-align: center;
+  font-size: 1.1rem;
+  width: 2rem;
+  white-space: nowrap;
+}
+
+.attendanceCheckYes {
+  color: #2f7d32;
+  font-weight: 700;
+  text-align: center;
+}
+
+.attendanceCheckNo {
+  color: #c62828;
+  font-weight: 700;
+  text-align: center;
+}
+
 /* Mobile responsive */
 @media (max-width: 480px) {
 
   .voteButton,
   .deleter,
   .attendanceButton,
+  .respondSummary,
   .comingAllButton,
   .cannotComeAllButton,
   .show_votes button {
-    min-width: 90px;
+    min-width: 72px;
     padding: var(--spacing-xs) var(--spacing-sm);
     font-size: var(--font-size-xs);
+  }
+
+  .labelDesktop {
+    display: none;
+  }
+
+  .labelMobile {
+    display: inline;
   }
 
   .voteButton:hover,
   .voted:hover,
   .deleter:hover,
+  .respondSummary:hover,
   .attendanceButton:hover,
   .comingAllButton:hover,
   .cannotComeAllButton:hover,
   .show_votes button:hover {
     transform: none;
+  }
+
+  .respondPanel {
+    min-width: 132px;
   }
 }

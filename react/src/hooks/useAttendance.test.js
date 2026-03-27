@@ -103,6 +103,58 @@ describe("useAttendance", () => {
         );
     });
 
+    it("switching from canCome to cannotCome removes canCome in same write", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        // First set canCome
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "canCome");
+        });
+
+        updateDocMock.mockClear();
+
+        // Now switch to cannotCome — must atomically remove canCome and add cannotCome
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "cannotCome");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledOnce();
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {
+                "pub-1.cannotCome": "arrayUnion:user-1",
+                "pub-1.canCome": "arrayRemove:user-1",
+            },
+        );
+    });
+
+    it("switching from cannotCome to canCome removes cannotCome in same write", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "cannotCome");
+        });
+
+        updateDocMock.mockClear();
+
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "canCome");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledOnce();
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {
+                "pub-1.canCome": "arrayUnion:user-1",
+                "pub-1.cannotCome": "arrayRemove:user-1",
+            },
+        );
+    });
+
     it("sets attendance for multiple pubs in one update", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
