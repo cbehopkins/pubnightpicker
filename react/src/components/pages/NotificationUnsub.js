@@ -9,6 +9,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../../firebase";
+import { notifyError } from "../../utils/notify";
 
 export async function loader({ params }) {
   const userId = params.userId;
@@ -33,7 +34,7 @@ function NotificationUnsub() {
         updateDoc(doc.ref, notificationParams);
       } catch (err) {
         console.error(err);
-        alert(err.message);
+        notifyError(err.message);
       }
     });
   }, [uid]);

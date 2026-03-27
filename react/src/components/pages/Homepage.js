@@ -12,8 +12,8 @@ function Homepage() {
         register or use your google login...
       </p>
       <p>
-        Some functionality needs an admin account - speak to Chris if you want
-        this.
+        Some functionality needs extra permissions. Ask Chris if you need a
+        capability enabled on your account.
       </p>
       <p></p>
       <h1>User Features</h1>
@@ -24,26 +24,26 @@ function Homepage() {
           Opt in to be emailed that pub has been chosen/changed at the last
           minute
         </li>
-        <li>Opt in to known users being able to see that you voted for that pub when the poll
+        <li>Opt in to trusted users being able to see that you voted for that pub when the poll
           closes - note this information is publically available to a well informed user who
           can reverse engineer the database...</li>
       </ul>
-      <h1>Known User Features</h1>
-      <p>To be added as a known user, an admin has to have approved you...</p>
+      <h1>Permission-Based Features</h1>
+      <p>Some features are now granted individually rather than coming from a single broad role.</p>
       <ul>
-        <li>Add pubs to the poll for consideration</li>
-        <li>See who else has voted for the current pub </li>
-        <li>Join in the pub chat</li>
-        <li>Set your avatar - via a url - to use for chat. </li>
+        <li>Can Chat: join the pub chat and set your avatar via a URL</li>
+        <li>Can Add Pub To Poll: add pubs to a live poll and remove pubs from that poll</li>
+        <li>Can Show Voters: see who voted for the current event winner or poll options</li>
+        <li>Can Create Poll: create polls and delete polls/events</li>
+        <li>Can Complete Poll: complete polls and reschedule events</li>
+        <li>Can Manage Pubs: create, edit, and delete pubs</li>
+        <li>Can Delete Any Message: remove other users' chat messages</li>
       </ul>
       <h1>Admin Features</h1>
       <ul>
-        <li>Edit the pub list</li>
-        <li>Edit the pub properties - name, website, address, map etc</li>
-        <li>Create/delete a poll</li>
-        <li>Complete the Poll - click on the pub's name and you should get a dialog box asking to complete the poll</li>
-        <li>Set other users as admin/known users</li>
-        <li>Delete other people's messages from chat.</li>
+        <li>Open the Manage Users page</li>
+        <li>Grant and revoke permissions for other users</li>
+        <li>Mark users as known users where that label is still useful socially or operationally</li>
       </ul>
       <h1>Developer Features</h1>
       <ul>
@@ -57,7 +57,7 @@ function Homepage() {
         This website is maintained by Chris H - please speak to him if you find
         any issues/have any feature requests.
       </p>
-    </div> 
+    </div>
   );
 }
 export default Homepage;

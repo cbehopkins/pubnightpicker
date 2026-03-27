@@ -5,6 +5,7 @@ import { query, where, collection, onSnapshot, updateDoc, getDocs } from "fireba
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
+import { notifyError } from "../utils/notify";
 
 function selfSubscription(uid, update_callback, remove_callback) {
     const q = query(collection(db, "users"), where("uid", "==", uid));
@@ -31,7 +32,7 @@ async function updatePhotoUrl(uid, photoUrl) {
             await updateDoc(doc.ref, { photoUrl: photoUrl })
         } catch (err) {
             console.error(err);
-            alert(err.message);
+            notifyError(err.message);
         }
     });
 }

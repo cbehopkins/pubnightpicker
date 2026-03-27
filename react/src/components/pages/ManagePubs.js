@@ -1,14 +1,12 @@
 import { NavLink } from "react-router-dom";
-import { doc, deleteDoc } from "firebase/firestore";
-import { db } from "../../firebase";
 import styles from "./ManagePubs.module.css";
 import usePubs from "../../hooks/usePubs";
-import useAdmin from "../../hooks/useAdmin";
+import useRole from "../../hooks/useRole";
+import { deletePub } from "../../dbtools/pubs";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 const ManagePubs = (params) => {
-  const deletePub = async (id, name) => {
-    await deleteDoc(doc(db, "pubs", id));
-  };
   // This mess is the best way I can find to get the pubs printed out
   // ordered by name
   // First get a list that of [pubName, key] sorted by pubname
@@ -20,10 +18,10 @@ const ManagePubs = (params) => {
     })
     .sort();
 
-  const admin = useAdmin();
+  const canManagePubs = useRole("canManagePubs");
   return (
     <div className={styles.navlink}>
-      {admin && (
+      {canManagePubs && (
         <NavLink className={styles.navlink} to="/pubs/new">
           New Pub
         </NavLink>
@@ -32,18 +30,22 @@ const ManagePubs = (params) => {
         {sortedPubsByName.map(([, pubName, key]) => {
           return (
             <div key={key} className={styles.navlink}>
-              {admin && (
+              {canManagePubs && (
                 <button
-                  disabled={!admin}
+                  disabled={!canManagePubs}
                   className={styles.delete}
-                  onClick={() => {
-                    deletePub(key, pubName);
+                  onClick={async () => {
+                    try {
+                      await deletePub(key);
+                    } catch (error) {
+                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this pub."));
+                    }
                   }}
                 >
                   Delete
                 </button>
               )}
-              {admin ? (
+              {canManagePubs ? (
                 <NavLink to={`/pubs/${key}`}>{pubName}</NavLink>
               ) : (
                 <span>{pubName}</span>

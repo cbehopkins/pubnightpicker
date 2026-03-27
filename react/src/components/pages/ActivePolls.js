@@ -5,13 +5,16 @@ import usePubs from "../../hooks/usePubs";
 import ConfirmModal from "../UI/ConfirmModal";
 import ActivePoll from "../UI/ActivePoll";
 import NewPoll from "../UI/NewPoll";
-import useAdmin from "../../hooks/useAdmin";
+import useRole from "../../hooks/useRole";
 import { complete_a_poll } from "../../dbtools/polls";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 
 function ActivePolls() {
   const [mobile, setMobile] = useState(window.innerWidth <= 800);
-  const admin = useAdmin();
+  const canCreatePoll = useRole("canCreatePoll");
+  const canCompletePoll = useRole("canCompletePoll");
 
   const handleWindowSizeChange = useCallback(() => {
     setMobile(window.innerWidth <= 800);
@@ -35,23 +38,27 @@ function ActivePolls() {
   const [completingPoll, setCompletingPoll] = useState([]);
   const completeHandler = useCallback(
     (key, pubName, poll_id) => {
-      if (!admin) {
+      if (!canCompletePoll) {
         return;
       }
       setCompletingPoll([key, pubName, poll_id]);
     },
-    [admin]
+    [canCompletePoll]
   );
 
   const [key, pubName, poll_id] = completingPoll;
   // Then if we decide to complete, then actually run the complete
   const completeThePoll = useCallback(async () => {
-    if (!admin) {
+    if (!canCompletePoll) {
       return;
     }
-    await complete_a_poll(key, poll_id);
-    setCompletingPoll([]);
-  }, [key, poll_id, admin]);
+    try {
+      await complete_a_poll(key, poll_id);
+      setCompletingPoll([]);
+    } catch (error) {
+      notifyError(getUserFacingErrorMessage(error, "Unable to complete this poll."));
+    }
+  }, [key, poll_id, canCompletePoll]);
 
   const completingPollBusy = completingPoll.length !== 0;
   const styleToUse = mobile ? styles.poll_mobile : styles.poll;
@@ -59,7 +66,7 @@ function ActivePolls() {
   // Change line numbers
   return (
     <div>
-      {admin && <NewPoll polls={currentPollDates} />}
+      {canCreatePoll && <NewPoll polls={currentPollDates} />}
       <h1>Active Polls</h1>
       {completingPollBusy && (
         <ConfirmModal

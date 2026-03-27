@@ -7,6 +7,7 @@ import {
   signInWithGoogle,
 } from "../../firebase";
 import styles from "./Register.module.css";
+import { notifyError } from "../../utils/notify";
 function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,7 +15,10 @@ function Register() {
   const [user, loading] = useAuthState(auth);
   const navigate = useNavigate();
   const register = () => {
-    if (!name) alert("Please enter name");
+    if (!name) {
+      notifyError("Please enter name");
+      return;
+    }
     registerWithEmailAndPassword(name, email, password);
   };
   useEffect(() => {

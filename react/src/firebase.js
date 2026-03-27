@@ -23,6 +23,7 @@ import {
 } from "firebase/firestore";
 import { redirect } from "react-router-dom";
 import { firebaseConfig } from "./firebase_config";
+import { notifyError, notifyInfo } from "./utils/notify";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -52,7 +53,7 @@ export async function addUserDoc(uid, name, authProvider, email) {
 
 const signInWithGoogle = async () => {
   if (useFirebaseEmulators) {
-    alert(
+    notifyError(
       "Google sign-in is disabled while Firebase Auth emulator is enabled. Use email/password locally, or set VITE_USE_FIREBASE_EMULATORS=false to test against your Firebase project.",
     );
     return;
@@ -74,7 +75,7 @@ const signInWithGoogle = async () => {
   } catch (err) {
     console.error("code", err.code); // == resource-exhausted
     console.error(err);
-    alert(err.message);
+    notifyError(err.message);
   }
 };
 
@@ -128,17 +129,17 @@ const logInWithEmailAndPassword = async (email, password) => {
   } catch (err) {
     if (err.name === "FirebaseError") {
       if (err.code === "auth/invalid-email") {
-        alert("Invalid email address")
+        notifyError("Invalid email address")
         return
       }
       if (err.code === "auth/invalid-login-credentials") {
-        alert("Invalid login details (check email and password)")
+        notifyError("Invalid login details (check email and password)")
         return
       }
     }
     console.error(JSON.stringify(err))
     console.error(err);
-    alert(err.message);
+    notifyError(err.message);
   }
 };
 
@@ -160,16 +161,16 @@ const registerWithEmailAndPassword = async (name, email, password) => {
     )
   } catch (err) {
     console.error(err);
-    alert(err.message);
+    notifyError(err.message);
   }
 };
 const sendPasswordReset = async (email) => {
   try {
     await sendPasswordResetEmail(auth, email);
-    alert("Password reset link sent!");
+    notifyInfo("Password reset link sent!");
   } catch (err) {
     console.error(err);
-    alert(err.message);
+    notifyError(err.message);
   }
 };
 const logout = () => {
