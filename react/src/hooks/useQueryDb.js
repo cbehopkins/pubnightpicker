@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { onSnapshot } from "firebase/firestore";
+import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 
 export default function useQueryDb(q, error_handler = null, precondition = null, enabled = true) {
     const [polls, setPolls] = useState({});
@@ -30,6 +31,7 @@ export default function useQueryDb(q, error_handler = null, precondition = null,
             setPolls({});
             return;
         }
+        const snapshotErrorHandler = error_handler || createFirestoreSnapshotErrorHandler("Polls data");
         const unsubscribe = onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
@@ -42,7 +44,7 @@ export default function useQueryDb(q, error_handler = null, precondition = null,
                     rmCallback(change.doc.id, change.doc.data());
                 }
             });
-        }, error_handler);
+        }, snapshotErrorHandler);
         return () => {
             unsubscribe()
         };

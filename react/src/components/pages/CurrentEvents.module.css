@@ -2,6 +2,7 @@
     max-height: 300px;
     max-width: 300px;
 }
+
 .button button {
     font: inherit;
     border: 1px solid #4f005f;
@@ -19,5 +20,32 @@
 }
 
 .button button:focus {
+    outline: none;
+}
+
+.attendanceActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0 0 1rem;
+}
+
+.attendanceButton {
+    font: inherit;
+    border: 1px solid #4f005f;
+    background: #4f005f;
+    color: white;
+    padding: 0.25rem 1rem;
+    cursor: pointer;
+}
+
+.attendanceButton:hover,
+.attendanceButton:active,
+.attendanceButtonSelected {
+    background: #741188;
+    border-color: #741188;
+}
+
+.attendanceButton:focus {
     outline: none;
 }

@@ -20,7 +20,8 @@ function NewPoll(params) {
       setEnteredDate("");
       // This is important to do here as the permissions should be set on the database
       // Such that only those who create polls can write vs update
-      await setDoc(doc(db, "votes", docRef.id), {any:[]})
+      await setDoc(doc(db, "votes", docRef.id), { any: [] })
+      await setDoc(doc(db, "attendance", docRef.id), {})
     } catch (err) {
       console.error("Error adding document: ", err);
     }

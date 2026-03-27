@@ -1,16 +1,20 @@
 import { useState, useCallback } from "react";
+import { useSelector } from "react-redux";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
 import Modal from "../UI/Modal";
 import PubOptions from "../UI/PubOptions";
 import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
+import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import styles from "./CurrentEvents.module.css";
-import ShowVoters from "../UI/ShowVoters";
+import ShowAttendance from "../UI/ShowAttendance";
+import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
 import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
+import { runAttendanceAction } from "../../utils/attendance";
 
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
@@ -101,12 +105,19 @@ function ChangePubModal(params) {
 
 
 function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
+  const currUserId = useSelector((state) => state.auth.uid);
   const [votes] = useVotes(poll_id);
+  const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
   const pubWasVotedFor = current_pub_id in votes || Boolean(votes["any"]);
   const pubName = pub_parameters[current_pub_id].name;
   const pubWebsite = pub_parameters[current_pub_id]?.web_site
   const pubImage = pub_parameters[current_pub_id]?.pubImage
   const pubAddress = pub_parameters[current_pub_id]?.address
+  const attendanceForPub = attendance[current_pub_id] || {};
+  const canCome = attendanceForPub.canCome || [];
+  const cannotCome = attendanceForPub.cannotCome || [];
+  const userCanCome = Boolean(currUserId) && canCome.includes(currUserId);
+  const userCannotCome = Boolean(currUserId) && cannotCome.includes(currUserId);
   const currentVotes = []
   if (votes[current_pub_id]) {
     currentVotes.push(...votes[current_pub_id])
@@ -114,13 +125,33 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
   if (votes["any"]) {
     currentVotes.push(...votes["any"])
   }
-  const allowShowVoters = show_voters && pubWasVotedFor;
+  const dedupedVotes = [...new Set(currentVotes)];
+  const hasAttendanceData = canCome.length > 0 || cannotCome.length > 0;
+  const allowShowVoters = show_voters && (pubWasVotedFor || hasAttendanceData);
   const rescheduleHandler = async (pubId) => {
     try {
       return await reschedule_a_poll(poll_id, current_pub_id, pubId);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
     }
+  };
+  const setAttendanceStatusHandler = async (status) => {
+    if (!currUserId) {
+      return;
+    }
+
+    await runAttendanceAction(() => setAttendanceStatus(current_pub_id, currUserId, status));
+  };
+
+  const clearAttendanceHandler = async () => {
+    if (!currUserId || (!userCanCome && !userCannotCome)) {
+      return;
+    }
+
+    await runAttendanceAction(
+      () => clearAttendance(current_pub_id, currUserId),
+      "Unable to clear your attendance.",
+    );
   };
   return (
     <>
@@ -132,6 +163,18 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
         alt="What the pub looks like"
         className={styles.image}
       /></p>}
+      {currUserId && <AttendanceActions
+        className={styles.attendanceActions}
+        buttonClassName={styles.attendanceButton}
+        selectedClassName={styles.attendanceButtonSelected}
+        canComeSelected={userCanCome}
+        cannotComeSelected={userCannotCome}
+        canComeSelectedLabel="Can come confirmed"
+        cannotComeSelectedLabel="Cannot come confirmed"
+        clearMode="button"
+        onSetStatus={setAttendanceStatusHandler}
+        onClear={clearAttendanceHandler}
+      />}
       {can_reschedule && (
         <QuestionRender
           className={styles.button}
@@ -161,8 +204,8 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
           }}
         />
       </QuestionRender>}
-      {allowShowVoters && <QuestionRender className={styles.button} question="Show Voters">
-        <ShowVoters votes={currentVotes} />
+      {allowShowVoters && <QuestionRender className={styles.button} question="Show attendance">
+        <ShowAttendance voters={dedupedVotes} canCome={canCome} cannotCome={cannotCome} />
       </QuestionRender>}
 
     </>
