@@ -14,11 +14,6 @@ service cloud.firestore {
       return hasRole("admin");
     }
     
-    // Helper function to check if user is known
-    function isKnown() {
-      return hasRole("known");
-    }
-
     function canChat() {
       return hasRole("canChat");
     }

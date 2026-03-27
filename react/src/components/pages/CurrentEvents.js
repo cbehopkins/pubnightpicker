@@ -9,10 +9,12 @@ import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import styles from "./CurrentEvents.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
+import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
 import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
+import { runAttendanceAction } from "../../utils/attendance";
 
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
@@ -133,43 +135,23 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
       notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
     }
   };
-  const setCanComeHandler = async () => {
+  const setAttendanceStatusHandler = async (status) => {
     if (!currUserId) {
       return;
     }
-    try {
-      if (userCanCome) {
-        await clearAttendance(current_pub_id, currUserId);
-        return;
-      }
-      await setAttendanceStatus(current_pub_id, currUserId, "canCome");
-    } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to update your attendance."));
-    }
+
+    await runAttendanceAction(() => setAttendanceStatus(current_pub_id, currUserId, status));
   };
-  const setCannotComeHandler = async () => {
-    if (!currUserId) {
-      return;
-    }
-    try {
-      if (userCannotCome) {
-        await clearAttendance(current_pub_id, currUserId);
-        return;
-      }
-      await setAttendanceStatus(current_pub_id, currUserId, "cannotCome");
-    } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to update your attendance."));
-    }
-  };
+
   const clearAttendanceHandler = async () => {
     if (!currUserId || (!userCanCome && !userCannotCome)) {
       return;
     }
-    try {
-      await clearAttendance(current_pub_id, currUserId);
-    } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to clear your attendance."));
-    }
+
+    await runAttendanceAction(
+      () => clearAttendance(current_pub_id, currUserId),
+      "Unable to clear your attendance.",
+    );
   };
   return (
     <>
@@ -181,26 +163,18 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
         alt="What the pub looks like"
         className={styles.image}
       /></p>}
-      {currUserId && <div className={styles.attendanceActions}>
-        <button
-          className={`${styles.attendanceButton} ${userCanCome ? styles.attendanceButtonSelected : ""}`}
-          onClick={setCanComeHandler}
-        >
-          {userCanCome ? "Can come confirmed" : "Can come"}
-        </button>
-        <button
-          className={`${styles.attendanceButton} ${userCannotCome ? styles.attendanceButtonSelected : ""}`}
-          onClick={setCannotComeHandler}
-        >
-          {userCannotCome ? "Cannot come confirmed" : "Cannot come"}
-        </button>
-        {(userCanCome || userCannotCome) && <button
-          className={styles.attendanceButton}
-          onClick={clearAttendanceHandler}
-        >
-          Clear response
-        </button>}
-      </div>}
+      {currUserId && <AttendanceActions
+        className={styles.attendanceActions}
+        buttonClassName={styles.attendanceButton}
+        selectedClassName={styles.attendanceButtonSelected}
+        canComeSelected={userCanCome}
+        cannotComeSelected={userCannotCome}
+        canComeSelectedLabel="Can come confirmed"
+        cannotComeSelectedLabel="Cannot come confirmed"
+        clearMode="button"
+        onSetStatus={setAttendanceStatusHandler}
+        onClear={clearAttendanceHandler}
+      />}
       {can_reschedule && (
         <QuestionRender
           className={styles.button}

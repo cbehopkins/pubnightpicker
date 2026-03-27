@@ -3,31 +3,46 @@ import { arrayRemove, arrayUnion, doc, onSnapshot, updateDoc } from "firebase/fi
 import { db } from "../firebase";
 
 function useAttendance(pollId) {
-  const [attendance, setAttendance] = useState({});
-  const docRef = doc(db, "attendance", pollId);
+    const [attendance, setAttendance] = useState({});
+    const docRef = doc(db, "attendance", pollId);
 
-  useEffect(() => {
-    return onSnapshot(docRef, (snapshot) => {
-      setAttendance(snapshot.data() || {});
-    });
-  }, [docRef]);
+    useEffect(() => {
+        return onSnapshot(docRef, (snapshot) => {
+            setAttendance(snapshot.data() || {});
+        });
+    }, [docRef]);
 
-  const setAttendanceStatus = useCallback(async (pubId, userId, status) => {
-    const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
-    await updateDoc(docRef, {
-      [`${pubId}.${status}`]: arrayUnion(userId),
-      [`${pubId}.${oppositeStatus}`]: arrayRemove(userId),
-    });
-  }, [docRef]);
+    const setAttendanceStatus = useCallback(async (pubId, userId, status) => {
+        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
+        await updateDoc(docRef, {
+            [`${pubId}.${status}`]: arrayUnion(userId),
+            [`${pubId}.${oppositeStatus}`]: arrayRemove(userId),
+        });
+    }, [docRef]);
 
-  const clearAttendance = useCallback(async (pubId, userId) => {
-    await updateDoc(docRef, {
-      [`${pubId}.canCome`]: arrayRemove(userId),
-      [`${pubId}.cannotCome`]: arrayRemove(userId),
-    });
-  }, [docRef]);
+    const clearAttendance = useCallback(async (pubId, userId) => {
+        await updateDoc(docRef, {
+            [`${pubId}.canCome`]: arrayRemove(userId),
+            [`${pubId}.cannotCome`]: arrayRemove(userId),
+        });
+    }, [docRef]);
 
-  return [attendance, setAttendanceStatus, clearAttendance];
+    const setAttendanceForMultiplePubs = useCallback(async (pubIds, userId, status) => {
+        if (!pubIds || pubIds.length === 0) {
+            return;
+        }
+
+        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
+        const payload = {};
+        for (const pubId of pubIds) {
+            payload[`${pubId}.${status}`] = arrayUnion(userId);
+            payload[`${pubId}.${oppositeStatus}`] = arrayRemove(userId);
+        }
+
+        await updateDoc(docRef, payload);
+    }, [docRef]);
+
+    return [attendance, setAttendanceStatus, clearAttendance, setAttendanceForMultiplePubs];
 }
 
 export default useAttendance;
