@@ -32,8 +32,10 @@ BASE_TEMPLATE = textwrap.dedent(
     The earliest attendees get there between 6:30 & 7:30pm and we continue through to closing time.
     """
 )
-PUB_TEMPLATE = textwrap.dedent("""\
-    This week on {event_date} we will be visiting {pub_name}""")
+PUB_TEMPLATE = textwrap.dedent(
+    """\
+    This week on {event_date} we will be visiting {pub_name}"""
+)
 
 EVENT_TEMPLATE = textwrap.dedent(
     """\
@@ -111,7 +113,10 @@ def _restaurant_block(restaurant_venue: VenuePayload | None) -> str:
     if restaurant_venue is None:
         return ""
     base = RESTAURANT_BLOCK_TEMPLATE.format(venue_name=_escape(restaurant_venue.name))
-    return _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False) + "\n\n"
+    return (
+        _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False)
+        + "\n\n"
+    )
 
 
 def _render_pub_template(
@@ -256,11 +261,11 @@ def send_ampub_email(
     )
     for email, uid in src:
         contents = pre_text + build_notification_text(
-                selected_venue=selected_venue,
-                restaurant_venue=restaurant_venue,
-                event_date=poll.date,
-                uid=uid,
-            )
+            selected_venue=selected_venue,
+            restaurant_venue=restaurant_venue,
+            event_date=poll.date,
+            uid=uid,
+        )
         _log.info(f"Notification email to send to {email}::{contents}")
         if dummy_run:
             continue

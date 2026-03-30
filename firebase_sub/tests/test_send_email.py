@@ -139,9 +139,10 @@ def test_send_ampub_email_builds_pub_message_without_sending(monkeypatch):
     assert len(fake_client.sent) == 1
     sent = fake_client.sent[0].kwargs
     assert sent["subject"] == "Pub Night @ The Castle"
-    assert "Every week we have a pub night to which you are cordially invited." in sent[
-        "text"
-    ]
+    assert (
+        "Every week we have a pub night to which you are cordially invited."
+        in sent["text"]
+    )
     assert "This week on 2026-04-06 we will be visiting The Castle" in sent["text"]
     assert "Before the pub we are meeting at Bistro Stop" in sent["text"]
 
