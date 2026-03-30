@@ -106,12 +106,23 @@ def sub_events(
             event: Event = q.get()
             if event.doc:
                 doc = event.doc.to_dict()
-                assert doc
-                date = doc["date"]
-                completed: bool = doc.get("completed", False)
-                _log.info(
-                    f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-                )
+                if doc is None:
+                    _log.warning(
+                        "Received event %s for doc %s with no payload",
+                        event.type,
+                        event.doc.id,
+                    )
+                    date = None
+                    completed = False
+                else:
+                    date = doc.get("date")
+                    completed = doc.get("completed", False)
+                    _log.info(
+                        "New Event: Type:%s, Date:%s, Completed:%s",
+                        event.type,
+                        date,
+                        completed,
+                    )
             else:
                 date = None
                 completed = False
@@ -136,7 +147,7 @@ def sub_events(
 @click.option(
     "--restart-interval",
     type=int,
-    default=60*24,
+    default=60 * 24,
     help="Restart interval in minutes (default: 1 day)",
 )
 def cli(

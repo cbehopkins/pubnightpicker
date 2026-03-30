@@ -63,9 +63,15 @@ def main(loglevel: int, logfile: Path | None, outfile: Path, timeout: int) -> No
 
     with OutputFile(outfile) as out:
 
-        def backup_item(collection_name, document: DocumentSnapshot) -> None:
+        def backup_item(collection_name: str, document: DocumentSnapshot) -> None:
             dct: dict[str, Any] | None = document.to_dict()
-            assert dct
+            if dct is None:
+                _log.warning(
+                    "Skipping missing Firestore snapshot for %s/%s",
+                    collection_name,
+                    document.id,
+                )
+                return
             out.write_dict(collection_name, document.id, dct)
             reset_timer()
 

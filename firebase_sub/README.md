@@ -1,5 +1,8 @@
-We use poetry install - so
+We use Poetry for local development dependencies:
 poetry install
+
+For runtime-only dependencies (for lean environments):
+poetry install --only main
 
 to create a venv
 # Deisgn Overview

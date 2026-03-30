@@ -6,7 +6,7 @@ from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.database.poll_manager import PollManager
-from firebase_sub.my_types import Callback
+from firebase_sub.my_types import Callback, DocumentId, VenueDocument
 
 
 class PubsList(PollManager):
@@ -16,7 +16,7 @@ class PubsList(PollManager):
     ):
         self.pub_collection = collection
         self.unsubscribe: Callback = None
-        self._dict = {}
+        self._dict: dict[DocumentId, VenueDocument] = {}
         super().__init__(
             query=cast(Query, collection),
             add=self._add,
@@ -24,7 +24,7 @@ class PubsList(PollManager):
             rm=self._remove,
         )
 
-    def __getitem__(self, key: Any) -> Any:
+    def __getitem__(self, key: Any) -> VenueDocument:
         if key not in self._dict:
             # Just in case the database hasn't populated yet
             time.sleep(5)
@@ -37,7 +37,10 @@ class PubsList(PollManager):
         return key in self._dict
 
     def _add(self, document: DocumentSnapshot) -> None:
-        self._dict[document.id] = document.to_dict()
+        data = document.to_dict()
+        if data is None:
+            return
+        self._dict[document.id] = cast(VenueDocument, data)
 
     def _remove(self, document: DocumentSnapshot) -> None:
         del self._dict[document.id]

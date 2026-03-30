@@ -11,6 +11,7 @@ def log_level_to_int(level: str | int) -> int:
         assert isinstance(level, str), "Level must be a string by now..."
         return int(logging.getLevelNamesMapping().get(level, logging.INFO))
 
+
 DEFAULT_LOGGING_CONFIG = {
     "loggers": {
         "root": {"level": logging.INFO},
@@ -24,6 +25,7 @@ DEFAULT_LOGGING_CONFIG = {
         },
     },
 }
+
 
 def configure_logging(log_level: str | int, logfile: str | Path | None):
     logging_config: dict[str, Any]
