@@ -9,6 +9,7 @@ const {
     arrayUnionMock,
     docMock,
     onSnapshotMock,
+    setDocMock,
     updateDocMock,
 } = vi.hoisted(() => {
     return {
@@ -16,6 +17,7 @@ const {
         arrayUnionMock: vi.fn((value) => `arrayUnion:${value}`),
         docMock: vi.fn(() => ({ id: "attendance-doc-ref" })),
         onSnapshotMock: vi.fn(),
+        setDocMock: vi.fn(async () => undefined),
         updateDocMock: vi.fn(async () => undefined),
     };
 });
@@ -32,6 +34,7 @@ vi.mock("firebase/firestore", () => {
         arrayUnion: arrayUnionMock,
         doc: docMock,
         onSnapshot: onSnapshotMock,
+        setDoc: setDocMock,
         updateDoc: updateDocMock,
     };
 });
@@ -42,6 +45,7 @@ describe("useAttendance", () => {
         arrayUnionMock.mockClear();
         docMock.mockClear();
         onSnapshotMock.mockReset();
+        setDocMock.mockClear();
         updateDocMock.mockClear();
     });
 
@@ -185,5 +189,25 @@ describe("useAttendance", () => {
         });
 
         expect(updateDocMock).not.toHaveBeenCalled();
+    });
+
+    it("creates attendance doc and retries update when update fails with NOT_FOUND", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+        updateDocMock
+            .mockRejectedValueOnce({ code: "not-found", message: "no entity to update" })
+            .mockResolvedValueOnce(undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "canCome");
+        });
+
+        expect(setDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {},
+            { merge: true },
+        );
+        expect(updateDocMock).toHaveBeenCalledTimes(2);
     });
 });

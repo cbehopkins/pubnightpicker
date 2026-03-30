@@ -4,3 +4,6 @@
 token.json
 cred.json
 .tox
+dist
+.env.test
+*.log

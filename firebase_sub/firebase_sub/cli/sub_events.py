@@ -1,7 +1,5 @@
 import logging
 import queue
-import threading
-import time
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -60,23 +58,13 @@ def configure_logging(log_level: int, logfile: Path | None) -> None:
     logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
-def heartbeat_publisher(queue: queue.Queue) -> None:
-    while True:
-        event = Event(type=EventType.HEARTBEAT, doc=None)
-        queue.put(event)
-        time.sleep(10)
-
-
 def sub_events(
     dummy: bool, loglevel: int, logfile: Path | None, restart_interval: int
 ) -> None:
     configure_logging(loglevel, logfile)
     dummy_run = dummy
-    q = queue.Queue()
-    heartbeat_thread = threading.Thread(
-        target=heartbeat_publisher, args=(q,), daemon=True
-    )
-    heartbeat_thread.start()
+    q: queue.Queue[Event] = queue.Queue()
+    healthcheck_interval_seconds = 10.0
 
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.NEW_POLL, doc=document))
@@ -103,26 +91,40 @@ def sub_events(
         complete_am = poll_complete_actions(dummy_run)
 
         while True:
-            event: Event = q.get()
+            try:
+                event = q.get(timeout=healthcheck_interval_seconds)
+            except queue.Empty:
+                if not DB_HANDLER.okay:
+                    raise SystemExit("Exiting due to db is not okay")
+                continue
+
             if event.doc:
                 doc = event.doc.to_dict()
-                assert doc
-                date = doc["date"]
-                completed: bool = doc.get("completed", False)
-                _log.info(
-                    f"New Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-                )
+                if doc is None:
+                    _log.warning(
+                        "Received event %s for doc %s with no payload",
+                        event.type,
+                        event.doc.id,
+                    )
+                    date = None
+                    completed = False
+                else:
+                    date = doc.get("date")
+                    completed = doc.get("completed", False)
+                    _log.info(
+                        "New Event: Type:%s, Date:%s, Completed:%s",
+                        event.type,
+                        date,
+                        completed,
+                    )
             else:
                 date = None
                 completed = False
 
             event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
-            if event.type != EventType.HEARTBEAT:
-                _log.info(
-                    f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-                )
-
-            time.sleep(1)
+            _log.info(
+                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+            )
 
 
 @click.command()
@@ -136,7 +138,7 @@ def sub_events(
 @click.option(
     "--restart-interval",
     type=int,
-    default=60*24,
+    default=60 * 24,
     help="Restart interval in minutes (default: 1 day)",
 )
 def cli(
