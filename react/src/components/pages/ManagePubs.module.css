@@ -1,15 +1,27 @@
 .content {
-    background-color: #2d3942;
-    border-radius: 0 4px 4px 4px;
-    padding: 1rem;
-  }
-  
+  background-color: #2d3942;
+  border-radius: 0 4px 4px 4px;
+  padding: 1rem;
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.filterRow select {
+  min-width: 10rem;
+}
+
 
 .navigate {
   background: green;
   color: white;
 }
-.delete{
+
+.delete {
   background: #4c6070;
 }
 
