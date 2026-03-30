@@ -139,6 +139,9 @@ def test_send_ampub_email_builds_pub_message_without_sending(monkeypatch):
     assert len(fake_client.sent) == 1
     sent = fake_client.sent[0].kwargs
     assert sent["subject"] == "Pub Night @ The Castle"
+    assert "Every week we have a pub night to which you are cordially invited." in sent[
+        "text"
+    ]
     assert "This week on 2026-04-06 we will be visiting The Castle" in sent["text"]
     assert "Before the pub we are meeting at Bistro Stop" in sent["text"]
 
@@ -171,3 +174,31 @@ def test_send_ampub_email_uses_event_template(monkeypatch):
     assert sent["subject"] == "Pub Night @ RESCHEDULED::Beer Festival"
     assert "destination is an event venue" in sent["text"]
     assert "we will be attending Beer Festival" in sent["text"]
+
+
+def test_restaurant_block_includes_venue_details():
+    text = build_notification_text(
+        selected_venue=VenuePayload.model_validate(
+            {"name": "The Swan", "venueType": "pub"}
+        ),
+        restaurant_venue=VenuePayload.model_validate(
+            {
+                "name": "Nosh Place",
+                "venueType": "restaurant",
+                "web_site": "https://nosh.example",
+                "address": "1 Food Street",
+                "map": "https://maps.example/nosh",
+            }
+        ),
+        event_date="2026-04-08",
+        uid=None,
+    )
+
+    assert "Every week we have a pub night to which you are cordially invited." in text
+    assert "This week on 2026-04-08 we will be visiting The Swan" in text
+    assert "Before the pub we are meeting at Nosh Place" in text
+    assert "Venue Web Site https://nosh.example" in text
+    assert "1 Food Street" in text
+    assert "Map to venue https://maps.example/nosh" in text
+    # Unsubscribe link should NOT appear in the restaurant block (uid=None there)
+    assert text.count("Unsubscribe") == 0

@@ -1,43 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { arrayUnion, arrayRemove, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
-function isEqualSets(first, second) {
-  const a = new Set(first)
-  const b = new Set(second)
-  if (a === b) return true;
-  if (a.size !== b.size) return false;
-  for (const value of a) if (!b.has(value)) return false;
-  return true;
-}
 
 function useVotes(pollId) {
   // Votes is a dict from pub ID -> List of users who voted for it
   const [votes, setVotes] = useState({});
-  const docRef = doc(db, "votes", pollId);
+  const docRef = useMemo(() => doc(db, "votes", pollId), [pollId]);
 
   useEffect(() => {
     const snapshotErrorHandler = createFirestoreSnapshotErrorHandler("Votes");
-    return onSnapshot(docRef, (doc) => {
-      if (!doc.data()) {
-        // We might not have set up doc data yet...
-        return
-      }
-      // FIXME this gets called a little too frequently...
-      for (const [key, value] of Object.entries(doc.data())) {
-        if (Object.hasOwn(votes, key) && isEqualSets(votes[key], value)) {
-        } else {
-          // FIXME - thhis should be reworked to a single call to this function
-          setVotes((prevVotes) => {
-            return {
-              ...prevVotes,
-              [key]: value
-            }
-          })
-        }
-      }
+    return onSnapshot(docRef, (snapshot) => {
+      setVotes(snapshot.data() || {});
     }, snapshotErrorHandler);
-  }, [votes, docRef, pollId]);
+  }, [docRef]);
 
   const makeVote = useCallback(async (pubId, userId) => {
     await updateDoc(docRef, {

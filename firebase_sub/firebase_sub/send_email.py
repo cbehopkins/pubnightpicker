@@ -30,10 +30,11 @@ BASE_TEMPLATE = textwrap.dedent(
     Every week we have a pub night to which you are cordially invited.
     The venue changes each week, though we do tend to frequent a few favourites - suggestions for venues are always welcome.
     The earliest attendees get there between 6:30 & 7:30pm and we continue through to closing time.
-    
-    
-    This week on {event_date} we will be visiting {pub_name}"""
+    """
 )
+PUB_TEMPLATE = textwrap.dedent("""\
+    This week on {event_date} we will be visiting {pub_name}""")
+
 EVENT_TEMPLATE = textwrap.dedent(
     """\
     Every week we have a pub night to which you are cordially invited.
@@ -68,14 +69,28 @@ def _escape(value: str | None) -> str | None:
 def _append_venue_details(
     message: str, *, venue: VenuePayload, uid: UserId | None, pub_wording: bool
 ) -> str:
+    match venue.venue_type:
+        case VenueType.PUB:
+            site_label = "Pub Web Site"
+            map_label = "Map to pub"
+        case VenueType.EVENT:
+            site_label = "Event Web Site"
+            map_label = "Map to event"
+        case VenueType.RESTAURANT:
+            site_label = "Restaurant Web Site"
+            map_label = "Map to restaurant"
+        case _:
+            # For now no type == pub.
+            # At some point we'll fix this in the database
+            # site_label = "Venue Web Site"
+            site_label = "Pub Web Site"
+            map_label = "Map to pub"
     result = message
     if venue.web_site:
-        site_label = "Pub Web Site" if pub_wording else "Venue Web Site"
         result += f"\n\n\n{site_label} {_escape(venue.web_site)}\n"
     if venue.address:
         result += f"\n{_escape(venue.address)}\n"
     if venue.map:
-        map_label = "Map to pub" if pub_wording else "Map to venue"
         result += f"\n\n{map_label} {_escape(venue.map)}"
     if uid:
         result += (
@@ -95,7 +110,8 @@ def _mailtrap_client() -> mailtrap.MailtrapClient:
 def _restaurant_block(restaurant_venue: VenuePayload | None) -> str:
     if restaurant_venue is None:
         return ""
-    return RESTAURANT_BLOCK_TEMPLATE.format(venue_name=_escape(restaurant_venue.name))
+    base = RESTAURANT_BLOCK_TEMPLATE.format(venue_name=_escape(restaurant_venue.name))
+    return _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False)
 
 
 def _render_pub_template(
@@ -110,6 +126,10 @@ def _render_pub_template(
         event_date=_escape(event_date),
     )
     base += _restaurant_block(restaurant_venue)
+    base += PUB_TEMPLATE.format(
+        pub_name=_escape(selected_venue.name),
+        event_date=_escape(event_date),
+    )
     return _append_venue_details(base, venue=selected_venue, uid=uid, pub_wording=True)
 
 
@@ -235,7 +255,13 @@ def send_ampub_email(
         "This week's event has been rescheduled\n\n" if previously_actioned else ""
     )
     for email, uid in src:
-        _log.info(f"Notification email to send to {email}")
+        contents = pre_text + build_notification_text(
+                selected_venue=selected_venue,
+                restaurant_venue=restaurant_venue,
+                event_date=poll.date,
+                uid=uid,
+            )
+        _log.info(f"Notification email to send to {email}::{contents}")
         if dummy_run:
             continue
         mail = mailtrap.Mail(
@@ -244,13 +270,7 @@ def send_ampub_email(
             ),
             to=[mailtrap.Address(email=email)],
             subject=subject,
-            text=pre_text
-            + build_notification_text(
-                selected_venue=selected_venue,
-                restaurant_venue=restaurant_venue,
-                event_date=poll.date,
-                uid=uid,
-            ),
+            text=contents,
             category="Pub notification",
         )
         _mailtrap_client().send(mail)

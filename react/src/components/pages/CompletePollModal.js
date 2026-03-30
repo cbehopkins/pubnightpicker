@@ -9,13 +9,18 @@ function CompletePollModal({
   onConfirm,
   onCancel,
 }) {
+  const selectedRestaurant = restaurantOptions.find((restaurant) => restaurant.id === chosenRestaurantId);
+  const autoRestaurant = !restaurantChoiceRequired && restaurantOptions.length === 1
+    ? restaurantOptions[0]
+    : null;
+
   return (
     <ConfirmModal
       title="Complete this poll?"
       detail={<>
-        <p>{pubName}</p>
+        <p>Selected venue: {pubName}</p>
         {restaurantChoiceRequired && (
-          <p>
+          <div>
             <label htmlFor="restaurant-choice">Pick the restaurant for this event: </label>
             <select
               id="restaurant-choice"
@@ -29,7 +34,13 @@ function CompletePollModal({
                 return <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>;
               })}
             </select>
-          </p>
+          </div>
+        )}
+        {autoRestaurant && (
+          <p>Restaurant association (automatic): {pubName} + {autoRestaurant.name}</p>
+        )}
+        {!autoRestaurant && selectedRestaurant && (
+          <p>Restaurant association: {pubName} + {selectedRestaurant.name}</p>
         )}
       </>}
       confirm_disabled={restaurantChoiceRequired && !chosenRestaurantId}

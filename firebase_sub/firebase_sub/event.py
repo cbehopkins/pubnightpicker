@@ -11,7 +11,6 @@ from firebase_sub.database.pubs_list import PubsList
 class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"
-    HEARTBEAT = "heartbeat"
 
 
 @dataclass
@@ -35,6 +34,3 @@ class Event:
                 db_handler.complete_poll_event_handler(
                     pubs_list, complete_am, poll_id=self.doc.id
                 )
-            case EventType.HEARTBEAT:
-                if not db_handler.okay:
-                    raise SystemExit("Exiting due to db is not okay")
