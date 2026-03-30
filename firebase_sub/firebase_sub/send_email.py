@@ -87,7 +87,7 @@ def _append_venue_details(
             map_label = "Map to pub"
     result = message
     if venue.web_site:
-        result += f"\n\n\n{site_label} {_escape(venue.web_site)}\n"
+        result += f"\n{site_label} {_escape(venue.web_site)}\n"
     if venue.address:
         result += f"\n{_escape(venue.address)}\n"
     if venue.map:
@@ -111,7 +111,7 @@ def _restaurant_block(restaurant_venue: VenuePayload | None) -> str:
     if restaurant_venue is None:
         return ""
     base = RESTAURANT_BLOCK_TEMPLATE.format(venue_name=_escape(restaurant_venue.name))
-    return _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False)
+    return _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False) + "\n\n"
 
 
 def _render_pub_template(
