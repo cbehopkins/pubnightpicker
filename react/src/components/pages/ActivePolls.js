@@ -2,14 +2,18 @@ import React, { useState, useCallback, useEffect } from "react";
 import styles from "./ActivePolls.module.css";
 import usePolls from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";
-import ConfirmModal from "../UI/ConfirmModal";
 import ActivePoll from "../UI/ActivePoll";
 import NewPoll from "../UI/NewPoll";
 import useRole from "../../hooks/useRole";
 import { complete_a_poll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
-
+import CompletePollModal from "./CompletePollModal";
+import {
+  createCompletingPollState,
+  getRestaurantIdForCompletion,
+  isRestaurantChoiceRequired,
+} from "../../utils/venueSelection";
 
 function ActivePolls() {
   const [mobile, setMobile] = useState(window.innerWidth <= 800);
@@ -35,33 +39,61 @@ function ActivePolls() {
 
   // We have a 2 stage approach, the click handler updates the
   // completingPoll state
-  const [completingPoll, setCompletingPoll] = useState([]);
+  const [completingPoll, setCompletingPoll] = useState(null);
   const completeHandler = useCallback(
     (key, pubName, poll_id) => {
       if (!canCompletePoll) {
         return;
       }
-      setCompletingPoll([key, pubName, poll_id]);
+      const poll = pollData.polls?.[poll_id];
+      setCompletingPoll(createCompletingPollState(key, pubName, poll_id, poll, pubs));
     },
-    [canCompletePoll]
+    [canCompletePoll, pollData.polls, pubs]
   );
 
-  const [key, pubName, poll_id] = completingPoll;
+  const key = completingPoll?.key;
+  const pubName = completingPoll?.pubName;
+  const poll_id = completingPoll?.poll_id;
+  const restaurantOptions = completingPoll?.restaurantOptions || [];
+  const chosenRestaurantId = completingPoll?.restaurantId || "";
+  const restaurantChoiceRequired = isRestaurantChoiceRequired(completingPoll);
   // Then if we decide to complete, then actually run the complete
   const completeThePoll = useCallback(async () => {
     if (!canCompletePoll) {
       return;
     }
+
+    if (!key || !poll_id) {
+      return;
+    }
+
+    if (restaurantChoiceRequired && !chosenRestaurantId) {
+      return;
+    }
+
+    const restaurantToPersist = getRestaurantIdForCompletion(completingPoll);
+
     try {
-      await complete_a_poll(key, poll_id);
-      setCompletingPoll([]);
+      await complete_a_poll(key, poll_id, restaurantToPersist);
+      setCompletingPoll(null);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to complete this poll."));
     }
-  }, [key, poll_id, canCompletePoll]);
+  }, [key, poll_id, canCompletePoll, chosenRestaurantId, restaurantChoiceRequired, completingPoll]);
 
-  const completingPollBusy = completingPoll.length !== 0;
+  const completingPollBusy = Boolean(completingPoll);
   const styleToUse = mobile ? styles.poll_mobile : styles.poll;
+  const setRestaurantChoice = useCallback((restaurantId) => {
+    setCompletingPoll((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        restaurantId,
+      };
+    });
+  }, []);
 
   // Change line numbers
   return (
@@ -69,12 +101,15 @@ function ActivePolls() {
       {canCreatePoll && <NewPoll polls={currentPollDates} />}
       <h1>Active Polls</h1>
       {completingPollBusy && (
-        <ConfirmModal
-          title="Complete this poll?"
-          detail={pubName}
-          on_confirm={completeThePoll}
-          on_cancel={() => {
-            setCompletingPoll([]);
+        <CompletePollModal
+          pubName={pubName}
+          restaurantOptions={restaurantOptions}
+          chosenRestaurantId={chosenRestaurantId}
+          restaurantChoiceRequired={restaurantChoiceRequired}
+          onRestaurantChange={setRestaurantChoice}
+          onConfirm={completeThePoll}
+          onCancel={() => {
+            setCompletingPoll(null);
           }}
         />
       )}

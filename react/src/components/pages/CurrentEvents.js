@@ -15,6 +15,7 @@ import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { runAttendanceAction } from "../../utils/attendance";
+import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
@@ -81,10 +82,10 @@ function ChangePubModal(params) {
   return (
     <Modal>
       <div>
-        <h1>Change to a different pub?</h1>
+        <h1>Change to a different venue?</h1>
         <PubOptions
           pub_parameters={params.pub_parameters}
-          optionText="New Pub"
+          optionText="New Venue"
           selectPubHandler={selectPubHandler}
         />
       </div>
@@ -104,30 +105,25 @@ function ChangePubModal(params) {
 }
 
 
-function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
+function CurrentEvent({ poll_id, current_pub_id, restaurant_id, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
   const currUserId = useSelector((state) => state.auth.uid);
   const [votes] = useVotes(poll_id);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
-  const pubWasVotedFor = current_pub_id in votes || Boolean(votes["any"]);
-  const pubName = pub_parameters[current_pub_id].name;
-  const pubWebsite = pub_parameters[current_pub_id]?.web_site
-  const pubImage = pub_parameters[current_pub_id]?.pubImage
-  const pubAddress = pub_parameters[current_pub_id]?.address
-  const attendanceForPub = attendance[current_pub_id] || {};
-  const canCome = attendanceForPub.canCome || [];
-  const cannotCome = attendanceForPub.cannotCome || [];
-  const userCanCome = Boolean(currUserId) && canCome.includes(currUserId);
-  const userCannotCome = Boolean(currUserId) && cannotCome.includes(currUserId);
-  const currentVotes = []
-  if (votes[current_pub_id]) {
-    currentVotes.push(...votes[current_pub_id])
+  const eventViewModel = buildCurrentEventViewModel({
+    current_pub_id,
+    restaurant_id,
+    pub_parameters,
+    votes,
+    attendance,
+    currUserId,
+    show_voters,
+  });
+
+  if (!eventViewModel) {
+    return <div></div>;
   }
-  if (votes["any"]) {
-    currentVotes.push(...votes["any"])
-  }
-  const dedupedVotes = [...new Set(currentVotes)];
-  const hasAttendanceData = canCome.length > 0 || cannotCome.length > 0;
-  const allowShowVoters = show_voters && (pubWasVotedFor || hasAttendanceData);
+  const { mainVenue, restaurantVenue } = eventViewModel;
+
   const rescheduleHandler = async (pubId) => {
     try {
       return await reschedule_a_poll(poll_id, current_pub_id, pubId);
@@ -140,41 +136,89 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
       return;
     }
 
-    await runAttendanceAction(() => setAttendanceStatus(current_pub_id, currUserId, status));
+    await runAttendanceAction(() => setAttendanceStatus(mainVenue.id, currUserId, status));
   };
 
   const clearAttendanceHandler = async () => {
-    if (!currUserId || (!userCanCome && !userCannotCome)) {
+    if (!currUserId || (!mainVenue.userCanCome && !mainVenue.userCannotCome)) {
       return;
     }
 
     await runAttendanceAction(
-      () => clearAttendance(current_pub_id, currUserId),
+      () => clearAttendance(mainVenue.id, currUserId),
       "Unable to clear your attendance.",
     );
   };
+
+  const setRestaurantAttendanceStatusHandler = async (status) => {
+    if (!currUserId || !restaurantVenue) {
+      return;
+    }
+
+    await runAttendanceAction(() => setAttendanceStatus(restaurantVenue.id, currUserId, status));
+  };
+
+  const clearRestaurantAttendanceHandler = async () => {
+    if (!currUserId || !restaurantVenue || (!restaurantVenue.userCanCome && !restaurantVenue.userCannotCome)) {
+      return;
+    }
+
+    await runAttendanceAction(
+      () => clearAttendance(restaurantVenue.id, currUserId),
+      "Unable to clear your restaurant attendance.",
+    );
+  };
+
   return (
     <>
-      {pubWebsite ? <h2><a href={pubWebsite} target="_blank" rel="noreferrer">{pubName}</a></h2> : <h2>{pubName}</h2>}
+      {mainVenue.website ? <h2><a href={mainVenue.website} target="_blank" rel="noreferrer">{mainVenue.name}</a></h2> : <h2>{mainVenue.name}</h2>}
       <h3>{date}</h3>
-      {pubAddress && <p>{pubAddress}</p>}
-      {pubImage && <p><img
-        src={pubImage}
-        alt="What the pub looks like"
+      {mainVenue.address && <p>{mainVenue.address}</p>}
+      {mainVenue.image && <p><img
+        src={mainVenue.image}
+        alt="What the venue looks like"
         className={styles.image}
       /></p>}
       {currUserId && <AttendanceActions
         className={styles.attendanceActions}
         buttonClassName={styles.attendanceButton}
         selectedClassName={styles.attendanceButtonSelected}
-        canComeSelected={userCanCome}
-        cannotComeSelected={userCannotCome}
+        canComeSelected={mainVenue.userCanCome}
+        cannotComeSelected={mainVenue.userCannotCome}
         canComeSelectedLabel="Can come confirmed"
         cannotComeSelectedLabel="Cannot come confirmed"
         clearMode="button"
         onSetStatus={setAttendanceStatusHandler}
         onClear={clearAttendanceHandler}
       />}
+      {mainVenue.allowShowVoters && <QuestionRender className={styles.button} question="Show venue attendance">
+        <ShowAttendance voters={mainVenue.dedupedVotes} canCome={mainVenue.canCome} cannotCome={mainVenue.cannotCome} />
+      </QuestionRender>}
+
+      {restaurantVenue && <>
+        <h3>Restaurant: {restaurantVenue.name}</h3>
+        {restaurantVenue.address && <p>{restaurantVenue.address}</p>}
+        {currUserId && <AttendanceActions
+          className={styles.attendanceActions}
+          buttonClassName={styles.attendanceButton}
+          selectedClassName={styles.attendanceButtonSelected}
+          canComeSelected={restaurantVenue.userCanCome}
+          cannotComeSelected={restaurantVenue.userCannotCome}
+          canComeSelectedLabel="Can come confirmed"
+          cannotComeSelectedLabel="Cannot come confirmed"
+          clearMode="button"
+          onSetStatus={setRestaurantAttendanceStatusHandler}
+          onClear={clearRestaurantAttendanceHandler}
+        />}
+        {restaurantVenue.allowShowVoters && <QuestionRender className={styles.button} question="Show restaurant attendance">
+          <ShowAttendance
+            voters={restaurantVenue.dedupedVotes}
+            canCome={restaurantVenue.canCome}
+            cannotCome={restaurantVenue.cannotCome}
+          />
+        </QuestionRender>}
+      </>}
+
       {can_reschedule && (
         <QuestionRender
           className={styles.button}
@@ -204,9 +248,6 @@ function CurrentEvent({ poll_id, current_pub_id, date, pub_parameters, can_resch
           }}
         />
       </QuestionRender>}
-      {allowShowVoters && <QuestionRender className={styles.button} question="Show attendance">
-        <ShowAttendance voters={dedupedVotes} canCome={canCome} cannotCome={cannotCome} />
-      </QuestionRender>}
 
     </>
   );
@@ -227,6 +268,7 @@ function CurrentEvents() {
             key={key}
             poll_id={key}
             current_pub_id={value.selected}
+            restaurant_id={value.restaurant}
             date={value.date}
             pub_parameters={pub_parameters}
             can_reschedule={canReschedule}

@@ -101,8 +101,8 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
   return (
     <div className={styleToUse}>
       <h2>{poll_data.date}</h2>
-      {canAddPub && <PubFilter title="Filter pub list to contain only items that have:" set_pub_filters={setPubFilters} />}
-      {canAddPub && <PubFilter title="Filter pub list to contain only items that do not have:" set_pub_filters={setPubAntiFilters} pub_params={antiParams} />}
+      {canAddPub && <PubFilter title="Filter venue list to contain only items that have:" set_pub_filters={setPubFilters} />}
+      {canAddPub && <PubFilter title="Filter venue list to contain only items that do not have:" set_pub_filters={setPubAntiFilters} pub_params={antiParams} />}
       <div>
         {canDeletePoll && (
           <button className={styles["button--alt"]} onClick={deletePollHandler}>
@@ -114,7 +114,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
             pub_parameters={newObj}
             selectPubHandler={selectPubHandler}
           />
-          <button onClick={addNewPubToPoll}>Add Pub To Poll</button>
+          <button onClick={addNewPubToPoll}>Add Venue To Poll</button>
         </>
         }
       </div>

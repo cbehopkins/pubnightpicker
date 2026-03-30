@@ -22,8 +22,8 @@ const ManagePubs = (params) => {
   return (
     <div className={styles.navlink}>
       {canManagePubs && (
-        <NavLink className={styles.navlink} to="/pubs/new">
-          New Pub
+        <NavLink className={styles.navlink} to="/venues/new">
+          New Venue
         </NavLink>
       )}
       <div className={styles.content}>
@@ -46,7 +46,7 @@ const ManagePubs = (params) => {
                 </button>
               )}
               {canManagePubs ? (
-                <NavLink to={`/pubs/${key}`}>{pubName}</NavLink>
+                <NavLink to={`/venues/${key}`}>{pubName}</NavLink>
               ) : (
                 <span>{pubName}</span>
               )}

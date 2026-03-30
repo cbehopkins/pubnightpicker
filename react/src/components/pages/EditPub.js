@@ -25,6 +25,11 @@ function EditPubPage() {
   const pub_parameters = usePubs();
   const { pub_id } = useRouteLoaderData("pub_id");
   const pubObject = pub_parameters[pub_id];
+
+  if (!pubObject) {
+    return <p>Loading venue...</p>;
+  }
+
   return <PubForm method="patch" pub_object={pubObject} />;
 }
 

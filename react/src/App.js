@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "./firebase";
@@ -29,6 +29,14 @@ import Homepage from "./components/pages/Homepage";
 import useSelf from "./hooks/useSelf";
 import { setRoles } from "./store/authSlice";
 import ChatPage from "./components/pages/ChatPage";
+
+function LegacyPubRouteRedirect() {
+  const { pubId } = useParams();
+  if (!pubId) {
+    return <Navigate to="/venues" replace />;
+  }
+  return <Navigate to={`/venues/${pubId}`} replace />;
+}
 
 function App() {
   const dispatch = useDispatch();
@@ -66,7 +74,7 @@ function App() {
           element: <Reset />,
         },
         {
-          path: "pubs",
+          path: "venues",
           children: [
             {
               index: true,
@@ -83,6 +91,23 @@ function App() {
               path: "new",
               element: <NewPubPage />,
               action: manipulatePubAction,
+            },
+          ],
+        },
+        {
+          path: "pubs",
+          children: [
+            {
+              index: true,
+              element: <Navigate to="/venues" replace />,
+            },
+            {
+              path: "new",
+              element: <Navigate to="/venues/new" replace />,
+            },
+            {
+              path: ":pubId",
+              element: <LegacyPubRouteRedirect />,
             },
           ],
         },

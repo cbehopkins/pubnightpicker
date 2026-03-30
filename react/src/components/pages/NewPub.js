@@ -27,6 +27,7 @@ export async function action({ request, params }) {
   const pub_id = params.pubId;
   const pubParams = {
     name: data.get("name"),
+    venueType: data.get("venueType") || "pub",
     web_site: data.get("web_site"),
     map: data.get("map"),
     address: data.get("address"),
@@ -49,5 +50,5 @@ export async function action({ request, params }) {
     notifyError(getUserFacingErrorMessage(error, "Unable to save this pub."));
     return null;
   }
-  return redirect("/pubs");
+  return redirect("/venues");
 }

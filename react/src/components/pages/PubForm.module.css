@@ -2,6 +2,12 @@
     width: 40%
 }
 
+.topActions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
 .pubImage {
     width: 80%
 }

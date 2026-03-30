@@ -2,17 +2,24 @@ import { useState, useEffect, useCallback } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 
+function normalizeVenue(venue) {
+  return {
+    ...venue,
+    venueType: venue?.venueType || "pub",
+  };
+}
+
 function pubSubscription(add_callback, mod_callback, rm_callback) {
   return onSnapshot(collection(db, "pubs"), (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type === "added") {
-        add_callback(change.doc.id, change.doc.data());
+        add_callback(change.doc.id, normalizeVenue(change.doc.data()));
       }
       if (change.type === "modified") {
-        mod_callback(change.doc.id, change.doc.data());
+        mod_callback(change.doc.id, normalizeVenue(change.doc.data()));
       }
       if (change.type === "removed") {
-        rm_callback(change.doc.id, change.doc.data());
+        rm_callback(change.doc.id, normalizeVenue(change.doc.data()));
       }
     });
   });

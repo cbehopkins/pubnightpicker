@@ -36,7 +36,7 @@ function Homepage() {
         <li>Can Show Voters: see who voted for the current event winner or poll options</li>
         <li>Can Create Poll: create polls and delete polls/events</li>
         <li>Can Complete Poll: complete polls and reschedule events</li>
-        <li>Can Manage Pubs: create, edit, and delete pubs</li>
+        <li>Can Manage Venues: create, edit, and delete venues</li>
         <li>Can Delete Any Message: remove other users' chat messages</li>
       </ul>
       <h1>Admin Features</h1>

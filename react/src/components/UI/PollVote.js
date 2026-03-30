@@ -112,7 +112,7 @@ function RespondMenu({
               await onVote();
               setShowActions(false);
             }}
-            title={votedFor ? "Cancel your vote" : "Vote for this pub"}
+            title={votedFor ? "Cancel your vote" : "Vote for this venue"}
           >
             {votedFor ? "Cancel Vote" : "Vote Up"}
           </button>
@@ -347,7 +347,7 @@ function PollVote(props) {
         <thead>
           <tr>
             {allowDelete && <th></th>}
-            <th>Pub Name</th>
+            <th>Venue Name</th>
             <th>Votes</th>
             {canVote && <th></th>}
             {canVote && <th>Actions</th>}
