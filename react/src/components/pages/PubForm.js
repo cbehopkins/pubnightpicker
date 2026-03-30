@@ -2,6 +2,8 @@ import { Form, useNavigate, useNavigation } from "react-router-dom";
 
 import styles from "./PubForm.module.css";
 
+const VenueTypes = ["pub", "restaurant", "event"];
+
 // Positive parameters about a pub - things you want to search for
 const PubParams = {
   parking: "Parking",
@@ -59,6 +61,30 @@ function PubForm({ method, pub_object }) {
     <Form method={method} className={styles.form}>
       <div>
         <p>
+          <label htmlFor="venueType">Venue Type</label>
+          <select
+            id="venueType"
+            name="venueType"
+            defaultValue={pub_object ? (pub_object.venueType || "pub") : "pub"}
+          >
+            {VenueTypes.map((venueType) => {
+              return (
+                <option key={venueType} value={venueType}>
+                  {venueType.charAt(0).toUpperCase() + venueType.slice(1)}
+                </option>
+              );
+            })}
+          </select>
+        </p>
+        <p className={styles.topActions}>
+          <button type="button" onClick={cancelHandler} disabled={isSubmitting}>
+            Cancel
+          </button>
+          <button type="submit" disabled={isSubmitting} >
+            {isSubmitting ? "Submitting..." : "Save"}
+          </button>
+        </p>
+        <p>
           <label htmlFor="name">Name</label>
           <input
             id="name"
@@ -69,7 +95,7 @@ function PubForm({ method, pub_object }) {
           />
         </p>
         <p>
-          <label htmlFor="web_site">Pub Web Site</label>
+          <label htmlFor="web_site">Venue Web Site</label>
           <input
             id="web_site"
             type="text"
@@ -109,7 +135,7 @@ function PubForm({ method, pub_object }) {
           />
         </p>
         <p>
-          <label htmlFor="pubImage">Link to Pub Image</label>
+          <label htmlFor="pubImage">Link to Venue Image</label>
           <input
             id="pubImage"
             type="text"
@@ -134,12 +160,6 @@ function PubForm({ method, pub_object }) {
           })}
         </tbody>
       </table>
-      <button type="button" onClick={cancelHandler} disabled={isSubmitting}>
-        Cancel
-      </button>
-      <button type="submit" disabled={isSubmitting} >
-        {isSubmitting ? "Submitting..." : "Save"}
-      </button>
     </Form>
   );
 }

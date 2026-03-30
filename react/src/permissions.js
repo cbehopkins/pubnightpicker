@@ -15,7 +15,7 @@ export const CONSOLIDATED_PERMISSION_COLUMNS = [
     { key: PERMISSIONS.canAddPubToPoll, label: "Can Add/Delete Poll Pubs" },
     { key: PERMISSIONS.canCreatePoll, label: "Can Create/Delete Poll" },
     { key: PERMISSIONS.canCompletePoll, label: "Can Complete/Reschedule" },
-    { key: PERMISSIONS.canManagePubs, label: "Can Manage Pubs" },
+    { key: PERMISSIONS.canManagePubs, label: "Can Manage Venues" },
     { key: PERMISSIONS.canShowVoters, label: "Can Show Voters" },
     { key: PERMISSIONS.canDeleteAnyMessage, label: "Can Delete Any Message" },
 ]

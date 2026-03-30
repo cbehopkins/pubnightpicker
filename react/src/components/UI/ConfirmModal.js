@@ -36,15 +36,16 @@ function ConfirmModal(props) {
   const confirmText = props.confirm_text || "Do It";
   const cancelText = props.cancel_text || "Run Away";
   const confirmOnly = props?.confirm_only;
+  const confirmDisabled = Boolean(props?.confirm_disabled);
   return (
     <Modal>
       <div className={styles.confirm_dia}>
         <div>
           <p className={styles.title}>{props.title}</p>
-          <p className={styles.detail}>{props.detail}</p>
+          <div className={styles.detail}>{props.detail}</div>
         </div>
         <div>
-          <button className={styles.ok_button} onClick={props.on_confirm}>{confirmText}</button>
+          <button className={styles.ok_button} onClick={props.on_confirm} disabled={confirmDisabled}>{confirmText}</button>
           {!confirmOnly && <button className={styles.cancel} onClick={props.on_cancel}>{cancelText}</button>}
         </div>
       </div>

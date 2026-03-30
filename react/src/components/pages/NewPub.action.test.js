@@ -27,7 +27,7 @@ vi.mock("../../utils/notify", () => {
 });
 
 function createRequest(method, formValues) {
-    return new Request("http://localhost/pubs", {
+    return new Request("http://localhost/venues", {
         method,
         body: new URLSearchParams(formValues),
     });
@@ -53,23 +53,25 @@ describe("NewPub action", () => {
         });
 
         expect(addNewPubMock).toHaveBeenCalledTimes(1);
+        expect(addNewPubMock).toHaveBeenCalledWith(expect.objectContaining({ venueType: "pub" }));
         expect(modifyPubMock).not.toHaveBeenCalled();
         expect(response.status).toBe(302);
-        expect(response.headers.get("Location")).toBe("/pubs");
+        expect(response.headers.get("Location")).toBe("/venues");
     });
 
     it("modifies a pub and redirects on PATCH", async () => {
         const response = await action({
             request: createRequest("PATCH", {
                 name: "Updated Pub",
+                venueType: "restaurant",
             }),
             params: { pubId: "pub-123" },
         });
 
         expect(modifyPubMock).toHaveBeenCalledTimes(1);
-        expect(modifyPubMock).toHaveBeenCalledWith("pub-123", expect.any(Object));
+        expect(modifyPubMock).toHaveBeenCalledWith("pub-123", expect.objectContaining({ venueType: "restaurant" }));
         expect(response.status).toBe(302);
-        expect(response.headers.get("Location")).toBe("/pubs");
+        expect(response.headers.get("Location")).toBe("/venues");
     });
 
     it("shows a user-facing error and aborts redirect on failure", async () => {

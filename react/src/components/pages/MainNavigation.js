@@ -49,13 +49,13 @@ function MainNavigation() {
           </li>}
           <li>
             <NavLink
-              to="/pubs"
+              to="/venues"
               className={({ isActive }) =>
                 isActive ? styles.active : undefined
               }
               end
             >
-              {loggedIn ? "Manage Pubs" : "View Pubs"}
+              {loggedIn ? "Manage Venues" : "View Venues"}
             </NavLink>
           </li>
           {admin && <li>

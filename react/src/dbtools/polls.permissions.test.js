@@ -87,6 +87,19 @@ describe("poll dbtools permission guards", () => {
         expect(updateDocMock).toHaveBeenCalledTimes(2);
     });
 
+    it("writes restaurant when poll completion includes one", async () => {
+        await complete_a_poll("pub-2", "poll-1", "pub-restaurant-1");
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "doc-ref" },
+            {
+                completed: true,
+                selected: "pub-2",
+                restaurant: "pub-restaurant-1",
+            },
+        );
+    });
+
     it("guards poll pub add/delete with canAddPubToPoll", async () => {
         const pubParams = {
             "pub-2": { name: "The Anchor" },

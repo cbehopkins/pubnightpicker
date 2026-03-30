@@ -7,7 +7,7 @@ function PubOptions({ pub_parameters, optionText, selectPubHandler }) {
     })
     .sort().map(([, id, pub]) => [id, pub]);
 
-  const optionTextI = optionText || "Select a pub to add here";
+  const optionTextI = optionText || "Select a venue to add here";
   return (
     <select defaultValue="" onChange={selectPubHandler}>
       <option value="">{optionTextI}</option>
