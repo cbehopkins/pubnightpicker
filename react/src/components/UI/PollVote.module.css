@@ -23,7 +23,10 @@
   min-width: min(44rem, calc(100vw - 2rem));
 }
 
-.show_votes h3 {
+.show_votes h3,
+.show_votes p,
+.show_votes label {
+  color: #1f1d1b;
   margin-top: 0;
   margin-bottom: 0.75rem;
 }
@@ -104,6 +107,7 @@
   border-radius: 0.5rem;
   border: 1px solid #dee2e6;
   background: #ffffff;
+  color: #1f1d1b;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
   overflow: hidden;
 }

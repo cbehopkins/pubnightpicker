@@ -13,6 +13,17 @@
 .poll_mobile h2 {
   margin-top: 0;
   margin-bottom: 0.75rem;
+  color: #1f1d1b;
+}
+
+.poll p,
+.poll_mobile p {
+  color: #1f1d1b;
+}
+
+.poll label,
+.poll_mobile label {
+  color: #1f1d1b;
 }
 
 .filterRow {
