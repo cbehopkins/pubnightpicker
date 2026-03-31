@@ -1,18 +1,18 @@
 import { useState, useCallback } from "react";
 import { useSelector } from "react-redux";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
-import Modal from "../UI/Modal";
-import PubOptions from "../UI/PubOptions";
 import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
+import { useReschedulePoll } from "../../hooks/useReschedulePoll";
 import { useEventAttendance } from "../../hooks/useEventAttendance";
 import styles from "./CurrentEvents.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
-import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
+import ReschedulePollModal from "./ReschedulePollModal";
+import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
@@ -83,44 +83,7 @@ export function PastEvents() {
     </div>
   );
 }
-function ChangePubModal(params) {
-  const [selectedPub, setSelectedPub] = useState("");
-
-  const selectPubHandler = useCallback(
-    (event) => {
-      event.preventDefault();
-      setSelectedPub(event.target.value);
-    },
-    [setSelectedPub]
-  );
-
-  return (
-    <Modal>
-      <div>
-        <h1>Change to a different venue?</h1>
-        <PubOptions
-          pub_parameters={params.pub_parameters}
-          optionText="New Venue"
-          selectPubHandler={selectPubHandler}
-        />
-      </div>
-      <div>
-        <button
-          onClick={() => {
-            console.log("Dispatching Change Pub event")
-            params.on_confirm(selectedPub);
-          }}
-        >
-          Reschedule
-        </button>
-        <button onClick={params.on_cancel}>Cancel</button>
-      </div>
-    </Modal>
-  );
-}
-
-
-function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
+function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time, date, pub_parameters, can_reschedule, can_delete_event, show_voters, on_open_reschedule }) {
   const currUserId = useSelector((state) => state.auth.uid);
   const [votes] = useVotes(poll_id);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
@@ -148,14 +111,6 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
     mainVenue.id,
     restaurantVenue?.id
   );
-
-  const rescheduleHandler = async (pubId) => {
-    try {
-      return await reschedule_a_poll(poll_id, current_pub_id, pubId);
-    } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
-    }
-  };
 
   return (
     <>
@@ -208,15 +163,13 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
       </>}
 
       {can_reschedule && (
-        <QuestionRender
-          className={styles.button}
-          question="Reschedule Event"
-        >
-          <ChangePubModal
-            pub_parameters={pub_parameters}
-            on_confirm={rescheduleHandler}
-          />
-        </QuestionRender>
+        <div className={styles.button}>
+          <button
+            onClick={() => on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)}
+          >
+            Reschedule Event
+          </button>
+        </div>
       )}
       {/* Note confirm and cancel look back to front to get the correct button colouring */}
       {can_delete_event && <QuestionRender
@@ -247,9 +200,26 @@ function CurrentEvents() {
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
+  const rescheduleState = useReschedulePoll(pub_parameters, canReschedule);
+
   return (
     <div>
       <h1>Current Events</h1>
+      {rescheduleState.isRescheduling && (
+        <ReschedulePollModal
+          selectedPubId={rescheduleState.selectedPubId}
+          pubHasFood={rescheduleState.pubHasFood}
+          pubOptions={rescheduleState.pubOptions}
+          restaurantOptions={rescheduleState.restaurantOptions}
+          chosenRestaurantId={rescheduleState.chosenRestaurantId}
+          restaurantTime={rescheduleState.restaurantTime}
+          onPubChange={rescheduleState.setSelectedPub}
+          onRestaurantChange={rescheduleState.setRestaurantChoice}
+          onRestaurantTimeChange={rescheduleState.setRestaurantTime}
+          onConfirm={rescheduleState.saveReschedule}
+          onCancel={rescheduleState.cancelReschedule}
+        />
+      )}
       {[...pollData.sortedByDate()].map(([key, value]) => {
         return (
           <CurrentEvent
@@ -263,6 +233,7 @@ function CurrentEvents() {
             can_reschedule={canReschedule}
             can_delete_event={canDeleteEvent}
             show_voters={canShowVoters}
+            on_open_reschedule={rescheduleState.openRescheduleModal}
           />
         );
       })}

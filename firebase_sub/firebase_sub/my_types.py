@@ -35,6 +35,7 @@ class PollDocument(TypedDict):
     date: str
     completed: NotRequired[bool]
     restaurant: NotRequired[DocumentId]
+    restaurant_time: NotRequired[str]
 
 
 class VenueDocument(TypedDict):

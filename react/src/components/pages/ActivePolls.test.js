@@ -62,10 +62,10 @@ vi.mock("../UI/ActivePoll", () => {
 
 vi.mock("./CompletePollModal", () => {
   return {
-    default: ({ restaurantChoiceRequired, onRestaurantChange, onRestaurantTimeChange, onConfirm, onCancel }) => {
+    default: ({ availableRestaurants, pubHasFood, onRestaurantChange, onRestaurantTimeChange, onConfirm, onCancel }) => {
       return (
         <div data-testid="complete-poll-modal">
-          {restaurantChoiceRequired && (
+          {!pubHasFood && availableRestaurants.length > 1 && (
             <button onClick={() => onRestaurantChange("r2")}>pick-r2</button>
           )}
           <button onClick={() => onRestaurantTimeChange("19:00")}>set-time-19-00</button>
@@ -152,7 +152,7 @@ describe("ActivePolls", () => {
     });
   });
 
-  it("requires explicit choice when multiple restaurants exist", async () => {
+  it("allows no restaurant or an explicit restaurant choice when multiple restaurants exist", async () => {
     usePollsMock.mockReturnValue(createPollData({
       date: "2026-03-30",
       pubs: {
@@ -172,8 +172,13 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("trigger-complete"));
     fireEvent.click(screen.getByText("confirm-complete"));
 
-    expect(completePollMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", undefined, undefined);
+    });
 
+    completePollMock.mockClear();
+
+    fireEvent.click(screen.getByText("trigger-complete"));
     fireEvent.click(screen.getByText("pick-r2"));
     fireEvent.click(screen.getByText("confirm-complete"));
 

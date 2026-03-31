@@ -1,5 +1,4 @@
-import Modal from "../UI/Modal";
-import styles from "./CompletePollModal.module.css";
+import VenueAssignmentModal from "./VenueAssignmentModal";
 
 function CompletePollModal({
   pubName,
@@ -13,74 +12,32 @@ function CompletePollModal({
   onConfirm,
   onCancel,
 }) {
-  const confirmDisabled = Boolean(chosenRestaurantId && !restaurantTime);
-
   const restaurantSectionLabel =
     restaurantSource === "poll"
       ? "Restaurant from this poll"
       : "Add a restaurant to this event";
 
   return (
-    <Modal>
-      <div className={styles.dialog}>
-        <div className={styles.header}>
-          <p className={styles.title}>Complete Poll</p>
-        </div>
-
-        <div className={styles.venueRow}>
-          <span className={styles.venueLabel}>Selected venue</span>
-          <span className={styles.venueName}>{pubName}</span>
-        </div>
-
-        {pubHasFood && (
-          <p className={styles.infoNote}>
-            This venue serves food — no separate restaurant needed.
-          </p>
-        )}
-
-        {!pubHasFood && (
-          <div className={styles.formSection}>
-            <label className={styles.fieldLabel} htmlFor="restaurant-choice">
-              {restaurantSectionLabel}
-            </label>
-            <select
-              id="restaurant-choice"
-              className={styles.select}
-              value={chosenRestaurantId}
-              onChange={(e) => onRestaurantChange(e.target.value)}
-            >
-              <option value="">No restaurant</option>
-              {availableRestaurants.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {chosenRestaurantId && (
-          <div className={styles.formSection}>
-            <label className={styles.fieldLabel} htmlFor="restaurant-time">
-              Restaurant meetup time
-            </label>
-            <input
-              id="restaurant-time"
-              type="time"
-              className={styles.timeInput}
-              value={restaurantTime}
-              onChange={(e) => onRestaurantTimeChange(e.target.value)}
-              required
-            />
-          </div>
-        )}
-
-        <div className={styles.footer}>
-          <button className={styles.btnCancel} onClick={onCancel}>Cancel</button>
-          <button className={styles.btnConfirm} onClick={onConfirm} disabled={confirmDisabled}>
-            Confirm
-          </button>
-        </div>
-      </div>
-    </Modal>
+    <VenueAssignmentModal
+      title="Complete Poll"
+      subtitle="Confirm the venue for this event and add any final food plan details."
+      mainVenueLabel="Selected venue"
+      mainVenueName={pubName}
+      mainVenueHelpText="This is the venue that will be stored as the event destination."
+      infoNote={pubHasFood ? "This venue serves food — no separate restaurant needed." : undefined}
+      showRestaurantSection={!pubHasFood}
+      restaurantLabel={restaurantSectionLabel}
+      restaurantOptions={availableRestaurants}
+      restaurantHelpText="Choose a restaurant if the group is eating separately. Leave this as No restaurant to skip it."
+      chosenRestaurantId={chosenRestaurantId}
+      restaurantTime={restaurantTime}
+      timeHelpText="Defaults to 18:30, but you can adjust it before confirming."
+      footerNote="Saving without a restaurant leaves the completed poll without restaurant details."
+      onRestaurantChange={onRestaurantChange}
+      onRestaurantTimeChange={onRestaurantTimeChange}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
 

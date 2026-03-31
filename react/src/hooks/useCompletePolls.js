@@ -4,6 +4,7 @@ import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError } from "../utils/notify";
 import {
   createCompletingPollState,
+  getDefaultRestaurantTime,
   getRestaurantIdForCompletion,
 } from "../utils/venueSelection";
 
@@ -76,9 +77,11 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
       if (!prev) {
         return prev;
       }
+
       return {
         ...prev,
         restaurantId,
+        restaurantTime: getDefaultRestaurantTime(restaurantId, prev.restaurantTime),
       };
     });
   }, []);

@@ -1,3 +1,8 @@
+function sortVenueOptions(options) {
+  options.sort((a, b) => a.name.localeCompare(b.name));
+  return options;
+}
+
 export function getRestaurantOptionsForPoll(poll, venues) {
   const pollPubs = poll?.pubs || {};
   const restaurantOptions = [];
@@ -16,8 +21,7 @@ export function getRestaurantOptionsForPoll(poll, venues) {
     });
   }
 
-  restaurantOptions.sort((a, b) => a.name.localeCompare(b.name));
-  return restaurantOptions;
+  return sortVenueOptions(restaurantOptions);
 }
 
 export function getAllRestaurantVenues(venues) {
@@ -27,8 +31,24 @@ export function getAllRestaurantVenues(venues) {
       results.push({ id: venueId, name: venue?.name || venueId });
     }
   }
-  results.sort((a, b) => a.name.localeCompare(b.name));
-  return results;
+  return sortVenueOptions(results);
+}
+
+export function getAllMainVenueOptions(venues) {
+  const results = [];
+  for (const [venueId, venue] of Object.entries(venues || {})) {
+    if ((venue?.venueType || "pub") !== "restaurant") {
+      results.push({ id: venueId, name: venue?.name || venueId });
+    }
+  }
+  return sortVenueOptions(results);
+}
+
+export function getDefaultRestaurantTime(restaurantId, currentTime) {
+  if (!restaurantId) {
+    return "";
+  }
+  return currentTime || "18:30";
 }
 
 export function createCompletingPollState(key, pubName, pollId, poll, venues) {
@@ -49,7 +69,7 @@ export function createCompletingPollState(key, pubName, pollId, poll, venues) {
     restaurantOptions,
     allRestaurantVenues,
     restaurantId: autoSelectedRestaurant,
-    restaurantTime: autoSelectedRestaurant ? "18:30" : "",
+    restaurantTime: getDefaultRestaurantTime(autoSelectedRestaurant),
   };
 }
 

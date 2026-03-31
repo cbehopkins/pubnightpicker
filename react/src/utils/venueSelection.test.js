@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createCompletingPollState,
+  getAllMainVenueOptions,
   getAllRestaurantVenues,
+  getDefaultRestaurantTime,
   getRestaurantIdForCompletion,
   getRestaurantOptionsForPoll,
   isRestaurantChoiceRequired,
@@ -48,6 +50,29 @@ describe("getAllRestaurantVenues", () => {
 
   it("returns empty array when no restaurants exist", () => {
     expect(getAllRestaurantVenues({ "p1": { name: "A Pub", venueType: "pub" } })).toEqual([]);
+  });
+});
+
+describe("getAllMainVenueOptions", () => {
+  it("returns all non-restaurant venues sorted by name", () => {
+    expect(getAllMainVenueOptions(systemVenues)).toEqual([
+      { id: "venue-pub", name: "The Maypole" },
+      { id: "venue-pub-food", name: "The Oak" },
+    ]);
+  });
+});
+
+describe("getDefaultRestaurantTime", () => {
+  it("returns the default meeting time when a restaurant is selected with no prior time", () => {
+    expect(getDefaultRestaurantTime("venue-restaurant", "")).toBe("18:30");
+  });
+
+  it("preserves an existing time when a restaurant is selected", () => {
+    expect(getDefaultRestaurantTime("venue-restaurant", "19:15")).toBe("19:15");
+  });
+
+  it("clears the time when no restaurant is selected", () => {
+    expect(getDefaultRestaurantTime("", "18:30")).toBe("");
   });
 });
 
