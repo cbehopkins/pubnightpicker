@@ -10,6 +10,9 @@
     gap: 1rem;
     color: #e5edf5;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
 }
 
 .header {
@@ -46,6 +49,7 @@
     border: 1px solid rgba(148, 163, 184, 0.14);
     border-radius: 14px;
     padding: 1rem;
+    min-width: 0;
 }
 
 .venueRow {
@@ -95,6 +99,7 @@
     font-size: 0.82rem;
     line-height: 1.45;
     color: #9eb0c3;
+    overflow-wrap: anywhere;
 }
 
 .select,
@@ -110,6 +115,7 @@
     cursor: pointer;
     box-sizing: border-box;
     transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+    min-width: 0;
 }
 
 .select:focus,
@@ -192,6 +198,8 @@
 
     .footer {
         align-items: stretch;
+        justify-content: stretch;
+        flex-direction: column;
     }
 
     .footerNote {
