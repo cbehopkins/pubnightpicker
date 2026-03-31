@@ -18,6 +18,20 @@ from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
 _log = logging.getLogger(__name__)
 
 
+def _compute_action_key(poll_dict: PollDocument, pub_id: str) -> str:
+    """Build a composite action key encoding pub ID, restaurant ID, and meeting time.
+
+    Storing this composite value in the comp_actions EMAIL set means that any change
+    to the restaurant or its meeting time produces a new key and therefore triggers a
+    fresh (rescheduled) notification, while an identical poll state is still deduplicated.
+    """
+    restaurant_id = poll_dict.get("restaurant") or ""
+    restaurant_time = poll_dict.get("restaurant_time") or ""
+    if (not restaurant_id) and (not restaurant_time):
+        return pub_id
+    return f"{pub_id}:{restaurant_id}:{restaurant_time}"
+
+
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
@@ -104,7 +118,7 @@ class DbHandler:
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         new_action_dict = am.action_event(
             action_dict=action_snapshot.to_dict(),
-            action_key=pub_id,
+            action_key=_compute_action_key(poll_dict, pub_id),
             poll_dict=poll_dict,
             pub_dict=pubs_list,
         )

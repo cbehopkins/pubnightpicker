@@ -1,71 +1,42 @@
-import ConfirmModal from "../UI/ConfirmModal";
+import VenueAssignmentModal from "./VenueAssignmentModal";
 
 function CompletePollModal({
   pubName,
-  restaurantOptions,
+  pubHasFood,
+  availableRestaurants,
+  restaurantSource,
   chosenRestaurantId,
   restaurantTime,
-  hasRestaurantAssociation,
-  restaurantChoiceRequired,
   onRestaurantChange,
   onRestaurantTimeChange,
   onConfirm,
   onCancel,
 }) {
-  const selectedRestaurant = restaurantOptions.find((restaurant) => restaurant.id === chosenRestaurantId);
-  const autoRestaurant = !restaurantChoiceRequired && restaurantOptions.length === 1
-    ? restaurantOptions[0]
-    : null;
+  const restaurantSectionLabel =
+    restaurantSource === "poll"
+      ? "Restaurant from this poll"
+      : "Add a restaurant to this event";
 
   return (
-    <ConfirmModal
-      title="Complete this poll?"
-      detail={<>
-        <p>Selected venue: {pubName}</p>
-        {restaurantChoiceRequired && (
-          <div>
-            <label htmlFor="restaurant-choice">Pick the restaurant for this event: </label>
-            <select
-              id="restaurant-choice"
-              value={chosenRestaurantId}
-              onChange={(event) => {
-                onRestaurantChange(event.target.value);
-              }}
-            >
-              <option value="">Select restaurant</option>
-              {restaurantOptions.map((restaurant) => {
-                return <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>;
-              })}
-            </select>
-          </div>
-        )}
-        {hasRestaurantAssociation && (
-          <div>
-            <label htmlFor="restaurant-time">Restaurant meetup time: </label>
-            <input
-              id="restaurant-time"
-              type="time"
-              value={restaurantTime}
-              onChange={(event) => {
-                onRestaurantTimeChange(event.target.value);
-              }}
-              required
-            />
-          </div>
-        )}
-        {autoRestaurant && (
-          <p>Restaurant association (automatic): {pubName} + {autoRestaurant.name}</p>
-        )}
-        {!autoRestaurant && selectedRestaurant && (
-          <p>Restaurant association: {pubName} + {selectedRestaurant.name}</p>
-        )}
-      </>}
-      confirm_disabled={
-        (restaurantChoiceRequired && !chosenRestaurantId)
-        || (hasRestaurantAssociation && !restaurantTime)
-      }
-      on_confirm={onConfirm}
-      on_cancel={onCancel}
+    <VenueAssignmentModal
+      title="Complete Poll"
+      subtitle="Confirm the venue for this event and add any final food plan details."
+      mainVenueLabel="Selected venue"
+      mainVenueName={pubName}
+      mainVenueHelpText="This is the venue that will be stored as the event destination."
+      infoNote={pubHasFood ? "This venue serves food — no separate restaurant needed." : undefined}
+      showRestaurantSection={!pubHasFood}
+      restaurantLabel={restaurantSectionLabel}
+      restaurantOptions={availableRestaurants}
+      restaurantHelpText="Choose a restaurant if the group is eating separately. Leave this as No restaurant to skip it."
+      chosenRestaurantId={chosenRestaurantId}
+      restaurantTime={restaurantTime}
+      timeHelpText="Defaults to 18:30, but you can adjust it before confirming."
+      footerNote="Saving without a restaurant leaves the completed poll without restaurant details."
+      onRestaurantChange={onRestaurantChange}
+      onRestaurantTimeChange={onRestaurantTimeChange}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
     />
   );
 }

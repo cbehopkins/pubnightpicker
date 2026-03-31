@@ -13,13 +13,26 @@ export async function deletePoll(pollId) {
     await votesDocRef;
     await attendanceDocRef;
 }
-export async function reschedule_a_poll(poll_id, current_pub_id, new_pub_id) {
+export async function reschedule_a_poll(poll_id, current_pub_id, new_pub_id, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "rescheduling a poll");
     const docRef = doc(db, "polls", poll_id);
-    await updateDoc(docRef, {
-        previous_pubs: arrayUnion(current_pub_id),
+    const payload = {
         selected: new_pub_id,
-    });
+    };
+
+    if (new_pub_id && current_pub_id && new_pub_id !== current_pub_id) {
+        payload.previous_pubs = arrayUnion(current_pub_id);
+    }
+
+    if (restaurantId) {
+        payload.restaurant = restaurantId;
+        payload.restaurant_time = restaurantTime || deleteField();
+    } else {
+        payload.restaurant = deleteField();
+        payload.restaurant_time = deleteField();
+    }
+
+    await updateDoc(docRef, payload);
 }
 export async function add_new_pub_to_poll(selectedPub, poll_id, pub_parameters) {
     if (!selectedPub) {

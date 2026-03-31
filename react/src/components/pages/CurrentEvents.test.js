@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CurrentEvents from "./CurrentEvents";
 
 const {
+  reschedulePollMock,
+  deletePollMock,
   useFutureCompletePollsMock,
   usePubsMock,
   useVotesMock,
@@ -16,6 +18,8 @@ const {
   runAttendanceActionMock,
 } = vi.hoisted(() => {
   return {
+    reschedulePollMock: vi.fn(async () => undefined),
+    deletePollMock: vi.fn(async () => undefined),
     useFutureCompletePollsMock: vi.fn(),
     usePubsMock: vi.fn(),
     useVotesMock: vi.fn(),
@@ -25,6 +29,13 @@ const {
     setAttendanceStatusMock: vi.fn(async () => undefined),
     clearAttendanceMock: vi.fn(async () => undefined),
     runAttendanceActionMock: vi.fn(async (fn) => fn()),
+  };
+});
+
+vi.mock("../../dbtools/polls", () => {
+  return {
+    deletePoll: deletePollMock,
+    reschedule_a_poll: reschedulePollMock,
   };
 });
 
@@ -119,6 +130,8 @@ describe("CurrentEvents", () => {
     useAttendanceMock.mockReset();
     useRoleMock.mockReset();
     useSelectorMock.mockReset();
+    reschedulePollMock.mockReset();
+    deletePollMock.mockReset();
     setAttendanceStatusMock.mockReset();
     clearAttendanceMock.mockReset();
     runAttendanceActionMock.mockReset();
@@ -223,5 +236,73 @@ describe("CurrentEvents", () => {
 
     expect(screen.queryByText(/Restaurant:/)).toBeNull();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
+  });
+
+  it("reschedules to any main venue and adds a restaurant", async () => {
+    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
+      selected: "venue-main",
+      date: "2026-03-30",
+    }));
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+      "venue-alt": { name: "The Anchor", venueType: "pub" },
+      "venue-food": { name: "The Oak", venueType: "pub", food: true },
+      "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
+      "venue-restaurant-2": { name: "Pizza Town", venueType: "restaurant" },
+    });
+    useRoleMock.mockImplementation((roleName) => roleName === "canCompletePoll");
+
+    render(<CurrentEvents />);
+
+    fireEvent.click(screen.getByText("Reschedule Event"));
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "venue-alt" } });
+    fireEvent.change(selects[1], { target: { value: "venue-restaurant-2" } });
+    fireEvent.click(screen.getByText("Save Changes"));
+
+    await waitFor(() => {
+      expect(reschedulePollMock).toHaveBeenCalledWith(
+        "poll-1",
+        "venue-main",
+        "venue-alt",
+        "venue-restaurant-2",
+        "18:30",
+      );
+    });
+  });
+
+  it("allows editing only the restaurant while keeping the main venue", async () => {
+    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
+      selected: "venue-main",
+      restaurant: "venue-restaurant",
+      restaurant_time: "18:30",
+      date: "2026-03-30",
+    }));
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+      "venue-alt": { name: "The Anchor", venueType: "pub" },
+      "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
+      "venue-restaurant-2": { name: "Pizza Town", venueType: "restaurant" },
+    });
+    useRoleMock.mockImplementation((roleName) => roleName === "canCompletePoll");
+
+    render(<CurrentEvents />);
+
+    fireEvent.click(screen.getByText("Reschedule Event"));
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[1], { target: { value: "venue-restaurant-2" } });
+    fireEvent.click(screen.getByText("Save Changes"));
+
+    await waitFor(() => {
+      expect(reschedulePollMock).toHaveBeenCalledWith(
+        "poll-1",
+        "venue-main",
+        "venue-main",
+        "venue-restaurant-2",
+        "18:30",
+      );
+    });
   });
 });

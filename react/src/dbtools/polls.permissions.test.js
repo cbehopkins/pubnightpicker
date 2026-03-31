@@ -73,7 +73,7 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("guards reschedule and complete with canCompletePoll", async () => {
-        await reschedule_a_poll("poll-1", "pub-1", "pub-2");
+        await reschedule_a_poll("poll-1", "pub-1", "pub-2", undefined, undefined);
         await complete_a_poll("pub-2", "poll-1", undefined, undefined);
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
@@ -85,6 +85,33 @@ describe("poll dbtools permission guards", () => {
             "completing a poll",
         );
         expect(updateDocMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("writes main venue and restaurant fields when rescheduling with a restaurant", async () => {
+        await reschedule_a_poll("poll-1", "pub-1", "pub-2", "restaurant-1", "18:30");
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "doc-ref" },
+            {
+                previous_pubs: "arrayUnion:pub-1",
+                selected: "pub-2",
+                restaurant: "restaurant-1",
+                restaurant_time: "18:30",
+            },
+        );
+    });
+
+    it("removes restaurant fields when rescheduling without a restaurant", async () => {
+        await reschedule_a_poll("poll-1", "pub-1", "pub-1", undefined, undefined);
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "doc-ref" },
+            {
+                selected: "pub-1",
+                restaurant: "deleteField",
+                restaurant_time: "deleteField",
+            },
+        );
     });
 
     it("writes restaurant when poll completion includes one", async () => {

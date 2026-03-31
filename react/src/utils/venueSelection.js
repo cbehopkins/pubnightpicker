@@ -1,3 +1,8 @@
+function sortVenueOptions(options) {
+  options.sort((a, b) => a.name.localeCompare(b.name));
+  return options;
+}
+
 export function getRestaurantOptionsForPoll(poll, venues) {
   const pollPubs = poll?.pubs || {};
   const restaurantOptions = [];
@@ -16,21 +21,55 @@ export function getRestaurantOptionsForPoll(poll, venues) {
     });
   }
 
-  restaurantOptions.sort((a, b) => a.name.localeCompare(b.name));
-  return restaurantOptions;
+  return sortVenueOptions(restaurantOptions);
+}
+
+export function getAllRestaurantVenues(venues) {
+  const results = [];
+  for (const [venueId, venue] of Object.entries(venues || {})) {
+    if ((venue?.venueType || "pub") === "restaurant") {
+      results.push({ id: venueId, name: venue?.name || venueId });
+    }
+  }
+  return sortVenueOptions(results);
+}
+
+export function getAllMainVenueOptions(venues) {
+  const results = [];
+  for (const [venueId, venue] of Object.entries(venues || {})) {
+    if ((venue?.venueType || "pub") !== "restaurant") {
+      results.push({ id: venueId, name: venue?.name || venueId });
+    }
+  }
+  return sortVenueOptions(results);
+}
+
+export function getDefaultRestaurantTime(restaurantId, currentTime) {
+  if (!restaurantId) {
+    return "";
+  }
+  return currentTime || "18:30";
 }
 
 export function createCompletingPollState(key, pubName, pollId, poll, venues) {
+  const selectedVenue = venues?.[key];
+  const pubHasFood = Boolean(selectedVenue?.food);
+
   const restaurantOptions = getRestaurantOptionsForPoll(poll, venues);
-  const autoSelectedRestaurant = restaurantOptions.length === 1 ? restaurantOptions[0].id : "";
+  const allRestaurantVenues = getAllRestaurantVenues(venues);
+
+  const autoSelectedRestaurant =
+    !pubHasFood && restaurantOptions.length === 1 ? restaurantOptions[0].id : "";
 
   return {
     key,
     pubName,
     poll_id: pollId,
+    pubHasFood,
     restaurantOptions,
+    allRestaurantVenues,
     restaurantId: autoSelectedRestaurant,
-    restaurantTime: "18:30",
+    restaurantTime: getDefaultRestaurantTime(autoSelectedRestaurant),
   };
 }
 
@@ -39,12 +78,8 @@ export function isRestaurantChoiceRequired(completingPoll) {
 }
 
 export function getRestaurantIdForCompletion(completingPoll) {
-  const restaurantOptions = completingPoll?.restaurantOptions || [];
-  if (restaurantOptions.length === 1) {
-    return restaurantOptions[0].id;
+  if (completingPoll?.pubHasFood) {
+    return undefined;
   }
-  if (restaurantOptions.length > 1) {
-    return completingPoll?.restaurantId || undefined;
-  }
-  return undefined;
+  return completingPoll?.restaurantId || undefined;
 }
