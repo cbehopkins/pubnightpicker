@@ -105,13 +105,14 @@ function ChangePubModal(params) {
 }
 
 
-function CurrentEvent({ poll_id, current_pub_id, restaurant_id, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
+function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time, date, pub_parameters, can_reschedule, can_delete_event, show_voters }) {
   const currUserId = useSelector((state) => state.auth.uid);
   const [votes] = useVotes(poll_id);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
   const eventViewModel = buildCurrentEventViewModel({
     current_pub_id,
     restaurant_id,
+    restaurant_time,
     pub_parameters,
     votes,
     attendance,
@@ -196,7 +197,7 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, date, pub_parame
       </QuestionRender>}
 
       {restaurantVenue && <>
-        <h3>Restaurant: {restaurantVenue.name}</h3>
+        <h3>Restaurant: {restaurantVenue.name}{restaurantVenue.restaurantTime ? ` (${restaurantVenue.restaurantTime})` : ""}</h3>
         {restaurantVenue.address && <p>{restaurantVenue.address}</p>}
         {currUserId && <AttendanceActions
           className={styles.attendanceActions}
@@ -269,6 +270,7 @@ function CurrentEvents() {
             poll_id={key}
             current_pub_id={value.selected}
             restaurant_id={value.restaurant}
+            restaurant_time={value.restaurant_time}
             date={value.date}
             pub_parameters={pub_parameters}
             can_reschedule={canReschedule}

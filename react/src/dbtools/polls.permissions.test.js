@@ -74,7 +74,7 @@ describe("poll dbtools permission guards", () => {
 
     it("guards reschedule and complete with canCompletePoll", async () => {
         await reschedule_a_poll("poll-1", "pub-1", "pub-2");
-        await complete_a_poll("pub-2", "poll-1");
+        await complete_a_poll("pub-2", "poll-1", undefined, undefined);
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canCompletePoll",
@@ -88,7 +88,7 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("writes restaurant when poll completion includes one", async () => {
-        await complete_a_poll("pub-2", "poll-1", "pub-restaurant-1");
+        await complete_a_poll("pub-2", "poll-1", "pub-restaurant-1", "18:30");
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -96,6 +96,19 @@ describe("poll dbtools permission guards", () => {
                 completed: true,
                 selected: "pub-2",
                 restaurant: "pub-restaurant-1",
+                restaurant_time: "18:30",
+            },
+        );
+    });
+
+    it("does not write restaurant_time when no restaurant is stored", async () => {
+        await complete_a_poll("pub-2", "poll-1", undefined, "18:30");
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "doc-ref" },
+            {
+                completed: true,
+                selected: "pub-2",
             },
         );
     });

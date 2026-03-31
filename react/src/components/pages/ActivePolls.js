@@ -56,6 +56,8 @@ function ActivePolls() {
   const poll_id = completingPoll?.poll_id;
   const restaurantOptions = completingPoll?.restaurantOptions || [];
   const chosenRestaurantId = completingPoll?.restaurantId || "";
+  const restaurantTime = completingPoll?.restaurantTime || "";
+  const hasRestaurantAssociation = restaurantOptions.length > 0;
   const restaurantChoiceRequired = isRestaurantChoiceRequired(completingPoll);
   // Then if we decide to complete, then actually run the complete
   const completeThePoll = useCallback(async () => {
@@ -72,14 +74,23 @@ function ActivePolls() {
     }
 
     const restaurantToPersist = getRestaurantIdForCompletion(completingPoll);
+    const restaurantTimeToPersist = restaurantToPersist ? restaurantTime : undefined;
 
     try {
-      await complete_a_poll(key, poll_id, restaurantToPersist);
+      await complete_a_poll(key, poll_id, restaurantToPersist, restaurantTimeToPersist);
       setCompletingPoll(null);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to complete this poll."));
     }
-  }, [key, poll_id, canCompletePoll, chosenRestaurantId, restaurantChoiceRequired, completingPoll]);
+  }, [
+    key,
+    poll_id,
+    canCompletePoll,
+    chosenRestaurantId,
+    restaurantChoiceRequired,
+    completingPoll,
+    restaurantTime,
+  ]);
 
   const completingPollBusy = Boolean(completingPoll);
   const styleToUse = mobile ? styles.poll_mobile : styles.poll;
@@ -95,6 +106,18 @@ function ActivePolls() {
     });
   }, []);
 
+  const setRestaurantTime = useCallback((timeValue) => {
+    setCompletingPoll((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        restaurantTime: timeValue,
+      };
+    });
+  }, []);
+
   // Change line numbers
   return (
     <div>
@@ -105,8 +128,11 @@ function ActivePolls() {
           pubName={pubName}
           restaurantOptions={restaurantOptions}
           chosenRestaurantId={chosenRestaurantId}
+          restaurantTime={restaurantTime}
+          hasRestaurantAssociation={hasRestaurantAssociation}
           restaurantChoiceRequired={restaurantChoiceRequired}
           onRestaurantChange={setRestaurantChoice}
+          onRestaurantTimeChange={setRestaurantTime}
           onConfirm={completeThePoll}
           onCancel={() => {
             setCompletingPoll(null);

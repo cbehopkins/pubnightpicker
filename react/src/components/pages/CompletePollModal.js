@@ -4,8 +4,11 @@ function CompletePollModal({
   pubName,
   restaurantOptions,
   chosenRestaurantId,
+  restaurantTime,
+  hasRestaurantAssociation,
   restaurantChoiceRequired,
   onRestaurantChange,
+  onRestaurantTimeChange,
   onConfirm,
   onCancel,
 }) {
@@ -36,6 +39,20 @@ function CompletePollModal({
             </select>
           </div>
         )}
+        {hasRestaurantAssociation && (
+          <div>
+            <label htmlFor="restaurant-time">Restaurant meetup time: </label>
+            <input
+              id="restaurant-time"
+              type="time"
+              value={restaurantTime}
+              onChange={(event) => {
+                onRestaurantTimeChange(event.target.value);
+              }}
+              required
+            />
+          </div>
+        )}
         {autoRestaurant && (
           <p>Restaurant association (automatic): {pubName} + {autoRestaurant.name}</p>
         )}
@@ -43,7 +60,10 @@ function CompletePollModal({
           <p>Restaurant association: {pubName} + {selectedRestaurant.name}</p>
         )}
       </>}
-      confirm_disabled={restaurantChoiceRequired && !chosenRestaurantId}
+      confirm_disabled={
+        (restaurantChoiceRequired && !chosenRestaurantId)
+        || (hasRestaurantAssociation && !restaurantTime)
+      }
       on_confirm={onConfirm}
       on_cancel={onCancel}
     />

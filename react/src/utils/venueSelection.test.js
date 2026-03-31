@@ -49,6 +49,7 @@ describe("venueSelection", () => {
       { id: "venue-restaurant", name: "Pizza Town" },
     ]);
     expect(state.restaurantId).toBe("venue-restaurant");
+    expect(state.restaurantTime).toBe("18:30");
     expect(isRestaurantChoiceRequired(state)).toBe(false);
     expect(getRestaurantIdForCompletion(state)).toBe("venue-restaurant");
   });

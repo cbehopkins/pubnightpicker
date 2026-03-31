@@ -54,7 +54,7 @@ RESTAURANT_TEMPLATE = textwrap.dedent(
 RESTAURANT_BLOCK_TEMPLATE = textwrap.dedent(
     """\
 
-    Before the pub we are meeting at {venue_name}."""
+    Before the pub we are meeting at {venue_name}.{restaurant_time_block}"""
 )
 OPEN_TEMPLATE = textwrap.dedent(
     """\
@@ -109,10 +109,18 @@ def _mailtrap_client() -> mailtrap.MailtrapClient:
     return mailtrap.MailtrapClient(token=token)
 
 
-def _restaurant_block(restaurant_venue: VenuePayload | None) -> str:
+def _restaurant_block(restaurant_venue: VenuePayload | None, restaurant_time: str | None) -> str:
     if restaurant_venue is None:
         return ""
-    base = RESTAURANT_BLOCK_TEMPLATE.format(venue_name=_escape(restaurant_venue.name))
+    if restaurant_time:
+        restaurant_time_block = f" We will be meeting there at {restaurant_time}."
+    else:
+        restaurant_time_block = ""
+    base = RESTAURANT_BLOCK_TEMPLATE.format(
+        venue_name=_escape(restaurant_venue.name),
+        restaurant_time_block=restaurant_time_block,
+    )
+
     return (
         _append_venue_details(base, venue=restaurant_venue, uid=None, pub_wording=False)
         + "\n\n"
@@ -124,13 +132,14 @@ def _render_pub_template(
     selected_venue: VenuePayload,
     restaurant_venue: VenuePayload | None,
     event_date: str,
+    restaurant_time: str | None,
     uid: UserId | None,
 ) -> str:
     base = BASE_TEMPLATE.format(
         pub_name=_escape(selected_venue.name),
         event_date=_escape(event_date),
     )
-    base += _restaurant_block(restaurant_venue)
+    base += _restaurant_block(restaurant_venue, restaurant_time)
     base += PUB_TEMPLATE.format(
         pub_name=_escape(selected_venue.name),
         event_date=_escape(event_date),
@@ -143,6 +152,7 @@ def _render_non_pub_template(
     selected_venue: VenuePayload,
     restaurant_venue: VenuePayload | None,
     event_date: str,
+    restaurant_time: str | None,
     uid: UserId | None,
 ) -> str:
     if selected_venue.venue_type == VenueType.EVENT:
@@ -155,7 +165,7 @@ def _render_non_pub_template(
             venue_name=_escape(selected_venue.name),
             event_date=_escape(event_date),
         )
-    message += _restaurant_block(restaurant_venue)
+    message += _restaurant_block(restaurant_venue, restaurant_time)
     return _append_venue_details(
         message, venue=selected_venue, uid=uid, pub_wording=False
     )
@@ -166,6 +176,7 @@ def build_notification_text(
     selected_venue: VenuePayload,
     restaurant_venue: VenuePayload | None,
     event_date: str,
+    restaurant_time: str | None = None,
     uid: UserId | None,
 ) -> str:
     if selected_venue.venue_type == VenueType.PUB:
@@ -173,12 +184,14 @@ def build_notification_text(
             selected_venue=selected_venue,
             restaurant_venue=restaurant_venue,
             event_date=event_date,
+            restaurant_time=restaurant_time,
             uid=uid,
         )
     return _render_non_pub_template(
         selected_venue=selected_venue,
         restaurant_venue=None,
         event_date=event_date,
+        restaurant_time=restaurant_time,
         uid=uid,
     )
 
@@ -264,6 +277,7 @@ def send_ampub_email(
             selected_venue=selected_venue,
             restaurant_venue=restaurant_venue,
             event_date=poll.date,
+            restaurant_time=poll.restaurant_time,
             uid=uid,
         )
         _log.info(f"Notification email to send to {email}::{contents}")

@@ -13,6 +13,7 @@ class PollPayload(BaseModel):
     date: str
     completed: bool = False
     restaurant: str | None = None
+    restaurant_time: str | None = None
 
     @field_validator("date", mode="before")
     @classmethod
