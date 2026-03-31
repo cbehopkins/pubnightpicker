@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Form, useNavigate, useNavigation } from "react-router-dom";
 
 import styles from "./PubForm.module.css";
@@ -51,6 +52,7 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
 function PubForm({ method, pub_object }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
+  const [venueType, setVenueType] = useState(pub_object ? (pub_object.venueType || "pub") : "pub");
 
   const isSubmitting = navigation.state === "submitting";
 
@@ -65,7 +67,10 @@ function PubForm({ method, pub_object }) {
           <select
             id="venueType"
             name="venueType"
-            defaultValue={pub_object ? (pub_object.venueType || "pub") : "pub"}
+            value={venueType}
+            onChange={(event) => {
+              setVenueType(event.target.value);
+            }}
           >
             {VenueTypes.map((venueType) => {
               return (
@@ -149,6 +154,10 @@ function PubForm({ method, pub_object }) {
       <table className={styles.checkboxes}>
         <tbody>
           {Object.entries(PubParams).map(([key, value]) => {
+            if (venueType === "restaurant" && key === "food") {
+              return null;
+            }
+
             return (
               <PubCheckbox
                 key={key}

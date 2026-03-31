@@ -1,5 +1,15 @@
-import { useState, useEffect, useMemo } from "react";
-import { query, collection, where, orderBy, limit } from "firebase/firestore";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  query,
+  collection,
+  where,
+  orderBy,
+  limit,
+  startAfter,
+  getDocs,
+  getDoc,
+  doc,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
 import { PollData, getTodaysDate, millisecUntilMidnight } from "../utils/pollSorting";
@@ -29,17 +39,62 @@ export function useFutureCompletePolls() {
   const polls = useQueryDb(q);
   return new PollData(polls);
 }
-export function usePastCompletePolls(pubCount) {
+export function usePastCompletePolls(pubCount, cursorId = null) {
   const todaysDate = useTodaysDate();
-  const q = useMemo(() => query(
+  const baseQuery = useMemo(() => query(
     collection(db, "polls"),
     where("completed", "==", true),
     where("date", "<", todaysDate),
-    orderBy("date", "desc"),
-    limit(pubCount)
-  ), [todaysDate, pubCount]);
-  const polls = useQueryDb(q);
-  return new PollData(polls);
+    orderBy("date", "desc")
+  ), [todaysDate]);
+
+  const [polls, setPolls] = useState({});
+  const [lastVisibleId, setLastVisibleId] = useState(null);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchPage = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      let pageQuery = query(baseQuery, limit(pubCount + 1));
+
+      if (cursorId) {
+        const cursorSnapshot = await getDoc(doc(db, "polls", cursorId));
+        if (cursorSnapshot.exists()) {
+          pageQuery = query(baseQuery, startAfter(cursorSnapshot), limit(pubCount + 1));
+        }
+      }
+
+      const snapshot = await getDocs(pageQuery);
+      let docs = [...snapshot.docs];
+      const computedHasNextPage = docs.length > pubCount;
+      if (computedHasNextPage) {
+        docs = docs.slice(0, pubCount);
+      }
+
+      const nextPolls = docs.reduce((acc, snap) => {
+        acc[snap.id] = snap.data();
+        return acc;
+      }, {});
+
+      setPolls(nextPolls);
+      setLastVisibleId(docs[docs.length - 1]?.id || null);
+      setHasNextPage(computedHasNextPage);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [baseQuery, pubCount, cursorId]);
+
+  useEffect(() => {
+    fetchPage();
+  }, [fetchPage]);
+
+  return {
+    pollData: new PollData(polls),
+    hasNextPage,
+    lastVisibleId,
+    isLoading,
+  };
 }
 
 function usePolls() {

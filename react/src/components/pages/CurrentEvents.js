@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { useSelector } from "react-redux";
+import { useSearchParams } from "react-router-dom";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
@@ -55,28 +56,78 @@ function PastEvent({ value, pub_parameters }) {
 }
 
 export function PastEvents() {
-  const [pubCount, setPubCount] = useState(5);
-  const pollData = usePastCompletePolls(pubCount);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pubCountParam = Number(searchParams.get("pastPageSize"));
+  const pubCount = [5, 10, 20].includes(pubCountParam) ? pubCountParam : 5;
+  const cursorTrail = (searchParams.get("pastCursorTrail") || "")
+    .split(",")
+    .filter(Boolean);
+  const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
+
+  const {
+    pollData,
+    hasNextPage,
+    lastVisibleId,
+    isLoading,
+  } = usePastCompletePolls(pubCount, currentCursorId);
+
+  const hasPreviousPage = cursorTrail.length > 0;
+  const pageIndex = cursorTrail.length;
   const pub_parameters = usePubs();
   const sortedPollsByDate = [...pollData.sortedByDate(true)]
+
+  const writePaginationParams = useCallback((nextPageSize, nextCursorTrail) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("pastPageSize", String(nextPageSize));
+    if (nextCursorTrail.length > 0) {
+      nextParams.set("pastCursorTrail", nextCursorTrail.join(","));
+    } else {
+      nextParams.delete("pastCursorTrail");
+    }
+    setSearchParams(nextParams);
+  }, [searchParams, setSearchParams]);
+
   const selectPubCountHandler = useCallback(
     (event) => {
       event.preventDefault();
-      console.log("setting value to", event.target.value)
-      setPubCount(event.target.value);
+      writePaginationParams(Number(event.target.value), []);
     },
-    [setPubCount]
+    [writePaginationParams]
   );
+
+  const goToNextPage = useCallback(() => {
+    if (!hasNextPage || !lastVisibleId || isLoading) {
+      return;
+    }
+    writePaginationParams(pubCount, [...cursorTrail, lastVisibleId]);
+  }, [hasNextPage, lastVisibleId, isLoading, writePaginationParams, pubCount, cursorTrail]);
+
+  const goToPreviousPage = useCallback(() => {
+    if (!hasPreviousPage || isLoading) {
+      return;
+    }
+    writePaginationParams(pubCount, cursorTrail.slice(0, -1));
+  }, [hasPreviousPage, isLoading, writePaginationParams, pubCount, cursorTrail]);
+
   return (
     <div>
       <h1>Past Events</h1>
       <span>
         <label>Number of past events to show</label>
-        <select defaultValue={pubCount} onChange={selectPubCountHandler}>
+        <select value={pubCount} onChange={selectPubCountHandler}>
           <option>5</option>
           <option>10</option>
           <option>20</option>
         </select></span>
+      <div className={styles.button}>
+        <button type="button" onClick={goToPreviousPage} disabled={!hasPreviousPage || isLoading}>
+          Newer Events
+        </button>
+        <button type="button" onClick={goToNextPage} disabled={!hasNextPage || isLoading}>
+          Older Events
+        </button>
+      </div>
+      <p>Page {pageIndex + 1}</p>
       {sortedPollsByDate.map(([key, value]) => {
         return <PastEvent key={key} value={value} pub_parameters={pub_parameters} />
       })}
