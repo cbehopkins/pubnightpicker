@@ -1,3 +1,5 @@
+import Button from "./Button";
+
 function AttendanceActions({
     canComeSelected,
     cannotComeSelected,
@@ -22,6 +24,9 @@ function AttendanceActions({
     canComeTitle,
     cannotComeTitle,
     onAfterAction,
+    canComeVariant = "success",
+    cannotComeVariant = "danger",
+    clearVariant = "secondary",
 }) {
     const handleCanCome = async () => {
         if (canComeSelected) {
@@ -50,7 +55,9 @@ function AttendanceActions({
 
     return (
         <div className={className}>
-            <button
+            <Button
+                type="button"
+                variant={canComeVariant}
                 className={canComeClasses}
                 onClick={handleCanCome}
                 title={canComeTitle}
@@ -63,8 +70,10 @@ function AttendanceActions({
                         {canComeShortLabel}
                     </span>
                 )}
-            </button>
-            <button
+            </Button>
+            <Button
+                type="button"
+                variant={cannotComeVariant}
                 className={cannotComeClasses}
                 onClick={handleCannotCome}
                 title={cannotComeTitle}
@@ -77,11 +86,19 @@ function AttendanceActions({
                         {cannotComeShortLabel}
                     </span>
                 )}
-            </button>
+            </Button>
             {clearMode === "button" && (canComeSelected || cannotComeSelected) && (
-                <button className={buttonClassName} onClick={async () => { await onClear(); onAfterAction?.(); }}>
+                <Button
+                    type="button"
+                    variant={clearVariant}
+                    className={buttonClassName}
+                    onClick={async () => {
+                        await onClear();
+                        onAfterAction?.();
+                    }}
+                >
                     {clearLabel}
-                </button>
+                </Button>
             )}
         </div>
     );

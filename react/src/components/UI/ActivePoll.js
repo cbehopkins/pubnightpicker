@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import PollVote from "./PollVote";
 import PubOptions from "./PubOptions";
 import PubFilter from "./PubFilter";
+import Button from "./Button";
 import styles from "./ActivePoll.module.css";
 import useRole from "../../hooks/useRole";
 import { AntiPubParams } from "../pages/PubForm"
@@ -132,16 +133,16 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
       </div>}
       <div>
         {canDeletePoll && (
-          <button className={styles["button--alt"]} onClick={deletePollHandler}>
+          <Button type="button" variant="danger" className={styles["button--alt"]} onClick={deletePollHandler}>
             Delete Poll
-          </button>
+          </Button>
         )}
         {canAddPub && <>
           <PubOptions
             pub_parameters={newObj}
             selectPubHandler={selectPubHandler}
           />
-          <button onClick={addNewPubToPoll}>Add Venue To Poll</button>
+          <Button type="button" onClick={addNewPubToPoll}>Add Venue To Poll</Button>
         </>
         }
       </div>

@@ -1,0 +1,261 @@
+/**
+ * Phase 0: Bootstrap CSS Customization Overrides
+ * 
+ * Maps PubNightPicker's existing color and spacing tokens to Bootstrap components
+ * without requiring SCSS compilation. Uses CSS custom properties for theming.
+ * 
+ * Import order:
+ * 1. bootstrap.min.css (from node_modules)
+ * 2. This file (bootstrap-overrides.css)
+ * 3. index.css (app-specific styles)
+ */
+
+:root {
+  /* PubNightPicker Color Palette - to override Bootstrap defaults */
+  --bs-primary: #f9c762;
+  /* Warm gold/yellow primary */
+  --bs-secondary: #4b4a47;
+  /* Dark gray secondary */
+  --bs-success: #28a745;
+  /* Bootstrap default green */
+  --bs-danger: #dc3545;
+  /* Bootstrap default red */
+  --bs-warning: #ffc107;
+  /* Bootstrap default yellow */
+  --bs-info: #17a2b8;
+  /* Bootstrap default cyan */
+  --bs-light: #f4f3f1;
+  /* Very light gray */
+  --bs-dark: #1f1d1b;
+  /* Very dark gray */
+  --bs-body-color: #1f1d1b;
+  --bs-body-bg: #f4f3f1;
+  --bs-emphasis-color: #1f1d1b;
+  --bs-secondary-color: #4b4a47;
+  --bs-tertiary-bg: #f4f3f1;
+
+  /* Grayscale tokens for subtle UI elements */
+  --bs-gray-100: #f4f3f1;
+  --bs-gray-200: #dddbd8;
+  --bs-gray-300: #ccc9c6;
+  --bs-gray-400: #aeaba7;
+  --bs-gray-500: #8a8784;
+  --bs-gray-600: #656360;
+  --bs-gray-700: #4b4a47;
+  --bs-gray-800: #31302e;
+  --bs-gray-900: #1f1d1b;
+
+  /* Bootstrap spacing scale alignment */
+  --bs-spacer: 1rem;
+
+  /* Responsive Breakpoints - align with app's custom breakpoints */
+  --breakpoint-mobile: 480px;
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1024px;
+  --breakpoint-wide: 1440px;
+
+  /* Responsive Spacing - uses clamp for fluid scaling */
+  --spacing-xs: clamp(0.25rem, 1vw, 0.5rem);
+  --spacing-sm: clamp(0.5rem, 2vw, 1rem);
+  --spacing-md: clamp(1rem, 3vw, 1.5rem);
+  --spacing-lg: clamp(1.5rem, 4vw, 2rem);
+  --spacing-xl: clamp(2rem, 5vw, 3rem);
+
+  /* Border radius - moderate rounded style */
+  --bs-border-radius: 0.375rem;
+  --bs-border-radius-lg: 0.5rem;
+}
+
+/**
+ * Accessibility & Focus Management
+ * Ensure Bootstrap components meet PubNightPicker accessibility standards
+ */
+.btn:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.nav-link:focus-visible,
+.form-control:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+/**
+ * Bootstrap Button Customization
+ * Subtle adjustments to match app's existing button styling
+ */
+.btn {
+  font-weight: 500;
+  transition: all 0.15s ease-in-out;
+}
+
+.btn-primary {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #1f1d1b;
+}
+
+.btn-primary:hover {
+  background-color: #f6ad1b;
+  border-color: #f6ad1b;
+}
+
+.btn-primary:active,
+.btn-primary.active {
+  background-color: #fab833;
+  border-color: #fab833;
+}
+
+/**
+ * Bootstrap Card Customization
+ */
+.card {
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 0.5rem;
+}
+
+.card-header {
+  background-color: #f4f3f1;
+  border-bottom: 1px solid #dddbd8;
+}
+
+/**
+ * Bootstrap Modal Customization
+ */
+.modal-content {
+  border: none;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  background-color: #f4f3f1;
+  border-bottom: 1px solid #dddbd8;
+}
+
+/**
+ * Bootstrap Form Customization
+ */
+.form-control {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
+}
+
+.form-control::placeholder {
+  color: var(--bs-secondary-color);
+  opacity: 0.7;
+}
+
+.form-select {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
+}
+
+.form-select option {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.25rem rgba(249, 199, 98, 0.25);
+  color: var(--bs-body-color);
+}
+
+/* Additional form element styling */
+label,
+.form-label {
+  color: var(--bs-body-color);
+}
+
+textarea.form-control {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="url"],
+textarea {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+}
+
+input[type="text"]::placeholder,
+input[type="email"]::placeholder,
+input[type="password"]::placeholder,
+input[type="number"]::placeholder,
+textarea::placeholder {
+  color: var(--bs-secondary-color);
+  opacity: 0.7;
+}
+
+/* Modal text elements */
+.modal-body {
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+}
+
+.modal-body p,
+.modal-body h1,
+.modal-body h2,
+.modal-body h3,
+.modal-body h4,
+.modal-body h5,
+.modal-body h6 {
+  color: var(--bs-body-color);
+}
+
+/**
+ * Responsive Behavior Alignment
+ * Bootstrap breakpoints now coordinated with PubNightPicker's custom breakpoints
+ */
+@media (max-width: 480px) {
+
+  /* Mobile: larger touch targets */
+  .btn {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  .form-control,
+  .form-select {
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    /* Prevent zoom on iOS */
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Tablet: balanced spacing */
+}
+
+@media (min-width: 1024px) {
+  /* Desktop: optimized whitespace */
+}
+
+/**
+ * Phase 0 Migration Helper Classes
+ * Use these during gradual migration to bridge Bootstrap and CSS Modules
+ */
+
+.bs-wrapper {
+  display: contents;
+  /* Make wrapper transparent in layout */
+}
+
+.legacy-module {
+  /* Mark components still using CSS Modules for easy tracking */
+}
+
+.bs-migrated {
+  /* Mark components migrated to Bootstrap components */
+}

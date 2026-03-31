@@ -1,4 +1,5 @@
 import Modal from "./Modal";
+import Button from "./Button";
 import useUsers from "../../hooks/useUsers";
 import styles from "./PollVote.module.css";
 
@@ -52,7 +53,7 @@ export default function ShowAttendance(params) {
                         ))}
                     </tbody>
                 </table>
-                <button onClick={params.on_cancel}>Close</button>
+                <Button type="button" variant="secondary" onClick={params.on_cancel}>Close</Button>
             </div>
         </Modal>
     );

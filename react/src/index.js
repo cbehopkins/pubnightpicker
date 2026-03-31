@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import  './index.css';
+import 'bootstrap/dist/css/bootstrap.min.css'; // Phase 0: Bootstrap foundation
+import './bootstrap-overrides.css'; // Phase 0: Custom theme overrides
+import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { Provider } from 'react-redux';

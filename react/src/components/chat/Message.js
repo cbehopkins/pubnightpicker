@@ -28,18 +28,44 @@ const Message = ({ message, users }) => {
     }
 
     return (
-        <div className={`${styles.chatBubble} ${messageFromMe ? styles.right : ""}`}>
-            <img
-                className={styles.chatBubbleLeft}
-                src={avatar}
-                alt="user avatar"
-                referrerPolicy="no-referrer"
-            />
-            <div className="chat-bubble__right">
-                <p className={styles.userName}>{name}</p>
-                <p className={styles.userMessage}>{message.text}</p>
+        <div className={`d-flex align-items-start gap-2 mb-3 ${messageFromMe ? "justify-content-end" : ""}`}>
+            {!messageFromMe && (
+                <img
+                    className={styles.chatBubbleLeft}
+                    src={avatar}
+                    alt="user avatar"
+                    referrerPolicy="no-referrer"
+                />
+            )}
+
+            <div className={`card shadow-sm ${styles.messageCard} ${messageFromMe ? "bg-primary-subtle border-primary-subtle" : "bg-body-tertiary border"}`}>
+                <div className="card-body p-2 p-md-3">
+                    <div className="d-flex align-items-start justify-content-between gap-2">
+                        <p className={`${styles.userName} text-body-emphasis mb-1`}>{name}</p>
+                        {deleteAllowed && (
+                            <button
+                                className="btn btn-sm btn-link text-danger p-0"
+                                onClick={deleteMessage}
+                                type="button"
+                                aria-label="Delete Message"
+                                title="Delete Message"
+                            >
+                                <img src={DeleteIcon} alt="" aria-hidden="true" />
+                            </button>
+                        )}
+                    </div>
+                    <p className={`${styles.userMessage} text-body mb-0`}>{message.text}</p>
+                </div>
             </div>
-            {deleteAllowed && <img src={DeleteIcon} onClick={deleteMessage} alt="Delete Message" />}
+
+            {messageFromMe && (
+                <img
+                    className={styles.chatBubbleLeft}
+                    src={avatar}
+                    alt="user avatar"
+                    referrerPolicy="no-referrer"
+                />
+            )}
         </div>
     );
 };

@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import TextModal from "../UI/TextModal";
 import ConfirmModal from "../UI/ConfirmModal";
+import Button from "../UI/Button";
 import {
   EmailAuthProvider, getAuth, updatePassword, reauthenticateWithCredential,
 } from "firebase/auth";
@@ -15,6 +16,13 @@ import { useAuthState } from "react-firebase-hooks/auth";
 import getUserDoc from "../../dbtools/getUserDoc";
 import styles from "./Preferences.module.css";
 import { notifyError } from "../../utils/notify";
+import { Card, Form } from "react-bootstrap";
+import {
+  applyThemeMode,
+  getStoredThemeMode,
+  setStoredThemeMode,
+  subscribeToSystemThemeChanges,
+} from "../../utils/themeMode";
 
 async function ReauthenticateUser(auth, userProvidedPassword) {
   const credential = EmailAuthProvider.credential(
@@ -122,7 +130,9 @@ function ChangeMyPassword() {
       on_confirm={() => setErrorString("")}
       confirm_only={true}
     />}
-    <button onClick={() => { setShowPasswordChange(true) }}>Change Password</button>
+    <Button type="button" variant="secondary" onClick={() => { setShowPasswordChange(true) }}>
+      Change Password
+    </Button>
     {showPasswordChange && <TextModal
       title="Change Password"
       detail="New Password"
@@ -150,6 +160,8 @@ function Preferences(params) {
   const auth = getAuth();
   const navigate = useNavigate();
   const [user, loading] = useAuthState(auth);
+  const [themeMode, setThemeMode] = useState(getStoredThemeMode);
+
   useEffect(() => {
     if (loading) {
       // maybe trigger a loading screen
@@ -157,9 +169,42 @@ function Preferences(params) {
     }
     if (!user) navigate("/");
   }, [user, loading, navigate]);
+
+  useEffect(() => {
+    applyThemeMode(themeMode);
+
+    if (themeMode !== "auto") {
+      return undefined;
+    }
+
+    const handleChange = () => applyThemeMode("auto");
+    return subscribeToSystemThemeChanges(handleChange);
+  }, [themeMode]);
+
+  const handleThemeModeChange = (event) => {
+    const nextMode = event.target.value;
+    setThemeMode(nextMode);
+    setStoredThemeMode(nextMode);
+  };
+
   // FIXME, this feels hacky!
   const isPassword = !loading && user && auth && (auth.currentUser.providerData[0].providerId === "password")
-  return <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+  return <div className="container py-3 d-flex flex-column gap-3" style={{ minHeight: "100vh" }}>
+    <Card>
+      <Card.Body>
+        <Form.Group controlId="theme_mode">
+          <Form.Label className="fw-semibold">Theme</Form.Label>
+          <Form.Select value={themeMode} onChange={handleThemeModeChange}>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="auto">Auto (match system)</option>
+          </Form.Select>
+          <Form.Text className="text-body-secondary">
+            Default is Auto mode. Auto follows your operating system setting.
+          </Form.Text>
+        </Form.Group>
+      </Card.Body>
+    </Card>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
     <PreferencesForm method="post" />

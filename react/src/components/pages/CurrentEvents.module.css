@@ -3,24 +3,17 @@
     max-width: 300px;
 }
 
-.button button {
-    font: inherit;
-    border: 1px solid #4f005f;
-    background: #4f005f;
-    color: white;
-    padding: 0.25rem 1rem;
-    cursor: pointer;
+.pastEventImage {
+    height: 220px;
+    width: 100%;
+    object-fit: cover;
 }
 
-
-.button button:hover,
-.button button:active {
-    background: #741188;
-    border-color: #741188;
-}
-
-.button button:focus {
-    outline: none;
+.pastEventImagePlaceholder {
+    height: 220px;
+    width: 100%;
+    background: var(--bs-secondary-bg);
+    border-bottom: 1px solid var(--bs-border-color);
 }
 
 .attendanceActions {
@@ -30,22 +23,10 @@
     margin: 0 0 1rem;
 }
 
-.attendanceButton {
-    font: inherit;
-    border: 1px solid #4f005f;
-    background: #4f005f;
-    color: white;
-    padding: 0.25rem 1rem;
-    cursor: pointer;
+.attendanceActions :global(.btn) {
+    min-width: 9rem;
 }
 
-.attendanceButton:hover,
-.attendanceButton:active,
-.attendanceButtonSelected {
-    background: #741188;
-    border-color: #741188;
-}
-
-.attendanceButton:focus {
-    outline: none;
+.actionBlock :global(.btn) {
+    margin-bottom: 0;
 }

@@ -10,6 +10,7 @@ import { useBallotActions } from "../../hooks/useBallotActions";
 import ShowAttendance from "./ShowAttendance";
 import AttendanceActions from "./AttendanceActions";
 import { QuestionRender } from "./ConfirmModal";
+import Button from "./Button";
 
 function RespondMenu({
   votedFor,
@@ -84,28 +85,30 @@ function RespondMenu({
 
   return (
     <div className={styles.respondMenu} ref={menuRef}>
-      <button
+      <Button
         ref={triggerRef}
         type="button"
+        variant="success"
         className={`${styles.respondSummary} ${showActions ? styles.respondSummaryActive : ""}`}
         onClick={toggleActions}
         aria-haspopup="menu"
         aria-expanded={showActions}
       >
         Respond
-      </button>
+      </Button>
       {showActions && (
         <div
           ref={panelRef}
-          className={`${styles.respondPanel} ${
-            panelPlacement === "right"
+          className={`${styles.respondPanel} ${panelPlacement === "right"
               ? styles.respondPanelRight
               : panelPlacement === "above"
                 ? styles.respondPanelAbove
                 : styles.respondPanelBelow
-          }`}
+            }`}
         >
-          <button
+          <Button
+            type="button"
+            variant={votedFor ? "warning" : "success"}
             className={`${styles.voteButton} ${votedFor ? styles.voted : ""}`}
             onClick={async () => {
               await onVote();
@@ -114,11 +117,13 @@ function RespondMenu({
             title={votedFor ? "Cancel your vote" : "Vote for this venue"}
           >
             {votedFor ? "Cancel Vote" : "Vote Up"}
-          </button>
+          </Button>
           {allowAttendanceControls && (
             <AttendanceActions
               canComeSelected={userCanCome}
               cannotComeSelected={userCannotCome}
+              canComeVariant="success"
+              cannotComeVariant="danger"
               buttonClassName={styles.attendanceButton}
               canComeSelectedClassName={styles.attending}
               cannotComeSelectedClassName={styles.notAttending}
@@ -136,7 +141,9 @@ function RespondMenu({
           {allowGlobalAttendanceControls && (
             <>
               <div className={styles.panelDivider}></div>
-              <button
+              <Button
+                type="button"
+                variant="success"
                 className={styles.comingAllButton}
                 onClick={async () => {
                   await onSetAllCanCome();
@@ -145,8 +152,10 @@ function RespondMenu({
                 title="Set can come for every pub in this poll"
               >
                 I'm coming (all pubs)
-              </button>
-              <button
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
                 className={styles.cannotComeAllButton}
                 onClick={async () => {
                   await onSetAllCannotCome();
@@ -155,7 +164,7 @@ function RespondMenu({
                 title="Set cannot come for every pub in this poll"
               >
                 I can't come (all pubs)
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -204,18 +213,20 @@ function VotablePub({
       {showDeleteColumn && (
         <td>
           {allowDelete && (
-            <button
+            <Button
+              type="button"
+              variant="danger"
               className={styles.deleter}
               onClick={rowData.deleteHandler}
             >
               Delete
-            </button>
+            </Button>
           )}
         </td>
       )}
       <td>
         {allowCompletePoll ? (
-          <button onClick={completeHandler}>{pubName}</button>
+          <Button type="button" variant="secondary" onClick={completeHandler}>{pubName}</Button>
         ) : (
           <label>{pubName}</label>
         )}
@@ -227,8 +238,8 @@ function VotablePub({
         <td className={styles.attendanceIndicator}>
           {pubId !== "any" && (
             rowData.userCanCome ? <span title="You said you can come">✅</span>
-            : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
-            : null
+              : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
+                : null
           )}
         </td>
       )}
