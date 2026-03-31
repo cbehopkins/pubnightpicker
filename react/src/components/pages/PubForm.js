@@ -1,6 +1,5 @@
-import { Form, useNavigate, useNavigation } from "react-router-dom";
-
-import styles from "./PubForm.module.css";
+import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
+import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
 
 const VenueTypes = ["pub", "restaurant", "event"];
 
@@ -30,19 +29,20 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
   const label_value = `${label_mod || ''}${name}`;
   return (
     <tr>
-      <td>
-        <input
-          id={name}
+      <td className="text-center" style={{ width: "3rem" }}>
+        <BsForm.Check
+          id={label_value}
           type="checkbox"
           name={label_value}
           defaultChecked={value}
           onChange={(event) => {
             onChange && onChange(event, name);
           }}
+          aria-label={label}
         />
       </td>
       <td>
-        <label htmlFor={label_value}>{label}</label>
+        <BsForm.Label htmlFor={label_value} className="mb-0 text-dark">{label}</BsForm.Label>
       </td>
     </tr>
   );
@@ -57,110 +57,134 @@ function PubForm({ method, pub_object }) {
   function cancelHandler() {
     navigate("..");
   }
+
   return (
-    <Form method={method} className={styles.form}>
-      <div>
-        <p>
-          <label htmlFor="venueType">Venue Type</label>
-          <select
-            id="venueType"
-            name="venueType"
-            defaultValue={pub_object ? (pub_object.venueType || "pub") : "pub"}
-          >
-            {VenueTypes.map((venueType) => {
-              return (
-                <option key={venueType} value={venueType}>
-                  {venueType.charAt(0).toUpperCase() + venueType.slice(1)}
-                </option>
-              );
-            })}
-          </select>
-        </p>
-        <p className={styles.topActions}>
-          <button type="button" onClick={cancelHandler} disabled={isSubmitting}>
-            Cancel
-          </button>
-          <button type="submit" disabled={isSubmitting} >
-            {isSubmitting ? "Submitting..." : "Save"}
-          </button>
-        </p>
-        <p>
-          <label htmlFor="name">Name</label>
-          <input
-            id="name"
-            type="text"
-            name="name"
-            required
-            defaultValue={pub_object ? pub_object.name : ""}
-          />
-        </p>
-        <p>
-          <label htmlFor="web_site">Venue Web Site</label>
-          <input
-            id="web_site"
-            type="text"
-            name="web_site"
-            title="Nice to have the website to show in notification messages"
-            defaultValue={pub_object ? pub_object.web_site : ""}
-          />
-        </p>
-        <p>
-          <label htmlFor="map">Map</label>
-          <input
-            id="map"
-            type="text"
-            name="map"
-            title="Usually a google maps link to include in the notification messages"
-            defaultValue={pub_object ? pub_object.map : ""}
-          />
-        </p>
-        <p>
-          <label htmlFor="address">Address</label>
-          <textarea
-            id="address"
-            type="text"
-            name="address"
-            title="The address"
-            defaultValue={pub_object ? pub_object.address : ""}
-          />
-        </p>
-        <p>
-          <label htmlFor="notes">Notes</label>
-          <textarea
-            id="notes"
-            type="text"
-            name="notes"
-            title="The notes"
-            defaultValue={pub_object ? pub_object.notes : ""}
-          />
-        </p>
-        <p>
-          <label htmlFor="pubImage">Link to Venue Image</label>
-          <input
-            id="pubImage"
-            type="text"
-            name="pubImage"
-            title="Pub Image"
-            defaultValue={pub_object ? pub_object.pubImage : ""}
-            className={styles.pubImage}
-          />
-        </p>
-      </div>
-      <table className={styles.checkboxes}>
-        <tbody>
-          {Object.entries(PubParams).map(([key, value]) => {
-            return (
-              <PubCheckbox
-                key={key}
-                name={key}
-                label={value}
-                pub_object={pub_object}
-              />
-            );
-          })}
-        </tbody>
-      </table>
-    </Form>
+    <RouterForm method={method}>
+      <Card>
+        <Card.Body className="text-dark">
+          <Row className="g-3">
+            <Col xs={12}>
+              <BsForm.Group controlId="venueType">
+                <BsForm.Label>Venue Type</BsForm.Label>
+                <BsForm.Select
+                  name="venueType"
+                  defaultValue={pub_object ? (pub_object.venueType || "pub") : "pub"}
+                >
+                  {VenueTypes.map((venueType) => {
+                    return (
+                      <option key={venueType} value={venueType}>
+                        {venueType.charAt(0).toUpperCase() + venueType.slice(1)}
+                      </option>
+                    );
+                  })}
+                </BsForm.Select>
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12} className="d-flex gap-2">
+              <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Submitting..." : "Save"}
+              </Button>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="name">
+                <BsForm.Label>Name</BsForm.Label>
+                <BsForm.Control
+                  type="text"
+                  name="name"
+                  required
+                  defaultValue={pub_object ? pub_object.name : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="web_site">
+                <BsForm.Label>Venue Web Site</BsForm.Label>
+                <BsForm.Control
+                  type="text"
+                  name="web_site"
+                  title="Nice to have the website to show in notification messages"
+                  defaultValue={pub_object ? pub_object.web_site : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="map">
+                <BsForm.Label>Map</BsForm.Label>
+                <BsForm.Control
+                  type="text"
+                  name="map"
+                  title="Usually a google maps link to include in the notification messages"
+                  defaultValue={pub_object ? pub_object.map : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="address">
+                <BsForm.Label>Address</BsForm.Label>
+                <BsForm.Control
+                  as="textarea"
+                  rows={3}
+                  name="address"
+                  title="The address"
+                  defaultValue={pub_object ? pub_object.address : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="notes">
+                <BsForm.Label>Notes</BsForm.Label>
+                <BsForm.Control
+                  as="textarea"
+                  rows={3}
+                  name="notes"
+                  title="The notes"
+                  defaultValue={pub_object ? pub_object.notes : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <BsForm.Group controlId="pubImage">
+                <BsForm.Label>Link to Venue Image</BsForm.Label>
+                <BsForm.Control
+                  type="text"
+                  name="pubImage"
+                  title="Pub Image"
+                  defaultValue={pub_object ? pub_object.pubImage : ""}
+                />
+              </BsForm.Group>
+            </Col>
+
+            <Col xs={12}>
+              <h5 className="mb-2">Venue Attributes</h5>
+              <Table bordered hover size="sm" responsive className="mb-0 align-middle">
+                <tbody>
+                  {Object.entries(PubParams).map(([key, value]) => {
+                    return (
+                      <PubCheckbox
+                        key={key}
+                        name={key}
+                        label={value}
+                        pub_object={pub_object}
+                      />
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </Col>
+          </Row>
+        </Card.Body>
+      </Card>
+    </RouterForm>
   );
 }
 
