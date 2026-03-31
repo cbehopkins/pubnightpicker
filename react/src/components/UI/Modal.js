@@ -1,31 +1,7 @@
-import ReactDOM from 'react-dom';
-
-import styles from './Modal.module.css';
-
-const Backdrop = (props) => {
-  return <div className={styles.backdrop} />;
-};
-
-const ModalOverlay = (props) => {
-  return (
-    <div className={styles.modal}>
-      <div className={styles.content}>{props.children}</div>
-    </div>
-  );
-};
-
-const portalElement = document.getElementById('overlay-root');
-
-const Modal = (props) => {
-  return (
-    <>
-      {ReactDOM.createPortal(<Backdrop />, portalElement)}
-      {ReactDOM.createPortal(
-        <ModalOverlay>{props.children}</ModalOverlay>,
-        portalElement
-      )}
-    </>
-  );
-};
-
-export default Modal;
+/**
+ * Modal Component - Migration to Bootstrap
+ * See Modal.bootstrap.js for the new Bootstrap-based implementation
+ * 
+ * This file is now an alias to Modal.bootstrap.js during Phase 1 migration
+ */
+export { default } from './Modal.bootstrap';

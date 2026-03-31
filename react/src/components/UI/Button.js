@@ -1,18 +1,7 @@
-import React from 'react';
-
-import styles from './Button.module.css';
-
-const Button = (props) => {
-  return (
-    <button
-      className={styles.button}
-      type={props.type || 'button'}
-      onClick={props.onClick}
-      disabled={props.disabled}
-    >
-      {props.children}
-    </button>
-  );
-};
-
-export default Button;
+/**
+ * Button Component - Migration to Bootstrap
+ * See Button.bootstrap.js for the new Bootstrap-based implementation
+ * 
+ * This file is now an alias to Button.bootstrap.js during Phase 1 migration
+ */
+export { default } from './Button.bootstrap';
