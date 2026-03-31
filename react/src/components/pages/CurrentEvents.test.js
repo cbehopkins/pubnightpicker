@@ -390,4 +390,41 @@ describe("PastEvents", () => {
     expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, null);
     expect(screen.getByText("Page 1")).toBeTruthy();
   });
+
+  it("shows placeholder when pub image URL is invalid", () => {
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+      hasNextPage: false,
+      lastVisibleId: null,
+      isLoading: false,
+    });
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", pubImage: "not-a-valid-image-url" },
+    });
+
+    renderPastEvents();
+
+    expect(screen.getByText("No image available")).toBeTruthy();
+    expect(screen.queryByAltText("Photo of The Maypole")).toBeNull();
+  });
+
+  it("falls back to placeholder when image request fails", () => {
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+      hasNextPage: false,
+      lastVisibleId: null,
+      isLoading: false,
+    });
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", pubImage: "https://img.example.com/maypole.png" },
+    });
+
+    renderPastEvents();
+
+    const image = screen.getByAltText("Photo of The Maypole");
+    fireEvent.error(image);
+
+    expect(screen.getByText("No image available")).toBeTruthy();
+    expect(screen.queryByAltText("Photo of The Maypole")).toBeNull();
+  });
 });

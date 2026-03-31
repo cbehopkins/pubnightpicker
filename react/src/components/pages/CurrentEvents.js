@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { useSearchParams } from "react-router-dom";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
@@ -19,6 +19,29 @@ import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
+function normalizeImageUrl(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("data:image/") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+
+  return null;
+}
+
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
     return <div></div>;
@@ -26,16 +49,24 @@ function PastEvent({ value, pub_parameters }) {
 
   const pubName = pub_parameters[value.selected].name;
   const pubWebsite = pub_parameters[value.selected]?.web_site;
-  const pubImage = pub_parameters[value.selected]?.pubImage;
+  const pubImage = normalizeImageUrl(pub_parameters[value.selected]?.pubImage);
+  const [hasImageLoadError, setHasImageLoadError] = useState(false);
+
+  useEffect(() => {
+    setHasImageLoadError(false);
+  }, [pubImage]);
+
+  const shouldShowImage = pubImage && !hasImageLoadError;
 
   return (
     <div className="col">
       <div className="card shadow-sm h-100">
-        {pubImage ? (
+        {shouldShowImage ? (
           <img
             src={pubImage}
             alt={`Photo of ${pubName}`}
             className={`card-img-top ${styles.pastEventImage}`}
+            onError={() => setHasImageLoadError(true)}
           />
         ) : (
           <div
