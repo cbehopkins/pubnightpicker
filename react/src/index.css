@@ -8,9 +8,9 @@
   line-height: 24px;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color-scheme: light;
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-100);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -71,6 +71,8 @@ body {
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
+  color: var(--bs-body-color, var(--color-gray-900));
+  background-color: var(--bs-body-bg, var(--color-gray-100));
 }
 
 html,

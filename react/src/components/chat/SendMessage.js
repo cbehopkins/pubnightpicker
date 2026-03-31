@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { db } from "../../firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import styles from "./chat.module.css"
+import Button from "../UI/Button";
 import { useSelector } from "react-redux";
 import { notifyError } from "../../utils/notify";
 
@@ -40,7 +41,7 @@ const SendMessage = ({ scroll }) => {
         value={message}
         onChange={(e) => setMessage(e.target.value)}
       />
-      <button type="submit">Send</button>
+      <Button type="submit">Send</Button>
     </form>
   );
 };

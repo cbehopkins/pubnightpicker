@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import TextModal from "../UI/TextModal";
 import ConfirmModal from "../UI/ConfirmModal";
+import Button from "../UI/Button";
 import {
   EmailAuthProvider, getAuth, updatePassword, reauthenticateWithCredential,
 } from "firebase/auth";
@@ -122,7 +123,9 @@ function ChangeMyPassword() {
       on_confirm={() => setErrorString("")}
       confirm_only={true}
     />}
-    <button onClick={() => { setShowPasswordChange(true) }}>Change Password</button>
+    <Button type="button" variant="secondary" onClick={() => { setShowPasswordChange(true) }}>
+      Change Password
+    </Button>
     {showPasswordChange && <TextModal
       title="Change Password"
       detail="New Password"
@@ -159,7 +162,7 @@ function Preferences(params) {
   }, [user, loading, navigate]);
   // FIXME, this feels hacky!
   const isPassword = !loading && user && auth && (auth.currentUser.providerData[0].providerId === "password")
-  return <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+  return <div className="container py-3 d-flex flex-column gap-3" style={{ minHeight: "100vh" }}>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
     <PreferencesForm method="post" />

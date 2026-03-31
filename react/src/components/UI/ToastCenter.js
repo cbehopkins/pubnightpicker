@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Button from "./Button";
 import { NOTIFY_EVENT_NAME } from "../../utils/notify";
 import styles from "./ToastCenter.module.css";
 
@@ -48,14 +49,15 @@ export default function ToastCenter() {
                 return (
                     <div key={toast.id} className={`${styles.toast} ${levelClass}`}>
                         <span className={styles.message}>{toast.message}</span>
-                        <button
+                        <Button
                             className={styles.dismiss}
                             onClick={() => removeToast(toast.id)}
                             aria-label="Dismiss notification"
                             type="button"
+                            variant="light"
                         >
                             x
-                        </button>
+                        </Button>
                     </div>
                 );
             })}

@@ -11,6 +11,7 @@ import styles from "./CurrentEvents.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
+import Button from "../UI/Button";
 import ReschedulePollModal from "./ReschedulePollModal";
 import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
@@ -164,11 +165,12 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
 
       {can_reschedule && (
         <div className={styles.button}>
-          <button
+          <Button
+            type="button"
             onClick={() => on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)}
           >
             Reschedule Event
-          </button>
+          </Button>
         </div>
       )}
       {/* Note confirm and cancel look back to front to get the correct button colouring */}

@@ -20,6 +20,11 @@
   --bs-info: #17a2b8;              /* Bootstrap default cyan */
   --bs-light: #f4f3f1;             /* Very light gray */
   --bs-dark: #1f1d1b;              /* Very dark gray */
+  --bs-body-color: #1f1d1b;
+  --bs-body-bg: #f4f3f1;
+  --bs-emphasis-color: #1f1d1b;
+  --bs-secondary-color: #4b4a47;
+  --bs-tertiary-bg: #f4f3f1;
 
   /* Grayscale tokens for subtle UI elements */
   --bs-gray-100: #f4f3f1;

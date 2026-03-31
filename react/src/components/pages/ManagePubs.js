@@ -3,6 +3,7 @@ import { useState } from "react";
 import styles from "./ManagePubs.module.css";
 import usePubs from "../../hooks/usePubs";
 import useRole from "../../hooks/useRole";
+import Button from "../UI/Button";
 import { deletePub } from "../../dbtools/pubs";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
@@ -30,16 +31,20 @@ const ManagePubs = (params) => {
 
   const canManagePubs = useRole("canManagePubs");
   return (
-    <div className={styles.navlink}>
-      {canManagePubs && (
-        <NavLink className={styles.navlink} to="/venues/new">
-          New Venue
-        </NavLink>
-      )}
-      <div className={styles.filterRow}>
-        <label htmlFor="venue-type-filter">Filter by venue type:</label>
+    <div className="container py-3">
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+        {canManagePubs && (
+          <NavLink className="btn btn-primary" to="/venues/new">
+            New Venue
+          </NavLink>
+        )}
+      </div>
+
+      <div className={`${styles.filterRow} text-dark mb-3`}>
+        <label htmlFor="venue-type-filter" className="fw-semibold">Filter by venue type:</label>
         <select
           id="venue-type-filter"
+          className="form-select w-auto"
           value={venueTypeFilter}
           onChange={(event) => {
             setVenueTypeFilter(event.target.value);
@@ -53,14 +58,16 @@ const ManagePubs = (params) => {
           })}
         </select>
       </div>
-      <div className={styles.content}>
+
+      <div className={`${styles.content} d-flex flex-column gap-2`}>
         {sortedPubsByName.map(([, pubName, key]) => {
           return (
-            <div key={key} className={styles.navlink}>
+            <div key={key} className="d-flex align-items-center gap-2 flex-wrap">
               {canManagePubs && (
-                <button
+                <Button
                   disabled={!canManagePubs}
-                  className={styles.delete}
+                  variant="danger"
+                  size="sm"
                   onClick={async () => {
                     try {
                       await deletePub(key);
@@ -70,12 +77,14 @@ const ManagePubs = (params) => {
                   }}
                 >
                   Delete
-                </button>
+                </Button>
               )}
               {canManagePubs ? (
-                <NavLink to={`/venues/${key}`}>{pubName}</NavLink>
+                <NavLink className="link-light link-underline-opacity-0 link-underline-opacity-100-hover" to={`/venues/${key}`}>
+                  {pubName}
+                </NavLink>
               ) : (
-                <span>{pubName}</span>
+                <span className="text-light">{pubName}</span>
               )}
             </div>
           );
