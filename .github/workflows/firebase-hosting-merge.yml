@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER }}
       - working-directory: ./react
         run: npm ci  && npm run build
         env:
@@ -28,3 +31,6 @@ jobs:
           channelId: live
           projectId: pubnightpicker
           entryPoint: react
+      - name: Deploy Firestore rules
+        working-directory: ./react
+        run: npx firebase-tools deploy --only firestore:rules --project pubnightpicker
