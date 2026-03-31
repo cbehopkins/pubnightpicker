@@ -130,10 +130,80 @@ select:focus-visible,
 /**
  * Bootstrap Form Customization
  */
+.form-control {
+  color: #1f1d1b;
+  background-color: #ffffff;
+  border-color: #dddbd8;
+}
+
+.form-control::placeholder {
+  color: #8a8784;
+  opacity: 0.7;
+}
+
+.form-select {
+  color: #1f1d1b;
+  background-color: #ffffff;
+  border-color: #dddbd8;
+}
+
+.form-select option {
+  color: #1f1d1b;
+  background-color: #ffffff;
+}
+
 .form-control:focus,
 .form-select:focus {
   border-color: var(--bs-primary);
   box-shadow: 0 0 0 0.25rem rgba(249, 199, 98, 0.25);
+  color: #1f1d1b;
+}
+
+/* Additional form element styling */
+label,
+.form-label {
+  color: #1f1d1b;
+}
+
+textarea.form-control {
+  color: #1f1d1b;
+  background-color: #ffffff;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="url"],
+textarea {
+  color: #1f1d1b;
+  background-color: #ffffff;
+}
+
+input[type="text"]::placeholder,
+input[type="email"]::placeholder,
+input[type="password"]::placeholder,
+input[type="number"]::placeholder,
+textarea::placeholder {
+  color: #8a8784;
+  opacity: 0.7;
+}
+
+/* Modal text elements */
+.modal-body {
+  color: #1f1d1b;
+  background-color: #ffffff;
+}
+
+.modal-body p,
+.modal-body h1,
+.modal-body h2,
+.modal-body h3,
+.modal-body h4,
+.modal-body h5,
+.modal-body h6 {
+  color: #1f1d1b;
 }
 
 /**

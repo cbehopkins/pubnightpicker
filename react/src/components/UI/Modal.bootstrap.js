@@ -52,6 +52,7 @@ const ModalOverlay = (props) => {
         maxWidth: 'calc(100vw - 1rem)',
         maxHeight: '90vh',
         backgroundColor: '#ffffff',
+        color: '#1f1d1b',
         borderRadius: '0.5rem',
         boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)',
         zIndex: 1050, // Bootstrap modal z-index
