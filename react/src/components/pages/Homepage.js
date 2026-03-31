@@ -18,7 +18,7 @@ function Homepage() {
             </NavLink>
           )}
           <NavLink className="btn btn-outline-primary" to="/current_events">
-            View Current Event
+            View Current Events
           </NavLink>
           {!loggedIn && (
             <>
