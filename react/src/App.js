@@ -26,6 +26,7 @@ import NotificationUnsub, {
 } from "./components/pages/NotificationUnsub";
 import { useUsersSource } from "./hooks/useUsers";
 import Homepage from "./components/pages/Homepage";
+import HelpPage from "./components/pages/HelpPage";
 import useSelf from "./hooks/useSelf";
 import { setRoles } from "./store/authSlice";
 import ChatPage from "./components/pages/ChatPage";
@@ -61,6 +62,10 @@ function App() {
       errorElement: <ErrorPage />,
       children: [
         { index: true, element: <Homepage /> },
+        {
+          path: "help",
+          element: <HelpPage />,
+        },
         {
           path: "login",
           element: <Login />,

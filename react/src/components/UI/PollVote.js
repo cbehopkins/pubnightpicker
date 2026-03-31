@@ -1,7 +1,7 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import { useVotableRow } from "../../hooks/useVotableRow";
@@ -25,34 +25,67 @@ function RespondMenu({
   onSetAllCannotCome,
 }) {
   const [showActions, setShowActions] = useState(false);
-  const [panelPlacement, setPanelPlacement] = useState("below");
+  const [panelStyle, setPanelStyle] = useState(null);
   const menuRef = useRef(null);
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!showActions || !panelRef.current || !triggerRef.current) {
       return;
     }
 
-    const triggerRect = triggerRef.current.getBoundingClientRect();
-    const panelRect = panelRef.current.getBoundingClientRect();
-    const spaceRight = window.innerWidth - triggerRect.right;
-    const spaceAbove = triggerRect.top;
-    const spaceBelow = window.innerHeight - triggerRect.bottom;
+    const gutter = 8;
 
-    if (spaceBelow < panelRect.height + 12 && spaceAbove >= panelRect.height + 12) {
-      setPanelPlacement("above");
-      return;
+    const updatePanelPosition = () => {
+      if (!panelRef.current || !triggerRef.current) {
+        return;
+      }
+
+      const triggerRect = triggerRef.current.getBoundingClientRect();
+      const panelRect = panelRef.current.getBoundingClientRect();
+      const spaceAbove = triggerRect.top;
+      const spaceBelow = window.innerHeight - triggerRect.bottom;
+      const spaceRight = window.innerWidth - triggerRect.right;
+
+      let top = triggerRect.bottom + gutter;
+      let left = triggerRect.left;
+
+      if (spaceBelow >= panelRect.height + gutter) {
+        top = triggerRect.bottom + gutter;
+      } else if (spaceAbove >= panelRect.height + gutter) {
+        top = triggerRect.top - panelRect.height - gutter;
+      } else if (spaceRight >= panelRect.width + gutter) {
+        top = triggerRect.top;
+        left = triggerRect.right + gutter;
+      } else {
+        top = Math.max(gutter, window.innerHeight - panelRect.height - gutter);
+      }
+
+      left = Math.max(gutter, Math.min(left, window.innerWidth - panelRect.width - gutter));
+      top = Math.max(gutter, Math.min(top, window.innerHeight - panelRect.height - gutter));
+
+      setPanelStyle({
+        top: `${top}px`,
+        left: `${left}px`,
+      });
+    };
+
+    updatePanelPosition();
+    window.addEventListener("resize", updatePanelPosition);
+    window.addEventListener("scroll", updatePanelPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePanelPosition);
+      window.removeEventListener("scroll", updatePanelPosition, true);
+    };
+  }, [showActions, allowAttendanceControls, allowGlobalAttendanceControls]);
+
+  useEffect(() => {
+    if (!showActions) {
+      setPanelStyle(null);
     }
-
-    if (spaceRight >= panelRect.width + 12) {
-      setPanelPlacement("right");
-      return;
-    }
-
-    setPanelPlacement("below");
-  }, [showActions, allowAttendanceControls]);
+  }, [showActions]);
 
   useEffect(() => {
     if (!showActions) {
@@ -99,12 +132,8 @@ function RespondMenu({
       {showActions && (
         <div
           ref={panelRef}
-          className={`${styles.respondPanel} ${panelPlacement === "right"
-              ? styles.respondPanelRight
-              : panelPlacement === "above"
-                ? styles.respondPanelAbove
-                : styles.respondPanelBelow
-            }`}
+          className={styles.respondPanel}
+          style={panelStyle ?? undefined}
         >
           <Button
             type="button"
@@ -218,6 +247,7 @@ function VotablePub({
               variant="danger"
               className={styles.deleter}
               onClick={rowData.deleteHandler}
+              title="Remove this venue from the poll"
             >
               Delete
             </Button>
@@ -226,7 +256,7 @@ function VotablePub({
       )}
       <td>
         {allowCompletePoll ? (
-          <Button type="button" variant="secondary" onClick={completeHandler}>{pubName}</Button>
+          <Button type="button" variant="secondary" onClick={completeHandler} title="Select this venue as the winner to complete the poll">{pubName}</Button>
         ) : (
           <label>{pubName}</label>
         )}

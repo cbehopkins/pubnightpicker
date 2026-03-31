@@ -45,6 +45,11 @@ In another terminal, start the Firebase emulators:
 npx firebase-tools emulators:start --import=./db_dir
 ```
 
+Export on exit
+```
+npx firebase-tools emulators:start --import=./db_dir --export-on-exit=./db_dir.
+```
+
 You should now be able to develop without affecting the production database.
 
 If you want the data to persist, while the emulators are running, run this in another terminal:
