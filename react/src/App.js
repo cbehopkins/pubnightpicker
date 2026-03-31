@@ -8,7 +8,7 @@ import Login from "./components/login/Login";
 import Register from "./components/login/Register";
 import Reset from "./components/login/Reset";
 import ManagePubs from "./components/pages/ManagePubs";
-import ManageUsers from "./components/pages/ManageUsers";
+import ManageUsers, { ManageUserDetail } from "./components/pages/ManageUsers";
 import ErrorPage from "./components/pages/Error";
 import NewPubPage, {
   action as manipulatePubAction,
@@ -118,7 +118,16 @@ function App() {
         },
         {
           path: "manage_users",
-          element: <ManageUsers />
+          children: [
+            {
+              index: true,
+              element: <ManageUsers />,
+            },
+            {
+              path: ":userId",
+              element: <ManageUserDetail />,
+            },
+          ],
         },
         {
           path: "chat",

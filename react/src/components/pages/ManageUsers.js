@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
+import { NavLink, useParams } from "react-router-dom";
 import { Form, Table } from "react-bootstrap";
 import useUsers from "../../hooks/useUsers";
 import { useAllRoles } from "../../hooks/useRoles";
+import { useIsMobileView } from "../../hooks/useIsMobileView";
 import ProtectedRoute from "../ProtectedRoute";
 import { db } from "../../firebase";
 import { doc, deleteField, updateDoc, setDoc } from "firebase/firestore";
@@ -12,6 +14,8 @@ import {
     CONSOLIDATED_PERMISSION_COLUMNS,
     KNOWN_DEFAULT_PERMISSIONS,
 } from "../../permissions";
+
+const MANAGE_USERS_NARROW_BREAKPOINT = 1200;
 
 async function setAdmin(uid) {
     const adminRef = doc(db, "roles", "admin");
@@ -75,9 +79,7 @@ function UIDModal({ uid, onClose }) {
     );
 }
 
-function ManageUsers() {
-    const [selectedUID, setSelectedUID] = useState(null);
-
+function useManageUsersState() {
     const users = useUsers();
     const sortedUsers = useMemo(() => {
         return Object.entries(users).sort(([, a], [, b]) => {
@@ -170,6 +172,195 @@ function ManageUsers() {
         console.log("Permission backfill complete", updates);
     }, [hasRole, roles]);
 
+    return {
+        users,
+        sortedUsers,
+        isAdmin,
+        isKnown,
+        hasRole,
+        handleAdminClick,
+        handleKnownClick,
+        handleRoleClick,
+        handleAutoSyncKnownToChat,
+    };
+}
+
+function UserPermissionsChecklist({
+    uid,
+    isAdmin,
+    isKnown,
+    hasRole,
+    handleAdminClick,
+    handleKnownClick,
+    handleRoleClick,
+}) {
+    const userIsAdmin = isAdmin(uid);
+    const userIsKnown = isKnown(uid);
+
+    return (
+        <div className="d-flex flex-column gap-2">
+            <Form.Check
+                type="checkbox"
+                id={`admin-${uid}`}
+                name="admin"
+                label="Admin"
+                checked={userIsAdmin}
+                onChange={(event) => {
+                    handleAdminClick(uid, event.target.checked);
+                }}
+            />
+            <Form.Check
+                type="checkbox"
+                id={`known-${uid}`}
+                name="known"
+                label="Known User"
+                checked={userIsKnown}
+                onChange={(event) => {
+                    handleKnownClick(uid, event.target.checked);
+                }}
+            />
+            {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
+                <Form.Check
+                    key={column.key}
+                    type="checkbox"
+                    id={`${column.key}-${uid}`}
+                    name={column.key}
+                    label={column.label}
+                    checked={hasRole(uid, column.key)}
+                    onChange={(event) => {
+                        handleRoleClick(uid, column.key, event.target.checked);
+                    }}
+                />
+            ))}
+        </div>
+    );
+}
+
+function ManageUsersList({ sortedUsers }) {
+    return (
+        <div className="list-group">
+            {sortedUsers.map(([uid, value]) => {
+                const displayName = value?.name || value?.email || uid;
+                return (
+                    <NavLink
+                        key={uid}
+                        to={`/manage_users/${uid}`}
+                        className="list-group-item list-group-item-action d-flex flex-column"
+                    >
+                        <span className="fw-semibold">{displayName}</span>
+                        <span className="small text-body-secondary text-break">{value?.email || "No email"}</span>
+                    </NavLink>
+                );
+            })}
+        </div>
+    );
+}
+
+function ManageUsersTable({
+    sortedUsers,
+    isAdmin,
+    isKnown,
+    hasRole,
+    handleAdminClick,
+    handleKnownClick,
+    handleRoleClick,
+    onViewUid,
+}) {
+    return (
+        <div className="table-responsive">
+            <Table striped bordered hover size="sm" className="align-middle bg-body">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Admin</th>
+                        <th>Known User</th>
+                        {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
+                            <th key={column.key}>{column.label}</th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {sortedUsers.map(([key, value]) => {
+                        const userPermissions = CONSOLIDATED_PERMISSION_COLUMNS.reduce((acc, column) => {
+                            acc[column.key] = hasRole(key, column.key);
+                            return acc;
+                        }, {});
+
+                        return (
+                            <tr key={key}>
+                                <td>
+                                    <Button
+                                        type="button"
+                                        variant="info"
+                                        size="sm"
+                                        onClick={() => onViewUid(key)}
+                                    >
+                                        View UID
+                                    </Button>
+                                </td>
+                                <td>
+                                    <NavLink to={`/manage_users/${key}`} className="link-primary">
+                                        {value?.name || value?.email || key}
+                                    </NavLink>
+                                </td>
+                                <td>{value?.email}</td>
+                                <td>
+                                    <Form.Check
+                                        type="checkbox"
+                                        name="admin"
+                                        checked={isAdmin(key)}
+                                        onChange={(event) => {
+                                            handleAdminClick(key, event.target.checked);
+                                        }}
+                                    />
+                                </td>
+                                <td>
+                                    <Form.Check
+                                        type="checkbox"
+                                        name="known"
+                                        checked={isKnown(key)}
+                                        onChange={(event) => {
+                                            handleKnownClick(key, event.target.checked);
+                                        }}
+                                    />
+                                </td>
+                                {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
+                                    <td key={column.key}>
+                                        <Form.Check
+                                            type="checkbox"
+                                            name={column.key}
+                                            checked={userPermissions[column.key]}
+                                            onChange={(event) => {
+                                                handleRoleClick(key, column.key, event.target.checked);
+                                            }}
+                                        />
+                                    </td>
+                                ))}
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </Table>
+        </div>
+    );
+}
+
+function ManageUsers() {
+    const [selectedUID, setSelectedUID] = useState(null);
+    const isMobileView = useIsMobileView(MANAGE_USERS_NARROW_BREAKPOINT);
+    const {
+        sortedUsers,
+        isAdmin,
+        isKnown,
+        hasRole,
+        handleAdminClick,
+        handleKnownClick,
+        handleRoleClick,
+        handleAutoSyncKnownToChat,
+    } = useManageUsersState();
+
     return (
         <div className="container py-3 text-body">
             <h1 className="mb-3">Manage Users</h1>
@@ -182,81 +373,20 @@ function ManageUsers() {
                 Auto-sync Known/Admin to Consolidated Permissions
             </Button>
 
-            <div className="table-responsive">
-                <Table striped bordered hover size="sm" className="align-middle bg-body">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Admin</th>
-                            <th>Known User</th>
-                            {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
-                                <th key={column.key}>{column.label}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {sortedUsers.map(([key, value]) => {
-                            const userIsAdmin = isAdmin(key);
-                            const userIsKnown = isKnown(key);
-                            const userPermissions = CONSOLIDATED_PERMISSION_COLUMNS.reduce((acc, column) => {
-                                acc[column.key] = hasRole(key, column.key);
-                                return acc;
-                            }, {});
-
-                            return (
-                                <tr key={key}>
-                                    <td>
-                                        <Button
-                                            type="button"
-                                            variant="info"
-                                            size="sm"
-                                            onClick={() => setSelectedUID(key)}
-                                        >
-                                            View UID
-                                        </Button>
-                                    </td>
-                                    <td>{value.name}</td>
-                                    <td>{value.email}</td>
-                                    <td>
-                                        <Form.Check
-                                            type="checkbox"
-                                            name="admin"
-                                            checked={userIsAdmin}
-                                            onChange={(event) => {
-                                                handleAdminClick(key, event.target.checked);
-                                            }}
-                                        />
-                                    </td>
-                                    <td>
-                                        <Form.Check
-                                            type="checkbox"
-                                            name="known"
-                                            checked={userIsKnown}
-                                            onChange={(event) => {
-                                                handleKnownClick(key, event.target.checked);
-                                            }}
-                                        />
-                                    </td>
-                                    {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
-                                        <td key={column.key}>
-                                            <Form.Check
-                                                type="checkbox"
-                                                name={column.key}
-                                                checked={userPermissions[column.key]}
-                                                onChange={(event) => {
-                                                    handleRoleClick(key, column.key, event.target.checked);
-                                                }}
-                                            />
-                                        </td>
-                                    ))}
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </Table>
-            </div>
+            {isMobileView ? (
+                <ManageUsersList sortedUsers={sortedUsers} />
+            ) : (
+                <ManageUsersTable
+                    sortedUsers={sortedUsers}
+                    isAdmin={isAdmin}
+                    isKnown={isKnown}
+                    hasRole={hasRole}
+                    handleAdminClick={handleAdminClick}
+                    handleKnownClick={handleKnownClick}
+                    handleRoleClick={handleRoleClick}
+                    onViewUid={setSelectedUID}
+                />
+            )}
 
             {selectedUID && (
                 <Modal>
@@ -267,4 +397,70 @@ function ManageUsers() {
     );
 }
 
+function ManageUserDetailPage() {
+    const [selectedUID, setSelectedUID] = useState(null);
+    const { userId } = useParams();
+    const {
+        users,
+        handleAdminClick,
+        handleKnownClick,
+        handleRoleClick,
+        isAdmin,
+        isKnown,
+        hasRole,
+    } = useManageUsersState();
+
+    const user = users[userId];
+    const hasLoadedUsers = Object.keys(users).length > 0;
+
+    if (!user && !hasLoadedUsers) {
+        return (
+            <div className="container py-3 text-body">
+                <h1 className="mb-3">Manage User</h1>
+                <p>Loading user details...</p>
+            </div>
+        );
+    }
+
+    if (!user) {
+        return (
+            <div className="container py-3 text-body">
+                <h1 className="mb-3">Manage User</h1>
+                <p className="mb-3">User not found.</p>
+                <NavLink to="/manage_users" className="btn btn-secondary">Back to Manage Users</NavLink>
+            </div>
+        );
+    }
+
+    return (
+        <div className="container py-3 text-body">
+            <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <NavLink to="/manage_users" className="btn btn-secondary">Back to Manage Users</NavLink>
+                <Button type="button" variant="info" onClick={() => setSelectedUID(userId)}>View UID</Button>
+            </div>
+
+            <h1 className="mb-1">Manage User</h1>
+            <h2 className="h4 mb-1">{user?.name || user?.email || userId}</h2>
+            <p className="text-body-secondary mb-3 text-break">{user?.email || "No email"}</p>
+
+            <UserPermissionsChecklist
+                uid={userId}
+                isAdmin={isAdmin}
+                isKnown={isKnown}
+                hasRole={hasRole}
+                handleAdminClick={handleAdminClick}
+                handleKnownClick={handleKnownClick}
+                handleRoleClick={handleRoleClick}
+            />
+
+            {selectedUID && (
+                <Modal>
+                    <UIDModal uid={selectedUID} onClose={() => setSelectedUID(null)} />
+                </Modal>
+            )}
+        </div>
+    );
+}
+
+export const ManageUserDetail = ProtectedRoute(ManageUserDetailPage, "admin", "/");
 export default ProtectedRoute(ManageUsers, "admin", "/");
