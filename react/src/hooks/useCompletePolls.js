@@ -5,7 +5,6 @@ import { notifyError } from "../utils/notify";
 import {
   createCompletingPollState,
   getRestaurantIdForCompletion,
-  isRestaurantChoiceRequired,
 } from "../utils/venueSelection";
 
 /**
@@ -32,11 +31,14 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
   const key = completingPoll?.key;
   const pubName = completingPoll?.pubName;
   const poll_id = completingPoll?.poll_id;
+  const pubHasFood = completingPoll?.pubHasFood ?? false;
   const restaurantOptions = completingPoll?.restaurantOptions || [];
+  const allRestaurantVenues = completingPoll?.allRestaurantVenues || [];
   const chosenRestaurantId = completingPoll?.restaurantId || "";
   const restaurantTime = completingPoll?.restaurantTime || "";
-  const hasRestaurantAssociation = restaurantOptions.length > 0;
-  const restaurantChoiceRequired = isRestaurantChoiceRequired(completingPoll);
+  // When the poll has no restaurants, fall back to all system restaurants
+  const availableRestaurants = restaurantOptions.length > 0 ? restaurantOptions : allRestaurantVenues;
+  const restaurantSource = restaurantOptions.length > 0 ? "poll" : "system";
 
   // Handler to actually complete the poll (after modal confirmation)
   const completeThePoll = useCallback(
@@ -46,10 +48,6 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
       }
 
       if (!key || !poll_id) {
-        return;
-      }
-
-      if (restaurantChoiceRequired && !chosenRestaurantId) {
         return;
       }
 
@@ -67,8 +65,6 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
       key,
       poll_id,
       canCompletePoll,
-      chosenRestaurantId,
-      restaurantChoiceRequired,
       completingPoll,
       restaurantTime,
     ]
@@ -109,11 +105,11 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
     // State for modal display
     completingPoll,
     pubName,
-    restaurantOptions,
+    pubHasFood,
+    availableRestaurants,
+    restaurantSource,
     chosenRestaurantId,
     restaurantTime,
-    hasRestaurantAssociation,
-    restaurantChoiceRequired,
     isCompletingPollBusy: Boolean(completingPoll),
     // Handlers
     completeHandler,

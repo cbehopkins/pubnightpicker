@@ -1,72 +1,86 @@
-import ConfirmModal from "../UI/ConfirmModal";
+import Modal from "../UI/Modal";
+import styles from "./CompletePollModal.module.css";
 
 function CompletePollModal({
   pubName,
-  restaurantOptions,
+  pubHasFood,
+  availableRestaurants,
+  restaurantSource,
   chosenRestaurantId,
   restaurantTime,
-  hasRestaurantAssociation,
-  restaurantChoiceRequired,
   onRestaurantChange,
   onRestaurantTimeChange,
   onConfirm,
   onCancel,
 }) {
-  const selectedRestaurant = restaurantOptions.find((restaurant) => restaurant.id === chosenRestaurantId);
-  const autoRestaurant = !restaurantChoiceRequired && restaurantOptions.length === 1
-    ? restaurantOptions[0]
-    : null;
+  const confirmDisabled = Boolean(chosenRestaurantId && !restaurantTime);
+
+  const restaurantSectionLabel =
+    restaurantSource === "poll"
+      ? "Restaurant from this poll"
+      : "Add a restaurant to this event";
 
   return (
-    <ConfirmModal
-      title="Complete this poll?"
-      detail={<>
-        <p>Selected venue: {pubName}</p>
-        {restaurantChoiceRequired && (
-          <div>
-            <label htmlFor="restaurant-choice">Pick the restaurant for this event: </label>
+    <Modal>
+      <div className={styles.dialog}>
+        <div className={styles.header}>
+          <p className={styles.title}>Complete Poll</p>
+        </div>
+
+        <div className={styles.venueRow}>
+          <span className={styles.venueLabel}>Selected venue</span>
+          <span className={styles.venueName}>{pubName}</span>
+        </div>
+
+        {pubHasFood && (
+          <p className={styles.infoNote}>
+            This venue serves food — no separate restaurant needed.
+          </p>
+        )}
+
+        {!pubHasFood && (
+          <div className={styles.formSection}>
+            <label className={styles.fieldLabel} htmlFor="restaurant-choice">
+              {restaurantSectionLabel}
+            </label>
             <select
               id="restaurant-choice"
+              className={styles.select}
               value={chosenRestaurantId}
-              onChange={(event) => {
-                onRestaurantChange(event.target.value);
-              }}
+              onChange={(e) => onRestaurantChange(e.target.value)}
             >
-              <option value="">Select restaurant</option>
-              {restaurantOptions.map((restaurant) => {
-                return <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>;
-              })}
+              <option value="">No restaurant</option>
+              {availableRestaurants.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
             </select>
           </div>
         )}
-        {hasRestaurantAssociation && (
-          <div>
-            <label htmlFor="restaurant-time">Restaurant meetup time: </label>
+
+        {chosenRestaurantId && (
+          <div className={styles.formSection}>
+            <label className={styles.fieldLabel} htmlFor="restaurant-time">
+              Restaurant meetup time
+            </label>
             <input
               id="restaurant-time"
               type="time"
+              className={styles.timeInput}
               value={restaurantTime}
-              onChange={(event) => {
-                onRestaurantTimeChange(event.target.value);
-              }}
+              onChange={(e) => onRestaurantTimeChange(e.target.value)}
               required
             />
           </div>
         )}
-        {autoRestaurant && (
-          <p>Restaurant association (automatic): {pubName} + {autoRestaurant.name}</p>
-        )}
-        {!autoRestaurant && selectedRestaurant && (
-          <p>Restaurant association: {pubName} + {selectedRestaurant.name}</p>
-        )}
-      </>}
-      confirm_disabled={
-        (restaurantChoiceRequired && !chosenRestaurantId)
-        || (hasRestaurantAssociation && !restaurantTime)
-      }
-      on_confirm={onConfirm}
-      on_cancel={onCancel}
-    />
+
+        <div className={styles.footer}>
+          <button className={styles.btnCancel} onClick={onCancel}>Cancel</button>
+          <button className={styles.btnConfirm} onClick={onConfirm} disabled={confirmDisabled}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

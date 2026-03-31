@@ -30,11 +30,11 @@ function ActivePolls() {
       {completePollsState.isCompletingPollBusy && (
         <CompletePollModal
           pubName={completePollsState.pubName}
-          restaurantOptions={completePollsState.restaurantOptions}
+          pubHasFood={completePollsState.pubHasFood}
+          availableRestaurants={completePollsState.availableRestaurants}
+          restaurantSource={completePollsState.restaurantSource}
           chosenRestaurantId={completePollsState.chosenRestaurantId}
           restaurantTime={completePollsState.restaurantTime}
-          hasRestaurantAssociation={completePollsState.hasRestaurantAssociation}
-          restaurantChoiceRequired={completePollsState.restaurantChoiceRequired}
           onRestaurantChange={completePollsState.setRestaurantChoice}
           onRestaurantTimeChange={completePollsState.setRestaurantTime}
           onConfirm={completePollsState.completeThePoll}

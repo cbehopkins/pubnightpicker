@@ -1,0 +1,135 @@
+.dialog {
+    background-color: #1e1e2e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    color: #e0e0e0;
+}
+
+/* ── Header ── */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 0.75rem;
+}
+
+.title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+
+/* ── Venue row ── */
+.venueRow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.venueLabel {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9ca3af;
+}
+
+.venueName {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #4ade80;
+}
+
+/* ── Info / note ── */
+.infoNote {
+    background-color: rgba(74, 222, 128, 0.08);
+    border-left: 3px solid #4ade80;
+    border-radius: 4px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.875rem;
+    color: #86efac;
+}
+
+/* ── Form rows ── */
+.formSection {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.fieldLabel {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #d1d5db;
+}
+
+.select,
+.timeInput {
+    background-color: #2a2a3e;
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    width: 100%;
+    appearance: none;
+    cursor: pointer;
+    transition: border-color 150ms;
+}
+
+.select:focus,
+.timeInput:focus {
+    outline: none;
+    border-color: #4ade80;
+}
+
+/* ── Footer ── */
+.footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btnConfirm {
+    cursor: pointer;
+    background-color: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.5rem 1.4rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: background-color 150ms;
+}
+
+.btnConfirm:hover:not(:disabled) {
+    background-color: #15803d;
+}
+
+.btnConfirm:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.btnCancel {
+    cursor: pointer;
+    background-color: transparent;
+    color: #9ca3af;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 0.5rem 1.2rem;
+    font-size: 0.9rem;
+    transition: color 150ms, border-color 150ms;
+}
+
+.btnCancel:hover {
+    color: #f87171;
+    border-color: #f87171;
+}
