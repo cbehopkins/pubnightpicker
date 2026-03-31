@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { query, collection, where, orderBy, limit } from "firebase/firestore";
+import { query, collection, where, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
 import { PollData, getTodaysDate, millisecUntilMidnight } from "../utils/pollSorting";
@@ -29,15 +29,14 @@ export function useFutureCompletePolls() {
   const polls = useQueryDb(q);
   return new PollData(polls);
 }
-export function usePastCompletePolls(pubCount) {
+export function usePastCompletePolls() {
   const todaysDate = useTodaysDate();
   const q = useMemo(() => query(
     collection(db, "polls"),
     where("completed", "==", true),
     where("date", "<", todaysDate),
-    orderBy("date", "desc"),
-    limit(pubCount)
-  ), [todaysDate, pubCount]);
+    orderBy("date", "desc")
+  ), [todaysDate]);
   const polls = useQueryDb(q);
   return new PollData(polls);
 }
