@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -26,26 +26,28 @@ function pubSubscription(add_callback, mod_callback, rm_callback) {
 }
 function usePubs() {
   const [pubs, setPubs] = useState({});
-  const addPubCallback = useCallback((id, pub) => {
-    setPubs((prevPubs) => {
-      return { ...prevPubs, [id]: pub };
-    });
-  }, []);
-  const modPubCallback = useCallback((id, pub) => {
-    setPubs((prevPubs) => {
-      const nextPubs = { ...prevPubs };
-      nextPubs[id] = pub;
-      return nextPubs;
-    });
-  }, []);
-  const rmPubCallback = useCallback((id) => {
-    setPubs((prevPubs) => {
-      const nextPubs = { ...prevPubs };
-      delete nextPubs[id];
-      return nextPubs;
-    });
-  }, []);
+  
   useEffect(() => {
+    const addPubCallback = (id, pub) => {
+      setPubs((prevPubs) => {
+        return { ...prevPubs, [id]: pub };
+      });
+    };
+    const modPubCallback = (id, pub) => {
+      setPubs((prevPubs) => {
+        const nextPubs = { ...prevPubs };
+        nextPubs[id] = pub;
+        return nextPubs;
+      });
+    };
+    const rmPubCallback = (id) => {
+      setPubs((prevPubs) => {
+        const nextPubs = { ...prevPubs };
+        delete nextPubs[id];
+        return nextPubs;
+      });
+    };
+    
     const unsubscribe = pubSubscription(
       addPubCallback,
       modPubCallback,
@@ -54,7 +56,8 @@ function usePubs() {
     return () => {
       unsubscribe();
     };
-  }, [addPubCallback, modPubCallback, rmPubCallback]);
+  }, []);
+  
   return pubs;
 }
 export default usePubs;

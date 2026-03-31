@@ -18,23 +18,38 @@ import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
 function PastEvent({ value, pub_parameters }) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  
   if (!pub_parameters[value.selected]) {
     return <div></div>;
   }
   const pubName = pub_parameters[value.selected].name;
   const pubWebsite = pub_parameters[value.selected]?.web_site
   const pubImage = pub_parameters[value.selected]?.pubImage
+  
+  const handleImageLoad = () => {
+    setImageLoaded(true);
+  };
+  
+  const handleImageError = () => {
+    setImageLoaded(false);
+  };
+  
   return (
     <>
       <h2>{pubName}</h2>
       <h3>{value.date}</h3>
       {/* Open link in new window with _blank magic */}
       {pubWebsite && <p><a href={pubWebsite} target="_blank" rel="noreferrer">Pub Website</a></p>}
-      {pubImage && <img
-        src={pubImage}
-        alt="What the pub looks like"
-        className={styles.image}
-      />}
+      {pubImage && (
+        <img
+          src={pubImage}
+          alt="What the pub looks like"
+          className={styles.image}
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+        />
+      )}
     </>
   );
 }
