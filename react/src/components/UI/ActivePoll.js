@@ -133,7 +133,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
       </div>}
       <div>
         {canDeletePoll && (
-          <Button type="button" variant="danger" className={styles["button--alt"]} onClick={deletePollHandler}>
+          <Button type="button" variant="danger" className={styles["button--alt"]} onClick={deletePollHandler} title="Delete this entire poll and all associated voting data">
             Delete Poll
           </Button>
         )}
