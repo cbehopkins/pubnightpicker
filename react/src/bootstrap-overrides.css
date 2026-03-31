@@ -1,0 +1,196 @@
+/**
+ * Phase 0: Bootstrap CSS Customization Overrides
+ * 
+ * Maps PubNightPicker's existing color and spacing tokens to Bootstrap components
+ * without requiring SCSS compilation. Uses CSS custom properties for theming.
+ * 
+ * Import order:
+ * 1. bootstrap.min.css (from node_modules)
+ * 2. This file (bootstrap-overrides.css)
+ * 3. index.css (app-specific styles)
+ */
+
+:root {
+  /* PubNightPicker Color Palette - to override Bootstrap defaults */
+  --bs-primary: #f9c762;           /* Warm gold/yellow primary */
+  --bs-secondary: #4b4a47;         /* Dark gray secondary */
+  --bs-success: #28a745;           /* Bootstrap default green */
+  --bs-danger: #dc3545;            /* Bootstrap default red */
+  --bs-warning: #ffc107;           /* Bootstrap default yellow */
+  --bs-info: #17a2b8;              /* Bootstrap default cyan */
+  --bs-light: #f4f3f1;             /* Very light gray */
+  --bs-dark: #1f1d1b;              /* Very dark gray */
+
+  /* Grayscale tokens for subtle UI elements */
+  --bs-gray-100: #f4f3f1;
+  --bs-gray-200: #dddbd8;
+  --bs-gray-300: #ccc9c6;
+  --bs-gray-400: #aeaba7;
+  --bs-gray-500: #8a8784;
+  --bs-gray-600: #656360;
+  --bs-gray-700: #4b4a47;
+  --bs-gray-800: #31302e;
+  --bs-gray-900: #1f1d1b;
+
+  /* Bootstrap spacing scale alignment */
+  --bs-spacer: 1rem;
+
+  /* Responsive Breakpoints - align with app's custom breakpoints */
+  --breakpoint-mobile: 480px;
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1024px;
+  --breakpoint-wide: 1440px;
+
+  /* Responsive Spacing - uses clamp for fluid scaling */
+  --spacing-xs: clamp(0.25rem, 1vw, 0.5rem);
+  --spacing-sm: clamp(0.5rem, 2vw, 1rem);
+  --spacing-md: clamp(1rem, 3vw, 1.5rem);
+  --spacing-lg: clamp(1.5rem, 4vw, 2rem);
+  --spacing-xl: clamp(2rem, 5vw, 3rem);
+
+  /* Border radius - moderate rounded style */
+  --bs-border-radius: 0.375rem;
+  --bs-border-radius-lg: 0.5rem;
+}
+
+/**
+ * Accessibility & Focus Management
+ * Ensure Bootstrap components meet PubNightPicker accessibility standards
+ */
+.btn:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.nav-link:focus-visible,
+.form-control:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+/**
+ * Bootstrap Button Customization
+ * Subtle adjustments to match app's existing button styling
+ */
+.btn {
+  font-weight: 500;
+  transition: all 0.15s ease-in-out;
+}
+
+.btn-primary {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #1f1d1b;
+}
+
+.btn-primary:hover {
+  background-color: #f6ad1b;
+  border-color: #f6ad1b;
+}
+
+.btn-primary:active,
+.btn-primary.active {
+  background-color: #fab833;
+  border-color: #fab833;
+}
+
+/**
+ * Bootstrap Card Customization
+ */
+.card {
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 0.5rem;
+}
+
+.card-header {
+  background-color: #f4f3f1;
+  border-bottom: 1px solid #dddbd8;
+}
+
+/**
+ * Bootstrap Modal Customization
+ */
+.modal-content {
+  border: none;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  background-color: #f4f3f1;
+  border-bottom: 1px solid #dddbd8;
+}
+
+/**
+ * Bootstrap Form Customization
+ */
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.25rem rgba(249, 199, 98, 0.25);
+}
+
+/**
+ * Bootstrap Navigation Customization
+ */
+.navbar {
+  background-color: #1f1d1b;
+}
+
+.nav-link {
+  color: rgba(255, 255, 255, 0.7) !important;
+  transition: color 0.15s ease-in-out;
+}
+
+.nav-link:hover {
+  color: #f9c762 !important;
+}
+
+.nav-link.active {
+  color: #f9c762 !important;
+}
+
+/**
+ * Responsive Behavior Alignment
+ * Bootstrap breakpoints now coordinated with PubNightPicker's custom breakpoints
+ */
+@media (max-width: 480px) {
+  /* Mobile: larger touch targets */
+  .btn {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  .form-control,
+  .form-select {
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem; /* Prevent zoom on iOS */
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Tablet: balanced spacing */
+}
+
+@media (min-width: 1024px) {
+  /* Desktop: optimized whitespace */
+}
+
+/**
+ * Phase 0 Migration Helper Classes
+ * Use these during gradual migration to bridge Bootstrap and CSS Modules
+ */
+
+.bs-wrapper {
+  display: contents; /* Make wrapper transparent in layout */
+}
+
+.legacy-module {
+  /* Mark components still using CSS Modules for easy tracking */
+}
+
+.bs-migrated {
+  /* Mark components migrated to Bootstrap components */
+}
+
