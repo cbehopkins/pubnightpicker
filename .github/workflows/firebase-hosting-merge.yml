@@ -17,7 +17,11 @@ jobs:
       - name: Verify Firestore rules deploy permissions
         run: |
           set -euo pipefail
-          ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -n 1)
+          if [ -n "${GOOGLE_GHA_CREDS_PATH:-}" ] && [ -f "${GOOGLE_GHA_CREDS_PATH}" ]; then
+            gcloud auth activate-service-account --key-file="${GOOGLE_GHA_CREDS_PATH}" >/dev/null
+          fi
+
+          ACTIVE_ACCOUNT=$(gcloud auth list --format='value(account)' | head -n 1)
           if [ -z "$ACTIVE_ACCOUNT" ]; then
             echo "No active gcloud account found after auth step"
             exit 1
