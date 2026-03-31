@@ -10,7 +10,7 @@
   padding: var(--spacing-md);
 }
 
-.actions button {
+.actions button:not(.btn) {
   font: inherit;
   cursor: pointer;
   background-color: transparent;
@@ -22,8 +22,8 @@
   transition: all 0.2s ease;
 }
 
-.actions button:hover,
-.actions button:active {
+.actions button:not(.btn):hover,
+.actions button:not(.btn):active {
   background-color: #5a1a01;
   border-color: #5a1a01;
   color: white;
@@ -48,7 +48,7 @@
   white-space: nowrap;
 }
 
-.poll button {
+.poll button:not(.btn) {
   background-color: transparent;
   color: white;
   border: 1px solid green;
@@ -60,10 +60,16 @@
   transition: all 0.2s ease;
 }
 
-.poll button:hover {
+.poll button:not(.btn):hover {
   background-color: blue;
   border-color: blue;
   color: white;
+}
+
+.poll .btn,
+.poll_mobile .btn,
+.actions .btn {
+  color: #1f1d1b;
 }
 
 /* Tablet and desktop - more spacing */
@@ -107,14 +113,14 @@
     background-color: rgba(138, 43, 6, 0.1);
   }
 
-  .poll button {
+  .poll button:not(.btn) {
     padding: var(--spacing-xs);
     margin-left: var(--spacing-xs);
     font-size: var(--font-size-xs);
     border: 1px solid yellow;
   }
 
-  .poll button:hover {
+  .poll button:not(.btn):hover {
     background-color: rgba(0, 0, 255, 0.8);
     color: white;
   }
