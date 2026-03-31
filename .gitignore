@@ -1,3 +1,4 @@
 .vscode/*
 **/backup.json
 node_modules/
+**/.medorg.xml
