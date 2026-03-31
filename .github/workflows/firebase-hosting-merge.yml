@@ -16,18 +16,26 @@ jobs:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER }}
       - name: Verify Firestore rules deploy permissions
         run: |
-          PERMS=$(gcloud projects test-iam-permissions pubnightpicker \
-            --permissions=firebaserules.rulesets.test,firebaserules.rulesets.create,firebaserules.releases.update \
-            --format="value(permissions)" | tr ';' '\n')
-          echo "Granted permissions:"
-          echo "$PERMS"
-          for REQUIRED in firebaserules.rulesets.test firebaserules.rulesets.create firebaserules.releases.update; do
-            if ! echo "$PERMS" | grep -q "$REQUIRED"; then
-              echo "Missing required permission: $REQUIRED"
-              echo "Grant roles/firebaserules.admin to the service account in FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER"
-              exit 1
-            fi
-          done
+          set -euo pipefail
+          ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -n 1)
+          if [ -z "$ACTIVE_ACCOUNT" ]; then
+            echo "No active gcloud account found after auth step"
+            exit 1
+          fi
+
+          echo "Active service account: $ACTIVE_ACCOUNT"
+          HAS_ROLE=$(gcloud projects get-iam-policy pubnightpicker \
+            --flatten="bindings[].members" \
+            --filter="bindings.role=roles/firebaserules.admin AND bindings.members=serviceAccount:${ACTIVE_ACCOUNT}" \
+            --format="value(bindings.role)")
+
+          if [ -z "$HAS_ROLE" ]; then
+            echo "Missing roles/firebaserules.admin for serviceAccount:${ACTIVE_ACCOUNT}"
+            echo "Grant roles/firebaserules.admin to the service account in FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER"
+            exit 1
+          fi
+
+          echo "Verified roles/firebaserules.admin for serviceAccount:${ACTIVE_ACCOUNT}"
       - working-directory: ./react
         run: npm ci  && npm run build
         env:
