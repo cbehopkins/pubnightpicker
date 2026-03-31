@@ -14,6 +14,20 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER }}
+      - name: Verify Firestore rules deploy permissions
+        run: |
+          PERMS=$(gcloud projects test-iam-permissions pubnightpicker \
+            --permissions=firebaserules.rulesets.test,firebaserules.rulesets.create,firebaserules.releases.update \
+            --format="value(permissions)" | tr ';' '\n')
+          echo "Granted permissions:"
+          echo "$PERMS"
+          for REQUIRED in firebaserules.rulesets.test firebaserules.rulesets.create firebaserules.releases.update; do
+            if ! echo "$PERMS" | grep -q "$REQUIRED"; then
+              echo "Missing required permission: $REQUIRED"
+              echo "Grant roles/firebaserules.admin to the service account in FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER"
+              exit 1
+            fi
+          done
       - working-directory: ./react
         run: npm ci  && npm run build
         env:
