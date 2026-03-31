@@ -1,37 +1,18 @@
-.poll {
-  font: inherit;
-  cursor: pointer;
-  background-color: transparent;
-  padding: 0rem 0rem;
-  border-radius: 25px;
-  margin-left: 1rem;
+.poll,
+.poll_mobile {
+  background: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 0.75rem;
+  padding: 0.9rem;
+  margin: 0.75rem 0;
+  color: #1f1d1b;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.poll button {
-  background-color: transparent;
-  color: white;
-  border: 1px solid green;
-  padding: 0.5rem 2rem;
-  border-radius: 25px;
-  margin-left: 1rem;
-}
-
-.poll .button--alt:hover {
-  background-color: red;
-  color: white;
-  border: 1px solid green;
-  padding: 0.5rem 2rem;
-  border-radius: 25px;
-  margin-left: 1rem;
-}
-
-.poll button:hover {
-  background-color: blue;
-  color: white;
-  border: 1px solid green;
-  padding: 0.5rem 2rem;
-  border-radius: 25px;
-  margin-left: 1rem;
+.poll h2,
+.poll_mobile h2 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
 }
 
 .filterRow {
@@ -39,49 +20,39 @@
   align-items: center;
   gap: 0.5rem;
   margin: 0.5rem 0;
+  color: #1f1d1b;
 }
 
 .filterRow select {
   min-width: 9rem;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.5rem;
+  background: #ffffff;
+  color: #1f1d1b;
+}
+
+.button--alt {
+  margin-right: 0.5rem;
 }
 
 .poll_mobile {
-  font: inherit;
-  cursor: pointer;
-  background-color: transparent;
-  border: 0px solid #8a2b06;
-  padding: 0.5rem 2rem;
-  border-radius: 1px;
-  margin-left: 0rem;
-}
-
-.poll_mobile button {
-  background-color: transparent;
-  color: white;
-  border: 1px solid yellow;
-  padding: 0rem 0.1rem;
-  border-radius: 1px;
-  margin-left: 1rem;
-}
-
-.poll_mobile .button--alt:hover {
-  background-color: red;
-  color: white;
-  border: 1px solid green;
-  padding: 0rem 0.1rem;
-  border-radius: 1px;
-  margin-left: 1rem;
-}
-
-.poll_mobile button:hover {
-  background-color: blue;
-  color: white;
-  border: 1px solid green;
-  padding: 0rem 0.1rem;
-  border-radius: 1px;
-  margin-left: 1rem;
+  padding: 0.75rem;
+  border-radius: 0.6rem;
 }
 
 .poll_mobile .filterRow {
   flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+  .poll,
+  .poll_mobile {
+    padding: 0.65rem;
+    border-radius: 0.6rem;
+  }
+
+  .filterRow {
+    flex-wrap: wrap;
+  }
 }

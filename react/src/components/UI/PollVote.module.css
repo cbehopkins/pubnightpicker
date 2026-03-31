@@ -1,99 +1,49 @@
-/* Vote Button Styles */
-.voteButton {
-  font: inherit;
-  cursor: pointer;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: 6px;
-  border: 2px solid #4CAF50;
-  background-color: #4CAF50;
-  color: white;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  transition: all 0.3s ease;
-  white-space: nowrap;
+/* Bootstrap-aligned poll interaction styles */
+.voteButton,
+.deleter,
+.attendanceButton,
+.comingAllButton,
+.cannotComeAllButton,
+.respondSummary {
   min-width: 120px;
+  font-weight: 600;
 }
 
-.voteButton:hover {
-  background-color: #45a049;
-  border-color: #45a049;
-  transform: scale(1.05);
-  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
-}
-
-.voteButton:active {
-  transform: scale(0.98);
-}
-
-/* Voted state - shows Cancel Vote button */
 .voted {
-  background-color: #ff9800;
-  border-color: #ff9800;
+  border-color: #f59f00 !important;
+  background-color: #f59f00 !important;
+  color: #1f1d1b !important;
 }
 
-.voted:hover {
-  background-color: #e68900;
-  border-color: #e68900;
-  box-shadow: 0 2px 8px rgba(255, 152, 0, 0.3);
-}
-
-/* Deleter button */
-.deleter {
-  background-color: #f44336;
-  border: 2px solid #f44336;
-  color: white;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  transition: all 0.3s ease;
-  white-space: nowrap;
-}
-
-.deleter:hover {
-  background-color: #da190b;
-  border-color: #da190b;
-  box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
-}
-
-.deleter:active {
-  transform: scale(0.98);
-}
-
-/* Show voters modal styling */
 .show_votes {
-  font: inherit;
-  cursor: pointer;
-  color: white;
-  border-radius: 14px;
-  background-color: #282c34;
-  padding: 0;
-  margin: 0;
+  color: #1f1d1b;
+  background: #ffffff;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  min-width: min(44rem, calc(100vw - 2rem));
 }
 
-.show_votes button {
-  background-color: #2196F3;
-  color: white;
-  border: 2px solid #2196F3;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: 6px;
-  margin: var(--spacing-sm);
-  cursor: pointer;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  transition: all 0.3s ease;
-  white-space: nowrap;
+.show_votes h3 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
 }
 
-.show_votes button:hover {
-  background-color: #0b7dda;
-  border-color: #0b7dda;
-  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+.show_votes table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
 }
 
-.show_votes button:active {
-  transform: scale(0.98);
+.show_votes th,
+.show_votes td {
+  border: 1px solid #dee2e6;
+  padding: 0.45rem 0.6rem;
+  vertical-align: middle;
+}
+
+.show_votes th {
+  background: #f8f9fa;
+  text-align: left;
 }
 
 .attendanceCell {
@@ -103,31 +53,15 @@
 }
 
 .attendanceButton {
-  font: inherit;
-  cursor: pointer;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: 6px;
-  border: 2px solid #4caf50;
-  background-color: #4caf50;
-  color: white;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  transition: all 0.3s ease;
-  white-space: nowrap;
-}
-
-.attendanceButton:hover {
-  transform: scale(1.03);
+  min-width: 96px;
 }
 
 .attending {
-  background-color: #2f7d32;
-  border-color: #2f7d32;
+  box-shadow: inset 0 0 0 2px rgba(25, 135, 84, 0.45);
 }
 
 .notAttending {
-  background-color: #f44336;
-  border-color: #f44336;
+  box-shadow: inset 0 0 0 2px rgba(220, 53, 69, 0.45);
 }
 
 .globalAttendanceActions {
@@ -135,33 +69,6 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   margin: 0.5rem 0;
-}
-
-.comingAllButton,
-.cannotComeAllButton {
-  font: inherit;
-  cursor: pointer;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: 6px;
-  color: white;
-  font-weight: 600;
-  border: 2px solid transparent;
-  transition: all 0.3s ease;
-}
-
-.comingAllButton {
-  background-color: #2f7d32;
-  border-color: #2f7d32;
-}
-
-.cannotComeAllButton {
-  background-color: #c62828;
-  border-color: #c62828;
-}
-
-.comingAllButton:hover,
-.cannotComeAllButton:hover {
-  transform: scale(1.03);
 }
 
 .labelDesktop {
@@ -178,35 +85,25 @@
 }
 
 .respondSummary {
-  list-style: none;
-  background-color: #2f7d32;
-  color: white;
-  border: 2px solid #2f7d32;
-  border-radius: 6px;
-  padding: var(--spacing-sm) var(--spacing-md);
-  font-weight: 600;
-  cursor: pointer;
-  user-select: none;
   min-width: 110px;
   text-align: center;
 }
 
 .respondSummaryActive {
-  background-color: #25672a;
-  border-color: #25672a;
+  filter: brightness(0.95);
 }
 
 .respondPanel {
   position: absolute;
-  z-index: 3;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.5rem;
-  min-width: 156px;
-  border-radius: 8px;
-  border: 1px solid #334155;
-  background: #1f2937;
+  min-width: 180px;
+  border-radius: 0.5rem;
+  border: 1px solid #dee2e6;
+  background: #ffffff;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
   overflow: hidden;
 }
@@ -241,7 +138,7 @@
 .panelDivider {
   width: 100%;
   height: 1px;
-  background: #475569;
+  background: #dee2e6;
   margin: 0.1rem 0 0.2rem;
 }
 
@@ -253,29 +150,29 @@
 }
 
 .attendanceCheckYes {
-  color: #2f7d32;
+  color: #198754;
   font-weight: 700;
   text-align: center;
 }
 
 .attendanceCheckNo {
-  color: #c62828;
+  color: #dc3545;
   font-weight: 700;
   text-align: center;
 }
 
-/* Mobile responsive */
-@media (max-width: 480px) {
+.button {
+  display: inline-flex;
+}
 
+@media (max-width: 480px) {
   .voteButton,
   .deleter,
   .attendanceButton,
   .respondSummary,
   .comingAllButton,
-  .cannotComeAllButton,
-  .show_votes button {
+  .cannotComeAllButton {
     min-width: 72px;
-    padding: var(--spacing-xs) var(--spacing-sm);
     font-size: var(--font-size-xs);
   }
 
@@ -287,18 +184,12 @@
     display: inline;
   }
 
-  .voteButton:hover,
-  .voted:hover,
-  .deleter:hover,
-  .respondSummary:hover,
-  .attendanceButton:hover,
-  .comingAllButton:hover,
-  .cannotComeAllButton:hover,
-  .show_votes button:hover {
-    transform: none;
+  .respondPanel {
+    min-width: 150px;
   }
 
-  .respondPanel {
-    min-width: 132px;
+  .show_votes {
+    min-width: auto;
+    width: calc(100vw - 2rem);
   }
 }

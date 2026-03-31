@@ -1,14 +1,15 @@
 .rolesSection {
-    margin: 2rem 0;
-    padding: 1.5rem;
-    background-color: #2a2a2a;
+    margin: 1.25rem 0;
+    padding: 1rem;
+    background-color: #ffffff;
     border-radius: 8px;
-    border-left: 4px solid #ffd37c;
+    border: 1px solid #dee2e6;
+    border-left: 4px solid #f9c762;
 }
 
 .rolesSection h3 {
     margin-top: 0;
-    color: #f4f3f1;
+    color: #1f1d1b;
     font-size: 1.1rem;
 }
 
@@ -16,14 +17,14 @@
     width: 100%;
     border-collapse: collapse;
     margin-top: 1rem;
-    background-color: #2a2a2a;
+    background-color: #ffffff;
     border-radius: 6px;
     overflow: hidden;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
 .rolesTable thead {
-    background-color: #ffd37c;
+    background-color: #f8f9fa;
 }
 
 .rolesTable th {
@@ -31,26 +32,26 @@
     text-align: left;
     font-weight: 600;
     color: #1f1d1b;
-    border-bottom: 2px solid #f9c762;
+    border-bottom: 1px solid #dee2e6;
 }
 
 .rolesTable tbody tr {
     transition: background-color 0.2s ease;
-    background-color: #2a2a2a;
+    background-color: #ffffff;
 }
 
 .rolesTable tbody tr:nth-child(odd) {
-    background-color: #333333;
+    background-color: #f8f9fa;
 }
 
 .rolesTable tbody tr:hover {
-    background-color: #404040;
+    background-color: #eef3f7;
 }
 
 .rolesTable td {
     padding: 0.75rem;
-    border-bottom: 1px solid #404040;
-    color: #f4f3f1;
+    border-bottom: 1px solid #dee2e6;
+    color: #1f1d1b;
 }
 
 .rolesTable tbody tr:last-child td {
@@ -59,7 +60,7 @@
 
 .roleName {
     font-weight: 500;
-    color: #f4f3f1;
+    color: #1f1d1b;
 }
 
 .status {
@@ -69,15 +70,15 @@
 .badge {
     display: inline-block;
     padding: 0.35rem 0.65rem;
-    background-color: #4caf50;
-    color: white;
+    background-color: #198754;
+    color: #ffffff;
     border-radius: 4px;
     font-size: 0.875rem;
     font-weight: 500;
 }
 
 .noRoles {
-    color: #aeaba7;
+    color: #6c757d;
     font-style: italic;
     margin: 1rem 0;
 }
