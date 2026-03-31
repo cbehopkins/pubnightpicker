@@ -66,6 +66,33 @@
   --max-width-wide: 1440px;
 }
 
+:root[data-bs-theme="light"] {
+  --bs-body-color: #1f1d1b;
+  --bs-body-bg: #f4f3f1;
+  --bs-emphasis-color: #1f1d1b;
+  --bs-secondary-color: #4b4a47;
+  --bs-tertiary-bg: #f4f3f1;
+}
+
+:root[data-bs-theme="dark"] {
+  --bs-body-color: #f4f3f1;
+  --bs-body-bg: #1f1d1b;
+  --bs-emphasis-color: #f4f3f1;
+  --bs-secondary-color: #dddbd8;
+  --bs-tertiary-bg: #31302e;
+
+  /* Make legacy token-based surfaces follow dark mode too. */
+  --color-gray-100: #1f1d1b;
+  --color-gray-200: #31302e;
+  --color-gray-300: #4b4a47;
+  --color-gray-400: #656360;
+  --color-gray-500: #8a8784;
+  --color-gray-600: #aeaba7;
+  --color-gray-700: #ccc9c6;
+  --color-gray-800: #dddbd8;
+  --color-gray-900: #f4f3f1;
+}
+
 body {
   margin: 0;
   width: 100%;

@@ -1,6 +1,6 @@
 .content {
-  background-color: #ffffff;
-  border: 1px solid #dee2e6;
+  background-color: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
   border-radius: 0.5rem;
   padding: 1rem;
 }

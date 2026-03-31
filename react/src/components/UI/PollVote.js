@@ -99,13 +99,12 @@ function RespondMenu({
       {showActions && (
         <div
           ref={panelRef}
-          className={`${styles.respondPanel} ${
-            panelPlacement === "right"
+          className={`${styles.respondPanel} ${panelPlacement === "right"
               ? styles.respondPanelRight
               : panelPlacement === "above"
                 ? styles.respondPanelAbove
                 : styles.respondPanelBelow
-          }`}
+            }`}
         >
           <Button
             type="button"
@@ -239,8 +238,8 @@ function VotablePub({
         <td className={styles.attendanceIndicator}>
           {pubId !== "any" && (
             rowData.userCanCome ? <span title="You said you can come">✅</span>
-            : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
-            : null
+              : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
+                : null
           )}
         </td>
       )}

@@ -15,39 +15,24 @@
   max-height: clamp(300px, 70vh, 600px);
   display: flex;
   flex-direction: column;
-  border-radius: 8px;
+  border-radius: 0.5rem;
   overflow: hidden;
+  border: 1px solid var(--bs-border-color);
+  background: var(--bs-body-bg);
 }
 
 .messagesWrapper {
   padding: var(--spacing-sm);
   box-sizing: border-box;
   height: calc(100% - 60px);
-  overflow-y: scroll;
-  background-color: rgba(124, 197, 217, 0.1);
+  overflow-y: auto;
+  background-color: var(--bs-tertiary-bg);
 }
 
-.chatBubble {
-  border-radius: 20px 20px 20px 0;
-  padding: var(--spacing-md);
-  background-color: #7cc5d9;
-  color: #1c2c4c;
+.messageCard {
   width: max-content;
-  max-width: min(90%, 500px);
-  box-shadow: -2px 2px 1px 1px #4c768d;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
-  word-wrap: break-word;
-}
-
-.chatBubble.right {
-  margin-left: auto;
-  margin-right: 0;
-  border-radius: 20px 20px 0 20px;
-  background-color: #fff;
-  box-shadow: -2px 2px 1px 1px #88dded;
+  max-width: min(90%, 560px);
+  border-radius: 0.75rem;
 }
 
 .chatBubbleLeft {
@@ -58,10 +43,9 @@
 }
 
 .userName {
-  font-weight: bold;
+  font-weight: 600;
   margin-bottom: var(--spacing-xs);
   font-size: var(--font-size-sm);
-  color: #1c2c4c;
 }
 
 .userMessage {
@@ -76,62 +60,30 @@
   margin-top: var(--spacing-xs);
 }
 
+.messageCard :global(.btn img) {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
 /* send message */
 .sendMessage {
   width: 100%;
-  padding: var(--spacing-md);
-  background-color: #4c768d;
-  display: flex;
-  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  background-color: var(--bs-secondary-bg);
+  border-top: 1px solid var(--bs-border-color);
   align-self: flex-end;
-  flex-wrap: wrap;
 }
 
-.sendMessage input {
-  flex: 1;
-  min-width: 200px;
-  height: clamp(35px, 8vw, 45px);
-  padding: var(--spacing-sm);
-  border-radius: 5px 0 0 5px;
-  border: none;
-  background-color: white;
-  color: #1c2c4c;
-  font-size: var(--font-size-sm);
+.sendMessage :global(.input-group) {
+  width: 100%;
 }
 
-.sendMessage input::placeholder {
-  color: #ddd;
+.sendMessage :global(.form-control) {
+  min-height: 2.5rem;
 }
 
-.sendMessage img {
-  max-width: clamp(40px, 10vw, 60px);
-  max-height: clamp(40px, 10vw, 60px);
-}
-
-.sendMessage input:focus,
-.sendMessage button:focus {
-  outline: none;
-  border-bottom: 1px solid #7cc5d9;
-}
-
-.sendMessage button {
-  flex-shrink: 0;
-  width: clamp(50px, 12vw, 80px);
-  height: clamp(35px, 8vw, 45px);
-  padding: var(--spacing-sm);
-  border-radius: 0 5px 5px 0;
-  color: #242443;
-  border: 1px solid #7cc5d9;
-  background-color: #7cc5d9;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.sendMessage button:hover {
-  background-color: #6ab3c7;
-  transition: background-color 0.2s ease;
+.sendMessage :global(.btn) {
+  min-width: 5.5rem;
 }
 
 /* Mobile improvements */
@@ -140,9 +92,8 @@
     padding: var(--spacing-xs);
   }
 
-  .chatBubble {
+  .messageCard {
     max-width: 85%;
-    padding: var(--spacing-sm);
   }
 
   .messagesWrapper {
@@ -150,13 +101,16 @@
   }
 
   .sendMessage {
-    flex-direction: column;
     padding: var(--spacing-sm);
   }
 
-  .sendMessage input,
-  .sendMessage button {
+  .sendMessage :global(.input-group) {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-xs);
+  }
+
+  .sendMessage :global(.btn) {
     width: 100%;
-    border-radius: 5px;
   }
 }

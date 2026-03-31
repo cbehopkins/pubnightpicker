@@ -33,27 +33,27 @@ function Reset() {
       <Row className="w-100 justify-content-center">
         <Col xs={12} sm={10} md={8} lg={6} xl={5}>
           <Card>
-            <Card.Body className="text-dark">
+            <Card.Body className="text-body">
               <Card.Title as="h2" className="mb-3">Reset Password</Card.Title>
 
-        {sentBusy && (
-          <ConfirmModal
-            title="Reset Send"
-            detail={resetString}
-            confirm_text="Ok"
-            on_confirm={() => setSentBusy(false)}
-            confirm_only={true}
-          />
-        )}
-        {errorString && (
-          <ConfirmModal
-            title="Error sending password reset email"
-            detail={errorString}
-            confirm_text="Ok"
-            on_confirm={() => setErrorString("")}
-            confirm_only={true}
-          />
-        )}
+              {sentBusy && (
+                <ConfirmModal
+                  title="Reset Send"
+                  detail={resetString}
+                  confirm_text="Ok"
+                  on_confirm={() => setSentBusy(false)}
+                  confirm_only={true}
+                />
+              )}
+              {errorString && (
+                <ConfirmModal
+                  title="Error sending password reset email"
+                  detail={errorString}
+                  confirm_text="Ok"
+                  on_confirm={() => setErrorString("")}
+                  confirm_only={true}
+                />
+              )}
 
               <Form>
                 <Form.Group className="mb-3" controlId="resetEmail">

@@ -12,14 +12,22 @@
 
 :root {
   /* PubNightPicker Color Palette - to override Bootstrap defaults */
-  --bs-primary: #f9c762;           /* Warm gold/yellow primary */
-  --bs-secondary: #4b4a47;         /* Dark gray secondary */
-  --bs-success: #28a745;           /* Bootstrap default green */
-  --bs-danger: #dc3545;            /* Bootstrap default red */
-  --bs-warning: #ffc107;           /* Bootstrap default yellow */
-  --bs-info: #17a2b8;              /* Bootstrap default cyan */
-  --bs-light: #f4f3f1;             /* Very light gray */
-  --bs-dark: #1f1d1b;              /* Very dark gray */
+  --bs-primary: #f9c762;
+  /* Warm gold/yellow primary */
+  --bs-secondary: #4b4a47;
+  /* Dark gray secondary */
+  --bs-success: #28a745;
+  /* Bootstrap default green */
+  --bs-danger: #dc3545;
+  /* Bootstrap default red */
+  --bs-warning: #ffc107;
+  /* Bootstrap default yellow */
+  --bs-info: #17a2b8;
+  /* Bootstrap default cyan */
+  --bs-light: #f4f3f1;
+  /* Very light gray */
+  --bs-dark: #1f1d1b;
+  /* Very dark gray */
   --bs-body-color: #1f1d1b;
   --bs-body-bg: #f4f3f1;
   --bs-emphasis-color: #1f1d1b;
@@ -131,43 +139,43 @@ select:focus-visible,
  * Bootstrap Form Customization
  */
 .form-control {
-  color: #1f1d1b;
-  background-color: #ffffff;
-  border-color: #dddbd8;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
 }
 
 .form-control::placeholder {
-  color: #8a8784;
+  color: var(--bs-secondary-color);
   opacity: 0.7;
 }
 
 .form-select {
-  color: #1f1d1b;
-  background-color: #ffffff;
-  border-color: #dddbd8;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
 }
 
 .form-select option {
-  color: #1f1d1b;
-  background-color: #ffffff;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
 }
 
 .form-control:focus,
 .form-select:focus {
   border-color: var(--bs-primary);
   box-shadow: 0 0 0 0.25rem rgba(249, 199, 98, 0.25);
-  color: #1f1d1b;
+  color: var(--bs-body-color);
 }
 
 /* Additional form element styling */
 label,
 .form-label {
-  color: #1f1d1b;
+  color: var(--bs-body-color);
 }
 
 textarea.form-control {
-  color: #1f1d1b;
-  background-color: #ffffff;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
 }
 
 input[type="text"],
@@ -177,8 +185,8 @@ input[type="number"],
 input[type="tel"],
 input[type="url"],
 textarea {
-  color: #1f1d1b;
-  background-color: #ffffff;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
 }
 
 input[type="text"]::placeholder,
@@ -186,14 +194,14 @@ input[type="email"]::placeholder,
 input[type="password"]::placeholder,
 input[type="number"]::placeholder,
 textarea::placeholder {
-  color: #8a8784;
+  color: var(--bs-secondary-color);
   opacity: 0.7;
 }
 
 /* Modal text elements */
 .modal-body {
-  color: #1f1d1b;
-  background-color: #ffffff;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
 }
 
 .modal-body p,
@@ -203,27 +211,7 @@ textarea::placeholder {
 .modal-body h4,
 .modal-body h5,
 .modal-body h6 {
-  color: #1f1d1b;
-}
-
-/**
- * Bootstrap Navigation Customization
- */
-.navbar {
-  background-color: #1f1d1b;
-}
-
-.nav-link {
-  color: rgba(255, 255, 255, 0.7) !important;
-  transition: color 0.15s ease-in-out;
-}
-
-.nav-link:hover {
-  color: #f9c762 !important;
-}
-
-.nav-link.active {
-  color: #f9c762 !important;
+  color: var(--bs-body-color);
 }
 
 /**
@@ -231,6 +219,7 @@ textarea::placeholder {
  * Bootstrap breakpoints now coordinated with PubNightPicker's custom breakpoints
  */
 @media (max-width: 480px) {
+
   /* Mobile: larger touch targets */
   .btn {
     padding: 0.5rem 1rem;
@@ -240,7 +229,8 @@ textarea::placeholder {
   .form-control,
   .form-select {
     padding: 0.5rem 0.75rem;
-    font-size: 1rem; /* Prevent zoom on iOS */
+    font-size: 1rem;
+    /* Prevent zoom on iOS */
   }
 }
 
@@ -258,7 +248,8 @@ textarea::placeholder {
  */
 
 .bs-wrapper {
-  display: contents; /* Make wrapper transparent in layout */
+  display: contents;
+  /* Make wrapper transparent in layout */
 }
 
 .legacy-module {
@@ -268,4 +259,3 @@ textarea::placeholder {
 .bs-migrated {
   /* Mark components migrated to Bootstrap components */
 }
-

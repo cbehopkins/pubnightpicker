@@ -42,7 +42,7 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
         />
       </td>
       <td>
-        <BsForm.Label htmlFor={label_value} className="mb-0 text-dark">{label}</BsForm.Label>
+        <BsForm.Label htmlFor={label_value} className="mb-0 text-body-emphasis">{label}</BsForm.Label>
       </td>
     </tr>
   );
@@ -61,7 +61,7 @@ function PubForm({ method, pub_object }) {
   return (
     <RouterForm method={method}>
       <Card>
-        <Card.Body className="text-dark">
+        <Card.Body className="text-body">
           <Row className="g-3">
             <Col xs={12}>
               <BsForm.Group controlId="venueType">

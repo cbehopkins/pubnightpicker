@@ -15,12 +15,12 @@ import { Card as RBCard } from 'react-bootstrap';
  * This allows header/footer/content elements to maintain their existing styles
  */
 const Card = (props) => {
-  return (
-    <RBCard className={props.className}>
-      {/* Pass children directly without Card.Body wrapper to maintain structure */}
-      {props.children}
-    </RBCard>
-  );
+    return (
+        <RBCard className={props.className}>
+            {/* Pass children directly without Card.Body wrapper to maintain structure */}
+            {props.children}
+        </RBCard>
+    );
 };
 
 export default Card;

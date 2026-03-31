@@ -5,7 +5,7 @@ import Modal from './Modal';
 
 const ModalOverlay = (props) => {
   return (
-    <div className="bg-white text-dark rounded shadow-sm overflow-hidden">
+    <div className="bg-body text-body rounded shadow-sm overflow-hidden border">
       <header className="bg-danger text-white p-3">
         <h2>{props.title}</h2>
       </header>

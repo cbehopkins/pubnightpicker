@@ -32,16 +32,21 @@ const SendMessage = ({ scroll }) => {
       <label htmlFor="messageInput" hidden>
         Enter Message
       </label>
-      <input
-        id="messageInput"
-        name="messageInput"
-        type="text"
-        className="form-input__input"
-        placeholder="type message..."
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-      />
-      <Button type="submit">Send</Button>
+      <div className="input-group">
+        <input
+          id="messageInput"
+          name="messageInput"
+          type="text"
+          className="form-control"
+          placeholder="Type message..."
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          aria-label="Chat message"
+        />
+        <Button type="submit" variant="primary" className="px-3">
+          Send
+        </Button>
+      </div>
     </form>
   );
 };

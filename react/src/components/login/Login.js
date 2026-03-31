@@ -31,7 +31,7 @@ function Login() {
       <Row className="w-100 justify-content-center g-3" style={{ maxWidth: "900px" }}>
         <Col xs={12} md={6}>
           <Card className="h-100">
-            <Card.Body className="d-flex flex-column align-items-center text-dark gap-3">
+            <Card.Body className="d-flex flex-column align-items-center text-body gap-3">
               <Card.Title as="h2" className="mb-2">Auth Providers</Card.Title>
               <Button
                 type="button"
@@ -53,7 +53,7 @@ function Login() {
 
         <Col xs={12} md={6}>
           <Card className="h-100">
-            <Card.Body className="text-dark">
+            <Card.Body className="text-body">
               <Card.Title as="h2" className="mb-3">Login with Email</Card.Title>
               <Form>
                 <Form.Group className="mb-3" controlId="loginEmail">

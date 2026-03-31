@@ -40,7 +40,7 @@ const ManagePubs = (params) => {
         )}
       </div>
 
-      <div className={`${styles.filterRow} text-dark mb-3`}>
+      <div className={`${styles.filterRow} text-body mb-3`}>
         <label htmlFor="venue-type-filter" className="fw-semibold">Filter by venue type:</label>
         <select
           id="venue-type-filter"
@@ -80,11 +80,14 @@ const ManagePubs = (params) => {
                 </Button>
               )}
               {canManagePubs ? (
-                <NavLink className="link-light link-underline-opacity-0 link-underline-opacity-100-hover" to={`/venues/${key}`}>
+                <NavLink
+                  className="link-primary link-underline-opacity-0 link-underline-opacity-100-hover fw-medium"
+                  to={`/venues/${key}`}
+                >
                   {pubName}
                 </NavLink>
               ) : (
-                <span className="text-light">{pubName}</span>
+                <span className="text-body">{pubName}</span>
               )}
             </div>
           );

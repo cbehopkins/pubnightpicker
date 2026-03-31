@@ -31,7 +31,7 @@ function Register() {
       <Row className="w-100 justify-content-center">
         <Col xs={12} sm={10} md={8} lg={6} xl={5}>
           <Card>
-            <Card.Body className="text-dark">
+            <Card.Body className="text-body">
               <Card.Title as="h2" className="mb-3">Create Account</Card.Title>
 
               <Form>

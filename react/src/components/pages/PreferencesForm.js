@@ -44,7 +44,7 @@ function PreferencesForm({ method }) {
   return (
     <RouterForm method={method}>
       <Card>
-        <Card.Body className="text-dark">
+        <Card.Body className="text-body">
           <Row className="g-3">
             <Col xs={12}>
               <Form.Group controlId="name">

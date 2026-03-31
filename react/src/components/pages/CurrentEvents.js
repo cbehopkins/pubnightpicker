@@ -20,22 +20,22 @@ import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
 function PastEvent({ value, pub_parameters }) {
   const [imageLoaded, setImageLoaded] = useState(false);
-  
+
   if (!pub_parameters[value.selected]) {
     return <div></div>;
   }
   const pubName = pub_parameters[value.selected].name;
   const pubWebsite = pub_parameters[value.selected]?.web_site
   const pubImage = pub_parameters[value.selected]?.pubImage
-  
+
   const handleImageLoad = () => {
     setImageLoaded(true);
   };
-  
+
   const handleImageError = () => {
     setImageLoaded(false);
   };
-  
+
   return (
     <>
       <h2>{pubName}</h2>

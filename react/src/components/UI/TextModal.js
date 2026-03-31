@@ -9,7 +9,7 @@ function TextModal(props) {
     const inputType = props.input_type || "text"
     return (
         <Modal>
-            <div className="p-3 p-md-4 text-dark bg-white rounded shadow-sm">
+            <div className="p-3 p-md-4 text-body bg-body rounded shadow-sm border">
                 <div className="mb-3">
                     <h5 className="mb-0">{props.title}</h5>
                 </div>

@@ -34,7 +34,7 @@ function VenueAssignmentModal({
 
   return (
     <Modal>
-      <div className="p-3 p-md-4 text-dark bg-white rounded shadow-sm">
+      <div className="p-3 p-md-4 text-body bg-body rounded shadow-sm border">
         <div className="border-bottom pb-3 mb-3">
           <div>
             <p className="text-uppercase fw-semibold small text-secondary mb-1">Event Update</p>
@@ -47,20 +47,20 @@ function VenueAssignmentModal({
           <div className="card-body">
             <div className="d-flex flex-column gap-2">
               <span className="text-uppercase fw-semibold small text-secondary">{mainVenueLabel}</span>
-            {mainVenueOptions ? (
-              <select
-                className="form-select"
-                value={selectedMainVenueId}
-                onChange={(event) => onMainVenueChange(event.target.value)}
-              >
-                <option value="">{mainVenuePlaceholder}</option>
-                {mainVenueOptions.map((venue) => (
-                  <option key={venue.id} value={venue.id}>{venue.name}</option>
-                ))}
-              </select>
-            ) : (
-              <span className="fs-5 fw-semibold">{mainVenueName}</span>
-            )}
+              {mainVenueOptions ? (
+                <select
+                  className="form-select"
+                  value={selectedMainVenueId}
+                  onChange={(event) => onMainVenueChange(event.target.value)}
+                >
+                  <option value="">{mainVenuePlaceholder}</option>
+                  {mainVenueOptions.map((venue) => (
+                    <option key={venue.id} value={venue.id}>{venue.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="fs-5 fw-semibold">{mainVenueName}</span>
+              )}
               {mainVenueHelpText && <p className="small text-secondary mb-0">{mainVenueHelpText}</p>}
             </div>
           </div>

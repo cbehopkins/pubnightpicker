@@ -53,9 +53,9 @@ async function clearRole(roleName, uid) {
 
 function UIDModal({ uid, onClose }) {
     return (
-        <div className="bg-white text-dark rounded shadow p-4" style={{ minWidth: "350px" }}>
+        <div className="bg-body text-body rounded shadow p-4 border" style={{ minWidth: "350px" }}>
             <h3 className="h5 mb-3">User ID</h3>
-            <p className="mb-3 font-monospace border rounded bg-light p-3 text-break">{uid}</p>
+            <p className="mb-3 font-monospace border rounded bg-body-tertiary p-3 text-break">{uid}</p>
             <div className="d-flex gap-2 justify-content-end">
                 <Button
                     type="button"
@@ -171,7 +171,7 @@ function ManageUsers() {
     }, [hasRole, roles]);
 
     return (
-        <div className="container py-3 text-dark">
+        <div className="container py-3 text-body">
             <h1 className="mb-3">Manage Users</h1>
             <Button
                 type="button"
@@ -183,7 +183,7 @@ function ManageUsers() {
             </Button>
 
             <div className="table-responsive">
-                <Table striped bordered hover size="sm" className="align-middle bg-white">
+                <Table striped bordered hover size="sm" className="align-middle bg-body">
                     <thead>
                         <tr>
                             <th></th>

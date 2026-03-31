@@ -1,15 +1,15 @@
 .rolesSection {
     margin: 1.25rem 0;
     padding: 1rem;
-    background-color: #ffffff;
+    background-color: var(--bs-body-bg);
     border-radius: 8px;
-    border: 1px solid #dee2e6;
-    border-left: 4px solid #f9c762;
+    border: 1px solid var(--bs-border-color);
+    border-left: 4px solid var(--bs-primary);
 }
 
 .rolesSection h3 {
     margin-top: 0;
-    color: #1f1d1b;
+    color: var(--bs-body-color);
     font-size: 1.1rem;
 }
 
@@ -17,41 +17,41 @@
     width: 100%;
     border-collapse: collapse;
     margin-top: 1rem;
-    background-color: #ffffff;
+    background-color: var(--bs-body-bg);
     border-radius: 6px;
     overflow: hidden;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
 .rolesTable thead {
-    background-color: #f8f9fa;
+    background-color: var(--bs-tertiary-bg);
 }
 
 .rolesTable th {
     padding: 0.75rem;
     text-align: left;
     font-weight: 600;
-    color: #1f1d1b;
-    border-bottom: 1px solid #dee2e6;
+    color: var(--bs-body-color);
+    border-bottom: 1px solid var(--bs-border-color);
 }
 
 .rolesTable tbody tr {
     transition: background-color 0.2s ease;
-    background-color: #ffffff;
+    background-color: var(--bs-body-bg);
 }
 
 .rolesTable tbody tr:nth-child(odd) {
-    background-color: #f8f9fa;
+    background-color: var(--bs-tertiary-bg);
 }
 
 .rolesTable tbody tr:hover {
-    background-color: #eef3f7;
+    background-color: var(--bs-secondary-bg);
 }
 
 .rolesTable td {
     padding: 0.75rem;
-    border-bottom: 1px solid #dee2e6;
-    color: #1f1d1b;
+    border-bottom: 1px solid var(--bs-border-color);
+    color: var(--bs-body-color);
 }
 
 .rolesTable tbody tr:last-child td {
@@ -60,7 +60,7 @@
 
 .roleName {
     font-weight: 500;
-    color: #1f1d1b;
+    color: var(--bs-body-color);
 }
 
 .status {
@@ -78,7 +78,7 @@
 }
 
 .noRoles {
-    color: #6c757d;
+    color: var(--bs-secondary-color);
     font-style: italic;
     margin: 1rem 0;
 }

@@ -1,46 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { Container, Dropdown, Nav, Navbar } from "react-bootstrap";
+import { Container, Nav, Navbar } from "react-bootstrap";
 import styles from "./MainNavigation.module.css";
 import { logout } from "../../firebase";
 import useAdmin from "../../hooks/useAdmin";
 import useRole from "../../hooks/useRole";
 import Button from "../UI/Button";
-
-const THEME_STORAGE_KEY = "pnp-theme-mode";
-
-const getStoredThemeMode = () => {
-  if (typeof window === "undefined") {
-    return "auto";
-  }
-
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return stored === "light" || stored === "dark" || stored === "auto" ? stored : "auto";
-};
-
-const getResolvedTheme = (mode) => {
-  if (mode === "light" || mode === "dark") {
-    return mode;
-  }
-
-  if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    return "dark";
-  }
-
-  return "light";
-};
-
-const applyTheme = (mode) => {
-  if (typeof document === "undefined") {
-    return;
-  }
-
-  const resolved = getResolvedTheme(mode);
-  const root = document.documentElement;
-  root.setAttribute("data-bs-theme", resolved);
-  root.style.colorScheme = resolved;
-};
+import { applyThemeMode, getStoredThemeMode, subscribeToSystemThemeChanges } from "../../utils/themeMode";
 
 const LoggedInElement = (params) => {
   return (
@@ -61,44 +28,17 @@ function MainNavigation() {
   const admin = useAdmin();
   const canChat = useRole("canChat");
   const email = useSelector((state) => state.auth.email);
-  const [themeMode, setThemeMode] = useState(getStoredThemeMode);
-
-  const themeLabel = useMemo(() => {
-    if (themeMode === "light") {
-      return "Light";
-    }
-    if (themeMode === "dark") {
-      return "Dark";
-    }
-    return "Auto";
-  }, [themeMode]);
-
   useEffect(() => {
-    applyTheme(themeMode);
+    const mode = getStoredThemeMode();
+    applyThemeMode(mode);
 
-    if (typeof window === "undefined") {
+    if (mode !== "auto") {
       return undefined;
     }
 
-    if (themeMode !== "auto") {
-      return undefined;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => applyTheme("auto");
-    mediaQuery.addEventListener("change", handleChange);
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleChange);
-    };
-  }, [themeMode]);
-
-  const setTheme = (nextMode) => {
-    setThemeMode(nextMode);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextMode);
-    }
-  };
+    const handleChange = () => applyThemeMode("auto");
+    return subscribeToSystemThemeChanges(handleChange);
+  }, []);
 
   const navLinkClassName = ({ isActive }) =>
     `nav-link px-2 py-1 rounded ${styles.navLink} ${isActive ? `active ${styles.navLinkActive}` : ""}`;
@@ -127,16 +67,6 @@ function MainNavigation() {
             </Nav>
 
             <div className={`${styles.controls} d-flex flex-column flex-lg-row align-items-start align-items-lg-center gap-2 gap-lg-3`}>
-              <Dropdown align="end">
-                <Dropdown.Toggle variant="outline-secondary" size="sm" id="theme-mode-toggle">
-                  Theme: {themeLabel}
-                </Dropdown.Toggle>
-                <Dropdown.Menu>
-                  <Dropdown.Item active={themeMode === "light"} onClick={() => setTheme("light")}>Light</Dropdown.Item>
-                  <Dropdown.Item active={themeMode === "dark"} onClick={() => setTheme("dark")}>Dark</Dropdown.Item>
-                  <Dropdown.Item active={themeMode === "auto"} onClick={() => setTheme("auto")}>Auto</Dropdown.Item>
-                </Dropdown.Menu>
-              </Dropdown>
               {loggedIn && <LoggedInElement name={name} email={email} />}
             </div>
           </Navbar.Collapse>
