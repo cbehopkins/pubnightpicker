@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { arrayRemove, arrayUnion, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
@@ -6,7 +6,7 @@ import { updateDocWithInitialization } from "../utils/firestoreDocOps";
 
 function useAttendance(pollId) {
     const [attendance, setAttendance] = useState({});
-    const docRef = doc(db, "attendance", pollId);
+    const docRef = useMemo(() => doc(db, "attendance", pollId), [pollId]);
 
     const updateAttendanceDoc = useCallback(async (payload) => {
         await updateDocWithInitialization(docRef, payload);

@@ -77,6 +77,43 @@ describe("useAttendance", () => {
         });
     });
 
+    it("subscribes once and does not churn subscriptions after snapshot updates", () => {
+        const unsubscribeMock = vi.fn();
+        let snapshotHandler;
+
+        onSnapshotMock.mockImplementation((_, handler) => {
+            snapshotHandler = handler;
+            return unsubscribeMock;
+        });
+
+        renderHook(() => useAttendance("poll-1"));
+
+        act(() => {
+            snapshotHandler({
+                data: () => ({
+                    "pub-1": {
+                        canCome: ["user-1"],
+                        cannotCome: [],
+                    },
+                }),
+            });
+        });
+
+        act(() => {
+            snapshotHandler({
+                data: () => ({
+                    "pub-1": {
+                        canCome: ["user-1", "user-2"],
+                        cannotCome: [],
+                    },
+                }),
+            });
+        });
+
+        expect(onSnapshotMock).toHaveBeenCalledTimes(1);
+        expect(unsubscribeMock).not.toHaveBeenCalled();
+    });
+
     it("switches and clears attendance with mutually exclusive updates", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
