@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
 import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
 
@@ -13,20 +14,17 @@ const PubParams = {
 };
 
 // Bad things about a pub, things you want to search for the absence of
-const AntiPubParams = { out_of_town: PubParams.out_of_town }
+const AntiPubParams = { out_of_town: PubParams.out_of_town };
 
 // Generic checkbox component for pub parameters
 function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
-  const value =
-    pub_object &&
-    Object.hasOwn(pub_object, name) &&
-    pub_object[name];
+  const value = pub_object && Object.hasOwn(pub_object, name) && pub_object[name];
 
   // We can have the same name in multiple filter contexts
   // So multiple labels attached to checkboxes representing different state
   // However a label attaches to any checkbox with the same name
   // So we need a different name on the label/checkbox in those different contexts
-  const label_value = `${label_mod || ''}${name}`;
+  const label_value = `${label_mod || ""}${name}`;
   return (
     <tr>
       <td className="text-center" style={{ width: "3rem" }}>
@@ -42,7 +40,9 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
         />
       </td>
       <td>
-        <BsForm.Label htmlFor={label_value} className="mb-0 text-body-emphasis">{label}</BsForm.Label>
+        <BsForm.Label htmlFor={label_value} className="mb-0 text-body-emphasis">
+          {label}
+        </BsForm.Label>
       </td>
     </tr>
   );
@@ -51,6 +51,7 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
 function PubForm({ method, pub_object }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
+  const [venueType, setVenueType] = useState(pub_object ? pub_object.venueType || "pub" : "pub");
 
   const isSubmitting = navigation.state === "submitting";
 
@@ -68,12 +69,15 @@ function PubForm({ method, pub_object }) {
                 <BsForm.Label>Venue Type</BsForm.Label>
                 <BsForm.Select
                   name="venueType"
-                  defaultValue={pub_object ? (pub_object.venueType || "pub") : "pub"}
+                  value={venueType}
+                  onChange={(event) => {
+                    setVenueType(event.target.value);
+                  }}
                 >
-                  {VenueTypes.map((venueType) => {
+                  {VenueTypes.map((type) => {
                     return (
-                      <option key={venueType} value={venueType}>
-                        {venueType.charAt(0).toUpperCase() + venueType.slice(1)}
+                      <option key={type} value={type}>
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
                       </option>
                     );
                   })}
@@ -169,14 +173,11 @@ function PubForm({ method, pub_object }) {
               <Table bordered hover size="sm" responsive className="mb-0 align-middle">
                 <tbody>
                   {Object.entries(PubParams).map(([key, value]) => {
-                    return (
-                      <PubCheckbox
-                        key={key}
-                        name={key}
-                        label={value}
-                        pub_object={pub_object}
-                      />
-                    );
+                    if (venueType === "restaurant" && key === "food") {
+                      return null;
+                    }
+
+                    return <PubCheckbox key={key} name={key} label={value} pub_object={pub_object} />;
                   })}
                 </tbody>
               </Table>

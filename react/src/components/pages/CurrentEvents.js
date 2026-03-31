@@ -1,5 +1,6 @@
-﻿import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useSelector } from "react-redux";
+import { useSearchParams } from "react-router-dom";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
@@ -22,6 +23,7 @@ function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
     return <div></div>;
   }
+
   const pubName = pub_parameters[value.selected].name;
   const pubWebsite = pub_parameters[value.selected]?.web_site;
   const pubImage = pub_parameters[value.selected]?.pubImage;
@@ -64,46 +66,59 @@ function PastEvent({ value, pub_parameters }) {
 }
 
 export function PastEvents() {
-  const [pubCount, setPubCount] = useState(5);
-  const [pageIndex, setPageIndex] = useState(0);
-  const pollData = usePastCompletePolls();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pubCountParam = Number(searchParams.get("pastPageSize"));
+  const pubCount = [5, 10, 20].includes(pubCountParam) ? pubCountParam : 5;
+  const cursorTrail = (searchParams.get("pastCursorTrail") || "")
+    .split(",")
+    .filter(Boolean);
+  const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
+
+  const { pollData, hasNextPage, lastVisibleId, isLoading } = usePastCompletePolls(
+    pubCount,
+    currentCursorId
+  );
+
+  const hasPreviousPage = cursorTrail.length > 0;
+  const pageIndex = cursorTrail.length;
   const pub_parameters = usePubs();
-  const allPastPolls = useMemo(() => [...pollData.sortedByDate(true)], [pollData]);
+  const sortedPollsByDate = [...pollData.sortedByDate(true)];
 
-  const pageSize = Number(pubCount);
-  const totalPages = Math.max(1, Math.ceil(allPastPolls.length / pageSize));
-  const safePageIndex = Math.min(pageIndex, totalPages - 1);
-  const startIndex = safePageIndex * pageSize;
-  const visiblePolls = allPastPolls.slice(startIndex, startIndex + pageSize);
-  const hasPreviousPage = safePageIndex > 0;
-  const hasNextPage = startIndex + pageSize < allPastPolls.length;
-
-  useEffect(() => {
-    if (pageIndex !== safePageIndex) {
-      setPageIndex(safePageIndex);
-    }
-  }, [pageIndex, safePageIndex]);
+  const writePaginationParams = useCallback(
+    (nextPageSize, nextCursorTrail) => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("pastPageSize", String(nextPageSize));
+      if (nextCursorTrail.length > 0) {
+        nextParams.set("pastCursorTrail", nextCursorTrail.join(","));
+      } else {
+        nextParams.delete("pastCursorTrail");
+      }
+      setSearchParams(nextParams);
+    },
+    [searchParams, setSearchParams]
+  );
 
   const selectPubCountHandler = useCallback(
     (event) => {
       event.preventDefault();
-      setPubCount(event.target.value);
-      setPageIndex(0);
+      writePaginationParams(Number(event.target.value), []);
     },
-    [setPubCount, setPageIndex]
+    [writePaginationParams]
   );
 
-  const goToPreviousPage = useCallback(() => {
-    if (hasPreviousPage) {
-      setPageIndex((current) => current - 1);
-    }
-  }, [hasPreviousPage]);
-
   const goToNextPage = useCallback(() => {
-    if (hasNextPage) {
-      setPageIndex((current) => current + 1);
+    if (!hasNextPage || !lastVisibleId || isLoading) {
+      return;
     }
-  }, [hasNextPage]);
+    writePaginationParams(pubCount, [...cursorTrail, lastVisibleId]);
+  }, [hasNextPage, lastVisibleId, isLoading, writePaginationParams, pubCount, cursorTrail]);
+
+  const goToPreviousPage = useCallback(() => {
+    if (!hasPreviousPage || isLoading) {
+      return;
+    }
+    writePaginationParams(pubCount, cursorTrail.slice(0, -1));
+  }, [hasPreviousPage, isLoading, writePaginationParams, pubCount, cursorTrail]);
 
   return (
     <section className="py-4 py-md-5">
@@ -122,7 +137,7 @@ export function PastEvents() {
             <select
               id="pastEventCount"
               className="form-select"
-              defaultValue={pubCount}
+              value={pubCount}
               onChange={selectPubCountHandler}
             >
               <option>5</option>
@@ -133,19 +148,19 @@ export function PastEvents() {
         </div>
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
-          {visiblePolls.map(([key, value]) => {
+          {sortedPollsByDate.map(([key, value]) => {
             return <PastEvent key={key} value={value} pub_parameters={pub_parameters} />;
           })}
         </div>
 
         <div className="d-flex align-items-center justify-content-between mt-4 gap-3 flex-wrap">
-          <div className="text-body-secondary">Page {safePageIndex + 1} of {totalPages}</div>
+          <div className="text-body-secondary">Page {pageIndex + 1}</div>
           <div className="d-flex gap-2">
             <button
               type="button"
               className="btn btn-outline-secondary"
               onClick={goToPreviousPage}
-              disabled={!hasPreviousPage}
+              disabled={!hasPreviousPage || isLoading}
             >
               Newer Events
             </button>
@@ -153,7 +168,7 @@ export function PastEvents() {
               type="button"
               className="btn btn-outline-secondary"
               onClick={goToNextPage}
-              disabled={!hasNextPage}
+              disabled={!hasNextPage || isLoading}
             >
               Older Events
             </button>
@@ -210,7 +225,12 @@ function CurrentEvent({
           <div>
             {mainVenue.website ? (
               <h2 className="h4 mb-1">
-                <a href={mainVenue.website} target="_blank" rel="noreferrer" className="link-primary text-decoration-none">
+                <a
+                  href={mainVenue.website}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="link-primary text-decoration-none"
+                >
                   {mainVenue.name}
                 </a>
               </h2>
@@ -298,7 +318,9 @@ function CurrentEvent({
             <Button
               type="button"
               variant="outline-primary"
-              onClick={() => on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)}
+              onClick={() =>
+                on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
+              }
             >
               Reschedule Event
             </Button>
@@ -340,40 +362,42 @@ function CurrentEvents() {
       <div className="container">
         <div className="mb-4">
           <h1 className="h2 mb-1">Current Events</h1>
-          <p className="text-body-secondary mb-0">Upcoming pub night details and attendance tracking.</p>
+          <p className="text-body-secondary mb-0">
+            Upcoming pub night details and attendance tracking.
+          </p>
         </div>
-      {rescheduleState.isRescheduling && (
-        <ReschedulePollModal
-          selectedPubId={rescheduleState.selectedPubId}
-          pubHasFood={rescheduleState.pubHasFood}
-          pubOptions={rescheduleState.pubOptions}
-          restaurantOptions={rescheduleState.restaurantOptions}
-          chosenRestaurantId={rescheduleState.chosenRestaurantId}
-          restaurantTime={rescheduleState.restaurantTime}
-          onPubChange={rescheduleState.setSelectedPub}
-          onRestaurantChange={rescheduleState.setRestaurantChoice}
-          onRestaurantTimeChange={rescheduleState.setRestaurantTime}
-          onConfirm={rescheduleState.saveReschedule}
-          onCancel={rescheduleState.cancelReschedule}
-        />
-      )}
-      {[...pollData.sortedByDate()].map(([key, value]) => {
-        return (
-          <CurrentEvent
-            key={key}
-            poll_id={key}
-            current_pub_id={value.selected}
-            restaurant_id={value.restaurant}
-            restaurant_time={value.restaurant_time}
-            date={value.date}
-            pub_parameters={pub_parameters}
-            can_reschedule={canReschedule}
-            can_delete_event={canDeleteEvent}
-            show_voters={canShowVoters}
-            on_open_reschedule={rescheduleState.openRescheduleModal}
+        {rescheduleState.isRescheduling && (
+          <ReschedulePollModal
+            selectedPubId={rescheduleState.selectedPubId}
+            pubHasFood={rescheduleState.pubHasFood}
+            pubOptions={rescheduleState.pubOptions}
+            restaurantOptions={rescheduleState.restaurantOptions}
+            chosenRestaurantId={rescheduleState.chosenRestaurantId}
+            restaurantTime={rescheduleState.restaurantTime}
+            onPubChange={rescheduleState.setSelectedPub}
+            onRestaurantChange={rescheduleState.setRestaurantChoice}
+            onRestaurantTimeChange={rescheduleState.setRestaurantTime}
+            onConfirm={rescheduleState.saveReschedule}
+            onCancel={rescheduleState.cancelReschedule}
           />
-        );
-      })}
+        )}
+        {[...pollData.sortedByDate()].map(([key, value]) => {
+          return (
+            <CurrentEvent
+              key={key}
+              poll_id={key}
+              current_pub_id={value.selected}
+              restaurant_id={value.restaurant}
+              restaurant_time={value.restaurant_time}
+              date={value.date}
+              pub_parameters={pub_parameters}
+              can_reschedule={canReschedule}
+              can_delete_event={canDeleteEvent}
+              show_voters={canShowVoters}
+              on_open_reschedule={rescheduleState.openRescheduleModal}
+            />
+          );
+        })}
       </div>
     </section>
   );

@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import CurrentEvents from "./CurrentEvents";
+import CurrentEvents, { PastEvents } from "./CurrentEvents";
 
 const {
   reschedulePollMock,
   deletePollMock,
   useFutureCompletePollsMock,
+  usePastCompletePollsMock,
   usePubsMock,
   useVotesMock,
   useAttendanceMock,
@@ -21,6 +23,7 @@ const {
     reschedulePollMock: vi.fn(async () => undefined),
     deletePollMock: vi.fn(async () => undefined),
     useFutureCompletePollsMock: vi.fn(),
+    usePastCompletePollsMock: vi.fn(),
     usePubsMock: vi.fn(),
     useVotesMock: vi.fn(),
     useAttendanceMock: vi.fn(),
@@ -42,7 +45,7 @@ vi.mock("../../dbtools/polls", () => {
 vi.mock("../../hooks/usePolls", () => {
   return {
     useFutureCompletePolls: useFutureCompletePollsMock,
-    usePastCompletePolls: vi.fn(),
+    usePastCompletePolls: usePastCompletePollsMock,
   };
 });
 
@@ -122,9 +125,18 @@ function createFuturePollData(pollValue) {
   };
 }
 
+function createPastPollData(pollValue) {
+  return {
+    *sortedByDate() {
+      yield ["poll-1", pollValue];
+    },
+  };
+}
+
 describe("CurrentEvents", () => {
   beforeEach(() => {
     useFutureCompletePollsMock.mockReset();
+    usePastCompletePollsMock.mockReset();
     usePubsMock.mockReset();
     useVotesMock.mockReset();
     useAttendanceMock.mockReset();
@@ -141,6 +153,18 @@ describe("CurrentEvents", () => {
     useVotesMock.mockReturnValue([{}]);
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({
+        selected: "venue-main",
+        date: "2026-03-20",
+      }),
+      hasNextPage: false,
+      hasPreviousPage: false,
+      goToNextPage: vi.fn(),
+      goToPreviousPage: vi.fn(),
+      pageIndex: 0,
+      isLoading: false,
+    });
   });
 
   afterEach(() => {
@@ -304,5 +328,66 @@ describe("CurrentEvents", () => {
         "18:30",
       );
     });
+  });
+});
+
+describe("PastEvents", () => {
+  beforeEach(() => {
+    usePastCompletePollsMock.mockReset();
+    usePubsMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  function renderPastEvents(initialEntry = "/events/past") {
+    return render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/events/past" element={<PastEvents />} />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it("requests page size changes as numbers", () => {
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+      hasNextPage: false,
+      lastVisibleId: null,
+      isLoading: false,
+    });
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole" },
+    });
+
+    renderPastEvents("/events/past?pastPageSize=5&pastCursorTrail=poll-older");
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "10" } });
+
+    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(10, null);
+  });
+
+  it("uses URL cursor trail for older/newer navigation", () => {
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+      hasNextPage: true,
+      lastVisibleId: "poll-last-visible",
+      isLoading: false,
+    });
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole" },
+    });
+
+    renderPastEvents();
+
+    fireEvent.click(screen.getByText("Older Events"));
+    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, "poll-last-visible");
+    expect(screen.getByText("Page 2")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Newer Events"));
+    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, null);
+    expect(screen.getByText("Page 1")).toBeTruthy();
   });
 });
