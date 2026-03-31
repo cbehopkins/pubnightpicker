@@ -154,6 +154,7 @@ describe("CurrentEvents", () => {
     useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
       selected: "venue-main",
       restaurant: "venue-restaurant",
+      restaurant_time: "18:30",
       date: "2026-03-30",
     }));
     usePubsMock.mockReturnValue({
@@ -164,8 +165,25 @@ describe("CurrentEvents", () => {
     render(<CurrentEvents />);
 
     expect(screen.getByText("The Maypole")).toBeTruthy();
-    expect(screen.getByText(/Restaurant:\s*Bistro 12/)).toBeTruthy();
+    expect(screen.getByText(/Restaurant:\s*Bistro 12\s*\(18:30\)/)).toBeTruthy();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(2);
+  });
+
+  it("hides restaurant time when the field is missing", () => {
+    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
+      selected: "venue-main",
+      restaurant: "venue-restaurant",
+      date: "2026-03-30",
+    }));
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+      "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
+    });
+
+    render(<CurrentEvents />);
+
+    expect(screen.getByText(/Restaurant:\s*Bistro 12/)).toBeTruthy();
+    expect(screen.queryByText(/18:30/)).toBeNull();
   });
 
   it("routes attendance actions independently for main venue and restaurant", async () => {

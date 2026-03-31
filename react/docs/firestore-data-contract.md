@@ -52,6 +52,7 @@ Fields:
 - pubs: map keyed by venue id
 - selected: venue id when completed
 - restaurant: venue id when applicable and selected for restaurant branch
+- restaurant_time: optional string in HH:mm, meetup time chosen by completer when restaurant is associated
 - previous_pubs: array of venue ids, used on reschedule
 
 polls.pubs map shape:
@@ -141,10 +142,10 @@ sequenceDiagram
 	alt No restaurant candidates on poll
 		UI->>P: update {completed:true, selected}
 	else One restaurant candidate
-		UI->>P: update {completed:true, selected, restaurant:restaurantId}
+		UI->>P: update {completed:true, selected, restaurant:restaurantId, restaurant_time:meetupTime}
 	else Multiple restaurant candidates
-		UI->>UI: Prompt user to choose restaurant
-		UI->>P: update {completed:true, selected, restaurant:chosenRestaurantId}
+		UI->>UI: Prompt user to choose restaurant and meetup time
+		UI->>P: update {completed:true, selected, restaurant:chosenRestaurantId, restaurant_time:meetupTime}
 	end
 
 	UI->>P: subscribe completed future events
@@ -194,6 +195,7 @@ Writes:
 - polls/{pollId}.completed true
 - polls/{pollId}.selected set
 - polls/{pollId}.restaurant set only when applicable
+- polls/{pollId}.restaurant_time set only when restaurant is applicable
 
 ### 6. Current Event Rendering
 Reads:
@@ -210,6 +212,7 @@ UI behavior:
 ## Data Invariants
 - A completed poll must have completed true and selected set.
 - restaurant field is optional and should only exist when chosen or derived by completion logic.
+- restaurant_time is optional and should only exist when restaurant exists on the same poll doc.
 - Missing venueType means pub for compatibility.
 - Attendance and votes are keyed by venue id within poll-scoped docs.
 - Poll deletion should clean up related poll-scoped docs (polls, votes, attendance, open_actions).

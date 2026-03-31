@@ -53,6 +53,7 @@ describe("currentEventViewModel", () => {
     const result = buildCurrentEventViewModel({
       current_pub_id: "venue-1",
       restaurant_id: "venue-2",
+      restaurant_time: "18:30",
       pub_parameters: {
         "venue-1": { name: "The Maypole" },
         "venue-2": { name: "Bistro 12", address: "12 Market Street" },
@@ -74,6 +75,7 @@ describe("currentEventViewModel", () => {
     expect(result.restaurantVenue).toEqual(expect.objectContaining({
       id: "venue-2",
       name: "Bistro 12",
+      restaurantTime: "18:30",
       address: "12 Market Street",
       userCanCome: false,
       userCannotCome: true,

@@ -45,7 +45,7 @@ export async function deletePubFromPoll(pollId, pubId) {
         [`pubs.${pubId}`]: deleteField(),
     })
 }
-export async function complete_a_poll(key, poll_id, restaurantId) {
+export async function complete_a_poll(key, poll_id, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "completing a poll");
     const docRef = doc(db, "polls", poll_id);
     const payload = {
@@ -55,6 +55,9 @@ export async function complete_a_poll(key, poll_id, restaurantId) {
 
     if (restaurantId) {
         payload.restaurant = restaurantId;
+        if (restaurantTime) {
+            payload.restaurant_time = restaurantTime;
+        }
     }
 
     await updateDoc(docRef, {

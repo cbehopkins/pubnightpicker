@@ -1,16 +1,15 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
+import { useVotableRow } from "../../hooks/useVotableRow";
+import { usePollRows } from "../../hooks/usePollRows";
+import { useBallotActions } from "../../hooks/useBallotActions";
 import ShowAttendance from "./ShowAttendance";
 import AttendanceActions from "./AttendanceActions";
 import { QuestionRender } from "./ConfirmModal";
-import { deletePubFromPoll } from "../../dbtools/polls";
-import { getUserFacingErrorMessage } from "../../permissions";
-import { notifyError } from "../../utils/notify";
-import { runAttendanceAction } from "../../utils/attendance";
 
 function RespondMenu({
   votedFor,
@@ -165,72 +164,49 @@ function RespondMenu({
   );
 }
 
-function VotablePub(params) {
-  const pubName = params.pub_name;
-  const currUserId = params.user_id;
-  const pubId = params.pub_id;
-  const pollId = params.poll_id;
-  const votes = params.votes;
-  const attendance = params.attendance;
-  const canShowAttendance = params.can_show_attendance;
-  const makeVote = params.make_vote;
-  const clearVote = params.clear_vote;
-  const setAttendanceStatus = params.set_attendance_status;
-  const clearAttendance = params.clear_attendance;
-  const setAllAttendanceToCanCome = params.set_all_attendance_to_can_come;
-  const setAllAttendanceToCannotCome = params.set_all_attendance_to_cannot_come;
-  const pollPubIds = params.poll_pub_ids || [];
+function VotablePub({
+  pubId,
+  pubName,
+  currUserId,
+  votes,
+  attendance,
+  canShowAttendance,
+  makeVote,
+  clearVote,
+  setAttendanceStatus,
+  clearAttendance,
+  setAllAttendanceToCanCome,
+  setAllAttendanceToCannotCome,
+  pollPubIds,
+  showDeleteColumn,
+  allowDelete,
+  allowCompletePoll,
+  pollId,
+  completeHandler,
+}) {
+  const rowData = useVotableRow(
+    pubId,
+    currUserId,
+    votes,
+    attendance,
+    setAttendanceStatus,
+    clearAttendance,
+    makeVote,
+    clearVote,
+    pollId
+  );
 
-  const canVote = Boolean(currUserId);
-  const showDeleteColumn = params.show_delete_column;
-  const allow_delete = params.allow_delete;
-  const allow_complete = params.allow_complete;
-  const voteCount = pubId in votes ? votes[pubId].length : 0;
-  const votedFor = pubId in votes && votes[pubId].includes(currUserId);
-  const attendanceForPub = attendance[pubId] || {};
-  const canCome = attendanceForPub.canCome || [];
-  const cannotCome = attendanceForPub.cannotCome || [];
-  const userCanCome = Boolean(currUserId) && canCome.includes(currUserId);
-  const userCannotCome = Boolean(currUserId) && cannotCome.includes(currUserId);
-  const allowAttendanceControls = canVote && pubId !== "any";
-  const allowGlobalAttendanceControls = canVote && pubId === "any" && pollPubIds.length > 0;
-  const hasAttendanceData = voteCount > 0 || canCome.length > 0 || cannotCome.length > 0;
-
-  const voteHandler = useCallback(async () => {
-    if (!currUserId) return;
-    if (votedFor) {
-      await clearVote(pubId, currUserId);
-    } else {
-      await makeVote(pubId, currUserId);
-    }
-  }, [makeVote, clearVote, pubId, currUserId, votedFor]);
-
-  const setAttendanceStatusHandler = useCallback(async (status) => {
-    if (!currUserId || pubId === "any") return;
-    await runAttendanceAction(() => setAttendanceStatus(pubId, currUserId, status));
-  }, [currUserId, pubId, setAttendanceStatus]);
-
-  const clearAttendanceHandler = useCallback(async () => {
-    if (!currUserId || pubId === "any") return;
-    await runAttendanceAction(() => clearAttendance(pubId, currUserId));
-  }, [clearAttendance, currUserId, pubId]);
-
-  const deleteHandler = useCallback(async () => {
-    try {
-      await deletePubFromPoll(pollId, pubId);
-    } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to remove this pub from the poll."));
-    }
-  }, [pollId, pubId]);
+  // Override allowGlobalAttendanceControls to include pollPubIds length check
+  const allowGlobalAttendanceControls = rowData.canVote && pubId === "any" && pollPubIds.length > 0;
 
   return (
     <tr>
       {showDeleteColumn && (
         <td>
-          {allow_delete && (
+          {allowDelete && (
             <button
               className={styles.deleter}
-              onClick={deleteHandler}
+              onClick={rowData.deleteHandler}
             >
               Delete
             </button>
@@ -238,36 +214,36 @@ function VotablePub(params) {
         </td>
       )}
       <td>
-        {allow_complete ? (
-          <button onClick={params.complete_handler}>{pubName}</button>
+        {allowCompletePoll ? (
+          <button onClick={completeHandler}>{pubName}</button>
         ) : (
           <label>{pubName}</label>
         )}
       </td>
       <td>
-        <label>{voteCount}</label>
+        <label>{rowData.voteCount}</label>
       </td>
-      {canVote && (
+      {rowData.canVote && (
         <td className={styles.attendanceIndicator}>
           {pubId !== "any" && (
-            userCanCome ? <span title="You said you can come">✅</span>
-            : userCannotCome ? <span title="You said you cannot come">❌</span>
+            rowData.userCanCome ? <span title="You said you can come">✅</span>
+            : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
             : null
           )}
         </td>
       )}
 
-      {canVote && (
+      {rowData.canVote && (
         <td>
           <RespondMenu
-            votedFor={votedFor}
-            userCanCome={userCanCome}
-            userCannotCome={userCannotCome}
-            allowAttendanceControls={allowAttendanceControls}
+            votedFor={rowData.votedFor}
+            userCanCome={rowData.userCanCome}
+            userCannotCome={rowData.userCannotCome}
+            allowAttendanceControls={rowData.allowAttendanceControls}
             allowGlobalAttendanceControls={allowGlobalAttendanceControls}
-            onVote={voteHandler}
-            onSetAttendanceStatus={setAttendanceStatusHandler}
-            onClearAttendance={clearAttendanceHandler}
+            onVote={rowData.voteHandler}
+            onSetAttendanceStatus={rowData.setAttendanceStatusHandler}
+            onClearAttendance={rowData.clearAttendanceHandler}
             onSetAllCanCome={setAllAttendanceToCanCome}
             onSetAllCannotCome={setAllAttendanceToCannotCome}
           />
@@ -276,15 +252,15 @@ function VotablePub(params) {
 
       {canShowAttendance && (
         <td>
-          {hasAttendanceData && (
+          {rowData.hasAttendanceData && (
             <QuestionRender
               className={styles.button}
               question="Show attendance"
             >
               <ShowAttendance
                 voters={votes[pubId] || []}
-                canCome={canCome}
-                cannotCome={cannotCome}
+                canCome={rowData.canCome}
+                cannotCome={rowData.cannotCome}
               />
             </QuestionRender>
           )}
@@ -303,43 +279,15 @@ function PollVote(props) {
   const [attendance, setAttendanceStatus, clearAttendance, setAttendanceForMultiplePubs] = useAttendance(props.poll_id);
   const canVote = Boolean(currUserId);
 
-  const pollPubIds = useMemo(() => {
-    return Object.keys(props.poll_data.pubs || {}).filter((pubId) => pubId !== "any");
-  }, [props.poll_data.pubs]);
+  // Get sorted poll rows
+  const rowEntries = usePollRows(props.poll_data);
 
-  const setAllAttendanceToCanCome = useCallback(async () => {
-    if (!currUserId || pollPubIds.length === 0) {
-      return;
-    }
-
-    await runAttendanceAction(() => setAttendanceForMultiplePubs(pollPubIds, currUserId, "canCome"));
-  }, [currUserId, pollPubIds, setAttendanceForMultiplePubs]);
-
-  const setAllAttendanceToCannotCome = useCallback(async () => {
-    if (!currUserId || pollPubIds.length === 0) {
-      return;
-    }
-
-    await runAttendanceAction(() => setAttendanceForMultiplePubs(pollPubIds, currUserId, "cannotCome"));
-  }, [currUserId, pollPubIds, setAttendanceForMultiplePubs]);
-
-  const rowEntries = useMemo(() => {
-    const rows = [["Global", "any"]];
-
-    const pubRows = [];
-    if (props.poll_data.pubs) {
-      for (const [id, pub] of Object.entries(props.poll_data.pubs)) {
-        if (id === "any") {
-          continue;
-        }
-        pubRows.push([pub.name, id]);
-      }
-    }
-
-    pubRows.sort((a, b) => a[0].localeCompare(b[0]));
-    rows.push(...pubRows);
-    return rows;
-  }, [props.poll_data.pubs]);
+  // Get ballot actions (batch attendance handlers)
+  const { pollPubIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
+    props.poll_data,
+    currUserId,
+    setAttendanceForMultiplePubs
+  );
 
   return (
     <>
@@ -356,33 +304,33 @@ function PollVote(props) {
         </thead>
         <tbody>
           {rowEntries.map(([pubName, key]) => {
-              const isGlobal = key === "any";
-              return (
-                <VotablePub
-                  key={key}
-                  pub_id={key}
-                  pub_name={pubName}
-                  poll_id={props.poll_id}
-                  user_id={currUserId}
-                  show_delete_column={allowDelete}
-                  allow_delete={!isGlobal && allowDelete}
-                  allow_complete={!isGlobal && allowCompletePoll}
-                  votes={votes}
-                  attendance={attendance}
-                  can_show_attendance={canShowAttendance}
-                  make_vote={makeVote}
-                  clear_vote={clearVote}
-                  set_attendance_status={setAttendanceStatus}
-                  clear_attendance={clearAttendance}
-                  set_all_attendance_to_can_come={setAllAttendanceToCanCome}
-                  set_all_attendance_to_cannot_come={setAllAttendanceToCannotCome}
-                  poll_pub_ids={pollPubIds}
-                  complete_handler={() => {
-                    props.on_complete(key, pubName, props.poll_id);
-                  }}
-                />
-              );
-            })}
+            const isGlobal = key === "any";
+            return (
+              <VotablePub
+                key={key}
+                pubId={key}
+                pubName={pubName}
+                currUserId={currUserId}
+                votes={votes}
+                attendance={attendance}
+                canShowAttendance={canShowAttendance}
+                makeVote={makeVote}
+                clearVote={clearVote}
+                setAttendanceStatus={setAttendanceStatus}
+                clearAttendance={clearAttendance}
+                setAllAttendanceToCanCome={setAllAttendanceToCanCome}
+                setAllAttendanceToCannotCome={setAllAttendanceToCannotCome}
+                pollPubIds={pollPubIds}
+                showDeleteColumn={allowDelete}
+                allowDelete={!isGlobal && allowDelete}
+                allowCompletePoll={!isGlobal && allowCompletePoll}
+                pollId={props.poll_id}
+                completeHandler={() => {
+                  props.on_complete(key, pubName, props.poll_id);
+                }}
+              />
+            );
+          })}
         </tbody>
       </table>
     </>

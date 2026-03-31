@@ -62,12 +62,13 @@ vi.mock("../UI/ActivePoll", () => {
 
 vi.mock("./CompletePollModal", () => {
   return {
-    default: ({ restaurantChoiceRequired, onRestaurantChange, onConfirm, onCancel }) => {
+    default: ({ restaurantChoiceRequired, onRestaurantChange, onRestaurantTimeChange, onConfirm, onCancel }) => {
       return (
         <div data-testid="complete-poll-modal">
           {restaurantChoiceRequired && (
             <button onClick={() => onRestaurantChange("r2")}>pick-r2</button>
           )}
+          <button onClick={() => onRestaurantTimeChange("19:00")}>set-time-19-00</button>
           <button onClick={onConfirm}>confirm-complete</button>
           <button onClick={onCancel}>cancel-complete</button>
         </div>
@@ -124,7 +125,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", undefined);
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", undefined, undefined);
     });
   });
 
@@ -147,7 +148,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r1");
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r1", "18:30");
     });
   });
 
@@ -177,7 +178,31 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r2");
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r2", "18:30");
+    });
+  });
+
+  it("persists a user-updated restaurant meetup time", async () => {
+    usePollsMock.mockReturnValue(createPollData({
+      date: "2026-03-30",
+      pubs: {
+        "selected-venue": { name: "The Maypole" },
+        r1: { name: "Bistro 12" },
+      },
+    }));
+    usePubsMock.mockReturnValue({
+      "selected-venue": { name: "The Maypole", venueType: "pub" },
+      r1: { name: "Bistro 12", venueType: "restaurant" },
+    });
+
+    render(<ActivePolls />);
+
+    fireEvent.click(screen.getByText("trigger-complete"));
+    fireEvent.click(screen.getByText("set-time-19-00"));
+    fireEvent.click(screen.getByText("confirm-complete"));
+
+    await waitFor(() => {
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r1", "19:00");
     });
   });
 });

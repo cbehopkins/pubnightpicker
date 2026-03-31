@@ -57,7 +57,7 @@ def test_event_template_uses_event_wording_and_venue_map_label():
 
     assert "destination is an event venue" in text
     assert "we will be attending Beer Festival" in text
-    assert "Map to venue" in text
+    assert "Map to event" in text
 
 
 def test_restaurant_template_uses_restaurant_wording():
@@ -198,8 +198,8 @@ def test_restaurant_block_includes_venue_details():
     assert "Every week we have a pub night to which you are cordially invited." in text
     assert "This week on 2026-04-08 we will be visiting The Swan" in text
     assert "Before the pub we are meeting at Nosh Place" in text
-    assert "Venue Web Site https://nosh.example" in text
+    assert "Restaurant Web Site https://nosh.example" in text
     assert "1 Food Street" in text
-    assert "Map to venue https://maps.example/nosh" in text
+    assert "Map to restaurant https://maps.example/nosh" in text
     # Unsubscribe link should NOT appear in the restaurant block (uid=None there)
     assert text.count("Unsubscribe") == 0

@@ -28,6 +28,7 @@ export function getDedupedVotesForVenue(votes, venueId) {
 export function buildCurrentEventViewModel({
   current_pub_id,
   restaurant_id,
+  restaurant_time,
   pub_parameters,
   votes,
   attendance,
@@ -62,6 +63,7 @@ export function buildCurrentEventViewModel({
     restaurantVenue = {
       id: restaurant_id,
       name: restaurantSource.name,
+      restaurantTime: restaurant_time,
       website: restaurantSource.web_site,
       image: restaurantSource.pubImage,
       address: restaurantSource.address,

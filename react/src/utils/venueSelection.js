@@ -30,6 +30,7 @@ export function createCompletingPollState(key, pubName, pollId, poll, venues) {
     poll_id: pollId,
     restaurantOptions,
     restaurantId: autoSelectedRestaurant,
+    restaurantTime: "18:30",
   };
 }
 

@@ -46,7 +46,7 @@ class DbHandler:
         docs_query = self.db.collection("users").where(
             filter=FieldFilter("notificationEmailEnabled", "==", True)
         )
-        _log.info("Generating personal email addresses")
+        # _log.info("Generating personal email addresses")
         for doc in docs_query.stream():
             record = doc.to_dict()
             if record is None:
@@ -55,13 +55,13 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
-        _log.info("Stream closed in query_personal_emails")
+        # _log.info("Stream closed in query_personal_emails")
 
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         docs_query = self.db.collection("users").where(
             filter=FieldFilter("openPollEmailEnabled", "==", True)
         )
-        _log.info("Generating open email addresses")
+        # _log.info("Generating open email addresses")
         for doc in docs_query.stream():
             record = doc.to_dict()
             if record is None:
@@ -70,7 +70,7 @@ class DbHandler:
             pemail = record["notificationEmail"]
             _log.debug(f"{pemail}")
             yield pemail, record["uid"]
-        _log.info("Stream closed in query_open_emails")
+        # _log.info("Stream closed in query_open_emails")
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)

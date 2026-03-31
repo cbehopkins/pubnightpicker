@@ -22,7 +22,7 @@ vi.mock("./notify", () => {
     };
 });
 
-import { runAttendanceAction } from "./attendance";
+import { runAttendanceAction } from "./asyncErrorHandler";
 
 describe("runAttendanceAction", () => {
     beforeEach(() => {

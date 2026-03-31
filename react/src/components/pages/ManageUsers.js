@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import useAdmin from "../../hooks/useAdmin";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useMemo, useState } from "react";
 import useUsers from "../../hooks/useUsers";
 import { useAllRoles } from "../../hooks/useRoles";
+import ProtectedRoute from "../ProtectedRoute";
 import { db } from "../../firebase";
 import { doc, deleteField, updateDoc, setDoc } from "firebase/firestore";
 import Modal from "../UI/Modal";
@@ -124,14 +123,8 @@ function UIDModal({ uid, onClose }) {
     );
 }
 
-export default function ManageUsers() {
-    const admin = useAdmin();
-    const navigate = useNavigate();
+function ManageUsers() {
     const [selectedUID, setSelectedUID] = useState(null);
-
-    useEffect(() => {
-        if (!admin) navigate("/");
-    }, [admin, navigate]);
 
     const users = useUsers();
     const sortedUsers = useMemo(() => {
@@ -338,4 +331,6 @@ export default function ManageUsers() {
             </Modal>
         )}
     </div>);
-};
+}
+
+export default ProtectedRoute(ManageUsers, "admin", "/");
