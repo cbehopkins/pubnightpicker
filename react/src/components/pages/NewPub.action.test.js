@@ -59,6 +59,34 @@ describe("NewPub action", () => {
         expect(response.headers.get("Location")).toBe("/venues");
     });
 
+    it("always persists restaurant venues as serving food", async () => {
+        await action({
+            request: createRequest("POST", {
+                name: "Bistro 12",
+                venueType: "restaurant",
+            }),
+            params: {},
+        });
+
+        expect(addNewPubMock).toHaveBeenCalledWith(
+            expect.objectContaining({ venueType: "restaurant", food: true })
+        );
+    });
+
+    it("keeps non-restaurant food flag tied to checkbox state", async () => {
+        await action({
+            request: createRequest("POST", {
+                name: "The Maypole",
+                venueType: "pub",
+            }),
+            params: {},
+        });
+
+        expect(addNewPubMock).toHaveBeenCalledWith(
+            expect.objectContaining({ venueType: "pub", food: false })
+        );
+    });
+
     it("modifies a pub and redirects on PATCH", async () => {
         const response = await action({
             request: createRequest("PATCH", {
@@ -69,7 +97,10 @@ describe("NewPub action", () => {
         });
 
         expect(modifyPubMock).toHaveBeenCalledTimes(1);
-        expect(modifyPubMock).toHaveBeenCalledWith("pub-123", expect.objectContaining({ venueType: "restaurant" }));
+        expect(modifyPubMock).toHaveBeenCalledWith(
+            "pub-123",
+            expect.objectContaining({ venueType: "restaurant", food: true })
+        );
         expect(response.status).toBe(302);
         expect(response.headers.get("Location")).toBe("/venues");
     });

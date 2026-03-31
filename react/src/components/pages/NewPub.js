@@ -25,6 +25,11 @@ export async function action({ request, params }) {
   };
   console.log("Pub action data", data, "pubParms", pubParams);
   for (const key of Object.keys(PubParams)) {
+    if (key === "food" && pubParams.venueType === "restaurant") {
+      pubParams[key] = true;
+      continue;
+    }
+
     pubParams[key] = Boolean(data.get(key));
   }
   console.log("Submitted parameters", pubParams)
