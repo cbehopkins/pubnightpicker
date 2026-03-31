@@ -7,6 +7,7 @@ import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
+import { useEventAttendance } from "../../hooks/useEventAttendance";
 import styles from "./CurrentEvents.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
@@ -14,7 +15,6 @@ import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
 import { deletePoll, reschedule_a_poll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
-import { runAttendanceAction } from "../../utils/attendance";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
 function PastEvent({ value, pub_parameters }) {
@@ -125,49 +125,21 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
   }
   const { mainVenue, restaurantVenue } = eventViewModel;
 
+  // Get attendance handlers for both venues
+  const attendanceHandlers = useEventAttendance(
+    currUserId,
+    setAttendanceStatus,
+    clearAttendance,
+    mainVenue.id,
+    restaurantVenue?.id
+  );
+
   const rescheduleHandler = async (pubId) => {
     try {
       return await reschedule_a_poll(poll_id, current_pub_id, pubId);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
     }
-  };
-  const setAttendanceStatusHandler = async (status) => {
-    if (!currUserId) {
-      return;
-    }
-
-    await runAttendanceAction(() => setAttendanceStatus(mainVenue.id, currUserId, status));
-  };
-
-  const clearAttendanceHandler = async () => {
-    if (!currUserId || (!mainVenue.userCanCome && !mainVenue.userCannotCome)) {
-      return;
-    }
-
-    await runAttendanceAction(
-      () => clearAttendance(mainVenue.id, currUserId),
-      "Unable to clear your attendance.",
-    );
-  };
-
-  const setRestaurantAttendanceStatusHandler = async (status) => {
-    if (!currUserId || !restaurantVenue) {
-      return;
-    }
-
-    await runAttendanceAction(() => setAttendanceStatus(restaurantVenue.id, currUserId, status));
-  };
-
-  const clearRestaurantAttendanceHandler = async () => {
-    if (!currUserId || !restaurantVenue || (!restaurantVenue.userCanCome && !restaurantVenue.userCannotCome)) {
-      return;
-    }
-
-    await runAttendanceAction(
-      () => clearAttendance(restaurantVenue.id, currUserId),
-      "Unable to clear your restaurant attendance.",
-    );
   };
 
   return (
@@ -189,8 +161,8 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
         canComeSelectedLabel="Can come confirmed"
         cannotComeSelectedLabel="Cannot come confirmed"
         clearMode="button"
-        onSetStatus={setAttendanceStatusHandler}
-        onClear={clearAttendanceHandler}
+        onSetStatus={attendanceHandlers.setMainAttendanceStatus}
+        onClear={attendanceHandlers.clearMainAttendance}
       />}
       {mainVenue.allowShowVoters && <QuestionRender className={styles.button} question="Show venue attendance">
         <ShowAttendance voters={mainVenue.dedupedVotes} canCome={mainVenue.canCome} cannotCome={mainVenue.cannotCome} />
@@ -208,8 +180,8 @@ function CurrentEvent({ poll_id, current_pub_id, restaurant_id, restaurant_time,
           canComeSelectedLabel="Can come confirmed"
           cannotComeSelectedLabel="Cannot come confirmed"
           clearMode="button"
-          onSetStatus={setRestaurantAttendanceStatusHandler}
-          onClear={clearRestaurantAttendanceHandler}
+          onSetStatus={attendanceHandlers.setRestaurantAttendanceStatus}
+          onClear={attendanceHandlers.clearRestaurantAttendance}
         />}
         {restaurantVenue.allowShowVoters && <QuestionRender className={styles.button} question="Show restaurant attendance">
           <ShowAttendance

@@ -1,25 +1,15 @@
-import { redirect, useNavigate } from "react-router-dom";
+import { redirect } from "react-router-dom";
 import PubForm, { PubParams } from "./PubForm";
-import useRole from "../../hooks/useRole";
-import { useEffect } from "react";
+import ProtectedRoute from "../ProtectedRoute";
 import { addNewPub, modifyPub } from "../../dbtools/pubs";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 
 function NewPubPage() {
-  const navigate = useNavigate();
-  const canManagePubs = useRole("canManagePubs");
-
-  useEffect(() => {
-    if (!canManagePubs) {
-      navigate("/");
-    }
-  }, [canManagePubs, navigate]);
-
   return <PubForm method="post" />;
 }
 
-export default NewPubPage;
+export default ProtectedRoute(NewPubPage, "canManagePubs", "/");
 
 export async function action({ request, params }) {
   const method = request.method;
