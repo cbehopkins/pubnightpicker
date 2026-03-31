@@ -1,5 +1,5 @@
 import Modal from "../UI/Modal";
-import styles from "./CompletePollModal.module.css";
+import Button from "../UI/Button";
 
 function VenueAssignmentModal({
   title,
@@ -34,21 +34,22 @@ function VenueAssignmentModal({
 
   return (
     <Modal>
-      <div className={styles.dialog}>
-        <div className={styles.header}>
+      <div className="p-3 p-md-4 text-dark bg-white rounded shadow-sm">
+        <div className="border-bottom pb-3 mb-3">
           <div>
-            <p className={styles.eyebrow}>Event Update</p>
-            <p className={styles.title}>{title}</p>
-            {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+            <p className="text-uppercase fw-semibold small text-secondary mb-1">Event Update</p>
+            <h4 className="mb-2">{title}</h4>
+            {subtitle && <p className="text-secondary mb-0">{subtitle}</p>}
           </div>
         </div>
 
-        <div className={styles.section}>
-          <div className={styles.venueRow}>
-            <span className={styles.venueLabel}>{mainVenueLabel}</span>
+        <div className="card mb-3 border-0 bg-light-subtle">
+          <div className="card-body">
+            <div className="d-flex flex-column gap-2">
+              <span className="text-uppercase fw-semibold small text-secondary">{mainVenueLabel}</span>
             {mainVenueOptions ? (
               <select
-                className={styles.select}
+                className="form-select"
                 value={selectedMainVenueId}
                 onChange={(event) => onMainVenueChange(event.target.value)}
               >
@@ -58,61 +59,64 @@ function VenueAssignmentModal({
                 ))}
               </select>
             ) : (
-              <span className={styles.venueName}>{mainVenueName}</span>
+              <span className="fs-5 fw-semibold">{mainVenueName}</span>
             )}
-            {mainVenueHelpText && <p className={styles.helpText}>{mainVenueHelpText}</p>}
+              {mainVenueHelpText && <p className="small text-secondary mb-0">{mainVenueHelpText}</p>}
+            </div>
           </div>
         </div>
 
-        {infoNote && <p className={styles.infoNote}>{infoNote}</p>}
+        {infoNote && <div className="alert alert-info py-2" role="status">{infoNote}</div>}
 
         {showRestaurantSection && (
-          <div className={styles.section}>
-            <div className={styles.formSection}>
-              <label className={styles.fieldLabel} htmlFor="restaurant-choice">
-                {restaurantLabel}
-              </label>
-              <select
-                id="restaurant-choice"
-                className={styles.select}
-                value={chosenRestaurantId}
-                onChange={(event) => onRestaurantChange(event.target.value)}
-              >
-                <option value="">No restaurant</option>
-                {restaurantOptions.map((restaurant) => (
-                  <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>
-                ))}
-              </select>
-              {restaurantHelpText && <p className={styles.helpText}>{restaurantHelpText}</p>}
+          <div className="card mb-3 border-0 bg-light-subtle">
+            <div className="card-body">
+              <div className="d-flex flex-column gap-2">
+                <label className="form-label mb-0 fw-semibold" htmlFor="restaurant-choice">
+                  {restaurantLabel}
+                </label>
+                <select
+                  id="restaurant-choice"
+                  className="form-select"
+                  value={chosenRestaurantId}
+                  onChange={(event) => onRestaurantChange(event.target.value)}
+                >
+                  <option value="">No restaurant</option>
+                  {restaurantOptions.map((restaurant) => (
+                    <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>
+                  ))}
+                </select>
+                {restaurantHelpText && <p className="small text-secondary mb-0">{restaurantHelpText}</p>}
+              </div>
             </div>
           </div>
         )}
 
         {showRestaurantSection && chosenRestaurantId && (
-          <div className={styles.section}>
-            <div className={styles.formSection}>
-              <label className={styles.fieldLabel} htmlFor="restaurant-time">
-                Restaurant meetup time
-              </label>
-              <input
-                id="restaurant-time"
-                type="time"
-                className={styles.timeInput}
-                value={restaurantTime}
-                onChange={(event) => onRestaurantTimeChange(event.target.value)}
-                required
-              />
-              <p className={styles.helpText}>{timeHelpText || "Set when the group should meet before moving on."}</p>
+          <div className="card mb-3 border-0 bg-light-subtle">
+            <div className="card-body">
+              <div className="d-flex flex-column gap-2">
+                <label className="form-label mb-0 fw-semibold" htmlFor="restaurant-time">
+                  Restaurant meetup time
+                </label>
+                <input
+                  id="restaurant-time"
+                  type="time"
+                  className="form-control"
+                  value={restaurantTime}
+                  onChange={(event) => onRestaurantTimeChange(event.target.value)}
+                  required
+                />
+                <p className="small text-secondary mb-0">{timeHelpText || "Set when the group should meet before moving on."}</p>
+              </div>
             </div>
           </div>
         )}
 
-        <div className={styles.footer}>
-          {footerNote && <p className={styles.footerNote}>{footerNote}</p>}
-          <button className={styles.btnCancel} onClick={onCancel}>{cancelText}</button>
-          <button className={styles.btnConfirm} onClick={onConfirm} disabled={confirmDisabled}>
-            {confirmText}
-          </button>
+        <div className="d-flex flex-column flex-md-row align-items-stretch align-items-md-center gap-2 pt-2 border-top">
+          {footerNote && <p className="small text-secondary mb-0 me-md-auto">{footerNote}</p>}
+          <Button type="button" variant="secondary" onClick={onCancel}>{cancelText}</Button>
+          <Button type="button" onClick={onConfirm} disabled={confirmDisabled}>{confirmText}</Button>
         </div>
       </div>
     </Modal>

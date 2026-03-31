@@ -1,11 +1,11 @@
 import { useState, Children, cloneElement } from "react";
 import Modal from "./Modal";
-import styles from "./ConfirmModal.module.css";
+import Button from "./Button";
 
 export function QuestionRender(props) {
   const [showSelf, setShowSelf] = useState(false)
   return <div className={props.className}>
-    <button onClick={() => { setShowSelf(true) }}>{props.question}</button>
+    <Button onClick={() => { setShowSelf(true) }} type="button">{props.question}</Button>
     {showSelf && <> {
       Children.map(props.children, (child) => {
         return cloneElement(child, {
@@ -39,14 +39,16 @@ function ConfirmModal(props) {
   const confirmDisabled = Boolean(props?.confirm_disabled);
   return (
     <Modal>
-      <div className={styles.confirm_dia}>
-        <div>
-          <p className={styles.title}>{props.title}</p>
-          <div className={styles.detail}>{props.detail}</div>
+      <div className="p-3 p-md-4 text-dark bg-white rounded shadow-sm">
+        <div className="mb-3">
+          <h5 className="mb-2">{props.title}</h5>
+          <div className="text-secondary">{props.detail}</div>
         </div>
-        <div>
-          <button className={styles.ok_button} onClick={props.on_confirm} disabled={confirmDisabled}>{confirmText}</button>
-          {!confirmOnly && <button className={styles.cancel} onClick={props.on_cancel}>{cancelText}</button>}
+        <div className="d-flex flex-wrap gap-2 justify-content-end">
+          {!confirmOnly && (
+            <Button type="button" variant="secondary" onClick={props.on_cancel}>{cancelText}</Button>
+          )}
+          <Button type="button" onClick={props.on_confirm} disabled={confirmDisabled}>{confirmText}</Button>
         </div>
       </div>
     </Modal>

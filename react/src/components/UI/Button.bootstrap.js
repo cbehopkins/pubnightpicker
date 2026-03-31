@@ -16,8 +16,9 @@ import { Button as RBButton } from 'react-bootstrap';
  * - variant: string (optional) - Bootstrap variant (primary|danger) - defaults to primary
  */
 const Button = (props) => {
-  // Map variants: default uses primary (gold), anything with 'danger' uses danger (red)
-  const variant = props.variant === 'danger' ? 'danger' : 'primary';
+  // Support common Bootstrap variants while keeping primary as the default.
+  const allowedVariants = new Set(["primary", "secondary", "success", "danger", "warning", "info", "light", "dark"]);
+  const variant = allowedVariants.has(props.variant) ? props.variant : 'primary';
 
   return (
     <RBButton
