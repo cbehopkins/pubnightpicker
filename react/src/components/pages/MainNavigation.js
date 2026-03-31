@@ -4,15 +4,17 @@ import styles from "./MainNavigation.module.css";
 import { logout } from "../../firebase";
 import useAdmin from "../../hooks/useAdmin";
 import useRole from "../../hooks/useRole";
+import Button from "../UI/Button";
+
 const LoggedInElement = (params) => {
   return (
-    <div className={styles.logged_in}>
-      Logged in as
-      <div>{params.name}</div>
-      <div>{params.email}</div>
-      <button className={styles.logged_in__btn} onClick={logout}>
+    <div className={`${styles.logged_in} text-light text-md-end`}>
+      <div className="small text-uppercase text-secondary-emphasis">Logged in as</div>
+      <div className="fw-semibold">{params.name}</div>
+      <div className="small mb-2 text-break">{params.email}</div>
+      <Button type="button" variant="secondary" className={styles.logged_in__btn} onClick={logout}>
         Logout
-      </button>
+      </Button>
     </div>
   );
 };
@@ -24,58 +26,54 @@ function MainNavigation() {
   const canChat = useRole("canChat");
   const email = useSelector((state) => state.auth.email);
 
+  const navLinkClassName = ({ isActive }) =>
+    `nav-link px-2 py-1 rounded ${styles.navLink} ${isActive ? `${styles.active} active` : ""}`;
+
   return (
-    <header className={styles.header}>
-      <nav className={styles.nav}>
-        <ul className={styles.list}>
-          <li>
+    <header className={`${styles.header} container-fluid py-2 py-md-3`}>
+      <nav className={`${styles.nav} d-flex flex-wrap align-items-center gap-2`}>
+        <ul className={`${styles.list} nav nav-pills flex-wrap gap-1 gap-md-2`}>
+          <li className="nav-item">
             <NavLink
               to="/"
+              className={navLinkClassName}
               end
             >
               Home Page
             </NavLink>
           </li>
-          {canChat && <li>
+          {canChat && <li className="nav-item">
             <NavLink
               to="/chat"
-              className={({ isActive }) =>
-                isActive ? styles.active : undefined
-              }
+              className={navLinkClassName}
               end
             >
               Chat Page
             </NavLink>
           </li>}
-          <li>
+          <li className="nav-item">
             <NavLink
               to="/venues"
-              className={({ isActive }) =>
-                isActive ? styles.active : undefined
-              }
+              className={navLinkClassName}
               end
             >
               {loggedIn ? "Manage Venues" : "View Venues"}
             </NavLink>
           </li>
-          {admin && <li>
+          {admin && <li className="nav-item">
             <NavLink
               to="/manage_users"
-              className={({ isActive }) =>
-                isActive ? styles.active : undefined
-              }
+              className={navLinkClassName}
               end
             >
               Manage Users
             </NavLink>
           </li>}
           {!loggedIn && (
-            <li>
+            <li className="nav-item">
               <NavLink
                 to="/login"
-                className={({ isActive }) =>
-                  isActive ? styles.active : undefined
-                }
+                className={navLinkClassName}
                 end
               >
                 Login
@@ -83,47 +81,39 @@ function MainNavigation() {
             </li>
           )}
           {loggedIn && (
-            <li>
+            <li className="nav-item">
               <NavLink
                 to="/active_polls"
-                className={({ isActive }) =>
-                  isActive ? styles.active : undefined
-                }
+                className={navLinkClassName}
                 end
               >
                 Active Polls
               </NavLink>
             </li>
           )}
-          <li>
+          <li className="nav-item">
             <NavLink
               to="/current_events"
-              className={({ isActive }) =>
-                isActive ? styles.active : undefined
-              }
+              className={navLinkClassName}
               end
             >
               Current Events
             </NavLink>
           </li>
-          {loggedIn && <li>
+          {loggedIn && <li className="nav-item">
             <NavLink
               to="/past_events"
-              className={({ isActive }) =>
-                isActive ? styles.active : undefined
-              }
+              className={navLinkClassName}
               end
             >
               Past Events
             </NavLink>
           </li>}
           {loggedIn && (
-            <li>
+            <li className="nav-item">
               <NavLink
                 to="/preferences"
-                className={({ isActive }) =>
-                  isActive ? styles.active : undefined
-                }
+                className={navLinkClassName}
                 end
               >
                 My Preferences

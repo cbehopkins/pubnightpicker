@@ -15,22 +15,34 @@ import { Button as RBButton } from 'react-bootstrap';
  * - className: string - Additional CSS classes (for customization)
  * - variant: string (optional) - Bootstrap variant (primary|danger) - defaults to primary
  */
-const Button = (props) => {
+const Button = React.forwardRef((props, ref) => {
   // Support common Bootstrap variants while keeping primary as the default.
   const allowedVariants = new Set(["primary", "secondary", "success", "danger", "warning", "info", "light", "dark"]);
   const variant = allowedVariants.has(props.variant) ? props.variant : 'primary';
+  const {
+    children,
+    type,
+    onClick,
+    disabled,
+    className,
+    ...restProps
+  } = props;
 
   return (
     <RBButton
+      ref={ref}
       variant={variant}
-      type={props.type || 'button'}
-      onClick={props.onClick}
-      disabled={props.disabled}
-      className={props.className}
+      type={type || 'button'}
+      onClick={onClick}
+      disabled={disabled}
+      className={className}
+      {...restProps}
     >
-      {props.children}
+      {children}
     </RBButton>
   );
-};
+});
+
+Button.displayName = 'Button';
 
 export default Button;

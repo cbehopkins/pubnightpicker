@@ -1,13 +1,12 @@
 .header {
   margin: 0;
-  padding: var(--spacing-md);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--spacing-md);
-  background-color: #1f1f1f;
-  border-bottom: 2px solid var(--color-primary-700);
+  gap: var(--spacing-sm);
+  background-color: var(--bs-dark);
+  border-bottom: 2px solid var(--bs-primary);
   max-height: auto;
   width: 100%;
 }
@@ -24,49 +23,34 @@
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: var(--spacing-sm);
+  gap: 0.35rem;
   margin: 0;
   padding: 0;
   list-style: none;
   width: 100%;
 }
 
-.list a {
-  text-decoration: none;
-  color: var(--color-primary-400);
+.navLink {
+  color: var(--bs-gray-200);
   font-size: var(--font-size-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: 4px;
   transition: all 0.2s ease;
-  display: inline-block;
 }
 
-.list a:hover,
-.list a.active {
-  color: var(--color-primary-800);
-  background-color: rgba(251, 201, 77, 0.1);
+.navLink:hover,
+.navLink.active {
+  color: var(--bs-dark) !important;
+  background-color: var(--bs-primary);
 }
 
 .logged_in {
-  color: chocolate;
+  color: var(--bs-light);
   text-align: right;
   font-size: var(--font-size-sm);
   order: 2;
 }
 
 .logged_in__btn {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  border: none;
-  color: chocolate;
-  background-color: transparent;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 4px;
-}
-
-.logged_in__btn:hover {
-  background-color: rgba(210, 105, 30, 0.2);
+  min-width: 6.5rem;
 }
 
 /* Tablet layout */
@@ -87,8 +71,7 @@
     gap: var(--spacing-md);
   }
 
-  .list a {
-    padding: var(--spacing-sm) var(--spacing-md);
+  .navLink {
     font-size: var(--font-size-base);
   }
 
@@ -100,11 +83,10 @@
 /* Desktop layout */
 @media (min-width: 1024px) {
   .header {
-    padding: var(--spacing-lg);
-    gap: var(--spacing-xl);
+    gap: var(--spacing-lg);
   }
 
-  .list a {
+  .navLink {
     font-size: var(--font-size-lg);
   }
 }
@@ -113,7 +95,6 @@
 @media (max-width: 480px) {
   .header {
     flex-direction: column;
-    padding: var(--spacing-sm);
     gap: var(--spacing-sm);
   }
 
@@ -132,10 +113,9 @@
     min-width: 100px;
   }
 
-  .list a {
+  .navLink {
     display: block;
     text-align: center;
-    padding: var(--spacing-sm);
     font-size: var(--font-size-sm);
   }
 
