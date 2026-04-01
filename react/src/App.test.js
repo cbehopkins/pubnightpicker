@@ -70,6 +70,12 @@ vi.mock("./hooks/useSelf", () => {
 
 vi.mock("./store/authSlice", () => {
   return {
+    default: () => ({
+      loggedIn: false,
+      name: "",
+      email: "",
+      roles: {},
+    }),
     setRoles: (roles) => ({ type: "auth/setRoles", payload: roles }),
   };
 });
@@ -78,7 +84,10 @@ vi.mock("./components/login/Login", () => ({ default: () => null }));
 vi.mock("./components/login/Register", () => ({ default: () => null }));
 vi.mock("./components/login/Reset", () => ({ default: () => null }));
 vi.mock("./components/pages/ManagePubs", () => ({ default: () => null }));
-vi.mock("./components/pages/ManageUsers", () => ({ default: () => null }));
+vi.mock("./components/pages/ManageUsers", () => ({
+  default: () => null,
+  ManageUserDetail: () => null,
+}));
 vi.mock("./components/pages/Error", () => ({ default: () => null }));
 vi.mock("./components/pages/NewPub", () => ({
   default: () => null,
