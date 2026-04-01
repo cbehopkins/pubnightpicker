@@ -317,7 +317,7 @@ function PollVote(props) {
   const allowCompletePoll = useRole("canCompletePoll");
   const canShowAttendance = useRole("canShowVoters");
   const [votes, makeVote, clearVote] = useVotes(props.poll_id);
-  const [attendance, setAttendanceStatus, clearAttendance, setAttendanceForMultiplePubs] = useAttendance(props.poll_id);
+  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus] = useAttendance(props.poll_id);
   const canVote = Boolean(currUserId);
 
   // Get sorted poll rows
@@ -327,7 +327,7 @@ function PollVote(props) {
   const { pollPubIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
     props.poll_data,
     currUserId,
-    setAttendanceForMultiplePubs
+    setGlobalAttendanceStatus
   );
 
   return (

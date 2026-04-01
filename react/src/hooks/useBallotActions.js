@@ -5,7 +5,7 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
  * Hook that manages batch ballot actions (setting attendance for all pubs at once)
  * Returns handlers for setting all pubs to "can come" or "cannot come"
  */
-export function useBallotActions(pollData, currUserId, setAttendanceForMultiplePubs) {
+export function useBallotActions(pollData, currUserId, setGlobalAttendanceStatus) {
   // Get all non-global pub IDs
   const pollPubIds = useMemo(() => {
     return Object.keys(pollData?.pubs || {}).filter((pubId) => pubId !== "any");
@@ -17,10 +17,10 @@ export function useBallotActions(pollData, currUserId, setAttendanceForMultipleP
       return;
     }
 
-    await runAttendanceAction(() => 
-      setAttendanceForMultiplePubs(pollPubIds, currUserId, "canCome")
+    await runAttendanceAction(() =>
+      setGlobalAttendanceStatus(pollPubIds, currUserId, "canCome")
     );
-  }, [currUserId, pollPubIds, setAttendanceForMultiplePubs]);
+  }, [currUserId, pollPubIds, setGlobalAttendanceStatus]);
 
   // Handler to set all pubs to "cannot come"
   const setAllAttendanceToCannotCome = useCallback(async () => {
@@ -28,10 +28,10 @@ export function useBallotActions(pollData, currUserId, setAttendanceForMultipleP
       return;
     }
 
-    await runAttendanceAction(() => 
-      setAttendanceForMultiplePubs(pollPubIds, currUserId, "cannotCome")
+    await runAttendanceAction(() =>
+      setGlobalAttendanceStatus(pollPubIds, currUserId, "cannotCome")
     );
-  }, [currUserId, pollPubIds, setAttendanceForMultiplePubs]);
+  }, [currUserId, pollPubIds, setGlobalAttendanceStatus]);
 
   return {
     pollPubIds,

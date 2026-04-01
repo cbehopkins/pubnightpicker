@@ -3,6 +3,7 @@ import { arrayRemove, arrayUnion, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 import { updateDocWithInitialization } from "../utils/firestoreDocOps";
+import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
 function useAttendance(pollId) {
     const [attendance, setAttendance] = useState({});
@@ -49,7 +50,28 @@ function useAttendance(pollId) {
         await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
-    return [attendance, setAttendanceStatus, clearAttendance, setAttendanceForMultiplePubs];
+    const setGlobalAttendanceStatus = useCallback(async (pubIds, userId, status) => {
+        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
+        const payload = {
+            [`${ATTENDANCE_GLOBAL_KEY}.${status}`]: arrayUnion(userId),
+            [`${ATTENDANCE_GLOBAL_KEY}.${oppositeStatus}`]: arrayRemove(userId),
+        };
+
+        for (const pubId of pubIds || []) {
+            payload[`${pubId}.${status}`] = arrayUnion(userId);
+            payload[`${pubId}.${oppositeStatus}`] = arrayRemove(userId);
+        }
+
+        await updateAttendanceDoc(payload);
+    }, [updateAttendanceDoc]);
+
+    return [
+        attendance,
+        setAttendanceStatus,
+        clearAttendance,
+        setAttendanceForMultiplePubs,
+        setGlobalAttendanceStatus,
+    ];
 }
 
 export default useAttendance;

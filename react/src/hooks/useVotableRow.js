@@ -3,6 +3,7 @@ import { deletePubFromPoll } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError } from "../utils/notify";
 import { runAttendanceAction } from "../utils/asyncErrorHandler";
+import { getEffectiveAttendanceState } from "../utils/attendanceState";
 
 /**
  * Hook that encapsulates all the logic for a single votable row in a poll
@@ -14,17 +15,17 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
   const votedFor = pubId in votes && votes[pubId].includes(currUserId);
 
   // Attendance-related derived state
-  const attendanceForPub = attendance[pubId] || {};
-  const canCome = attendanceForPub.canCome || [];
-  const cannotCome = attendanceForPub.cannotCome || [];
-  const userCanCome = Boolean(currUserId) && canCome.includes(currUserId);
-  const userCannotCome = Boolean(currUserId) && cannotCome.includes(currUserId);
+  const attendanceForPub = getEffectiveAttendanceState(attendance, pubId, currUserId);
+  const canCome = attendanceForPub.canCome;
+  const cannotCome = attendanceForPub.cannotCome;
+  const userCanCome = attendanceForPub.userCanCome;
+  const userCannotCome = attendanceForPub.userCannotCome;
 
   // Control availability
   const canVote = Boolean(currUserId);
   const allowAttendanceControls = canVote && pubId !== "any";
   const allowGlobalAttendanceControls = canVote && pubId === "any";
-  const hasAttendanceData = voteCount > 0 || canCome.length > 0 || cannotCome.length > 0;
+  const hasAttendanceData = voteCount > 0 || attendanceForPub.hasAttendanceData;
 
   // Vote handler
   const voteHandler = useCallback(async () => {

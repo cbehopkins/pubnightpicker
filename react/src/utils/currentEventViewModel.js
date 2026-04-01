@@ -1,16 +1,4 @@
-function getAttendanceState(attendance, venueId, currentUserId) {
-  const attendanceForVenue = venueId ? (attendance[venueId] || {}) : {};
-  const canCome = attendanceForVenue.canCome || [];
-  const cannotCome = attendanceForVenue.cannotCome || [];
-
-  return {
-    canCome,
-    cannotCome,
-    userCanCome: Boolean(currentUserId) && canCome.includes(currentUserId),
-    userCannotCome: Boolean(currentUserId) && cannotCome.includes(currentUserId),
-    hasAttendanceData: canCome.length > 0 || cannotCome.length > 0,
-  };
-}
+import { getEffectiveAttendanceState } from "./attendanceState";
 
 export function getDedupedVotesForVenue(votes, venueId) {
   const allVotes = [];
@@ -40,7 +28,7 @@ export function buildCurrentEventViewModel({
     return null;
   }
 
-  const mainAttendance = getAttendanceState(attendance, current_pub_id, currUserId);
+  const mainAttendance = getEffectiveAttendanceState(attendance, current_pub_id, currUserId);
   const mainVotes = getDedupedVotesForVenue(votes, current_pub_id);
   const pubWasVotedFor = current_pub_id in votes || Boolean(votes.any);
 
@@ -58,7 +46,7 @@ export function buildCurrentEventViewModel({
   const restaurantSource = restaurant_id ? pub_parameters[restaurant_id] : null;
   let restaurantVenue = null;
   if (restaurantSource) {
-    const restaurantAttendance = getAttendanceState(attendance, restaurant_id, currUserId);
+    const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurant_id, currUserId);
     const restaurantVotes = getDedupedVotesForVenue(votes, restaurant_id);
     restaurantVenue = {
       id: restaurant_id,

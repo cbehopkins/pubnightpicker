@@ -90,4 +90,29 @@ describe("currentEventViewModel", () => {
       any: ["user-2", "user-3"],
     }, "venueA")).toEqual(["user-1", "user-2", "user-3"]);
   });
+
+  it("applies global attendance sentinel to the selected venue", () => {
+    const result = buildCurrentEventViewModel({
+      current_pub_id: "venue-1",
+      restaurant_id: undefined,
+      pub_parameters: {
+        "venue-1": {
+          name: "The Maypole",
+        },
+      },
+      votes: {},
+      attendance: {
+        any: {
+          canCome: ["user-1"],
+          cannotCome: [],
+        },
+      },
+      currUserId: "user-1",
+      show_voters: true,
+    });
+
+    expect(result.mainVenue.userCanCome).toBe(true);
+    expect(result.mainVenue.userCannotCome).toBe(false);
+    expect(result.mainVenue.canCome).toEqual(["user-1"]);
+  });
 });
