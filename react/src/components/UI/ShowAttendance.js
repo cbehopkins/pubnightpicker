@@ -1,10 +1,25 @@
+// @ts-check
+
 import Modal from "./Modal";
 import Button from "./Button";
 import useUsers from "../../hooks/useUsers";
 import styles from "./PollVote.module.css";
 
+/** @typedef {{ name?: string }} UserEntry */
+
+/**
+ * @typedef {Object} ShowAttendanceProps
+ * @property {string[]=} voters
+ * @property {string[]=} canCome
+ * @property {string[]=} cannotCome
+ * @property {() => void=} on_cancel
+ */
+
+/**
+ * @param {ShowAttendanceProps} params
+ */
 export default function ShowAttendance(params) {
-    const users = useUsers();
+    const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
     const voters = params.voters || [];
     const canCome = params.canCome || [];
     const cannotCome = params.cannotCome || [];
@@ -53,7 +68,7 @@ export default function ShowAttendance(params) {
                         ))}
                     </tbody>
                 </table>
-                <Button type="button" variant="secondary" onClick={params.on_cancel}>Close</Button>
+                <Button type="button" variant="secondary" onClick={params.on_cancel || (() => { })}>Close</Button>
             </div>
         </Modal>
     );

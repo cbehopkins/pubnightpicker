@@ -1,6 +1,45 @@
+// @ts-check
+
 import Modal from "../UI/Modal";
 import Button from "../UI/Button";
 
+/**
+ * @typedef {Object} VenueOption
+ * @property {string} id
+ * @property {string} name
+ */
+
+/**
+ * @typedef {Object} VenueAssignmentModalProps
+ * @property {string} title
+ * @property {string=} subtitle
+ * @property {string} mainVenueLabel
+ * @property {string=} mainVenueName
+ * @property {VenueOption[]=} mainVenueOptions
+ * @property {string=} mainVenuePlaceholder
+ * @property {string=} selectedMainVenueId
+ * @property {(value: string) => void} onMainVenueChange
+ * @property {string=} mainVenueHelpText
+ * @property {string=} infoNote
+ * @property {boolean=} showRestaurantSection
+ * @property {string=} restaurantLabel
+ * @property {VenueOption[]=} restaurantOptions
+ * @property {string=} chosenRestaurantId
+ * @property {string=} restaurantTime
+ * @property {(value: string) => void=} onRestaurantChange
+ * @property {(value: string) => void=} onRestaurantTimeChange
+ * @property {string=} restaurantHelpText
+ * @property {string=} timeHelpText
+ * @property {string=} confirmText
+ * @property {string=} cancelText
+ * @property {string=} footerNote
+ * @property {() => void | Promise<void>} onConfirm
+ * @property {() => void | Promise<void>} onCancel
+ */
+
+/**
+ * @param {VenueAssignmentModalProps} props
+ */
 function VenueAssignmentModal({
   title,
   subtitle,
@@ -17,8 +56,8 @@ function VenueAssignmentModal({
   restaurantOptions,
   chosenRestaurantId,
   restaurantTime,
-  onRestaurantChange,
-  onRestaurantTimeChange,
+  onRestaurantChange = () => { },
+  onRestaurantTimeChange = () => { },
   restaurantHelpText,
   timeHelpText,
   confirmText = "Confirm",

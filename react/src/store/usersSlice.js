@@ -1,9 +1,34 @@
+// @ts-check
+
 import { createSlice } from "@reduxjs/toolkit";
+
+/**
+ * @typedef {Object} UserProfile
+ * @property {string=} name
+ * @property {string=} email
+ * @property {boolean=} votesVisible
+ * @property {string | null=} photoUrl
+ */
+
+/** @typedef {Record<string, UserProfile>} UsersState */
+
+/**
+ * @typedef {Object} UserPayload
+ * @property {string} uid
+ * @property {string=} name
+ * @property {string=} email
+ * @property {boolean=} votesVisible
+ * @property {string | null=} photoUrl
+ */
+
+/** @type {UsersState} */
+const initialState = {};
 
 const usersSlice = createSlice({
   name: "users",
-  initialState: {},
+  initialState,
   reducers: {
+    /** @param {UsersState} state @param {{ payload: UserPayload }} action */
     userAdded(state, action) {
       state[action.payload.uid] = {
         name: action.payload.name,
@@ -12,11 +37,13 @@ const usersSlice = createSlice({
         photoUrl: action.payload.photoUrl
       };
     },
+    /** @param {UsersState} state @param {{ payload: { uid: string } }} action */
     clearUser(state, action) {
       delete state[action.payload.uid];
     },
+    /** @returns {UsersState} */
     clearStore(state) {
-      state = {};
+      return {};
     },
   },
 });

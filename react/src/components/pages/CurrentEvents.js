@@ -1,3 +1,5 @@
+// @ts-check
+
 import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { useSearchParams } from "react-router-dom";
@@ -19,6 +21,17 @@ import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
+/** @typedef {{ name?: string, web_site?: string, pubImage?: string, address?: string }} PubParametersEntry */
+/** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
+/** @typedef {{ selected?: string, restaurant?: string | null, restaurant_time?: string | null, date?: string }} EventPollValue */
+/** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, EventPollValue]> }} SortedPollCollection */
+
+/** @typedef {import("../../store").RootState} RootState */
+
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 function normalizeImageUrl(value) {
   if (typeof value !== "string") {
     return null;
@@ -42,6 +55,9 @@ function normalizeImageUrl(value) {
   return null;
 }
 
+/**
+ * @param {{ value: EventPollValue, pub_parameters: PubParametersMap }} props
+ */
 function PastEvent({ value, pub_parameters }) {
   if (!pub_parameters[value.selected]) {
     return <div></div>;
@@ -210,6 +226,20 @@ export function PastEvents() {
   );
 }
 
+/**
+ * @param {{
+ *  poll_id: string,
+ *  current_pub_id: string,
+ *  restaurant_id: string | null | undefined,
+ *  restaurant_time: string | null | undefined,
+ *  date: string,
+ *  pub_parameters: PubParametersMap,
+ *  can_reschedule: boolean,
+ *  can_delete_event: boolean,
+ *  show_voters: boolean,
+ *  on_open_reschedule: (pollId: string, pubId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
+ * }} props
+ */
 function CurrentEvent({
   poll_id,
   current_pub_id,
@@ -222,7 +252,11 @@ function CurrentEvent({
   show_voters,
   on_open_reschedule,
 }) {
-  const currUserId = useSelector((state) => state.auth.uid);
+  const currUserId = useSelector(
+    /** @param {RootState} state */
+    (state) => state.auth.uid
+  );
+  const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
   const [votes] = useVotes(poll_id);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
   const eventViewModel = buildCurrentEventViewModel({
@@ -232,7 +266,7 @@ function CurrentEvent({
     pub_parameters,
     votes,
     attendance,
-    currUserId,
+    currUserId: normalizedUserId,
     show_voters,
   });
 
@@ -242,7 +276,7 @@ function CurrentEvent({
   const { mainVenue, restaurantVenue } = eventViewModel;
 
   const attendanceHandlers = useEventAttendance(
-    currUserId,
+    normalizedUserId,
     setAttendanceStatus,
     clearAttendance,
     mainVenue.id,

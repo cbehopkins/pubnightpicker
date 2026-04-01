@@ -1,9 +1,17 @@
 import { setDoc, updateDoc } from "firebase/firestore";
 
+/** @typedef {import("firebase/firestore").DocumentReference} DocumentReference */
+
+/**
+ * @typedef {Error & {
+ *   code?: string;
+ * }} FirestoreLikeError
+ */
+
 /**
  * Checks if error is due to missing Firestore document
  * Common when trying to update a document that doesn't exist yet
- * @param {Error} error - The error to check
+ * @param {FirestoreLikeError | null | undefined} error - The error to check
  * @returns {boolean} True if error is "document not found"
  */
 export function isMissingDeterminingDocError(error) {

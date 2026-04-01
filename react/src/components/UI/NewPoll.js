@@ -1,14 +1,26 @@
+// @ts-check
+
 import React, { useState } from "react";
 
 import { doc, collection, addDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import Button from "../UI/Button";
 
+/** @typedef {{ polls: Set<string> }} NewPollProps */
+
+/**
+ * @param {NewPollProps} params
+ */
 function NewPoll(params) {
   const [enteredDate, setEnteredDate] = useState("");
+  const minDate = new Date().toISOString().slice(0, 10);
+
+  /** @param {React.ChangeEvent<HTMLInputElement>} event */
   const dateChangeHandler = (event) => {
     setEnteredDate(event.target.value);
   };
+
+  /** @param {React.MouseEvent<HTMLButtonElement>} event */
   const addNewPollHandler = async (event) => {
     event.preventDefault();
 
@@ -20,8 +32,8 @@ function NewPoll(params) {
       setEnteredDate("");
       // This is important to do here as the permissions should be set on the database
       // Such that only those who create polls can write vs update
-      await setDoc(doc(db, "votes", docRef.id), { any: [] })
-      await setDoc(doc(db, "attendance", docRef.id), {})
+      await setDoc(doc(db, "votes", docRef.id), { any: [] });
+      await setDoc(doc(db, "attendance", docRef.id), {});
     } catch (err) {
       console.error("Error adding document: ", err);
     }
@@ -45,7 +57,7 @@ function NewPoll(params) {
       <label>Date</label>
       <input
         type="date"
-        min={new Date()}
+        min={minDate}
         value={enteredDate}
         onChange={dateChangeHandler}
       />

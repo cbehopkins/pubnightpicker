@@ -1,5 +1,23 @@
+// @ts-check
+
 import VenueAssignmentModal from "./VenueAssignmentModal";
 
+/** @typedef {{ id: string, name: string }} VenueOption */
+
+/**
+ * @param {{
+ *  pubName: string,
+ *  pubHasFood: boolean,
+ *  availableRestaurants: VenueOption[],
+ *  restaurantSource: "poll" | "system",
+ *  chosenRestaurantId: string,
+ *  restaurantTime: string,
+ *  onRestaurantChange: (restaurantId: string) => void,
+ *  onRestaurantTimeChange: (value: string) => void,
+ *  onConfirm: () => void,
+ *  onCancel: () => void,
+ * }} props
+ */
 function CompletePollModal({
   pubName,
   pubHasFood,
@@ -23,8 +41,9 @@ function CompletePollModal({
       subtitle="Confirm the venue for this event and add any final food plan details."
       mainVenueLabel="Selected venue"
       mainVenueName={pubName}
+      onMainVenueChange={() => { }}
       mainVenueHelpText="This is the venue that will be stored as the event destination."
-      infoNote={pubHasFood ? "This venue serves food — no separate restaurant needed." : undefined}
+      infoNote={pubHasFood ? "This venue serves food - no separate restaurant needed." : undefined}
       showRestaurantSection={!pubHasFood}
       restaurantLabel={restaurantSectionLabel}
       restaurantOptions={availableRestaurants}

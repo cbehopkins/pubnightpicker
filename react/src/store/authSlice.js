@@ -1,25 +1,57 @@
+// @ts-check
+
 import { createSlice } from "@reduxjs/toolkit";
+
+/** @typedef {Record<string, true | false | Record<string, boolean> | null | undefined>} RolesMap */
+
+/**
+ * @typedef {Object} AuthState
+ * @property {string} name
+ * @property {string | null} uid
+ * @property {boolean} loggedIn
+ * @property {string} email
+ * @property {RolesMap} roles
+ * @property {string | null} photoUrl
+ */
+
+/**
+ * @typedef {Object} AuthPayload
+ * @property {string=} name
+ * @property {string | null=} uid
+ * @property {string=} email
+ * @property {string | null=} photoUrl
+ */
+
+/** @type {AuthState} */
+const initialState = { name: "", uid: null, loggedIn: false, email: "", roles: {}, photoUrl: null };
 
 const authSlice = createSlice({
   name: "auth",
-  initialState: { name: "", uid: 0, loggedIn: false, email: "", roles: {}, photoUrl: null },
+  initialState,
   reducers: {
+    /** @param {AuthState} state @param {{ payload: AuthPayload }} action */
     authAdded(state, action) {
-      state.name = action.payload.name;
-      state.uid = action.payload.uid;
-      state.loggedIn = Boolean(action.payload.uid);
-      state.email = action.payload.email;
+      const uid = typeof action.payload.uid === "string" && action.payload.uid.length > 0
+        ? action.payload.uid
+        : null;
+
+      state.name = action.payload.name || "";
+      state.uid = uid;
+      state.loggedIn = uid !== null;
+      state.email = action.payload.email || "";
       state.roles = {};
-      state.photoUrl = action.payload.photoUrl
+      state.photoUrl = action.payload.photoUrl ?? null;
     },
+    /** @param {AuthState} state */
     clearAuth(state) {
       state.name = "";
-      state.uid = 0;
+      state.uid = null;
       state.loggedIn = false;
       state.email = "";
       state.roles = {};
       state.photoUrl = null;
     },
+    /** @param {AuthState} state @param {{ payload: RolesMap }} action */
     setRoles(state, action) {
       // Store the full roles object from Firebase
       // action.payload = { admin: { userId: true, ... }, known: { userId: true, ... } }

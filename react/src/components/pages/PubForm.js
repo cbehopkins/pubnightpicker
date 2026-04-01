@@ -17,8 +17,18 @@ const PubParams = {
 const AntiPubParams = { out_of_town: PubParams.out_of_town };
 
 // Generic checkbox component for pub parameters
+/**
+ * @typedef {Object} PubCheckboxProps
+ * @property {string} name
+ * @property {string} label
+ * @property {string=} label_mod
+ * @property {Record<string, unknown>=} pub_object
+ * @property {(event: import("react").ChangeEvent<HTMLInputElement>, name: string) => void=} onChange
+ */
+
+/** @param {PubCheckboxProps} props */
 function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
-  const value = pub_object && Object.hasOwn(pub_object, name) && pub_object[name];
+  const value = Boolean(pub_object && Object.hasOwn(pub_object, name) && pub_object[name]);
 
   // We can have the same name in multiple filter contexts
   // So multiple labels attached to checkboxes representing different state

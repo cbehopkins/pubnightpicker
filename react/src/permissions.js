@@ -1,5 +1,9 @@
 import { store } from "./store";
 
+/** @typedef {Record<string, boolean>} RoleUserMap */
+/** @typedef {true | false | RoleUserMap | null | undefined} RoleValue */
+/** @typedef {Record<string, RoleValue>} RolesMap */
+
 export const PERMISSIONS = {
     canChat: "canChat",
     canAddPubToPoll: "canAddPubToPoll",
@@ -36,6 +40,12 @@ export const ADMIN_DEFAULT_PERMISSIONS = [
     PERMISSIONS.canDeleteAnyMessage,
 ]
 
+/**
+ * @param {RolesMap | null | undefined} roles
+ * @param {string} roleName
+ * @param {string | null | undefined} uid
+ * @returns {boolean}
+ */
 export function hasPermissionInRoles(roles, roleName, uid) {
     if (!roles || !uid) {
         return false;
@@ -55,10 +65,15 @@ export function hasPermissionInRoles(roles, roleName, uid) {
 
 export function hasCurrentUserPermission(roleName) {
     const state = store.getState();
-    return hasPermissionInRoles(state.auth.roles, roleName, state.auth.uid);
+    const typedState = /** @type {{ auth?: { roles?: RolesMap, uid?: string | null } }} */ (state);
+    return hasPermissionInRoles(typedState.auth?.roles, roleName, typedState.auth?.uid);
 }
 
 export class PermissionError extends Error {
+    /**
+     * @param {string} roleName
+     * @param {string} actionDescription
+     */
     constructor(roleName, actionDescription) {
         super(`Permission denied for ${actionDescription}. Missing role: ${roleName}`);
         this.name = "PermissionError";

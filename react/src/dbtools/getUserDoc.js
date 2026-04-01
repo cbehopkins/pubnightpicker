@@ -5,7 +5,7 @@ export default async function getUserDoc(uid, onSuccess = null, onFail = null) {
     const q = query(collection(db, "users"), where("uid", "==", uid));
     const docs = await getDocs(q);
 
-    if (docs.length === 0 || docs.docs.length !== 1) {
+    if (docs.empty || docs.docs.length !== 1) {
         if (onFail === null) {
             console.error("Error with user doc fetch", docs.docs.length, docs)
             return null

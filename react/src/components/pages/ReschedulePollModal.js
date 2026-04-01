@@ -1,5 +1,31 @@
+// @ts-check
+
 import VenueAssignmentModal from "./VenueAssignmentModal";
 
+/**
+ * @typedef {Object} VenueOption
+ * @property {string} id
+ * @property {string} name
+ */
+
+/**
+ * @typedef {Object} ReschedulePollModalProps
+ * @property {string=} selectedPubId
+ * @property {boolean=} pubHasFood
+ * @property {VenueOption[]} pubOptions
+ * @property {VenueOption[]} restaurantOptions
+ * @property {string=} chosenRestaurantId
+ * @property {string=} restaurantTime
+ * @property {(value: string) => void} onPubChange
+ * @property {(value: string) => void} onRestaurantChange
+ * @property {(value: string) => void} onRestaurantTimeChange
+ * @property {() => void | Promise<void>} onConfirm
+ * @property {() => void | Promise<void>} onCancel
+ */
+
+/**
+ * @param {ReschedulePollModalProps} props
+ */
 function ReschedulePollModal({
   selectedPubId,
   pubHasFood,

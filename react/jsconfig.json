@@ -1,0 +1,53 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "DOM",
+            "ES2022"
+        ],
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "jsx": "react-jsx",
+        "allowJs": true,
+        "checkJs": true,
+        "noEmit": true,
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "strict": false,
+        "types": [
+            "vite/client",
+            "vitest/globals"
+        ]
+    },
+    "include": [
+        "src/utils/**/*.js",
+        "src/hooks/**/*.js",
+        "src/store/**/*.js",
+        "src/dbtools/**/*.js",
+        "src/components/UI/Button.bootstrap.js",
+        "src/components/UI/ConfirmModal.js",
+        "src/components/UI/Modal.bootstrap.js",
+        "src/components/UI/ShowAttendance.js",
+        "src/components/UI/ActivePoll.js",
+        "src/components/UI/PollVote.js",
+        "src/components/pages/ActivePolls.js",
+        "src/components/pages/ChatPage.js",
+        "src/components/pages/CurrentEvents.js",
+        "src/components/pages/VenueAssignmentModal.js",
+        "src/components/pages/ReschedulePollModal.js",
+        "src/components/chat/Message.js",
+        "src/components/chat/SendMessage.js",
+        "src/firebase.js",
+        "src/firebase_config.js",
+        "src/permissions.js",
+        "vite.config.js"
+    ],
+    "exclude": [
+        "build",
+        "db_dir_a",
+        "firebase-export-*",
+        "node_modules",
+        "**/*.test.js"
+    ]
+}

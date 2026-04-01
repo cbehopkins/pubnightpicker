@@ -9,3 +9,6 @@ export const store = configureStore({
     users: usersReducer,
   }
 })
+
+/** @typedef {ReturnType<typeof store.getState>} RootState */
+/** @typedef {typeof store.dispatch} AppDispatch */

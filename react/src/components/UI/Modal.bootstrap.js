@@ -1,3 +1,5 @@
+// @ts-check
+
 import React from 'react';
 import ReactDOM from 'react-dom';
 
@@ -18,6 +20,12 @@ import ReactDOM from 'react-dom';
  * CSS: Uses Bootstrap modal classes and responsive sizing from bootstrap-overrides.css
  */
 
+/**
+ * @typedef {Object} BackdropProps
+ * @property {() => void=} onClick
+ */
+
+/** @param {BackdropProps} props */
 const Backdrop = (props) => {
     return (
         <div
@@ -37,6 +45,12 @@ const Backdrop = (props) => {
     );
 };
 
+/**
+ * @typedef {Object} ModalOverlayProps
+ * @property {import('react').ReactNode=} children
+ */
+
+/** @param {ModalOverlayProps} props */
 const ModalOverlay = (props) => {
     return (
         <div
@@ -70,12 +84,23 @@ const ModalOverlay = (props) => {
 
 const portalElement = document.getElementById('overlay-root');
 
+/**
+ * @typedef {Object} ModalProps
+ * @property {import('react').ReactNode=} children
+ * @property {() => void=} onBackdropClick
+ */
+
+/** @param {ModalProps} props */
 const Modal = (props) => {
     const handleBackdropClick = () => {
         if (props.onBackdropClick) {
             props.onBackdropClick();
         }
     };
+
+    if (!portalElement) {
+        return null;
+    }
 
     return (
         <>

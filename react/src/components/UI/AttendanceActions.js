@@ -1,5 +1,41 @@
+// @ts-check
+
 import Button from "./Button";
 
+/** @typedef {"canCome" | "cannotCome"} AttendanceStatus */
+/** @typedef {"primary" | "secondary" | "success" | "danger" | "warning" | "info" | "light" | "dark" | "outline-primary" | "outline-secondary" | "outline-success" | "outline-danger" | "outline-warning" | "outline-info" | "outline-light" | "outline-dark"} ButtonVariant */
+
+/**
+ * @typedef {Object} AttendanceActionsProps
+ * @property {boolean} canComeSelected
+ * @property {boolean} cannotComeSelected
+ * @property {(status: AttendanceStatus) => Promise<void>} onSetStatus
+ * @property {() => Promise<void>} onClear
+ * @property {"toggle" | "button"=} clearMode
+ * @property {string=} className
+ * @property {string=} buttonClassName
+ * @property {string=} selectedClassName
+ * @property {string=} canComeSelectedClassName
+ * @property {string=} cannotComeSelectedClassName
+ * @property {string=} canComeLabel
+ * @property {string=} canComeSelectedLabel
+ * @property {string=} cannotComeLabel
+ * @property {string=} cannotComeSelectedLabel
+ * @property {string=} clearLabel
+ * @property {string=} canComeShortLabel
+ * @property {string=} cannotComeShortLabel
+ * @property {boolean=} showMobileShortLabels
+ * @property {string=} desktopLabelClassName
+ * @property {string=} mobileLabelClassName
+ * @property {string=} canComeTitle
+ * @property {string=} cannotComeTitle
+ * @property {() => void=} onAfterAction
+ * @property {ButtonVariant=} canComeVariant
+ * @property {ButtonVariant=} cannotComeVariant
+ * @property {ButtonVariant=} clearVariant
+ */
+
+/** @param {AttendanceActionsProps} props */
 function AttendanceActions({
     canComeSelected,
     cannotComeSelected,

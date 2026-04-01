@@ -17,5 +17,7 @@ export async function wrapAsyncAction(action, fallbackMessage = "Unable to perfo
     }
 }
 
-// Export with original name for backwards compatibility during refactoring
-export const runAttendanceAction = wrapAsyncAction;
+// Keep legacy attendance semantics while the generic helper is adopted.
+export async function runAttendanceAction(action, fallbackMessage = "Unable to update your attendance.") {
+    return wrapAsyncAction(action, fallbackMessage);
+}

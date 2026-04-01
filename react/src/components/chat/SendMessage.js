@@ -1,3 +1,5 @@
+// @ts-check
+
 import React, { useState } from "react";
 import { db } from "../../firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -6,10 +8,15 @@ import Button from "../UI/Button";
 import { useSelector } from "react-redux";
 import { notifyError } from "../../utils/notify";
 
+/** @typedef {import("../../store").RootState} RootState */
+
+/**
+ * @param {{ scroll: { current: { scrollIntoView: (options?: ScrollIntoViewOptions) => void } | null } }} props
+ */
 const SendMessage = ({ scroll }) => {
   const [message, setMessage] = useState("");
-  const name = useSelector((state) => state.auth.name);
-  const uid = useSelector((state) => state.auth.uid);
+  const name = useSelector(/** @param {RootState} state */(state) => state.auth.name);
+  const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
   // const photoURL = useSelector((state) => state.auth.photoUrl);
 
   const sendMessage = async (event) => {
@@ -25,7 +32,7 @@ const SendMessage = ({ scroll }) => {
       uid,
     });
     setMessage("");
-    setTimeout(() => { scroll.current.scrollIntoView({ behavior: "smooth" }); }, 100);
+    setTimeout(() => { scroll.current?.scrollIntoView({ behavior: "smooth" }); }, 100);
   }
   return (
     <form onSubmit={(event) => sendMessage(event)} className={styles.sendMessage}>

@@ -1,3 +1,5 @@
+// @ts-check
+
 import React from "react";
 import styles from "./ActivePolls.module.css";
 import usePolls from "../../hooks/usePolls";
@@ -9,12 +11,23 @@ import { useIsMobileView } from "../../hooks/useIsMobileView";
 import { useCompletePolls } from "../../hooks/useCompletePolls";
 import CompletePollModal from "./CompletePollModal";
 
+/** @typedef {{ selected?: string, date?: string }} PollValue */
+/** @typedef {{ dates: Set<string>, sortedByDate: () => Iterable<[string, PollValue]> }} PollData */
+
+/**
+ * @param {unknown} value
+ * @returns {PollData}
+ */
+function toPollData(value) {
+  return /** @type {PollData} */ (value);
+}
+
 function ActivePolls() {
   const mobile = useIsMobileView();
   const canCreatePoll = useRole("canCreatePoll");
   const canCompletePoll = useRole("canCompletePoll");
 
-  const pollData = usePolls();
+  const pollData = toPollData(usePolls());
   const pubs = usePubs();
   const currentPollDates = pollData.dates;
 

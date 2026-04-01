@@ -1,3 +1,5 @@
+// @ts-check
+
 import React from "react";
 import { useSelector } from "react-redux";
 import { doc, deleteDoc } from "firebase/firestore";
@@ -9,9 +11,27 @@ import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import styles from "./chat.module.css"
 
+/** @typedef {import("../../store").RootState} RootState */
+
+/**
+ * @typedef {Object} ChatMessage
+ * @property {string} id
+ * @property {string} uid
+ * @property {string=} name
+ * @property {string} text
+ */
+
+/**
+ * @typedef {Object} ChatUser
+ * @property {string=} photoUrl
+ */
+
+/**
+ * @param {{ message: ChatMessage, users: Record<string, ChatUser | undefined> }} props
+ */
 const Message = ({ message, users }) => {
     const canDeleteAnyMessage = useRole("canDeleteAnyMessage");
-    const uid = useSelector((state) => state.auth.uid);
+    const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
     const avatar = users[message.uid]?.photoUrl || UnknownUser;
     const name = message.name || "Name not set"
     const messageFromMe = message.uid === uid
