@@ -12,6 +12,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
 from firebase_sub.common.logging import log_level_to_int
 from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
@@ -69,12 +70,18 @@ def sub_events(
     dummy_run = dummy
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
+    notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
 
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.NEW_POLL, doc=document))
 
     def comp_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.COMP_POLL, doc=document))
+
+    def notification_request_callback(document: DocumentSnapshot) -> None:
+        notification_mirror.mirror_request_document(document)
+
+    _log.info("Notification request/ack mirror listener started")
 
     with (
         PollManager(
@@ -85,6 +92,11 @@ def sub_events(
             DB_HANDLER.query_completed_true,
             add=comp_poll_event_callback,
             modify=comp_poll_event_callback,
+        ).start_periodic_restart(restart_interval),
+        PollManager(
+            DB_HANDLER.query_notification_requests,
+            add=notification_request_callback,
+            modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
         PubsList(
             DB_HANDLER.pub_collection,

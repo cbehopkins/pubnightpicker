@@ -69,6 +69,15 @@ service cloud.firestore {
     match /open_actions/{poll} {
       allow read, write: if canCreatePoll();
     }
+
+    // Notification request and acknowledgement collections - admin diagnostics and tooling checks
+    match /notification_req/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /notification_ack/{docId} {
+      allow read, write: if isAdmin();
+    }
     
     // Pubs collection - read for all, write for admins only
     match /pubs/{pubId} {
