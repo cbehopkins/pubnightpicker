@@ -122,7 +122,7 @@ class DbHandler:
     @property
     def query_notification_requests(self) -> Query:
         """Return a query for notification request health-check documents."""
-        return self.db.collection("notification_req").order_by("__name__")
+        return self.db.collection("notification_req")
 
     @staticmethod
     def wrapped_callback(

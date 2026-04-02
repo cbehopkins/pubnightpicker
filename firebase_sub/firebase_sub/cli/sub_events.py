@@ -1,5 +1,6 @@
 import logging
 import queue
+import threading
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -12,6 +13,12 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
 from firebase_sub.common.logging import log_level_to_int
 from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.housekeeping import (
+    HousekeepingRunner,
+    IntervalSchedule,
+    PeriodicTrigger,
+)
+from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
@@ -70,7 +77,12 @@ def sub_events(
     dummy_run = dummy
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
+    housekeeping_interval_seconds = 60
     notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
+    housekeeping_runner = HousekeepingRunner(
+        tasks=build_housekeeping_tasks(DB_HANDLER.db),
+        schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
+    )
 
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.NEW_POLL, doc=document))
@@ -81,7 +93,20 @@ def sub_events(
     def notification_request_callback(document: DocumentSnapshot) -> None:
         notification_mirror.mirror_request_document(document)
 
+    def enqueue_housekeeping_tick() -> None:
+        q.put(
+            Event(
+                type=EventType.TICK,
+                doc=None,
+                callback=lambda: housekeeping_runner.maybe_run(),
+            )
+        )
+
+
     _log.info("Notification request/ack mirror listener started")
+    _log.info(
+        "Housekeeping runner started (interval=%ss)", housekeeping_interval_seconds
+    )
 
     with (
         PollManager(
@@ -98,49 +123,58 @@ def sub_events(
             add=notification_request_callback,
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
+        PeriodicTrigger(
+            interval_seconds=housekeeping_interval_seconds,
+            callback=enqueue_housekeeping_tick,
+        ),
         PubsList(
             DB_HANDLER.pub_collection,
         ) as pubs_list,
     ):
-        pubs_list.start_periodic_restart(restart_interval)
-        open_am = poll_open_actions(dummy_run)
-        complete_am = poll_complete_actions(dummy_run)
+            pubs_list.start_periodic_restart(restart_interval)
+            open_am = poll_open_actions(dummy_run)
+            complete_am = poll_complete_actions(dummy_run)
 
-        while True:
-            try:
-                event = q.get(timeout=healthcheck_interval_seconds)
-            except queue.Empty:
-                if not DB_HANDLER.okay:
-                    raise SystemExit("Exiting due to db is not okay")
-                continue
-
-            if event.doc:
-                doc = event.doc.to_dict()
-                if doc is None:
-                    _log.warning(
-                        "Received event %s for doc %s with no payload",
-                        event.type,
-                        event.doc.id,
-                    )
+            while True:
+                try:
+                    event = q.get(timeout=healthcheck_interval_seconds)
+                except queue.Empty:
+                    if not DB_HANDLER.okay:
+                        raise SystemExit("Exiting due to db is not okay")
+                    continue
+                
+                if event.doc:
+                    doc = event.doc.to_dict()
+                    if doc is None:
+                        _log.warning(
+                            "Received event %s for doc %s with no payload",
+                            event.type,
+                            event.doc.id,
+                        )
+                        date = None
+                        completed = False
+                    else:
+                        date = doc.get("date")
+                        completed = doc.get("completed", False)
+                        _log.info(
+                            "New Event: Type:%s, Date:%s, Completed:%s",
+                            event.type,
+                            date,
+                            completed,
+                        )
+                else:
                     date = None
                     completed = False
-                else:
-                    date = doc.get("date")
-                    completed = doc.get("completed", False)
-                    _log.info(
-                        "New Event: Type:%s, Date:%s, Completed:%s",
-                        event.type,
-                        date,
-                        completed,
-                    )
-            else:
-                date = None
-                completed = False
 
-            event.handle_queue_item(DB_HANDLER, pubs_list, open_am, complete_am)
-            _log.info(
-                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-            )
+                event.handle_queue_item(
+                    DB_HANDLER,
+                    pubs_list,
+                    open_am,
+                    complete_am,
+                )
+                _log.info(
+                    f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+                )
 
 
 @click.command()

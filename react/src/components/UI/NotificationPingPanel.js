@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { clearNotificationPing, pingNotificationTool } from "../../dbtools/notificationPings";
+import { useCallback } from "react";
+import { useNotificationPing } from "../../hooks/useNotificationPing";
 import { notifyError, notifyInfo } from "../../utils/notify";
 
 function NotificationPingPanel({
@@ -11,46 +11,33 @@ function NotificationPingPanel({
     eventKey,
     timeoutMs = 60000,
 }) {
-    const [status, setStatus] = useState("idle");
-    const [lastPingValue, setLastPingValue] = useState(null);
+    const { status, lastPingValue, runPing, clearPing } = useNotificationPing(documentId, eventKey, timeoutMs);
 
-    const runPing = useCallback(async () => {
-        setStatus("checking");
+    const handlePing = useCallback(async () => {
         try {
-            const result = await pingNotificationTool(documentId, eventKey, timeoutMs);
+            const result = await runPing();
             if (result.acknowledged) {
-                setStatus("ok");
-                setLastPingValue(result.pingValue);
                 notifyInfo(`Notification diagnostics ping acknowledged (value ${result.pingValue}).`);
-                return;
-            }
-
-            if (result.timedOut) {
-                setStatus("timeout");
+            } else if (result.timedOut) {
                 notifyError(`No response from notification tool after ${Math.round(timeoutMs / 1000)}s.`);
-                return;
+            } else {
+                notifyError("Notification diagnostics ping did not receive an acknowledgement.");
             }
-
-            setStatus("error");
-            notifyError("Notification diagnostics ping did not receive an acknowledgement.");
         } catch (error) {
             console.error(error);
-            setStatus("error");
             notifyError("Unable to run notification diagnostics ping.");
         }
-    }, [documentId, eventKey, timeoutMs]);
+    }, [runPing, timeoutMs]);
 
-    const clearPing = useCallback(async () => {
+    const handleClear = useCallback(async () => {
         try {
-            await clearNotificationPing(documentId, eventKey);
-            setStatus("idle");
-            setLastPingValue(null);
+            await clearPing();
             notifyInfo("Notification diagnostics ping cleared.");
         } catch (error) {
             console.error(error);
             notifyError("Unable to clear notification diagnostics ping.");
         }
-    }, [documentId, eventKey]);
+    }, [clearPing]);
 
     const badgeClassName =
         status === "ok"
@@ -80,7 +67,7 @@ function NotificationPingPanel({
                 <button
                     type="button"
                     className="btn btn-outline-secondary"
-                    onClick={runPing}
+                    onClick={handlePing}
                     disabled={status === "checking"}
                 >
                     {status === "checking" ? checkingLabel : buttonLabel}
@@ -88,7 +75,7 @@ function NotificationPingPanel({
                 <button
                     type="button"
                     className="btn btn-outline-danger"
-                    onClick={clearPing}
+                    onClick={handleClear}
                     disabled={status === "checking"}
                 >
                     Clear Ping
