@@ -1,9 +1,31 @@
+// @ts-check
+
 import { createSlice } from "@reduxjs/toolkit";
+
+/** @typedef {Record<string, unknown>} PollValue */
+
+/**
+ * @typedef {Object} PollEntry
+ * @property {string} id
+ * @property {PollValue} poll
+ */
+
+/** @typedef {PollEntry[]} PollsState */
+
+/**
+ * @typedef {Object} PollPayload
+ * @property {string} id
+ * @property {PollValue} poll
+ */
+
+/** @type {PollsState} */
+const initialState = [];
 
 const pollsSlice = createSlice({
   name: "polls",
-  initialState: [],
+  initialState,
   reducers: {
+    /** @param {PollsState} state @param {{ payload: PollPayload }} action */
     pollAdded(state, action) {
       const id = action.payload.id;
       state.push({
@@ -11,11 +33,12 @@ const pollsSlice = createSlice({
         poll: action.payload.poll,
       });
     },
+    /** @param {PollsState} state @param {{ payload: PollPayload }} action */
     pollModified(state, action) {
       const id = action.payload.id;
-      const index = state.findIndex((v)=>(v.id===id));
+      const index = state.findIndex((v) => (v.id === id));
       if (index < 0) {
-        console.error("Unable to find id in state, mod",id, state)
+        console.error("Unable to find id in state, mod", id, state)
         return
       }
       state[index] = {
@@ -23,14 +46,15 @@ const pollsSlice = createSlice({
         poll: action.payload.poll,
       };
     },
-    pollRemoved(state, action){
+    /** @param {PollsState} state @param {{ payload: { id: string } }} action */
+    pollRemoved(state, action) {
       const id = action.payload.id;
-      const index = state.findIndex((v)=>(v.id===id));
+      const index = state.findIndex((v) => (v.id === id));
       if (index < 0) {
-        console.error("Unable to find id in state, rm",id, state)
+        console.error("Unable to find id in state, rm", id, state)
         return
       }
-      state.filter(item => item.id !== id)
+      state.splice(index, 1);
     }
   },
 });

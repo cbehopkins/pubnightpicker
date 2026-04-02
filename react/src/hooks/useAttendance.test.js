@@ -228,6 +228,28 @@ describe("useAttendance", () => {
         expect(updateDocMock).not.toHaveBeenCalled();
     });
 
+    it("sets global attendance sentinel and existing pubs in one update", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[4](["pub-1", "pub-2"], "user-1", "canCome");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {
+                "any.canCome": "arrayUnion:user-1",
+                "any.cannotCome": "arrayRemove:user-1",
+                "pub-1.canCome": "arrayUnion:user-1",
+                "pub-1.cannotCome": "arrayRemove:user-1",
+                "pub-2.canCome": "arrayUnion:user-1",
+                "pub-2.cannotCome": "arrayRemove:user-1",
+            },
+        );
+    });
+
     it("creates attendance doc and retries update when update fails with NOT_FOUND", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
         updateDocMock

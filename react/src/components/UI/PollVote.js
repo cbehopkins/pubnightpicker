@@ -1,3 +1,5 @@
+// @ts-check
+
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
@@ -12,6 +14,57 @@ import AttendanceActions from "./AttendanceActions";
 import { QuestionRender } from "./ConfirmModal";
 import Button from "./Button";
 
+/** @typedef {import("../../store").RootState} RootState */
+
+/** @typedef {Record<string, string[]>} VotesMap */
+/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[] } | undefined>} AttendanceMap */
+/** @typedef {{ name?: string }} PollPubEntry */
+/** @typedef {{ pubs?: Record<string, PollPubEntry> }} PollData */
+
+/**
+ * @typedef {Object} RespondMenuProps
+ * @property {boolean} votedFor
+ * @property {boolean} userCanCome
+ * @property {boolean} userCannotCome
+ * @property {boolean} allowAttendanceControls
+ * @property {boolean} allowGlobalAttendanceControls
+ * @property {() => Promise<void>} onVote
+ * @property {(status: "canCome" | "cannotCome") => Promise<void>} onSetAttendanceStatus
+ * @property {() => Promise<void>} onClearAttendance
+ * @property {() => Promise<void>} onSetAllCanCome
+ * @property {() => Promise<void>} onSetAllCannotCome
+ */
+
+/**
+ * @typedef {Object} VotablePubProps
+ * @property {string} pubId
+ * @property {string} pubName
+ * @property {string | null | undefined} currUserId
+ * @property {VotesMap} votes
+ * @property {AttendanceMap} attendance
+ * @property {boolean} canShowAttendance
+ * @property {(pubId: string, userId: string) => Promise<void>} makeVote
+ * @property {(pubId: string, userId: string) => Promise<void>} clearVote
+ * @property {(pubId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
+ * @property {(pubId: string, userId: string) => Promise<void>} clearAttendance
+ * @property {() => Promise<void>} setAllAttendanceToCanCome
+ * @property {() => Promise<void>} setAllAttendanceToCannotCome
+ * @property {string[]} pollPubIds
+ * @property {boolean} showDeleteColumn
+ * @property {boolean} allowDelete
+ * @property {boolean} allowCompletePoll
+ * @property {string} pollId
+ * @property {() => void} completeHandler
+ */
+
+/**
+ * @typedef {Object} PollVoteProps
+ * @property {string} poll_id
+ * @property {PollData} poll_data
+ * @property {(pubId: string, pubName: string, pollId: string) => void} on_complete
+ */
+
+/** @param {RespondMenuProps} props */
 function RespondMenu({
   votedFor,
   userCanCome,
@@ -25,9 +78,13 @@ function RespondMenu({
   onSetAllCannotCome,
 }) {
   const [showActions, setShowActions] = useState(false);
+  /** @type {[import("react").CSSProperties | null, import("react").Dispatch<import("react").SetStateAction<import("react").CSSProperties | null>>]} */
   const [panelStyle, setPanelStyle] = useState(null);
+  /** @type {import("react").RefObject<HTMLDivElement | null>} */
   const menuRef = useRef(null);
+  /** @type {import("react").RefObject<HTMLButtonElement | null>} */
   const triggerRef = useRef(null);
+  /** @type {import("react").RefObject<HTMLDivElement | null>} */
   const panelRef = useRef(null);
 
   useLayoutEffect(() => {
@@ -92,12 +149,14 @@ function RespondMenu({
       return;
     }
 
+    /** @param {MouseEvent} event */
     const closeIfOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
+      if (menuRef.current && event.target instanceof Node && !menuRef.current.contains(event.target)) {
         setShowActions(false);
       }
     };
 
+    /** @param {KeyboardEvent} event */
     const closeOnEscape = (event) => {
       if (event.key === "Escape") {
         setShowActions(false);
@@ -202,6 +261,7 @@ function RespondMenu({
   );
 }
 
+/** @param {VotablePubProps} props */
 function VotablePub({
   pubId,
   pubName,
@@ -311,13 +371,19 @@ function VotablePub({
   );
 }
 
+/** @param {PollVoteProps} props */
 function PollVote(props) {
-  const currUserId = useSelector((state) => state.auth.uid);
+  /** @type {string | null} */
+  const currUserId = useSelector((state) => {
+    const typedState = /** @type {RootState} */ (state);
+    const uid = typedState.auth?.uid;
+    return typeof uid === "string" && uid.length > 0 ? uid : null;
+  });
   const allowDelete = useRole("canAddPubToPoll");
   const allowCompletePoll = useRole("canCompletePoll");
   const canShowAttendance = useRole("canShowVoters");
   const [votes, makeVote, clearVote] = useVotes(props.poll_id);
-  const [attendance, setAttendanceStatus, clearAttendance, setAttendanceForMultiplePubs] = useAttendance(props.poll_id);
+  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus] = useAttendance(props.poll_id);
   const canVote = Boolean(currUserId);
 
   // Get sorted poll rows
@@ -327,7 +393,7 @@ function PollVote(props) {
   const { pollPubIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
     props.poll_data,
     currUserId,
-    setAttendanceForMultiplePubs
+    setGlobalAttendanceStatus
   );
 
   return (

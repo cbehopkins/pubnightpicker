@@ -6,6 +6,8 @@ import { userAdded, clearUser } from "../store/usersSlice";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
 
+/** @typedef {import("../store").RootState} RootState */
+
 function userSubscription(add_callback, mod_callback, rm_callback) {
   return onSnapshot(collection(db, "users"), (snapshot) => {
     snapshot.docChanges().forEach((change) => {
@@ -75,6 +77,11 @@ export function useUsersSource() {
 }
 
 function useUsers() {
-  return useSelector((state) => state.users);
+  return useSelector(
+    /** @param {RootState} state */
+    (state) => {
+      return state.users;
+    }
+  );
 }
 export default useUsers;

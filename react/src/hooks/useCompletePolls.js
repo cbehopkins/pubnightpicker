@@ -39,6 +39,7 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
   const restaurantTime = completingPoll?.restaurantTime || "";
   // When the poll has no restaurants, fall back to all system restaurants
   const availableRestaurants = restaurantOptions.length > 0 ? restaurantOptions : allRestaurantVenues;
+  /** @type {"poll" | "system"} */
   const restaurantSource = restaurantOptions.length > 0 ? "poll" : "system";
 
   // Handler to actually complete the poll (after modal confirmation)
