@@ -25,12 +25,14 @@ class Event:
         open_am: ActionMan,
         complete_am: ActionMan,
     ):
+        if self.doc is None:
+            raise ValueError(
+                f"Event has no document: type={self.type}. This indicates a coding error."
+            )
         match self.type:
             case EventType.NEW_POLL:
-                assert self.doc
                 db_handler.new_poll_event_handler(open_am, poll_id=self.doc.id)
             case EventType.COMP_POLL:
-                assert self.doc
                 db_handler.complete_poll_event_handler(
                     pubs_list, complete_am, poll_id=self.doc.id
                 )

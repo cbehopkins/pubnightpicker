@@ -40,6 +40,30 @@ def test_query_open_emails_returns_only_enabled(firestore_client):
 
 
 @pytest.mark.integration
+def test_query_personal_emails_returns_only_enabled(firestore_client):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "notificationEmail": "one@example.com",
+            "notificationEmailEnabled": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").set(
+        {
+            "uid": "u2",
+            "notificationEmail": "two@example.com",
+            "notificationEmailEnabled": False,
+        }
+    )
+
+    handler = DbHandler()
+
+    emails = list(handler.query_personal_emails())
+
+    assert emails == [("one@example.com", "u1")]
+
+
+@pytest.mark.integration
 def test_complete_poll_event_handler_persists_action_doc(firestore_client):
     poll_id = "poll-1"
     selected_venue_id = "venue-1"
@@ -99,3 +123,24 @@ def test_complete_poll_event_handler_no_selected_field_does_not_persist(
 
     assert action_doc is None
     assert fake_am.calls == []
+
+
+@pytest.mark.integration
+def test_complete_poll_event_handler_raises_on_missing_selected_pub(firestore_client):
+    poll_id = "poll-missing-pub"
+
+    firestore_client.collection("polls").document(poll_id).set(
+        {
+            "selected": "missing-venue",
+            "date": "2026-04-12",
+            "completed": True,
+        }
+    )
+
+    handler = DbHandler()
+    fake_am = FakeActionMan({"email": ["missing-venue"]})
+
+    with pytest.raises(ValueError, match="not in pubs_list"):
+        handler.complete_poll_event_handler(
+            pubs_list={}, am=cast(ActionMan, fake_am), poll_id=poll_id
+        )

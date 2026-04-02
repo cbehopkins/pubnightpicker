@@ -48,3 +48,11 @@ class VenueDocument(TypedDict):
 
 Callback = Callable[[], None] | None
 DocCallback = Callable[[DocumentSnapshot], None] | None
+
+
+class MissingPubError(KeyError):
+    """Raised when a pub/venue is not found in the pubs list.
+
+    Subclasses KeyError so existing exception handlers continue to work.
+    Indicates a coding error or database consistency issue.
+    """

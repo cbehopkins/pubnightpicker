@@ -39,12 +39,16 @@ def poll_open_actions(dummy_run: bool) -> ActionMan:
 
 
 def poll_complete_actions(dummy_run: bool) -> ActionMan:
+    send_mail_list_email = cast(
+        ActionCallbackProtocol,
+        partial(send_ampub_email),  # defaults to Google Groups mailing list
+    )
     send_personal_email = cast(
         ActionCallbackProtocol,
         partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails),
     )
     complete_am = ActionMan(dummy_run)
-    complete_am.bind(ActionType.EMAIL, send_ampub_email)
+    complete_am.bind(ActionType.EMAIL, send_mail_list_email)
     complete_am.bind(ActionType.PEMAIL, send_personal_email)
     return complete_am
 

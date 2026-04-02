@@ -1,6 +1,7 @@
 *.pyc
 .vscode
 *_venv
+.venv
 token.json
 cred.json
 .tox

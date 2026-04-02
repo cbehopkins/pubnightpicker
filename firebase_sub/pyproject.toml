@@ -18,7 +18,7 @@ pyserial = "^3.5"
 pytest = "^7.0"
 black = "^24.0"
 isort = "^5.10"
-tox = "^3.24"
+tox = "^4.24"
 
 
 [build-system]

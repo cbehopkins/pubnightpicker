@@ -6,13 +6,16 @@ from typing import Callable, Generator, Sequence, cast
 from firebase_admin import firestore
 from google.cloud.firestore_v1 import watch
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.watch import DocumentChange
 
 from firebase_sub.action_track import ActionMan
+from firebase_sub.database.repositories import (
+    FirestorePollRepository,
+    FirestoreUserRepository,
+)
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
 
 _log = logging.getLogger(__name__)
@@ -27,8 +30,6 @@ def _compute_action_key(poll_dict: PollDocument, pub_id: str) -> str:
     """
     restaurant_id = poll_dict.get("restaurant") or ""
     restaurant_time = poll_dict.get("restaurant_time") or ""
-    if (not restaurant_id) and (not restaurant_time):
-        return pub_id
     return f"{pub_id}:{restaurant_id}:{restaurant_time}"
 
 
@@ -37,6 +38,8 @@ class DbHandler:
         self.db: Client = firestore.client()
         # patch_watch_close(self.my_watch_close_callback)
         self.okay = True
+        self.poll_repo = FirestorePollRepository(self.db)
+        self.user_repo = FirestoreUserRepository(self.db)
 
     def my_watch_close_callback(self, reason):
         # This is no longer called as we often close a watch
@@ -52,39 +55,17 @@ class DbHandler:
     def pub_collection(self) -> CollectionReference:
         return self.db.collection("pubs")
 
-    @property
-    def polls_collection(self) -> CollectionReference:
-        return self.db.collection("polls")
-
     def query_personal_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
-        docs_query = self.db.collection("users").where(
-            filter=FieldFilter("notificationEmailEnabled", "==", True)
+        """Query users who want personal email notifications (via personal email)."""
+        yield from self.user_repo.query_users_by_email_preference(
+            "notificationEmailEnabled"
         )
-        # _log.info("Generating personal email addresses")
-        for doc in docs_query.stream():
-            record = doc.to_dict()
-            if record is None:
-                _log.warning("Skipping users doc %s with no payload", doc.id)
-                continue
-            pemail = record["notificationEmail"]
-            _log.debug(f"{pemail}")
-            yield pemail, record["uid"]
-        # _log.info("Stream closed in query_personal_emails")
 
     def query_open_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
-        docs_query = self.db.collection("users").where(
-            filter=FieldFilter("openPollEmailEnabled", "==", True)
+        """Query users who want poll-open notifications."""
+        yield from self.user_repo.query_users_by_email_preference(
+            "openPollEmailEnabled"
         )
-        # _log.info("Generating open email addresses")
-        for doc in docs_query.stream():
-            record = doc.to_dict()
-            if record is None:
-                _log.warning("Skipping users doc %s with no payload", doc.id)
-                continue
-            pemail = record["notificationEmail"]
-            _log.debug(f"{pemail}")
-            yield pemail, record["uid"]
-        # _log.info("Stream closed in query_open_emails")
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
@@ -99,22 +80,20 @@ class DbHandler:
     def complete_poll_event_handler(
         self, pubs_list, am: ActionMan, poll_id: PollId
     ) -> None:
-        polls_document = self.polls_collection.document(poll_id)
+        poll_dict_raw = self.poll_repo.get_poll(poll_id)
         action_document = self.db.collection("comp_actions").document(poll_id)
-
-        polls_snapshot = cast(DocumentSnapshot, polls_document.get())
-        poll_dict_raw = polls_snapshot.to_dict()
         if poll_dict_raw is None:
-            _log.error(f"Poll document {poll_id} not found or is empty.")
             return
         poll_dict = cast(PollDocument, poll_dict_raw)
         if "selected" not in poll_dict:
             _log.error("Poll document %s has no selected field", poll_id)
             return
         pub_id = poll_dict["selected"]
-        assert (
-            pub_id in pubs_list
-        ), f"Someone selected a pub that's not in the pub dict, {pub_id=}"
+        if pub_id not in pubs_list:
+            raise ValueError(
+                f"Poll {poll_id} selected pub {pub_id} that is not in pubs_list. "
+                "This indicates a coding error or database consistency issue."
+            )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         new_action_dict = am.action_event(
             action_dict=action_snapshot.to_dict(),
@@ -127,16 +106,18 @@ class DbHandler:
 
     @property
     def query_completed_true(self) -> Query:
-        return self.polls_collection.where(filter=FieldFilter("completed", "==", True))
+        """Query completed polls."""
+        return self.poll_repo.get_polls_by_status(completed=True)
 
     @property
     def query_completed_false(self) -> Query:
-        return self.polls_collection.where(filter=FieldFilter("completed", "==", False))
+        """Query open (incomplete) polls."""
+        return self.poll_repo.get_polls_by_status(completed=False)
 
     @property
     def query_all_polls(self) -> Query:
         """Return a query for all polls (no filters)."""
-        return cast(Query, self.polls_collection)
+        return self.poll_repo.get_all_polls()
 
     @staticmethod
     def wrapped_callback(
@@ -146,7 +127,8 @@ class DbHandler:
         callback: Callable[[str, DocumentSnapshot], None],
         collection: CollectionReference,
     ) -> None:
-        assert collection.id != "users", "Users collection should not be watched here."
+        if collection.id == "users":
+            raise ValueError("Users collection should not be watched here.")
         for change in changes:
             if change.type.name == "ADDED":
                 callback(collection.id, change.document)

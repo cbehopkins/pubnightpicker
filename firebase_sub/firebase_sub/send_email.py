@@ -12,6 +12,7 @@ from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.models.notification_models import PollPayload, VenuePayload
 from firebase_sub.my_types import (
     EmailAddr,
+    MissingPubError,
     PollDocument,
     UserId,
     VenueDocument,
@@ -109,7 +110,9 @@ def _mailtrap_client() -> mailtrap.MailtrapClient:
     return mailtrap.MailtrapClient(token=token)
 
 
-def _restaurant_block(restaurant_venue: VenuePayload | None, restaurant_time: str | None) -> str:
+def _restaurant_block(
+    restaurant_venue: VenuePayload | None, restaurant_time: str | None
+) -> str:
     if restaurant_venue is None:
         return ""
     if restaurant_time:
@@ -202,12 +205,12 @@ def _resolve_payloads(
     try:
         poll = PollPayload.model_validate(poll_dict)
         selected_venue = VenuePayload.model_validate(pub_dict[poll.selected])
-    except (KeyError, ValidationError) as exc:
+    except (MissingPubError, KeyError, ValidationError) as exc:
         raise CallbackExceptionRetry(f"Invalid poll/venue payload: {exc}") from exc
 
     restaurant_venue: VenuePayload | None = None
     if poll.restaurant:
-        with contextlib.suppress(KeyError, ValidationError):
+        with contextlib.suppress(MissingPubError, KeyError, ValidationError):
             restaurant_venue = VenuePayload.model_validate(pub_dict[poll.restaurant])
         if restaurant_venue is None:
             _log.warning(
