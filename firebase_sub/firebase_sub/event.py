@@ -1,6 +1,5 @@
 import enum
 from dataclasses import dataclass
-from collections.abc import Callable
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -12,14 +11,12 @@ from firebase_sub.database.pubs_list import PubsList
 class EventType(enum.StrEnum):
     NEW_POLL = "new_poll"
     COMP_POLL = "comp_poll"
-    TICK = "tick"
 
 
 @dataclass
 class Event:
     type: EventType
     doc: DocumentSnapshot | None
-    callback: Callable[[], None] | None = None
 
     def handle_queue_item(
         self,
@@ -28,15 +25,6 @@ class Event:
         open_am: ActionMan,
         complete_am: ActionMan,
     ):
-        if self.type == EventType.TICK:
-            if self.callback is None:
-                raise ValueError(
-                    "Tick event requires callback. "
-                    "This indicates a wiring error."
-                )
-            self.callback()
-            return
-
         if self.doc is None:
             raise ValueError(
                 f"Event has no document: type={self.type}. This indicates a coding error."

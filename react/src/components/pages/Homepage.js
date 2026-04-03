@@ -1,14 +1,8 @@
 import { NavLink } from "react-router-dom";
 import { useSelector } from "react-redux";
-import useAdmin from "../../hooks/useAdmin";
-import {
-  NOTIFICATION_DIAGNOSTICS_DOC,
-} from "../../dbtools/notificationPings";
-import NotificationPingPanel from "../UI/NotificationPingPanel";
 
 function Homepage() {
   const loggedIn = useSelector((state) => state.auth.loggedIn);
-  const canRunDiagnostics = useAdmin();
 
   return (
     <div className="container py-4 py-md-5">
@@ -93,18 +87,6 @@ function Homepage() {
           Need help using the app? Visit the <NavLink to="/help">Help and FAQ page</NavLink>.
         </p>
       </section>
-
-      {canRunDiagnostics && (
-        <NotificationPingPanel
-          title="Admin Diagnostics"
-          description="Run a manual ping to confirm the notification tool is responding."
-          buttonLabel="Ping Notification Tool"
-          checkingLabel="Checking..."
-          documentId={NOTIFICATION_DIAGNOSTICS_DOC}
-          eventKey="manual"
-          timeoutMs={60000}
-        />
-      )}
 
       <p className="small text-body-secondary mb-0">
         Maintained by Chris H. <a href="https://github.com/cbehopkins/pubnightpicker" target="_blank" rel="noopener noreferrer">We also accept PRs on GitHub</a>
