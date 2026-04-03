@@ -42,7 +42,6 @@ function ActivePolls() {
       <h1>Active Polls</h1>
       {completePollsState.isCompletingPollBusy && (
         <CompletePollModal
-          pollId={completePollsState.completingPollId}
           pubName={completePollsState.pubName}
           pubHasFood={completePollsState.pubHasFood}
           availableRestaurants={completePollsState.availableRestaurants}

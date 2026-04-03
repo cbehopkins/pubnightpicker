@@ -108,7 +108,6 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
   return {
     // State for modal display
     completingPoll,
-    completingPollId: poll_id,
     pubName,
     pubHasFood,
     availableRestaurants,

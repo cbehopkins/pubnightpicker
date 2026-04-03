@@ -13,8 +13,6 @@ import Button from "../UI/Button";
  * @typedef {Object} VenueAssignmentModalProps
  * @property {string} title
  * @property {string=} subtitle
- * @property {import("react").ReactNode=} statusNode
- * @property {import("react").ReactNode=} footerStatusNode
  * @property {string} mainVenueLabel
  * @property {string=} mainVenueName
  * @property {VenueOption[]=} mainVenueOptions
@@ -45,8 +43,6 @@ import Button from "../UI/Button";
 function VenueAssignmentModal({
   title,
   subtitle,
-  statusNode,
-  footerStatusNode,
   mainVenueLabel,
   mainVenueName,
   mainVenueOptions,
@@ -79,13 +75,10 @@ function VenueAssignmentModal({
     <Modal>
       <div className="p-3 p-md-4 text-body bg-body rounded shadow-sm border">
         <div className="border-bottom pb-3 mb-3">
-          <div className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2">
-            <div>
-              <p className="text-uppercase fw-semibold small text-secondary mb-1">Event Update</p>
-              <h4 className="mb-2">{title}</h4>
-              {subtitle && <p className="text-secondary mb-0">{subtitle}</p>}
-            </div>
-            {statusNode}
+          <div>
+            <p className="text-uppercase fw-semibold small text-secondary mb-1">Event Update</p>
+            <h4 className="mb-2">{title}</h4>
+            {subtitle && <p className="text-secondary mb-0">{subtitle}</p>}
           </div>
         </div>
 
@@ -160,12 +153,7 @@ function VenueAssignmentModal({
         )}
 
         <div className="d-flex flex-column flex-md-row align-items-stretch align-items-md-center gap-2 pt-2 border-top">
-          {(footerNote || footerStatusNode) && (
-            <div className="me-md-auto d-flex flex-column gap-1">
-              {footerNote && <p className="small text-secondary mb-0">{footerNote}</p>}
-              {footerStatusNode}
-            </div>
-          )}
+          {footerNote && <p className="small text-secondary mb-0 me-md-auto">{footerNote}</p>}
           <Button type="button" variant="secondary" onClick={onCancel}>{cancelText}</Button>
           <Button type="button" onClick={onConfirm} disabled={confirmDisabled}>{confirmText}</Button>
         </div>

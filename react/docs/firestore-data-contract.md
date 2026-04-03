@@ -110,24 +110,6 @@ Chat message payload, read/write controlled by chat permissions.
 ### open_actions and comp_actions collections
 Support collections used in poll lifecycle workflows and cleanup.
 
-### notification_req and notification_ack collections
-These collections provide generic request/ack messaging between the web app and
-the notification tool.
-
-Document id:
-- poll id for poll-scoped checks
-- diagnostics for manual admin checks
-
-Shape:
-- arbitrary event key to request value in notification_req
-- matching event key to mirrored request value in notification_ack
-
-Examples:
-- notification_req/diagnostics.manual: 1743600000000
-- notification_ack/diagnostics.manual: 1743600000000
-- notification_req/{pollId}.open: 1743600001234
-- notification_ack/{pollId}.open: 1743600001234
-
 ## Normal Event Data Flow
 
 ### Lifecycle Diagram
@@ -234,7 +216,6 @@ UI behavior:
 - Missing venueType means pub for compatibility.
 - Attendance and votes are keyed by venue id within poll-scoped docs.
 - Poll deletion should clean up related poll-scoped docs (polls, votes, attendance, open_actions).
-- For notification request/ack records, cleanup can be deferred and run as a post-event tidy-up task.
 
 ## Access and Permissions Summary
 See full rules in firestore.rules.
@@ -244,7 +225,6 @@ At a high level:
 - polls: public read, controlled update/create/delete permissions
 - votes and attendance: authenticated read/update, controlled create/delete
 - roles and users: restricted by auth and role checks
-- notification_req and notification_ack: admin read/write from web app; notification tool uses Admin SDK
 
 ## Future Rename Note: pubs to venues
 Current state:
