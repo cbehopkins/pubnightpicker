@@ -37,6 +37,10 @@ service cloud.firestore {
     function canDeleteAnyMessage() {
       return hasRole("canDeleteAnyMessage");
     }
+
+    function canUseNotificationPing() {
+      return isAdmin() || canCreatePoll() || canCompletePoll();
+    }
     
     // Polls collection - read for all, update for known users, create/delete for admins
     match /polls/{poll} {
@@ -70,13 +74,14 @@ service cloud.firestore {
       allow read, write: if canCreatePoll();
     }
 
-    // Notification request and acknowledgement collections - admin diagnostics and tooling checks
+    // Notification request and acknowledgement collections - ping handshake between web app and notifier tool
     match /notification_req/{docId} {
-      allow read, write: if isAdmin();
+      allow read, write: if canUseNotificationPing();
     }
 
     match /notification_ack/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if canUseNotificationPing();
+      allow write: if false;
     }
     
     // Pubs collection - read for all, write for admins only

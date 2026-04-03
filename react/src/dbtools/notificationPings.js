@@ -11,14 +11,14 @@ export function createNotificationPingValue() {
 
 async function ensureNotificationDocs(documentId) {
     const reqRef = doc(db, NOTIFICATION_REQ_COLLECTION, documentId);
-    const ackRef = doc(db, NOTIFICATION_ACK_COLLECTION, documentId);
-
-    await Promise.all([
-        setDoc(reqRef, {}, { merge: true }),
-        setDoc(ackRef, {}, { merge: true }),
-    ]);
+    await setDoc(reqRef, {}, { merge: true });
 }
 
+/**
+ * @param {string} collectionName
+ * @param {string} documentId
+ * @param {{ [x: number]: import("@firebase/firestore").FieldValue; }} updateData
+ */
 async function updateFieldWithCreateFallback(collectionName, documentId, updateData) {
     const docRef = doc(db, collectionName, documentId);
     try {
@@ -32,6 +32,10 @@ async function updateFieldWithCreateFallback(collectionName, documentId, updateD
     }
 }
 
+/**
+ * @param {string} documentId
+ * @param {any} eventKey
+ */
 export async function requestNotificationPing(documentId, eventKey, pingValue = createNotificationPingValue()) {
     await ensureNotificationDocs(documentId);
     await setDoc(
@@ -94,15 +98,10 @@ export async function pingNotificationTool(documentId, eventKey, timeoutMs = 600
 
 export async function clearNotificationPing(documentId, eventKey) {
     await ensureNotificationDocs(documentId);
-    const collections = [NOTIFICATION_REQ_COLLECTION, NOTIFICATION_ACK_COLLECTION];
-    const clearFieldPromiseList = collections.map(async (collectionName) => {
-        const docRef = doc(db, collectionName, documentId);
-        const snapshot = await getDoc(docRef);
-        if (!snapshot.exists()) {
-            return;
-        }
-        await updateFieldWithCreateFallback(collectionName, documentId, { [eventKey]: deleteField() });
-    });
-
-    await Promise.all(clearFieldPromiseList);
+    const docRef = doc(db, NOTIFICATION_REQ_COLLECTION, documentId);
+    const snapshot = await getDoc(docRef);
+    if (!snapshot.exists()) {
+        return;
+    }
+    await updateFieldWithCreateFallback(NOTIFICATION_REQ_COLLECTION, documentId, { [eventKey]: deleteField() });
 }
