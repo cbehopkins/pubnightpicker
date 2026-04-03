@@ -9,7 +9,31 @@ export function createNotificationPingValue() {
     return Date.now();
 }
 
+async function ensureNotificationDocs(documentId) {
+    const reqRef = doc(db, NOTIFICATION_REQ_COLLECTION, documentId);
+    const ackRef = doc(db, NOTIFICATION_ACK_COLLECTION, documentId);
+
+    await Promise.all([
+        setDoc(reqRef, {}, { merge: true }),
+        setDoc(ackRef, {}, { merge: true }),
+    ]);
+}
+
+async function updateFieldWithCreateFallback(collectionName, documentId, updateData) {
+    const docRef = doc(db, collectionName, documentId);
+    try {
+        await updateDoc(docRef, updateData);
+    } catch (error) {
+        if (error?.code === "not-found") {
+            await setDoc(docRef, updateData, { merge: true });
+            return;
+        }
+        throw error;
+    }
+}
+
 export async function requestNotificationPing(documentId, eventKey, pingValue = createNotificationPingValue()) {
+    await ensureNotificationDocs(documentId);
     await setDoc(
         doc(db, NOTIFICATION_REQ_COLLECTION, documentId),
         { [eventKey]: pingValue },
@@ -59,6 +83,7 @@ export function waitForNotificationAck(documentId, eventKey, expectedValue, time
 }
 
 export async function pingNotificationTool(documentId, eventKey, timeoutMs = 60000) {
+    await ensureNotificationDocs(documentId);
     const pingValue = await requestNotificationPing(documentId, eventKey);
     const result = await waitForNotificationAck(documentId, eventKey, pingValue, timeoutMs);
     return {
@@ -68,6 +93,7 @@ export async function pingNotificationTool(documentId, eventKey, timeoutMs = 600
 }
 
 export async function clearNotificationPing(documentId, eventKey) {
+    await ensureNotificationDocs(documentId);
     const collections = [NOTIFICATION_REQ_COLLECTION, NOTIFICATION_ACK_COLLECTION];
     const clearFieldPromiseList = collections.map(async (collectionName) => {
         const docRef = doc(db, collectionName, documentId);
@@ -75,7 +101,7 @@ export async function clearNotificationPing(documentId, eventKey) {
         if (!snapshot.exists()) {
             return;
         }
-        await updateDoc(docRef, { [eventKey]: deleteField() });
+        await updateFieldWithCreateFallback(collectionName, documentId, { [eventKey]: deleteField() });
     });
 
     await Promise.all(clearFieldPromiseList);
