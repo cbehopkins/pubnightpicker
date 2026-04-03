@@ -2,7 +2,9 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
+
+from croniter import croniter
 
 _log = logging.getLogger(__name__)
 
@@ -69,6 +71,42 @@ class PeriodicTrigger:
             self.callback()
 
     def __enter__(self) -> "PeriodicTrigger":
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+
+
+class CroniterTrigger:
+    """Run a callback on a cron schedule in a daemon thread."""
+
+    def __init__(self, cron_expression: str, callback: Callable[[], None]):
+        self.cron_expression = cron_expression.strip()
+        if not self.cron_expression:
+            raise ValueError("cron_expression cannot be empty")
+        self.callback = callback
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        # Validate expression once at startup.
+        croniter(self.cron_expression, datetime.now())
+
+    def _run(self) -> None:
+        while True:
+            now = datetime.now()
+            cron = croniter(self.cron_expression, now)
+            next_run = cron.get_next(datetime)
+            wait_seconds = max((next_run - now).total_seconds(), 0.0)
+            if self._stop_event.wait(wait_seconds):
+                break
+            self.callback()
+
+    def __enter__(self) -> "CroniterTrigger":
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()

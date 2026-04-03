@@ -1,6 +1,5 @@
 import logging
 import queue
-import threading
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -14,6 +13,7 @@ from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionT
 from firebase_sub.common.logging import log_level_to_int
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.housekeeping import (
+    CroniterTrigger,
     HousekeepingRunner,
     IntervalSchedule,
     PeriodicTrigger,
@@ -71,13 +71,17 @@ def configure_logging(log_level: int, logfile: Path | None) -> None:
 
 
 def sub_events(
-    dummy: bool, loglevel: int, logfile: Path | None, restart_interval: int
+    dummy: bool,
+    loglevel: int,
+    logfile: Path | None,
+    restart_interval: int,
+    housekeeping_interval_seconds: int,
+    housekeeping_cron: str | None,
 ) -> None:
     configure_logging(loglevel, logfile)
     dummy_run = dummy
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
-    housekeeping_interval_seconds = 60
     notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
     housekeeping_runner = HousekeepingRunner(
         tasks=build_housekeeping_tasks(DB_HANDLER.db),
@@ -104,9 +108,13 @@ def sub_events(
 
 
     _log.info("Notification request/ack mirror listener started")
-    _log.info(
-        "Housekeeping runner started (interval=%ss)", housekeeping_interval_seconds
-    )
+    if housekeeping_cron:
+        _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
+    else:
+        _log.info(
+            "Housekeeping runner started (interval=%ss)",
+            housekeeping_interval_seconds,
+        )
 
     with (
         PollManager(
@@ -123,9 +131,16 @@ def sub_events(
             add=notification_request_callback,
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
-        PeriodicTrigger(
-            interval_seconds=housekeeping_interval_seconds,
-            callback=enqueue_housekeeping_tick,
+        (
+            CroniterTrigger(
+                cron_expression=housekeeping_cron,
+                callback=enqueue_housekeeping_tick,
+            )
+            if housekeeping_cron
+            else PeriodicTrigger(
+                interval_seconds=housekeeping_interval_seconds,
+                callback=enqueue_housekeeping_tick,
+            )
         ),
         PubsList(
             DB_HANDLER.pub_collection,
@@ -191,10 +206,35 @@ def sub_events(
     default=60 * 24,
     help="Restart interval in minutes (default: 1 day)",
 )
+@click.option(
+    "--housekeeping-interval-seconds",
+    type=int,
+    default=60,
+    show_default=True,
+    help="Housekeeping trigger interval in seconds (ignored if --housekeeping-cron is set)",
+)
+@click.option(
+    "--housekeeping-cron",
+    type=str,
+    default=None,
+    help="Cron expression for housekeeping trigger (e.g. '0 0 * * 4')",
+)
 def cli(
-    dummy: bool, loglevel: int, logfile: Path | None, restart_interval: int
+    dummy: bool,
+    loglevel: int,
+    logfile: Path | None,
+    restart_interval: int,
+    housekeeping_interval_seconds: int,
+    housekeeping_cron: str | None,
 ) -> None:
-    sub_events(dummy, loglevel, logfile, restart_interval)
+    sub_events(
+        dummy,
+        loglevel,
+        logfile,
+        restart_interval,
+        housekeeping_interval_seconds,
+        housekeeping_cron,
+    )
 
 
 if __name__ == "__main__":

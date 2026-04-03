@@ -1,34 +1,52 @@
 import { useEffect } from "react";
 import { useNotificationPing } from "../../hooks/useNotificationPing";
 
+const acknowledgedAutoPingKeys = new Set();
+
 /**
  * Fires a notification ping automatically on mount and renders a single
  * status badge. No buttons or user interaction required.
  */
 function NotificationPingStatus({ documentId, eventKey, timeoutMs = 60000 }) {
     const { status, runPing } = useNotificationPing(documentId, eventKey, timeoutMs);
+    const cacheKey = `${documentId}::${eventKey}`;
+    const hasAcknowledgedAutoPing = acknowledgedAutoPingKeys.has(cacheKey);
 
     useEffect(() => {
-        runPing();
-    }, [runPing]);
+        if (hasAcknowledgedAutoPing) {
+            return;
+        }
+
+        runPing()
+            .then((result) => {
+                if (result.acknowledged) {
+                    acknowledgedAutoPingKeys.add(cacheKey);
+                }
+            })
+            .catch(() => {
+                // The hook updates status to "error"/"timeout".
+            });
+    }, [cacheKey, hasAcknowledgedAutoPing, runPing]);
+
+    const effectiveStatus = hasAcknowledgedAutoPing ? "ok" : status;
 
     const badgeClassName =
-        status === "ok"
+        effectiveStatus === "ok"
             ? "bg-success"
-            : status === "checking"
+            : effectiveStatus === "checking"
                 ? "bg-warning text-dark"
-                : status === "timeout" || status === "error"
+                : effectiveStatus === "timeout" || effectiveStatus === "error"
                     ? "bg-danger"
                     : "bg-secondary";
 
     const statusLabel =
-        status === "ok"
+        effectiveStatus === "ok"
             ? "Notification Tool: OK"
-            : status === "checking"
+            : effectiveStatus === "checking"
                 ? "Notification Tool: Checking…"
-                : status === "timeout"
+                : effectiveStatus === "timeout"
                     ? "Notification Tool: Timeout"
-                    : status === "error"
+                    : effectiveStatus === "error"
                         ? "Notification Tool: Error"
                         : "Notification Tool: Not Checked";
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { clearNotificationPing, pingNotificationTool } from "../dbtools/notificationPings";
 
 /**
@@ -15,24 +15,36 @@ import { clearNotificationPing, pingNotificationTool } from "../dbtools/notifica
 export function useNotificationPing(documentId, eventKey, timeoutMs = 60000) {
     const [status, setStatus] = useState("idle");
     const [lastPingValue, setLastPingValue] = useState(null);
+    const inFlightPingRef = useRef(null);
 
     const runPing = useCallback(async () => {
-        setStatus("checking");
-        try {
-            const result = await pingNotificationTool(documentId, eventKey, timeoutMs);
-            if (result.acknowledged) {
-                setStatus("ok");
-                setLastPingValue(result.pingValue);
-            } else if (result.timedOut) {
-                setStatus("timeout");
-            } else {
-                setStatus("error");
-            }
-            return result;
-        } catch (error) {
-            setStatus("error");
-            throw error;
+        if (inFlightPingRef.current) {
+            return inFlightPingRef.current;
         }
+
+        setStatus("checking");
+        const pingPromise = (async () => {
+            try {
+                const result = await pingNotificationTool(documentId, eventKey, timeoutMs);
+                if (result.acknowledged) {
+                    setStatus("ok");
+                    setLastPingValue(result.pingValue);
+                } else if (result.timedOut) {
+                    setStatus("timeout");
+                } else {
+                    setStatus("error");
+                }
+                return result;
+            } catch (error) {
+                setStatus("error");
+                throw error;
+            } finally {
+                inFlightPingRef.current = null;
+            }
+        })();
+
+        inFlightPingRef.current = pingPromise;
+        return pingPromise;
     }, [documentId, eventKey, timeoutMs]);
 
     const clearPing = useCallback(async () => {
