@@ -119,6 +119,11 @@ class DbHandler:
         """Return a query for all polls (no filters)."""
         return self.poll_repo.get_all_polls()
 
+    @property
+    def query_notification_requests(self) -> Query:
+        """Return a query for notification request health-check documents."""
+        return self.db.collection("notification_req")
+
     @staticmethod
     def wrapped_callback(
         doc_snapshot: Sequence[DocumentSnapshot],

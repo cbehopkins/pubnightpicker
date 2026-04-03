@@ -11,6 +11,7 @@ import { AntiPubParams } from "../pages/PubForm";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
+import NotificationPingStatus from "./NotificationPingStatus";
 
 const venueTypeOptions = ["all", "pub", "restaurant", "event"];
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
@@ -219,6 +220,13 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             Add Venue To Poll
                         </Button>
                     </>
+                )}
+                {canDeletePoll && (
+                    <NotificationPingStatus
+                        documentId={poll_id}
+                        eventKey="create"
+                        timeoutMs={60000}
+                    />
                 )}
             </div>
             <PollVote

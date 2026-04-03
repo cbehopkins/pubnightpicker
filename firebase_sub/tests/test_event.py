@@ -54,3 +54,34 @@ def test_handle_queue_item_raises_on_missing_document():
 
     with pytest.raises(ValueError, match="Event has no document"):
         event.handle_queue_item(handler, object(), object(), object())
+
+
+def test_handle_queue_item_housekeeping_tick_routes_to_callback():
+    handler = _FakeDbHandler()
+    called = {"count": 0}
+
+    def housekeeping_callback():
+        called["count"] += 1
+
+    event = Event(
+        type=EventType.TICK,
+        doc=None,
+        callback=housekeeping_callback,
+    )
+
+    event.handle_queue_item(
+        handler,
+        object(),
+        object(),
+        object(),
+    )
+
+    assert called["count"] == 1
+
+
+def test_handle_queue_item_housekeeping_tick_requires_callback():
+    handler = _FakeDbHandler()
+    event = Event(type=EventType.TICK, doc=None)
+
+    with pytest.raises(ValueError, match="Tick event requires callback."):
+        event.handle_queue_item(handler, object(), object(), object())
