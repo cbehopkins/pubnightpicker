@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     function canUseNotificationPing() {
-      return isAdmin() || canCreatePoll() || canCompletePoll();
+      return request.auth != null;
     }
     
     // Polls collection - read for all, update for known users, create/delete for admins

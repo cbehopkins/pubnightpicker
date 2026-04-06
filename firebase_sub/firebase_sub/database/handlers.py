@@ -1,7 +1,8 @@
 import logging
+from collections.abc import Callable, Generator, Sequence
 from datetime import datetime
 from functools import partial
-from typing import Callable, Generator, Sequence, cast
+from typing import cast
 
 from firebase_admin import firestore
 from google.cloud.firestore_v1 import watch
@@ -30,6 +31,9 @@ def _compute_action_key(poll_dict: PollDocument, pub_id: str) -> str:
     """
     restaurant_id = poll_dict.get("restaurant") or ""
     restaurant_time = poll_dict.get("restaurant_time") or ""
+    if not restaurant_id and not restaurant_time:
+        # If there is no restaurant or restaurant time, we can just use the pub ID as the key.
+        return pub_id
     return f"{pub_id}:{restaurant_id}:{restaurant_time}"
 
 
@@ -123,6 +127,7 @@ class DbHandler:
     def query_notification_requests(self) -> Query:
         """Return a query for notification request health-check documents."""
         return self.db.collection("notification_req")
+
 
     @staticmethod
     def wrapped_callback(
