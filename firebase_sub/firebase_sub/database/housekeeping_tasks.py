@@ -44,5 +44,5 @@ def build_housekeeping_tasks(db: Client) -> list[HousekeepingTask]:
         HousekeepingTask(
             name="delete_notification_docs_for_past_polls",
             callback=lambda: delete_notification_docs_for_past_polls(db),
-        )
+        ),
     ]

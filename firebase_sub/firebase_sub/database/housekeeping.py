@@ -1,8 +1,8 @@
 import logging
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Callable, Sequence
 
 from croniter import croniter
 

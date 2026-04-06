@@ -9,6 +9,9 @@ export function createNotificationPingValue() {
     return Date.now();
 }
 
+/**
+ * @param {string} documentId
+ */
 async function ensureNotificationDocs(documentId) {
     const reqRef = doc(db, NOTIFICATION_REQ_COLLECTION, documentId);
     await setDoc(reqRef, {}, { merge: true });
@@ -86,6 +89,10 @@ export function waitForNotificationAck(documentId, eventKey, expectedValue, time
     });
 }
 
+/**
+ * @param {string} documentId
+ * @param {any} eventKey
+ */
 export async function pingNotificationTool(documentId, eventKey, timeoutMs = 60000) {
     await ensureNotificationDocs(documentId);
     const pingValue = await requestNotificationPing(documentId, eventKey);
@@ -96,6 +103,10 @@ export async function pingNotificationTool(documentId, eventKey, timeoutMs = 600
     };
 }
 
+/**
+ * @param {string} documentId
+ * @param {any} eventKey
+ */
 export async function clearNotificationPing(documentId, eventKey) {
     await ensureNotificationDocs(documentId);
     const docRef = doc(db, NOTIFICATION_REQ_COLLECTION, documentId);

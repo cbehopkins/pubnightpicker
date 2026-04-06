@@ -2,6 +2,28 @@ import { useCallback } from "react";
 import { useNotificationPing } from "../../hooks/useNotificationPing";
 import { notifyError, notifyInfo } from "../../utils/notify";
 
+function formatPingTimestamp(rawPingValue) {
+    const numericValue =
+        typeof rawPingValue === "number"
+            ? rawPingValue
+            : typeof rawPingValue === "string"
+                ? Number(rawPingValue)
+                : Number.NaN;
+
+    if (!Number.isFinite(numericValue)) {
+        return null;
+    }
+
+    const timestampMs = numericValue < 1e11 ? numericValue * 1000 : numericValue;
+    const pingDate = new Date(timestampMs);
+
+    if (Number.isNaN(pingDate.getTime())) {
+        return null;
+    }
+
+    return pingDate.toLocaleString();
+}
+
 function NotificationPingPanel({
     title,
     description,
@@ -12,6 +34,7 @@ function NotificationPingPanel({
     timeoutMs = 60000,
 }) {
     const { status, lastPingValue, runPing, clearPing } = useNotificationPing(documentId, eventKey, timeoutMs);
+    const lastPingFriendlyTime = formatPingTimestamp(lastPingValue);
 
     const handlePing = useCallback(async () => {
         try {
@@ -83,7 +106,10 @@ function NotificationPingPanel({
                 <span className={`badge ${badgeClassName}`}>{statusLabel}</span>
             </div>
             {lastPingValue !== null && (
-                <p className="small text-body-secondary mt-2 mb-0">Last ping value: {lastPingValue}</p>
+                <p className="small text-body-secondary mt-2 mb-0">
+                    Last ping value: {lastPingValue}
+                    {lastPingFriendlyTime && ` (${lastPingFriendlyTime})`}
+                </p>
             )}
         </section>
     );

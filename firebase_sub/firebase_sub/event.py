@@ -1,6 +1,6 @@
 import enum
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -31,8 +31,7 @@ class Event:
         if self.type == EventType.TICK:
             if self.callback is None:
                 raise ValueError(
-                    "Tick event requires callback. "
-                    "This indicates a wiring error."
+                    "Tick event requires callback. " "This indicates a wiring error."
                 )
             self.callback()
             return

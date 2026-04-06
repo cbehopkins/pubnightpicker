@@ -43,9 +43,13 @@ class NotificationAckMirrorHandler:
             if ack_payload is None:
                 ack_payload = {}
 
-            patch = self._build_patch(request_payload=request_payload, ack_payload=ack_payload)
+            patch = self._build_patch(
+                request_payload=request_payload, ack_payload=ack_payload
+            )
             if not patch:
-                _log.info("Notification mirror no-op for doc %s (already in sync)", doc_id)
+                _log.info(
+                    "Notification mirror no-op for doc %s (already in sync)", doc_id
+                )
                 return
 
             ack_document.set(patch, merge=True)

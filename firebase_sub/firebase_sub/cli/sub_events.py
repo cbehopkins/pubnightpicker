@@ -106,7 +106,6 @@ def sub_events(
             )
         )
 
-
     _log.info("Notification request/ack mirror listener started")
     if housekeeping_cron:
         _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
@@ -146,50 +145,50 @@ def sub_events(
             DB_HANDLER.pub_collection,
         ) as pubs_list,
     ):
-            pubs_list.start_periodic_restart(restart_interval)
-            open_am = poll_open_actions(dummy_run)
-            complete_am = poll_complete_actions(dummy_run)
+        pubs_list.start_periodic_restart(restart_interval)
+        open_am = poll_open_actions(dummy_run)
+        complete_am = poll_complete_actions(dummy_run)
 
-            while True:
-                try:
-                    event = q.get(timeout=healthcheck_interval_seconds)
-                except queue.Empty:
-                    if not DB_HANDLER.okay:
-                        raise SystemExit("Exiting due to db is not okay")
-                    continue
-                
-                if event.doc:
-                    doc = event.doc.to_dict()
-                    if doc is None:
-                        _log.warning(
-                            "Received event %s for doc %s with no payload",
-                            event.type,
-                            event.doc.id,
-                        )
-                        date = None
-                        completed = False
-                    else:
-                        date = doc.get("date")
-                        completed = doc.get("completed", False)
-                        _log.info(
-                            "New Event: Type:%s, Date:%s, Completed:%s",
-                            event.type,
-                            date,
-                            completed,
-                        )
-                else:
+        while True:
+            try:
+                event = q.get(timeout=healthcheck_interval_seconds)
+            except queue.Empty:
+                if not DB_HANDLER.okay:
+                    raise SystemExit("Exiting due to db is not okay")
+                continue
+
+            if event.doc:
+                doc = event.doc.to_dict()
+                if doc is None:
+                    _log.warning(
+                        "Received event %s for doc %s with no payload",
+                        event.type,
+                        event.doc.id,
+                    )
                     date = None
                     completed = False
+                else:
+                    date = doc.get("date")
+                    completed = doc.get("completed", False)
+                    _log.info(
+                        "New Event: Type:%s, Date:%s, Completed:%s",
+                        event.type,
+                        date,
+                        completed,
+                    )
+            else:
+                date = None
+                completed = False
 
-                event.handle_queue_item(
-                    DB_HANDLER,
-                    pubs_list,
-                    open_am,
-                    complete_am,
-                )
-                _log.info(
-                    f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
-                )
+            event.handle_queue_item(
+                DB_HANDLER,
+                pubs_list,
+                open_am,
+                complete_am,
+            )
+            _log.info(
+                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+            )
 
 
 @click.command()

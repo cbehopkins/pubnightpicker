@@ -110,7 +110,9 @@ def test_send_ampub_email_builds_pub_message_without_sending(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Mail", _FakeMail)
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Address", _FakeAddress)
-    monkeypatch.setattr("firebase_sub.send_email._mailtrap_client", lambda: fake_client)
+    monkeypatch.setattr(
+        "firebase_sub.send_email._mail_client", lambda dummy_run=True: fake_client
+    )
 
     poll_dict: PollDocument = {
         "selected": "pub-1",
@@ -151,7 +153,9 @@ def test_send_ampub_email_uses_event_template(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Mail", _FakeMail)
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Address", _FakeAddress)
-    monkeypatch.setattr("firebase_sub.send_email._mailtrap_client", lambda: fake_client)
+    monkeypatch.setattr(
+        "firebase_sub.send_email._mail_client", lambda dummy_run=True: fake_client
+    )
 
     poll_dict: PollDocument = {"selected": "event-1", "date": "2026-04-07"}
     pub_dict: dict[str, VenueDocument] = {

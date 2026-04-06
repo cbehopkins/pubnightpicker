@@ -1,14 +1,17 @@
 import contextlib
 import html
 import logging
+import os
 import textwrap
+import time
 from os import getenv
-from typing import Callable, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 import mailtrap
 from pydantic import ValidationError
 
 from firebase_sub.action_track import CallbackExceptionRetry
+from firebase_sub.common.rate_limit import TokenBucket, rate_limited
 from firebase_sub.models.notification_models import PollPayload, VenuePayload
 from firebase_sub.my_types import (
     EmailAddr,
@@ -17,6 +20,44 @@ from firebase_sub.my_types import (
     UserId,
     VenueDocument,
     VenueType,
+)
+
+SECONDS_IN_HOUR = 60 * 60
+SECONDS_IN_DAY = SECONDS_IN_HOUR * 24
+
+STALLED_MAIL_SEND_BUCKET = TokenBucket(
+    refill_amount=int(1),
+    max_tokens=int(1),
+    refill_interval_seconds=float(SECONDS_IN_DAY),
+)
+
+
+@rate_limited(STALLED_MAIL_SEND_BUCKET)
+def _on_mail_send_stall() -> None:
+    logging.warning(
+        "Mail send rate limit stall: no tokens available in MAIL_SEND_BUCKET"
+    )
+    client = _mail_client(dummy_run=False)
+    mail = mailtrap.Mail(
+        sender=mailtrap.Address(
+            email="ampubnight@contable.co.uk", name="ampubnight notification emails"
+        ),
+        to=[mailtrap.Address(email="cbehopkins@gmail.com")],
+        subject="Mail send rate limit stall",
+        text="ampubnight mail send rate limit stall: no tokens available in MAIL_SEND_BUCKET",
+        category="Pub notification",
+    )
+    client.send(mail)
+    time.sleep(SECONDS_IN_HOUR * 6)
+
+
+MAIL_SEND_BUCKET = TokenBucket(
+    refill_amount=int(os.getenv("MAIL_SEND_REFILL_AMOUNT", "4")),
+    max_tokens=int(os.getenv("MAIL_SEND_MAX_TOKENS", "4")),
+    refill_interval_seconds=float(
+        os.getenv("MAIL_SEND_REFILL_INTERVAL_SECONDS", str(SECONDS_IN_DAY))
+    ),
+    on_stall=_on_mail_send_stall,
 )
 
 
@@ -103,7 +144,19 @@ def _append_venue_details(
     return result
 
 
-def _mailtrap_client() -> mailtrap.MailtrapClient:
+class MailSender(Protocol):
+    def send(self, mail: mailtrap.Mail) -> dict[str, Any]: ...
+
+
+class DummyClient:
+    def send(self, mail: mailtrap.Mail) -> dict[str, Any]:
+        _log.info(f"DummyClient sending email: {mail}")
+        return {"status": "dummy_sent"}
+
+
+def _mail_client(dummy_run: bool = True) -> MailSender:
+    if dummy_run:
+        return DummyClient()
     token = getenv("MAILTRAP_TOKEN", "")
     if not token:
         raise CallbackExceptionRetry("MAILTRAP_TOKEN environment variable not set")
@@ -221,15 +274,15 @@ def _resolve_payloads(
     return poll, selected_venue, restaurant_venue
 
 
+@rate_limited(MAIL_SEND_BUCKET)
 def send_poll_open_email(
     previously_actioned: bool,
     emails_src: Callable[[], Iterable[tuple[EmailAddr, UserId | None]]],
     dummy_run: bool = False,
 ):
+    client = _mail_client(dummy_run)
     for email, _ in emails_src():
         _log.info(f"Poll open email to send to {email}")
-        if dummy_run:
-            continue
         mail = mailtrap.Mail(
             sender=mailtrap.Address(
                 email="ampubnight@contable.co.uk", name="ampubnight notification emails"
@@ -239,9 +292,10 @@ def send_poll_open_email(
             text=OPEN_TEMPLATE,
             category="Pub notification",
         )
-        _mailtrap_client().send(mail)
+        client.send(mail)
 
 
+@rate_limited(MAIL_SEND_BUCKET)
 def send_ampub_email(
     poll_dict: PollDocument,
     pub_dict: VenueLookup,
@@ -275,6 +329,7 @@ def send_ampub_email(
     pre_text = (
         "This week's event has been rescheduled\n\n" if previously_actioned else ""
     )
+    client = _mail_client(dummy_run)
     for email, uid in src:
         contents = pre_text + build_notification_text(
             selected_venue=selected_venue,
@@ -284,8 +339,6 @@ def send_ampub_email(
             uid=uid,
         )
         _log.info(f"Notification email to send to {email}::{contents}")
-        if dummy_run:
-            continue
         mail = mailtrap.Mail(
             sender=mailtrap.Address(
                 email="ampubnight@contable.co.uk", name="ampubnight notification emails"
@@ -295,7 +348,7 @@ def send_ampub_email(
             text=contents,
             category="Pub notification",
         )
-        _mailtrap_client().send(mail)
+        client.send(mail)
 
 
 if __name__ == "__main__":
