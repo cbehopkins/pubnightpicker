@@ -5,13 +5,14 @@ import os
 import textwrap
 import time
 from os import getenv
-from typing import Any, Callable, Iterable, Protocol
+from collections.abc import Callable, Iterable
+from typing import Any, Protocol
 
 import mailtrap
 from pydantic import ValidationError
 
 from firebase_sub.action_track import CallbackExceptionRetry
-from firebase_sub.common.rate_limit import TokenBucket, rate_limited
+from firebase_sub.common.rate_limit import SkipCall, TokenBucket, rate_limited
 from firebase_sub.models.notification_models import PollPayload, VenuePayload
 from firebase_sub.my_types import (
     EmailAddr,
@@ -22,13 +23,22 @@ from firebase_sub.my_types import (
     VenueType,
 )
 
+_SELF_EMAIL_ADDR = "ampubnight@contable.co.uk"
+_SELF_EMAIL_NAME = "ampubnight notification emails"
+_ADMIN_EMAIL_ADDR = "cbehopkins@gmail.com"
+_SELF_EMAIL = mailtrap.Address(email=_SELF_EMAIL_ADDR, name=_SELF_EMAIL_NAME)
+
 SECONDS_IN_HOUR = 60 * 60
 SECONDS_IN_DAY = SECONDS_IN_HOUR * 24
+
+def skip_mail_send() -> None:
+    raise SkipCall()
 
 STALLED_MAIL_SEND_BUCKET = TokenBucket(
     refill_amount=int(1),
     max_tokens=int(1),
     refill_interval_seconds=float(SECONDS_IN_DAY),
+    on_stall=skip_mail_send,
 )
 
 
@@ -39,10 +49,8 @@ def _on_mail_send_stall() -> None:
     )
     client = _mail_client(dummy_run=False)
     mail = mailtrap.Mail(
-        sender=mailtrap.Address(
-            email="ampubnight@contable.co.uk", name="ampubnight notification emails"
-        ),
-        to=[mailtrap.Address(email="cbehopkins@gmail.com")],
+        sender=_SELF_EMAIL,
+        to=[mailtrap.Address(email=_ADMIN_EMAIL_ADDR)],
         subject="Mail send rate limit stall",
         text="ampubnight mail send rate limit stall: no tokens available in MAIL_SEND_BUCKET",
         category="Pub notification",
@@ -284,15 +292,14 @@ def send_poll_open_email(
     for email, _ in emails_src():
         _log.info(f"Poll open email to send to {email}")
         mail = mailtrap.Mail(
-            sender=mailtrap.Address(
-                email="ampubnight@contable.co.uk", name="ampubnight notification emails"
-            ),
+            sender=_SELF_EMAIL,
             to=[mailtrap.Address(email=email)],
             subject=f"Pub Night voting opened",
             text=OPEN_TEMPLATE,
             category="Pub notification",
         )
-        client.send(mail)
+        result = client.send(mail)
+        _log.info(f"Mail send result for {email}: {result}")
 
 
 @rate_limited(MAIL_SEND_BUCKET)
@@ -340,15 +347,14 @@ def send_ampub_email(
         )
         _log.info(f"Notification email to send to {email}::{contents}")
         mail = mailtrap.Mail(
-            sender=mailtrap.Address(
-                email="ampubnight@contable.co.uk", name="ampubnight notification emails"
-            ),
+            sender=_SELF_EMAIL,
             to=[mailtrap.Address(email=email)],
             subject=subject,
             text=contents,
             category="Pub notification",
         )
-        client.send(mail)
+        result = client.send(mail)
+        _log.info(f"Mail send result for {email}: {result}")
 
 
 if __name__ == "__main__":

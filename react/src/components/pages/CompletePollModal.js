@@ -72,8 +72,17 @@ function CompletePollModal({
       }
     }
 
+    if (!pubHasFood && !chosenRestaurantId) {
+      const proceedWithoutFoodPlan = window.confirm(
+        "This venue does not serve food and no restaurant is selected. Do you want to complete this poll without a food plan?"
+      );
+      if (!proceedWithoutFoodPlan) {
+        return;
+      }
+    }
+
     await onConfirm();
-  }, [onConfirm, status]);
+  }, [chosenRestaurantId, onConfirm, pubHasFood, status]);
 
   const restaurantSectionLabel =
     restaurantSource === "poll"

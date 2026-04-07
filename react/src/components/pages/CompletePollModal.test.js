@@ -77,7 +77,7 @@ describe("CompletePollModal", () => {
 
         useNotificationPingMock.mockReturnValue({ status: "ok", runPing });
 
-        render(<CompletePollModal {...createProps({ onConfirm })} />);
+        render(<CompletePollModal {...createProps({ pubHasFood: true, onConfirm })} />);
 
         fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -111,7 +111,7 @@ describe("CompletePollModal", () => {
 
         useNotificationPingMock.mockReturnValue({ status: "error", runPing });
 
-        render(<CompletePollModal {...createProps({ onConfirm })} />);
+        render(<CompletePollModal {...createProps({ pubHasFood: true, onConfirm })} />);
 
         fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -119,6 +119,67 @@ describe("CompletePollModal", () => {
             expect(window.confirm).toHaveBeenCalledTimes(1);
             expect(onConfirm).toHaveBeenCalledTimes(1);
         });
+    });
+
+    it("asks for explicit confirmation when pub has no food and no restaurant is selected", async () => {
+        const runPing = vi.fn(async () => ({ acknowledged: true, pingValue: 1 }));
+        const onConfirm = vi.fn(async () => undefined);
+        const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+        useNotificationPingMock.mockReturnValue({ status: "ok", runPing });
+
+        render(
+            <CompletePollModal
+                {...createProps({
+                    pubHasFood: false,
+                    chosenRestaurantId: "",
+                    onConfirm,
+                })}
+            />
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+        await waitFor(() => {
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+        });
+        expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks both warnings in order when handshake is not ok and no food plan is selected", async () => {
+        const runPing = vi.fn(async () => ({ acknowledged: false, timedOut: true, pingValue: 1 }));
+        const onConfirm = vi.fn(async () => undefined);
+        const confirmSpy = vi.spyOn(window, "confirm")
+            .mockReturnValueOnce(true)
+            .mockReturnValueOnce(false);
+
+        useNotificationPingMock.mockReturnValue({ status: "timeout", runPing });
+
+        render(
+            <CompletePollModal
+                {...createProps({
+                    pubHasFood: false,
+                    chosenRestaurantId: "",
+                    onConfirm,
+                })}
+            />
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+        await waitFor(() => {
+            expect(confirmSpy).toHaveBeenCalledTimes(2);
+        });
+
+        expect(confirmSpy).toHaveBeenNthCalledWith(
+            1,
+            "Notification tool has not acknowledged the completion handshake yet. Completing now may skip notification processing. Do you want to continue?"
+        );
+        expect(confirmSpy).toHaveBeenNthCalledWith(
+            2,
+            "This venue does not serve food and no restaurant is selected. Do you want to complete this poll without a food plan?"
+        );
+        expect(onConfirm).not.toHaveBeenCalled();
     });
 
     it("renders the notification status badge in modal footer", () => {
