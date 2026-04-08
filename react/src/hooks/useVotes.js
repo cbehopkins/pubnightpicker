@@ -17,20 +17,26 @@ import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 
 /**
  * @param {string} pollId
+ * @param {boolean} [enabled=true]
  * @returns {UseVotesResult}
  */
-function useVotes(pollId) {
+function useVotes(pollId, enabled = true) {
   // Votes is a dict from pub ID -> List of users who voted for it
   /** @type {[VotesMap, import("react").Dispatch<import("react").SetStateAction<VotesMap>>]} */
   const [votes, setVotes] = useState({});
   const docRef = useMemo(() => doc(db, "votes", pollId), [pollId]);
 
   useEffect(() => {
+    if (!enabled) {
+      setVotes({});
+      return undefined;
+    }
+
     const snapshotErrorHandler = createFirestoreSnapshotErrorHandler("Votes");
     return onSnapshot(docRef, (snapshot) => {
       setVotes(/** @type {VotesMap} */(snapshot.data() || {}));
     }, snapshotErrorHandler);
-  }, [docRef]);
+  }, [docRef, enabled]);
 
   /** @type {(pubId: string, userId: string) => Promise<void>} */
   const makeVote = useCallback(async (pubId, userId) => {

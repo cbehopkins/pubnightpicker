@@ -358,11 +358,21 @@ def send_ampub_email(
 
 
 if __name__ == "__main__":
-    print(
-        build_notification_text(
-            selected_venue=VenuePayload(name="Red Lion"),
-            restaurant_venue=None,
-            event_date="2026-03-30",
-            uid=None,
-        )
+    # print(
+    #     build_notification_text(
+    #         selected_venue=VenuePayload(name="Red Lion"),
+    #         restaurant_venue=None,
+    #         event_date="2026-03-30",
+    #         uid=None,
+    #     )
+    # )
+    client = _mail_client(dummy_run=False)
+    mail = mailtrap.Mail(
+        sender=_SELF_EMAIL,
+        to=[mailtrap.Address(email=_ADMIN_EMAIL_ADDR)],
+        subject="Test email from send_email.py",
+        text="This is a test email sent from send_email.py",
+        category="Pub notification",
     )
+    result = client.send(mail)
+    print(f"Mail send result: {result}")
