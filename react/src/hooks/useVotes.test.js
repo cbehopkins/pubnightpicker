@@ -111,6 +111,13 @@ describe("useVotes", () => {
     expect(unsubscribeMock).not.toHaveBeenCalled();
   });
 
+  it("does not subscribe when disabled", () => {
+    const { result } = renderHook(() => useVotes("poll-1", false));
+
+    expect(onSnapshotMock).not.toHaveBeenCalled();
+    expect(result.current[0]).toEqual({});
+  });
+
   it("writes votes using arrayUnion and arrayRemove", async () => {
     onSnapshotMock.mockImplementation(() => () => undefined);
 

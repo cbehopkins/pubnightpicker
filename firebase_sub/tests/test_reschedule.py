@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from firebase_sub.action_track import ActionMan, ActionType
 from firebase_sub.database.handlers import _compute_action_key
-from firebase_sub.my_types import PollDocument
+from firebase_sub.my_types import PollDocument, VenueDocument
 from firebase_sub.send_email import send_ampub_email
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared between tests
@@ -39,7 +38,7 @@ def _pub_poll() -> PollDocument:
     return {"selected": "pub_A", "date": "2026-04-07"}
 
 
-def _pub_dict():
+def _pub_dict() -> dict[str, VenueDocument]:
     return {"pub_A": {"name": "The Swan", "venueType": "pub"}}
 
 
@@ -53,7 +52,9 @@ def test_pub_reschedule_email_subject_has_rescheduled_prefix(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Mail", _FakeMail)
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Address", _FakeAddress)
-    monkeypatch.setattr("firebase_sub.send_email._mailtrap_client", lambda: fake_client)
+    monkeypatch.setattr(
+        "firebase_sub.send_email._mail_client", lambda dummy_run=True: fake_client
+    )
 
     send_ampub_email(
         _pub_poll(),
@@ -71,7 +72,9 @@ def test_pub_reschedule_email_body_has_rescheduled_text(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Mail", _FakeMail)
     monkeypatch.setattr("firebase_sub.send_email.mailtrap.Address", _FakeAddress)
-    monkeypatch.setattr("firebase_sub.send_email._mailtrap_client", lambda: fake_client)
+    monkeypatch.setattr(
+        "firebase_sub.send_email._mail_client", lambda dummy_run=True: fake_client
+    )
 
     send_ampub_email(
         _pub_poll(),
@@ -130,7 +133,7 @@ def test_action_man_same_pub_fires_only_once():
 def test_compute_action_key_pub_only():
     """A poll with no restaurant produces a key containing only the pub ID."""
     poll: PollDocument = {"selected": "pub_A", "date": "2026-04-01"}
-    assert _compute_action_key(poll, "pub_A") == "pub_A::"
+    assert _compute_action_key(poll, "pub_A") == "pub_A"
 
 
 def test_compute_action_key_with_restaurant():

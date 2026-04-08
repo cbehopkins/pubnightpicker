@@ -1,5 +1,6 @@
-import pytest
 from typing import cast
+
+import pytest
 
 from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler

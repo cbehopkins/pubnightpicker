@@ -9,7 +9,6 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.document import DocumentReference
 
-
 TEST_PROJECT_ID = "demo-firebase-sub-integration"
 
 

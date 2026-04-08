@@ -28,9 +28,10 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
 /**
  * @param {string} pollId
+ * @param {boolean} [enabled=true]
  * @returns {UseAttendanceResult}
  */
-function useAttendance(pollId) {
+function useAttendance(pollId, enabled = true) {
     /** @type {[AttendanceMap, import("react").Dispatch<import("react").SetStateAction<AttendanceMap>>]} */
     const [attendance, setAttendance] = useState({});
     const docRef = useMemo(() => doc(db, "attendance", pollId), [pollId]);
@@ -41,11 +42,16 @@ function useAttendance(pollId) {
     }, [docRef]);
 
     useEffect(() => {
+        if (!enabled) {
+            setAttendance({});
+            return undefined;
+        }
+
         const snapshotErrorHandler = createFirestoreSnapshotErrorHandler("Attendance");
         return onSnapshot(docRef, (snapshot) => {
             setAttendance(snapshot.data() || {});
         }, snapshotErrorHandler);
-    }, [docRef]);
+    }, [docRef, enabled]);
 
     /** @type {(pubId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setAttendanceStatus = useCallback(async (pubId, userId, status) => {

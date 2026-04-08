@@ -1,7 +1,7 @@
 import logging
 import threading
-from datetime import datetime as Datetime
 from collections.abc import Sequence
+from datetime import datetime as Datetime
 from typing import Self
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot

@@ -114,6 +114,13 @@ describe("useAttendance", () => {
         expect(unsubscribeMock).not.toHaveBeenCalled();
     });
 
+    it("does not subscribe when disabled", () => {
+        const { result } = renderHook(() => useAttendance("poll-1", false));
+
+        expect(onSnapshotMock).not.toHaveBeenCalled();
+        expect(result.current[0]).toEqual({});
+    });
+
     it("switches and clears attendance with mutually exclusive updates", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 

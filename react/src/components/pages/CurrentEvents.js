@@ -49,6 +49,14 @@ function normalizeImageUrl(value) {
     trimmed.startsWith("data:image/") ||
     trimmed.startsWith("blob:")
   ) {
+    if (
+      trimmed.startsWith("http://") &&
+      typeof window !== "undefined" &&
+      window.location.protocol === "https:"
+    ) {
+      return `https://${trimmed.slice("http://".length)}`;
+    }
+
     return trimmed;
   }
 
@@ -257,8 +265,12 @@ function CurrentEvent({
     (state) => state.auth.uid
   );
   const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
-  const [votes] = useVotes(poll_id);
-  const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(poll_id);
+  const canReadProtectedEventData = Boolean(normalizedUserId);
+  const [votes] = useVotes(poll_id, canReadProtectedEventData);
+  const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(
+    poll_id,
+    canReadProtectedEventData
+  );
   const eventViewModel = buildCurrentEventViewModel({
     current_pub_id,
     restaurant_id,
@@ -274,6 +286,14 @@ function CurrentEvent({
     return <div></div>;
   }
   const { mainVenue, restaurantVenue } = eventViewModel;
+  const mainVenueImage = normalizeImageUrl(mainVenue.image);
+  const [hasMainImageLoadError, setHasMainImageLoadError] = useState(false);
+
+  useEffect(() => {
+    setHasMainImageLoadError(false);
+  }, [mainVenueImage]);
+
+  const shouldShowMainImage = mainVenueImage && !hasMainImageLoadError;
 
   const attendanceHandlers = useEventAttendance(
     normalizedUserId,
@@ -308,13 +328,22 @@ function CurrentEvent({
 
         {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
 
-        {mainVenue.image && (
+        {shouldShowMainImage && (
           <div className="mb-3">
             <img
-              src={mainVenue.image}
+              src={mainVenueImage}
               alt="What the venue looks like"
               className={`img-fluid rounded ${styles.image}`}
+              loading="lazy"
+              decoding="async"
+              onError={() => setHasMainImageLoadError(true)}
             />
+          </div>
+        )}
+
+        {!shouldShowMainImage && (
+          <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
+            <span className="text-body-secondary">No image available</span>
           </div>
         )}
 
