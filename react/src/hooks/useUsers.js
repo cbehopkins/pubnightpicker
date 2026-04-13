@@ -9,7 +9,7 @@ import { auth } from "../firebase";
 /** @typedef {import("../store").RootState} RootState */
 
 function userSubscription(add_callback, mod_callback, rm_callback) {
-  return onSnapshot(collection(db, "users"), (snapshot) => {
+  return onSnapshot(collection(db, "user-public"), (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type === "added") {
         add_callback(change.doc.id, change.doc.data());
@@ -29,13 +29,11 @@ export function useUsersSource() {
   const dispatch = useDispatch();
   const addCallback = useCallback(
     (id, doc) => {
-      const votes_visible = doc?.votesVisible;
+      const uid = doc?.uid || id;
       dispatch(
         userAdded({
-          uid: doc.uid,
+          uid,
           name: doc.name,
-          email: doc.email,
-          votesVisible: votes_visible,
           photoUrl: doc.photoUrl,
         })
       );
@@ -45,14 +43,11 @@ export function useUsersSource() {
 
   const modCallback = useCallback(
     (id, doc) => {
-      const votes_visible = doc?.votesVisible;
-
+      const uid = doc?.uid || id;
       dispatch(
         userAdded({
-          uid: doc.uid,
+          uid,
           name: doc.name,
-          email: doc.email,
-          votesVisible: votes_visible,
           photoUrl: doc.photoUrl,
         })
       );
@@ -62,7 +57,8 @@ export function useUsersSource() {
 
   const rmCallback = useCallback(
     (id, doc) => {
-      dispatch(clearUser({ uid: doc.uid }));
+      const uid = doc?.uid || id;
+      dispatch(clearUser({ uid }));
     },
     [dispatch]
   );

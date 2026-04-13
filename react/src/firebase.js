@@ -40,8 +40,26 @@ if (useFirebaseEmulators) {
 }
 
 const googleProvider = new GoogleAuthProvider();
+
+/**
+ * Write user public profile data to user-public collection
+ */
+async function addUserPublicProfile(uid, name, photoUrl) {
+  return setDoc(doc(db, "user-public", uid), {
+    uid: uid,
+    name: name,
+    photoUrl: photoUrl || null,
+  }, {
+    merge: true,
+  });
+}
+
+/**
+ * Write user private data to users collection and public profile to user-public
+ */
 export async function addUserDoc(uid, name, authProvider, email) {
-  return setDoc(doc(db, "users", uid), {
+  // Write private user data
+  await setDoc(doc(db, "users", uid), {
     uid: uid,
     name: name,
     authProvider: authProvider,
@@ -49,6 +67,9 @@ export async function addUserDoc(uid, name, authProvider, email) {
   }, {
     merge: true,
   });
+
+  // Write public profile data
+  await addUserPublicProfile(uid, name, null);
 }
 
 const signInWithGoogle = async () => {
@@ -186,4 +207,5 @@ export {
   registerWithEmailAndPassword,
   sendPasswordReset,
   logout,
+  addUserPublicProfile,
 };

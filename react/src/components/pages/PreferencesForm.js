@@ -47,7 +47,7 @@ function PreferencesForm({ method }) {
         <Card.Body className="text-body">
           <Row className="g-3">
             <Col xs={12}>
-              <Form.Group controlId="name">
+              <Form.Group>
                 <Form.Label>My Preferred Name</Form.Label>
                 <Form.Control
                   id="name"
@@ -61,7 +61,7 @@ function PreferencesForm({ method }) {
             </Col>
 
             <Col xs={12}>
-              <Form.Group controlId="avatar">
+              <Form.Group>
                 <Form.Label>Chat Avatar</Form.Label>
                 {photoUrl && (
                   <div className="mb-2">
@@ -96,7 +96,7 @@ function PreferencesForm({ method }) {
             </Col>
 
             <Col xs={12}>
-              <Form.Group controlId="email">
+              <Form.Group>
                 <Form.Label>Email Address</Form.Label>
                 <Form.Control
                   id="email"

@@ -5,7 +5,9 @@ import { useSelector } from "react-redux";
 import { store } from "../../store";
 import {
   updateDoc,
+  doc as firestoreDoc,
 } from "firebase/firestore";
+import { db } from "../../firebase";
 import TextModal from "../UI/TextModal";
 import ConfirmModal from "../UI/ConfirmModal";
 import Button from "../UI/Button";
@@ -248,12 +250,44 @@ export async function action({ request, params }) {
   };
   if (method === "POST") {
     try {
-      // Firestore rejects fields with value `undefined`. Remove any undefined
-      // values before calling updateDoc.
+      // Firestore rejects fields with value `undefined`. Remove any undefined values
       const cleaned = Object.fromEntries(
         Object.entries(notificationParams).filter(([, v]) => v !== undefined)
       );
-      await updateDoc(doc.ref, cleaned);
+
+      // Write private data to users collection
+      const privateData = {
+        notificationEmail: cleaned.notificationEmail,
+        notificationEmailEnabled: cleaned.notificationEmailEnabled,
+        votesVisible: cleaned.votesVisible,
+        openPollEmailEnabled: cleaned.openPollEmailEnabled,
+        customPhotoUrl: cleaned.customPhotoUrl,
+      };
+
+      // Remove undefined private fields
+      const cleanedPrivate = Object.fromEntries(
+        Object.entries(privateData).filter(([, v]) => v !== undefined)
+      );
+
+      if (Object.keys(cleanedPrivate).length > 0) {
+        await updateDoc(doc.ref, cleanedPrivate);
+      }
+
+      // Write public data to user-public collection
+      const publicData = {
+        uid,
+        name: cleaned.name,
+        photoUrl: cleaned.photoUrl,
+      };
+
+      // Remove undefined public fields
+      const cleanedPublic = Object.fromEntries(
+        Object.entries(publicData).filter(([, v]) => v !== undefined)
+      );
+
+      if (Object.keys(cleanedPublic).length > 0) {
+        await updateDoc(firestoreDoc(db, "user-public", uid), cleanedPublic);
+      }
     } catch (err) {
       console.error(err);
       notifyError(err.message);

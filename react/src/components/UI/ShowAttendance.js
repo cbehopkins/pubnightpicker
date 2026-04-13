@@ -4,8 +4,20 @@ import Modal from "./Modal";
 import Button from "./Button";
 import useUsers from "../../hooks/useUsers";
 import styles from "./PollVote.module.css";
+import { useMemo } from "react";
 
-/** @typedef {{ name?: string }} UserEntry */
+/** @typedef {{ uid?: string, name?: string }} UserEntry */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeUserId(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value).trim();
+}
 
 /**
  * @typedef {Object} ShowAttendanceProps
@@ -20,13 +32,36 @@ import styles from "./PollVote.module.css";
  */
 export default function ShowAttendance(params) {
     const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
-    const voters = params.voters || [];
-    const canCome = params.canCome || [];
-    const cannotCome = params.cannotCome || [];
+    const voters = (params.voters || []).map(normalizeUserId).filter(Boolean);
+    const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
+    const cannotCome = (params.cannotCome || []).map(normalizeUserId).filter(Boolean);
+
+    const votersSet = useMemo(() => new Set(voters), [voters]);
+    const canComeSet = useMemo(() => new Set(canCome), [canCome]);
+    const cannotComeSet = useMemo(() => new Set(cannotCome), [cannotCome]);
+
+    const usersByUid = useMemo(() => {
+        /** @type {Record<string, UserEntry>} */
+        const map = {};
+        Object.entries(users).forEach(([key, userEntry]) => {
+            if (!userEntry) {
+                return;
+            }
+            const keyUid = normalizeUserId(key);
+            const entryUid = normalizeUserId(userEntry.uid);
+            if (keyUid) {
+                map[keyUid] = userEntry;
+            }
+            if (entryUid) {
+                map[entryUid] = userEntry;
+            }
+        });
+        return map;
+    }, [users]);
 
     const allUserIds = [...new Set([...voters, ...canCome, ...cannotCome])];
     const sortedUsers = allUserIds
-        .map((id) => ({ id, name: (id in users && users[id].name) || "No Name Recorded" }))
+        .map((id) => ({ id, name: usersByUid[id]?.name || "No Name Recorded" }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
     const showVoters = voters.length > 0;
@@ -50,18 +85,18 @@ export default function ShowAttendance(params) {
                             <tr key={id}>
                                 <td>{name}</td>
                                 {showVoters && (
-                                    <td className={voters.includes(id) ? styles.attendanceCheckYes : ""}>
-                                        {voters.includes(id) ? "✓" : ""}
+                                    <td className={votersSet.has(id) ? styles.attendanceCheckYes : ""}>
+                                        {votersSet.has(id) ? "✓" : ""}
                                     </td>
                                 )}
                                 {showCanCome && (
-                                    <td className={canCome.includes(id) ? styles.attendanceCheckYes : ""}>
-                                        {canCome.includes(id) ? "✓" : ""}
+                                    <td className={canComeSet.has(id) ? styles.attendanceCheckYes : ""}>
+                                        {canComeSet.has(id) ? "✓" : ""}
                                     </td>
                                 )}
                                 {showCannotCome && (
-                                    <td className={cannotCome.includes(id) ? styles.attendanceCheckNo : ""}>
-                                        {cannotCome.includes(id) ? "✓" : ""}
+                                    <td className={cannotComeSet.has(id) ? styles.attendanceCheckNo : ""}>
+                                        {cannotComeSet.has(id) ? "✓" : ""}
                                     </td>
                                 )}
                             </tr>
