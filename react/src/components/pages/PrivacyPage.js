@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import privacyNoticeMarkdown from "../../../docs/privacy-notice-draft.md?raw";
+import privacyNoticeMarkdown from "../../../docs/privacy-notice.md?raw";
 
 function MarkdownNotice() {
     return (
