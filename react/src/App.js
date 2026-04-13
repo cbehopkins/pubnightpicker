@@ -27,6 +27,7 @@ import NotificationUnsub, {
 import { useUsersSource } from "./hooks/useUsers";
 import Homepage from "./components/pages/Homepage";
 import HelpPage from "./components/pages/HelpPage";
+import PrivacyPage from "./components/pages/PrivacyPage";
 import useSelf from "./hooks/useSelf";
 import { setRoles } from "./store/authSlice";
 import ChatPage from "./components/pages/ChatPage";
@@ -65,6 +66,10 @@ function App() {
         {
           path: "help",
           element: <HelpPage />,
+        },
+        {
+          path: "privacy",
+          element: <PrivacyPage />,
         },
         {
           path: "login",

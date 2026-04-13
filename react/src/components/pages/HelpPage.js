@@ -30,6 +30,7 @@ function HelpPage() {
                     <li>You can change your avatar for the chat window here to a URL you provide.</li>
                     <li>You may select an email address (different from your login email) to receive notifications at. You may disable your email notifications too.</li>
                     <li>You may also change to light/dark mode viewing of this website.</li>
+                    <li>For details on personal data handling, see the <a href="/privacy">Privacy Notice</a>.</li>
                 </ul>
             </section>
 
