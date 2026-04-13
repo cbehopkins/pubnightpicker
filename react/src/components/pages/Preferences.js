@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useSelector } from "react-redux";
 import { store } from "../../store";
 import {
+  setDoc,
   updateDoc,
   doc as firestoreDoc,
 } from "firebase/firestore";
@@ -286,7 +287,7 @@ export async function action({ request, params }) {
       );
 
       if (Object.keys(cleanedPublic).length > 0) {
-        await updateDoc(firestoreDoc(db, "user-public", uid), cleanedPublic);
+        await setDoc(firestoreDoc(db, "user-public", uid), cleanedPublic, { merge: true });
       }
     } catch (err) {
       console.error(err);

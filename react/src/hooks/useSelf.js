@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
-import { query, where, collection, onSnapshot, updateDoc, getDocs } from "firebase/firestore";
+import { query, where, collection, onSnapshot, updateDoc, getDocs, doc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
@@ -35,6 +35,16 @@ async function updatePhotoUrl(uid, photoUrl) {
             notifyError(err.message);
         }
     });
+
+    try {
+        await setDoc(doc(db, "user-public", uid), {
+            uid,
+            photoUrl,
+        }, { merge: true });
+    } catch (err) {
+        console.error(err);
+        notifyError(err.message);
+    }
 }
 
 export default function useSelf() {
