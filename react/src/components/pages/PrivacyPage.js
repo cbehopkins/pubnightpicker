@@ -299,7 +299,7 @@ function PrivacyExportPanel() {
                             notificationEmail: privateUserData?.notificationEmail || null,
                             notificationEmailEnabled: privateUserData?.notificationEmailEnabled || false,
                             openPollEmailEnabled: privateUserData?.openPollEmailEnabled || false,
-                            votesVisible: privateUserData?.votesVisible || false,
+                            votesVisible: publicUserData?.votesVisible ?? privateUserData?.votesVisible ?? true,
                         },
                         publicProfile: publicUserData,
                     },

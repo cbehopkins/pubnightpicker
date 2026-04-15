@@ -49,6 +49,7 @@ async function addUserPublicProfile(uid, name, photoUrl) {
     uid: uid,
     name: name,
     photoUrl: photoUrl || null,
+    votesVisible: true,
   }, {
     merge: true,
   });

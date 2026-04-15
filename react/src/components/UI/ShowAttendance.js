@@ -6,7 +6,7 @@ import useUsers from "../../hooks/useUsers";
 import styles from "./PollVote.module.css";
 import { useMemo } from "react";
 
-/** @typedef {{ uid?: string, name?: string }} UserEntry */
+/** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
 /**
  * @param {unknown} value
@@ -36,10 +36,6 @@ export default function ShowAttendance(params) {
     const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
     const cannotCome = (params.cannotCome || []).map(normalizeUserId).filter(Boolean);
 
-    const votersSet = useMemo(() => new Set(voters), [voters]);
-    const canComeSet = useMemo(() => new Set(canCome), [canCome]);
-    const cannotComeSet = useMemo(() => new Set(cannotCome), [cannotCome]);
-
     const usersByUid = useMemo(() => {
         /** @type {Record<string, UserEntry>} */
         const map = {};
@@ -59,12 +55,17 @@ export default function ShowAttendance(params) {
         return map;
     }, [users]);
 
-    const allUserIds = [...new Set([...voters, ...canCome, ...cannotCome])];
+    const visibleVoters = voters.filter((id) => usersByUid[id]?.votesVisible !== false);
+    const votersSet = useMemo(() => new Set(visibleVoters), [visibleVoters]);
+    const canComeSet = useMemo(() => new Set(canCome), [canCome]);
+    const cannotComeSet = useMemo(() => new Set(cannotCome), [cannotCome]);
+
+    const allUserIds = [...new Set([...visibleVoters, ...canCome, ...cannotCome])];
     const sortedUsers = allUserIds
         .map((id) => ({ id, name: usersByUid[id]?.name || "No Name Recorded" }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-    const showVoters = voters.length > 0;
+    const showVoters = visibleVoters.length > 0;
     const showCanCome = canCome.length > 0;
     const showCannotCome = cannotCome.length > 0;
 

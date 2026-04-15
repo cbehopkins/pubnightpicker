@@ -260,7 +260,6 @@ export async function action({ request, params }) {
       const privateData = {
         notificationEmail: cleaned.notificationEmail,
         notificationEmailEnabled: cleaned.notificationEmailEnabled,
-        votesVisible: cleaned.votesVisible,
         openPollEmailEnabled: cleaned.openPollEmailEnabled,
         customPhotoUrl: cleaned.customPhotoUrl,
       };
@@ -279,6 +278,7 @@ export async function action({ request, params }) {
         uid,
         name: cleaned.name,
         photoUrl: cleaned.photoUrl,
+        votesVisible: cleaned.votesVisible,
       };
 
       // Remove undefined public fields

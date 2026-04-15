@@ -122,7 +122,7 @@ describe("PrivacyPage", () => {
                 uid: "user-123",
                 email: "user@example.com",
                 notificationEmailEnabled: true,
-                votesVisible: false,
+                votesVisible: true,
             }),
         });
 
@@ -131,6 +131,7 @@ describe("PrivacyPage", () => {
             data: () => ({
                 uid: "user-123",
                 name: "Preferred User",
+                votesVisible: false,
             }),
         });
 
@@ -289,6 +290,7 @@ describe("PrivacyPage", () => {
         expect(payload.lookup.venues.any.name).toBe("Any venue");
 
         expect(payload.expanded.profile.preferredName).toBe("Preferred User");
+        expect(payload.expanded.profile.notificationPreferences.votesVisible).toBe(false);
         expect(payload.expanded.votes["poll-1"].event.pollId).toBe("poll-1");
         expect(payload.expanded.votes["poll-1"].votes[0].venue.name).toBe("Venue A");
         expect(payload.expanded.attendance["poll-1"].attendance[1].venue.name).toBe("Venue B");

@@ -7,6 +7,7 @@ import { createSlice } from "@reduxjs/toolkit";
  * @property {string=} uid
  * @property {string=} name
  * @property {string | null=} photoUrl
+ * @property {boolean=} votesVisible
  */
 
 /** @typedef {Record<string, UserProfile>} UsersState */
@@ -16,6 +17,7 @@ import { createSlice } from "@reduxjs/toolkit";
  * @property {string} uid
  * @property {string=} name
  * @property {string | null=} photoUrl
+ * @property {boolean=} votesVisible
  */
 
 /** @type {UsersState} */
@@ -29,7 +31,8 @@ const usersSlice = createSlice({
     userAdded(state, action) {
       state[action.payload.uid] = {
         uid: action.payload.uid,
-        name: action.payload.name,
+        name: action.payload.name,,
+        votesVisible: action.payload.votesVisible !== false,
         photoUrl: action.payload.photoUrl
       };
     },

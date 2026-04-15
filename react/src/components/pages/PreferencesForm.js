@@ -1,5 +1,5 @@
 import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
-import { query, getDocs, collection, where } from "firebase/firestore";
+import { query, getDocs, collection, where, doc as firestoreDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useSelector } from "react-redux";
 import { useEffect, useState } from "react";
@@ -10,26 +10,42 @@ function PreferencesForm({ method }) {
   const uid = useSelector((state) => state.auth.uid);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
   const [currUserDoc, setCurrUserDoc] = useState({});
+  const [publicUserDoc, setPublicUserDoc] = useState({});
 
   useEffect(() => {
     if (!loggedIn) {
       setCurrUserDoc({});
+      setPublicUserDoc({});
       return;
     }
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    getDocs(q).then((docs) => {
-      if (docs.length === 0) {
+
+    const loadProfiles = async () => {
+      const privateQuery = query(collection(db, "users"), where("uid", "==", uid));
+      const [privateDocs, publicDoc] = await Promise.all([
+        getDocs(privateQuery),
+        getDoc(firestoreDoc(db, "user-public", uid)),
+      ]);
+
+      if (privateDocs.empty) {
         setCurrUserDoc({});
-        return;
+      } else {
+        setCurrUserDoc(privateDocs.docs[0].data());
       }
-      setCurrUserDoc(docs.docs[0].data());
-    });
+
+      if (publicDoc.exists()) {
+        setPublicUserDoc(publicDoc.data());
+      } else {
+        setPublicUserDoc({});
+      }
+    };
+
+    loadProfiles();
   }, [loggedIn, uid]);
 
-  const name = loggedIn ? currUserDoc?.name : "";
+  const name = loggedIn ? currUserDoc?.name || publicUserDoc?.name : "";
   const notificationEmail = loggedIn ? currUserDoc?.notificationEmail || currUserDoc.email : "";
   const notificationEnabled = loggedIn ? currUserDoc?.notificationEmailEnabled : false;
-  const votesVisible = loggedIn ? currUserDoc?.votesVisible : false;
+  const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;
   const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
   const photoUrl = useSelector((state) => state.auth.photoUrl);
   const navigate = useNavigate();

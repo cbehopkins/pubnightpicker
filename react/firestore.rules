@@ -43,10 +43,11 @@ service cloud.firestore {
     }
 
     function isValidPublicUserProfile(userId) {
-      return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl"])
+      return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
         && request.resource.data.uid == userId
         && (!("name" in request.resource.data) || request.resource.data.name is string || request.resource.data.name == null)
-        && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null);
+        && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
+        && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
     }
     
     // Polls collection - read for all, update for known users, create/delete for admins

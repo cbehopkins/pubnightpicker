@@ -35,6 +35,7 @@ export function useUsersSource() {
           uid,
           name: doc.name,
           photoUrl: doc.photoUrl,
+          votesVisible: doc?.votesVisible !== false,
         })
       );
     },
@@ -49,6 +50,7 @@ export function useUsersSource() {
           uid,
           name: doc.name,
           photoUrl: doc.photoUrl,
+          votesVisible: doc?.votesVisible !== false,
         })
       );
     },
