@@ -10,9 +10,7 @@ import { collection, doc, deleteField, onSnapshot, updateDoc, setDoc } from "fir
 import Modal from "../UI/Modal";
 import Button from "../UI/Button";
 import {
-    ADMIN_DEFAULT_PERMISSIONS,
     CONSOLIDATED_PERMISSION_COLUMNS,
-    KNOWN_DEFAULT_PERMISSIONS,
 } from "../../permissions";
 
 const MANAGE_USERS_NARROW_BREAKPOINT = 1200;
@@ -172,45 +170,6 @@ function useManageUsersState() {
         await clearRole(roleName, uid);
     }, [hasRole]);
 
-    const handleAutoSyncKnownToChat = useCallback(async () => {
-        const knownDict = roles["known"] || {};
-        const adminDict = roles["admin"] || {};
-
-        const updates = {
-            knownUsersScanned: 0,
-            adminUsersScanned: 0,
-            roleWrites: 0,
-        };
-
-        for (const [uid, isKnownUser] of Object.entries(knownDict)) {
-            if (!isKnownUser) {
-                continue;
-            }
-            updates.knownUsersScanned += 1;
-            for (const roleName of KNOWN_DEFAULT_PERMISSIONS) {
-                if (!hasRole(uid, roleName)) {
-                    await setRole(roleName, uid);
-                    updates.roleWrites += 1;
-                }
-            }
-        }
-
-        for (const [uid, isAdminUser] of Object.entries(adminDict)) {
-            if (!isAdminUser) {
-                continue;
-            }
-            updates.adminUsersScanned += 1;
-            for (const roleName of ADMIN_DEFAULT_PERMISSIONS) {
-                if (!hasRole(uid, roleName)) {
-                    await setRole(roleName, uid);
-                    updates.roleWrites += 1;
-                }
-            }
-        }
-
-        console.log("Permission backfill complete", updates);
-    }, [hasRole, roles]);
-
     return {
         users: mergedUsers,
         sortedUsers,
@@ -220,7 +179,6 @@ function useManageUsersState() {
         handleAdminClick,
         handleKnownClick,
         handleRoleClick,
-        handleAutoSyncKnownToChat,
     };
 }
 
@@ -414,20 +372,11 @@ function ManageUsers() {
         handleAdminClick,
         handleKnownClick,
         handleRoleClick,
-        handleAutoSyncKnownToChat,
     } = useManageUsersState();
 
     return (
         <div className="container py-3 text-body">
             <h1 className="mb-3">Manage Users</h1>
-            <Button
-                type="button"
-                variant="secondary"
-                className="mb-3"
-                onClick={handleAutoSyncKnownToChat}
-            >
-                Auto-sync Known/Admin to Consolidated Permissions
-            </Button>
 
             {sortedUsers.length === 0 ? (
                 <EmptyUsersNotice />
