@@ -61,17 +61,38 @@ async function updatePhotoUrl(uid, photoUrl) {
 export default function useSelf() {
     const [user, loading] = useAuthState(auth);
     const dispatch = useDispatch();
+    const logInFromAuthUser = useCallback((authUser) => {
+        if (!authUser?.uid) {
+            return;
+        }
+        dispatch(authAdded({
+            uid: authUser.uid,
+            name: authUser.displayName || authUser.email || "",
+            email: authUser.email || "",
+            photoUrl: authUser.photoURL || null,
+        }));
+    }, [dispatch]);
     const logInUser = useCallback(async (data) => {
+        const resolvedUid = data?.uid || auth.currentUser?.uid;
+        if (!resolvedUid) {
+            return;
+        }
+
         if (data.authProvider === "google" && !data?.customPhotoUrl) {
             if (data?.photoUrl !== auth.currentUser.photoURL) {
                 data.photoUrl = auth.currentUser.photoURL
                 // FIXME await this after the dispatch
-                await updatePhotoUrl(data.uid, data.photoUrl)
+                await updatePhotoUrl(resolvedUid, data.photoUrl)
             }
         }
-        const photoUrl = data.photoUrl
+        const photoUrl = data?.photoUrl ?? auth.currentUser?.photoURL ?? null
         dispatch(
-            authAdded({ name: data.name, uid: data.uid, email: data?.email, photoUrl })
+            authAdded({
+                name: data?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
+                uid: resolvedUid,
+                email: data?.email || auth.currentUser?.email || "",
+                photoUrl,
+            })
         );
     }, [dispatch]);
     const logOutUser = useCallback(() => {
@@ -85,9 +106,12 @@ export default function useSelf() {
             return;
         }
 
+        // Keep auth/uid available for role-gated UI even if users/{uid} hydration is delayed.
+        logInFromAuthUser(user);
+
         // Ensure canonical users/{uid} exists before listening.
         void ensureCanonicalUserDocFromAuth(user);
         const unsubscribe = selfSubscription(user.uid, logInUser);
         return unsubscribe;
-    }, [user, loading, logInUser, logOutUser]);
+    }, [user, loading, logInFromAuthUser, logInUser, logOutUser]);
 };

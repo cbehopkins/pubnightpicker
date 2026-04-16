@@ -1,5 +1,5 @@
 import PreferencesForm from "./PreferencesForm";
-import { redirect, useNavigate } from "react-router-dom";
+import { NavLink, redirect, useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react"
 import { useSelector } from "react-redux";
 import { store } from "../../store";
@@ -209,6 +209,13 @@ function Preferences(params) {
     </Card>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
+    <Card>
+      <Card.Body>
+        <p className="mb-0">
+          Read how your data is handled in the <NavLink to="/privacy">Privacy Notice</NavLink>.
+        </p>
+      </Card.Body>
+    </Card>
     <PreferencesForm method="post" />
     <MyRoles />
   </div>

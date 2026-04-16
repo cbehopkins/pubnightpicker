@@ -55,7 +55,6 @@ function MainNavigation() {
             <Nav className="me-auto mb-2 mb-lg-0 flex-wrap">
               <Nav.Link as={NavLink} to="/" end className={navLinkClassName}>Home Page</Nav.Link>
               <Nav.Link as={NavLink} to="/help" end className={navLinkClassName}>Help</Nav.Link>
-              <Nav.Link as={NavLink} to="/privacy" end className={navLinkClassName}>Privacy</Nav.Link>
               {canChat && <Nav.Link as={NavLink} to="/chat" end className={navLinkClassName}>Chat Page</Nav.Link>}
               <Nav.Link as={NavLink} to="/venues" end className={navLinkClassName}>
                 {loggedIn ? "Manage Venues" : "View Venues"}
