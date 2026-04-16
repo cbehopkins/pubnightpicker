@@ -290,8 +290,8 @@ export async function action({ request, params }) {
         await setDoc(firestoreDoc(db, "user-public", uid), cleanedPublic, { merge: true });
       }
     } catch (err) {
-      console.error(err);
-      notifyError(err.message);
+      console.error("[Preferences save error]", err?.code, err?.message, err);
+      notifyError(`[${err?.code ?? "unknown"}] ${err?.message}`);
     }
   }
   return redirect("/");

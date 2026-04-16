@@ -42,9 +42,18 @@ service cloud.firestore {
       return isAdmin() || canCreatePoll() || canCompletePoll();
     }
 
-    function isValidPublicUserProfile(userId) {
+    function isValidPublicUserProfileCreate(userId) {
       return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
         && request.resource.data.uid == userId
+        && (!("name" in request.resource.data) || request.resource.data.name is string || request.resource.data.name == null)
+        && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
+        && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
+    }
+
+    function isValidPublicUserProfileUpdate(userId) {
+      return request.resource.data.uid == userId
+        // Permit legacy keys to remain, but only allow changing approved public fields.
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
         && (!("name" in request.resource.data) || request.resource.data.name is string || request.resource.data.name == null)
         && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
         && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
@@ -110,12 +119,15 @@ service cloud.firestore {
       allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
 
-    // Users public collection - display name and avatar, readable by all authenticated users
+    // Users public collection - display profile metadata, readable by all authenticated users
     match /user-public/{userId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null
+      allow create: if request.auth != null
                     && (request.auth.uid == userId || isAdmin())
-                    && isValidPublicUserProfile(userId);
+                    && isValidPublicUserProfileCreate(userId);
+      allow update: if request.auth != null
+                    && (request.auth.uid == userId || isAdmin())
+                    && isValidPublicUserProfileUpdate(userId);
     }
     
     // Messages collection - known users can read/create, admins have full access, users can delete their own
