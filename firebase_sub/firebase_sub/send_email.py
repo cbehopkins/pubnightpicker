@@ -8,6 +8,12 @@ from os import getenv
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
+from firebase_sub.constants import (
+    ADMIN_EMAIL_ADDR,
+    SELF_EMAIL,
+    SECONDS_IN_DAY,
+    SECONDS_IN_HOUR,
+)
 import mailtrap
 from pydantic import ValidationError
 
@@ -23,16 +29,10 @@ from firebase_sub.my_types import (
     VenueType,
 )
 
-_SELF_EMAIL_ADDR = "ampubnight@contable.co.uk"
-_SELF_EMAIL_NAME = "ampubnight notification emails"
-_ADMIN_EMAIL_ADDR = "cbehopkins@gmail.com"
-_SELF_EMAIL = mailtrap.Address(email=_SELF_EMAIL_ADDR, name=_SELF_EMAIL_NAME)
-
-SECONDS_IN_HOUR = 60 * 60
-SECONDS_IN_DAY = SECONDS_IN_HOUR * 24
 
 def skip_mail_send() -> None:
     raise SkipCall()
+
 
 STALLED_MAIL_SEND_BUCKET = TokenBucket(
     refill_amount=int(1),
@@ -49,8 +49,8 @@ def _on_mail_send_stall() -> None:
     )
     client = _mail_client(dummy_run=False)
     mail = mailtrap.Mail(
-        sender=_SELF_EMAIL,
-        to=[mailtrap.Address(email=_ADMIN_EMAIL_ADDR)],
+        sender=SELF_EMAIL,
+        to=[mailtrap.Address(email=ADMIN_EMAIL_ADDR)],
         subject="Mail send rate limit stall",
         text="ampubnight mail send rate limit stall: no tokens available in MAIL_SEND_BUCKET",
         category="Pub notification",
@@ -287,12 +287,13 @@ def send_poll_open_email(
     previously_actioned: bool,
     emails_src: Callable[[], Iterable[tuple[EmailAddr, UserId | None]]],
     dummy_run: bool = False,
+    **_kwargs: Any,
 ):
     client = _mail_client(dummy_run)
     for email, _ in emails_src():
         _log.info(f"Poll open email to send to {email}")
         mail = mailtrap.Mail(
-            sender=_SELF_EMAIL,
+            sender=SELF_EMAIL,
             to=[mailtrap.Address(email=email)],
             subject=f"Pub Night voting opened",
             text=OPEN_TEMPLATE,
@@ -310,6 +311,7 @@ def send_ampub_email(
     previously_actioned: bool = False,
     emails_src: Callable[[], Iterable[tuple[EmailAddr, UserId | None]]] | None = None,
     dummy_run: bool = False,
+    **_: Any,
 ):
     poll, selected_venue, restaurant_venue = _resolve_payloads(
         poll_dict=poll_dict,
@@ -347,7 +349,7 @@ def send_ampub_email(
         )
         _log.info(f"Notification email to send to {email}::{contents}")
         mail = mailtrap.Mail(
-            sender=_SELF_EMAIL,
+            sender=SELF_EMAIL,
             to=[mailtrap.Address(email=email)],
             subject=subject,
             text=contents,
@@ -368,8 +370,8 @@ if __name__ == "__main__":
     # )
     client = _mail_client(dummy_run=False)
     mail = mailtrap.Mail(
-        sender=_SELF_EMAIL,
-        to=[mailtrap.Address(email=_ADMIN_EMAIL_ADDR)],
+        sender=SELF_EMAIL,
+        to=[mailtrap.Address(email=ADMIN_EMAIL_ADDR)],
         subject="Test email from send_email.py",
         text="This is a test email sent from send_email.py",
         category="Pub notification",

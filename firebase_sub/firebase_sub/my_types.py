@@ -14,6 +14,7 @@ CollectionSnapshotCallback = Callable[
 class ActionType(StrEnum):
     EMAIL = auto()
     PEMAIL = auto()
+    PUSH = auto()
 
 
 class VenueType(StrEnum):

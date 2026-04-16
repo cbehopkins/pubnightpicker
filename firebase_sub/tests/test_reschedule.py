@@ -4,8 +4,6 @@ Phase 1 — pub rescheduling already works today.
 Phase 2 — restaurant/time rescheduling requires the composite-key fix (Phase 3).
 """
 
-from __future__ import annotations
-
 from firebase_sub.action_track import ActionMan, ActionType
 from firebase_sub.database.handlers import _compute_action_key
 from firebase_sub.my_types import PollDocument, VenueDocument
@@ -131,9 +129,9 @@ def test_action_man_same_pub_fires_only_once():
 
 
 def test_compute_action_key_pub_only():
-    """A poll with no restaurant produces a key containing only the pub ID."""
+    """A poll with no restaurant produces a canonical complete key."""
     poll: PollDocument = {"selected": "pub_A", "date": "2026-04-01"}
-    assert _compute_action_key(poll, "pub_A") == "pub_A"
+    assert _compute_action_key("poll-1", poll, "pub_A") == "complete:poll-1:pub_A::"
 
 
 def test_compute_action_key_with_restaurant():
@@ -143,8 +141,8 @@ def test_compute_action_key_with_restaurant():
         "date": "2026-04-01",
         "restaurant": "rest_B",
     }
-    key = _compute_action_key(poll, "pub_A")
-    assert key.startswith("pub_A:")
+    key = _compute_action_key("poll-1", poll, "pub_A")
+    assert key.startswith("complete:poll-1:pub_A:")
     assert "rest_B" in key
 
 
@@ -156,7 +154,7 @@ def test_compute_action_key_with_restaurant_and_time():
         "restaurant": "rest_B",
         "restaurant_time": "7pm",
     }
-    key = _compute_action_key(poll, "pub_A")
+    key = _compute_action_key("poll-1", poll, "pub_A")
     assert "rest_B" in key
     assert "7pm" in key
 
@@ -173,7 +171,7 @@ def test_restaurant_added_triggers_reschedule_email():
 
     # Initial state: pub_A, no restaurant
     poll_no_restaurant: PollDocument = {"selected": "pub_A", "date": "2026-04-01"}
-    initial_key = _compute_action_key(poll_no_restaurant, "pub_A")
+    initial_key = _compute_action_key("poll-1", poll_no_restaurant, "pub_A")
     action_dict, actioned = am.run(action_dict={}, action_key=initial_key)
     assert actioned
     assert calls[-1]["previously_actioned"] is False
@@ -184,7 +182,7 @@ def test_restaurant_added_triggers_reschedule_email():
         "date": "2026-04-01",
         "restaurant": "rest_B",
     }
-    new_key = _compute_action_key(poll_with_restaurant, "pub_A")
+    new_key = _compute_action_key("poll-1", poll_with_restaurant, "pub_A")
     assert new_key != initial_key, "Keys must differ when restaurant is added"
 
     action_dict, actioned = am.run(action_dict=action_dict, action_key=new_key)
@@ -207,7 +205,7 @@ def test_restaurant_time_change_triggers_reschedule_email():
         "date": "2026-04-01",
         "restaurant": "rest_B",
     }
-    initial_key = _compute_action_key(poll_no_time, "pub_A")
+    initial_key = _compute_action_key("poll-1", poll_no_time, "pub_A")
     action_dict, actioned = am.run(action_dict={}, action_key=initial_key)
     assert actioned
     assert calls[-1]["previously_actioned"] is False
@@ -218,7 +216,7 @@ def test_restaurant_time_change_triggers_reschedule_email():
         "restaurant": "rest_B",
         "restaurant_time": "7pm",
     }
-    new_key = _compute_action_key(poll_with_time, "pub_A")
+    new_key = _compute_action_key("poll-1", poll_with_time, "pub_A")
     assert new_key != initial_key, "Keys must differ when restaurant_time is added"
 
     action_dict, actioned = am.run(action_dict=action_dict, action_key=new_key)
@@ -243,7 +241,7 @@ def test_unchanged_restaurant_does_not_retrigger():
         "restaurant": "rest_B",
         "restaurant_time": "7pm",
     }
-    key = _compute_action_key(poll_dict, "pub_A")
+    key = _compute_action_key("poll-1", poll_dict, "pub_A")
     action_dict, _ = am.run(action_dict={}, action_key=key)
     am.run(action_dict=action_dict, action_key=key)
     assert run_count == 1

@@ -48,3 +48,24 @@ def test_action_runner():
     assert not actioned
 
     assert "email" in ad
+
+
+def test_action_runner_supports_per_action_dummy_override():
+    am = ActionMan(dummy_run=True)
+    observed: list[tuple[ActionType, bool]] = []
+
+    def email_callback(*, dummy_run: bool, **kwargs):
+        _ = kwargs
+        observed.append((ActionType.EMAIL, dummy_run))
+
+    def push_callback(*, dummy_run: bool, **kwargs):
+        _ = kwargs
+        observed.append((ActionType.PUSH, dummy_run))
+
+    am.bind(ActionType.EMAIL, email_callback)
+    am.bind(ActionType.PUSH, push_callback, dummy_run=False)
+
+    am.run(action_dict={}, action_key="some_value")
+
+    assert (ActionType.EMAIL, True) in observed
+    assert (ActionType.PUSH, False) in observed

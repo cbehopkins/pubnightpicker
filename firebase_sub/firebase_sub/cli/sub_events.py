@@ -24,6 +24,11 @@ from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
+from firebase_sub.send_push import (
+    send_poll_complete_push,
+    send_poll_open_push,
+    web_push_enabled,
+)
 
 _log = logging.getLogger(__name__)
 # Based on https://firebase.google.com/docs/firestore/query-data/listen#python_5
@@ -36,17 +41,26 @@ app = firebase_admin.initialize_app(cred)
 DB_HANDLER = DbHandler()
 
 
-def poll_open_actions(dummy_run: bool) -> ActionMan:
+def poll_open_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
     send_poll_open_email_i = cast(
         ActionCallbackProtocol,
         partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails),
     )
-    open_am = ActionMan(dummy_run)
+    open_am = ActionMan(dummy_email)
     open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
+    if web_push_enabled():
+        send_poll_open_push_i = cast(
+            ActionCallbackProtocol,
+            partial(
+                send_poll_open_push,
+                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+            ),
+        )
+        open_am.bind(ActionType.PUSH, send_poll_open_push_i, dummy_run=dummy_push)
     return open_am
 
 
-def poll_complete_actions(dummy_run: bool) -> ActionMan:
+def poll_complete_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
     send_mail_list_email = cast(
         ActionCallbackProtocol,
         partial(send_ampub_email),  # defaults to Google Groups mailing list
@@ -55,9 +69,18 @@ def poll_complete_actions(dummy_run: bool) -> ActionMan:
         ActionCallbackProtocol,
         partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails),
     )
-    complete_am = ActionMan(dummy_run)
+    complete_am = ActionMan(dummy_email)
     complete_am.bind(ActionType.EMAIL, send_mail_list_email)
     complete_am.bind(ActionType.PEMAIL, send_personal_email)
+    if web_push_enabled():
+        send_push_i = cast(
+            ActionCallbackProtocol,
+            partial(
+                send_poll_complete_push,
+                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+            ),
+        )
+        complete_am.bind(ActionType.PUSH, send_push_i, dummy_run=dummy_push)
     return complete_am
 
 
@@ -71,7 +94,8 @@ def configure_logging(log_level: int, logfile: Path | None) -> None:
 
 
 def sub_events(
-    dummy: bool,
+    dummy_email: bool,
+    dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
     restart_interval: int,
@@ -79,7 +103,6 @@ def sub_events(
     housekeeping_cron: str | None,
 ) -> None:
     configure_logging(loglevel, logfile)
-    dummy_run = dummy
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
     notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
@@ -146,8 +169,8 @@ def sub_events(
         ) as pubs_list,
     ):
         pubs_list.start_periodic_restart(restart_interval)
-        open_am = poll_open_actions(dummy_run)
-        complete_am = poll_complete_actions(dummy_run)
+        open_am = poll_open_actions(dummy_email, dummy_push)
+        complete_am = poll_complete_actions(dummy_email, dummy_push)
 
         while True:
             try:
@@ -192,7 +215,12 @@ def sub_events(
 
 
 @click.command()
-@click.option("--dummy/--no-dummy", default=False, help="Run in dummy mode")
+@click.option("--dummy-email/--no-dummy-email", default=False, help="Run in dummy mode")
+@click.option(
+    "--dummy-push/--no-dummy-push",
+    default=False,
+    help="Run push notifications in dummy mode",
+)
 @click.option(
     "--loglevel", default=logging.INFO, type=log_level_to_int, help="Set the log level"
 )
@@ -219,7 +247,8 @@ def sub_events(
     help="Cron expression for housekeeping trigger (e.g. '0 0 * * 4')",
 )
 def cli(
-    dummy: bool,
+    dummy_email: bool,
+    dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
     restart_interval: int,
@@ -227,7 +256,8 @@ def cli(
     housekeeping_cron: str | None,
 ) -> None:
     sub_events(
-        dummy,
+        dummy_email,
+        dummy_push,
         loglevel,
         logfile,
         restart_interval,

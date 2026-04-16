@@ -2,3 +2,4 @@ firebase-admin==6.3.0
 mailtrap==2.0.1
 Mastodon.py==1.8.1
 croniter==2.0.5
+pywebpush==2.0.3

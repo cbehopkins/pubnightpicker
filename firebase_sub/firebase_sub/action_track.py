@@ -54,11 +54,22 @@ class ActionMan:
 
     def __init__(self, dummy_run: bool = False):
         self._callbacks: dict[ActionType, ActionCallbackProtocol] = {}
+        self._dummy_run_overrides: dict[ActionType, bool] = {}
         self.dummy_run = dummy_run
 
-    def bind(self, action: ActionType, callback: ActionCallbackProtocol):
+    def bind(
+        self,
+        action: ActionType,
+        callback: ActionCallbackProtocol,
+        *,
+        dummy_run: bool | None = None,
+    ):
         """Bind an action type against callbacks"""
         self._callbacks[action] = callback
+        if dummy_run is None:
+            self._dummy_run_overrides.pop(action, None)
+        else:
+            self._dummy_run_overrides[action] = dummy_run
 
     def run(
         self, action_dict: ActionDict, action_key: DocumentId, *args, **kwargs
@@ -70,11 +81,14 @@ class ActionMan:
             previously_actioned = ad.previously_actioned(action_type)
             if ad.to_action(action_type, action_key):
                 anything_actioned = True
+                callback_dummy_run = self._dummy_run_overrides.get(
+                    action_type, self.dummy_run
+                )
                 try:
                     callback(
                         *args,
                         previously_actioned=previously_actioned,
-                        dummy_run=self.dummy_run,
+                        dummy_run=callback_dummy_run,
                         **kwargs,
                     )
                     ad.action(action_type, action_key=action_key)

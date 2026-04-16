@@ -58,6 +58,31 @@ service cloud.firestore {
         && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
         && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
     }
+
+    function isValidPushEndpointWrite() {
+      return request.resource.data.keys().hasOnly([
+          "endpoint",
+          "p256dh",
+          "auth",
+          "active",
+          "createdAt",
+          "lastSeenAt",
+          "disabledAt",
+          "userAgent",
+          "platform",
+          "appVersion"
+        ])
+        && request.resource.data.endpoint is string
+        && (!("p256dh" in request.resource.data) || request.resource.data.p256dh is string || request.resource.data.p256dh == null)
+        && (!("auth" in request.resource.data) || request.resource.data.auth is string || request.resource.data.auth == null)
+        && request.resource.data.active is bool
+        && (!("createdAt" in request.resource.data) || request.resource.data.createdAt is timestamp)
+        && (!("lastSeenAt" in request.resource.data) || request.resource.data.lastSeenAt is timestamp)
+        && (!("disabledAt" in request.resource.data) || request.resource.data.disabledAt is timestamp || request.resource.data.disabledAt == null)
+        && (!("userAgent" in request.resource.data) || request.resource.data.userAgent is string || request.resource.data.userAgent == null)
+        && (!("platform" in request.resource.data) || request.resource.data.platform is string || request.resource.data.platform == null)
+        && (!("appVersion" in request.resource.data) || request.resource.data.appVersion is string || request.resource.data.appVersion == null);
+    }
     
     // Polls collection - read for all, update for known users, create/delete for admins
     match /polls/{poll} {
@@ -119,6 +144,14 @@ service cloud.firestore {
       // TODO(remove-legacy-users-read): delete `resource.data.uid == request.auth.uid` after users docs are migrated to canonical users/{uid} IDs.
       allow read: if request.auth != null && (request.auth.uid == userId || resource.data.uid == request.auth.uid || isAdmin());
       allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
+
+      match /push_endpoints/{endpointId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow create, update: if request.auth != null
+                              && (request.auth.uid == userId || isAdmin())
+                              && isValidPushEndpointWrite();
+        allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      }
     }
 
     // Users public collection - display profile metadata, readable by all authenticated users

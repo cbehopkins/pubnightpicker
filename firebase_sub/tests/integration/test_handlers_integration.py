@@ -4,6 +4,7 @@ import pytest
 
 from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler
+from firebase_sub.push_contract import PushDedupeKeys
 
 
 class FakeActionMan:
@@ -97,6 +98,146 @@ def test_complete_poll_event_handler_persists_action_doc(firestore_client):
     assert action_doc["email"] == [selected_venue_id]
     assert len(fake_am.calls) == 1
     assert fake_am.calls[0]["poll_dict"]["restaurant"] == "rest-1"
+    assert fake_am.calls[0]["action_key"] == PushDedupeKeys.complete_key(
+        poll_id=poll_id,
+        pub_id=selected_venue_id,
+        restaurant_id="rest-1",
+        restaurant_time=None,
+    )
+
+
+@pytest.mark.integration
+def test_new_poll_event_handler_uses_open_dedupe_key(firestore_client):
+    poll_id = "poll-open-1"
+    fake_am = FakeActionMan({"email": [PushDedupeKeys.open_key(poll_id)]})
+    handler = DbHandler()
+
+    handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
+
+    action_doc = (
+        firestore_client.collection("open_actions").document(poll_id).get().to_dict()
+    )
+
+    assert action_doc is not None
+    assert action_doc["email"] == [PushDedupeKeys.open_key(poll_id)]
+    assert fake_am.calls[0]["action_key"] == PushDedupeKeys.open_key(poll_id)
+
+
+@pytest.mark.integration
+def test_query_active_push_endpoints_returns_only_active(firestore_client):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "webPushEnabled": True,
+        }
+    )
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-active").set(
+        {
+            "endpoint": "https://push.example/u1",
+            "active": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").set(
+        {
+            "uid": "u2",
+            "webPushEnabled": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").collection(
+        "push_endpoints"
+    ).document("ep-inactive").set(
+        {
+            "endpoint": "https://push.example/u2",
+            "active": False,
+        }
+    )
+
+    handler = DbHandler()
+    docs = list(handler.query_active_push_endpoints())
+
+    assert len(docs) == 1
+    assert docs[0].id == "ep-active"
+
+
+@pytest.mark.integration
+def test_query_active_push_endpoints_excludes_disabled_user_preference(
+    firestore_client,
+):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "webPushEnabled": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").set(
+        {
+            "uid": "u2",
+            "webPushEnabled": False,
+        }
+    )
+
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-u1").set(
+        {
+            "endpoint": "https://push.example/u1",
+            "active": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").collection(
+        "push_endpoints"
+    ).document("ep-u2").set(
+        {
+            "endpoint": "https://push.example/u2",
+            "active": True,
+        }
+    )
+
+    handler = DbHandler()
+    docs = list(handler.query_active_push_endpoints())
+
+    assert len(docs) == 1
+    assert docs[0].id == "ep-u1"
+
+
+@pytest.mark.integration
+def test_query_active_push_endpoints_excludes_missing_user_preference(firestore_client):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "webPushEnabled": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").set(
+        {
+            "uid": "u2",
+        }
+    )
+
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-u1").set(
+        {
+            "endpoint": "https://push.example/u1",
+            "active": True,
+        }
+    )
+    firestore_client.collection("users").document("u2").collection(
+        "push_endpoints"
+    ).document("ep-u2").set(
+        {
+            "endpoint": "https://push.example/u2",
+            "active": True,
+        }
+    )
+
+    handler = DbHandler()
+    docs = list(handler.query_active_push_endpoints())
+
+    assert len(docs) == 1
+    assert docs[0].id == "ep-u1"
 
 
 @pytest.mark.integration
