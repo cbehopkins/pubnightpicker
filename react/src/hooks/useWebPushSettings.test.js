@@ -110,4 +110,28 @@ describe("useWebPushSettings", () => {
 
         expect(result.current.enabled).toBe(true);
     });
+
+    it("updates permission to granted after enabling push", async () => {
+        let permission = "default";
+        webPushStatusMock.mockImplementation(() => ({
+            supported: true,
+            featureEnabled: true,
+            permission,
+        }));
+        enableWebPushMock.mockImplementation(async () => {
+            permission = "granted";
+            return { endpointId: "ep_123" };
+        });
+
+        const { result } = renderHook(() => useWebPushSettings("user-1", false));
+
+        expect(result.current.permission).toBe("default");
+
+        await act(async () => {
+            const success = await result.current.enable();
+            expect(success).toBe(true);
+        });
+
+        expect(result.current.permission).toBe("granted");
+    });
 });

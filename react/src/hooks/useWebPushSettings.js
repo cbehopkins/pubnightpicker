@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
     deactivateCurrentWebPushEndpoint,
     enableWebPush,
@@ -6,7 +6,7 @@ import {
 } from "../push/webPush";
 
 export default function useWebPushSettings(uid, initialEnabled = false) {
-    const status = useMemo(() => webPushStatus(), []);
+    const status = webPushStatus();
     const [busy, setBusy] = useState(false);
     const [enabled, setEnabled] = useState(Boolean(initialEnabled));
     const [error, setError] = useState("");
