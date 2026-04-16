@@ -100,4 +100,4 @@ jobs:
           entryPoint: react
       - name: Deploy Firestore rules
         working-directory: ./react
-        run: npx firebase-tools deploy --only firestore:rules --project pubnightpicker
+        run: npx firebase-tools deploy --only firestore:rules,firestore:indexes --project pubnightpicker
