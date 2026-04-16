@@ -8,7 +8,18 @@ import {
 } from "firebase/firestore";
 
 const WEB_PUSH_SW_PATH = "/push-sw.js";
-const FEATURE_ENABLED = import.meta.env.VITE_ENABLE_WEB_PUSH === "true";
+function parseBooleanEnv(value) {
+    if (value === undefined || value === null) {
+        return false;
+    }
+    const normalized = String(value)
+        .trim()
+        .replace(/^['\"]|['\"]$/g, "")
+        .toLowerCase();
+    return normalized === "true";
+}
+
+const FEATURE_ENABLED = parseBooleanEnv(import.meta.env.VITE_ENABLE_WEB_PUSH);
 const PUBLIC_VAPID_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
 
 function supportsWebPush() {

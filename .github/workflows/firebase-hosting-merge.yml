@@ -51,6 +51,34 @@ jobs:
             echo "$BODY"
             exit 1
           fi
+      - name: Validate web push build env
+        shell: bash
+        env:
+          VITE_ENABLE_WEB_PUSH: ${{ secrets.VITE_ENABLE_WEB_PUSH }}
+          VITE_WEB_PUSH_PUBLIC_KEY: ${{ secrets.VITE_WEB_PUSH_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+
+          RAW_FLAG="${VITE_ENABLE_WEB_PUSH:-}"
+          NORM_FLAG=$(printf '%s' "$RAW_FLAG" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | sed -E 's/^\"(.*)\"$/\1/' | sed -E "s/^'(.*)'$/\1/")
+
+          if [ -z "$NORM_FLAG" ]; then
+            echo "VITE_ENABLE_WEB_PUSH is empty or missing; build will hide push controls"
+          elif [ "$NORM_FLAG" != "true" ] && [ "$NORM_FLAG" != "false" ]; then
+            echo "VITE_ENABLE_WEB_PUSH must be true/false (optionally quoted). Got: $RAW_FLAG"
+            exit 1
+          fi
+
+          if [ "$NORM_FLAG" = "true" ] && [ -z "${VITE_WEB_PUSH_PUBLIC_KEY:-}" ]; then
+            echo "VITE_WEB_PUSH_PUBLIC_KEY must be set when VITE_ENABLE_WEB_PUSH=true"
+            exit 1
+          fi
+
+          if [ "$NORM_FLAG" = "true" ]; then
+            echo "Web push build flag enabled"
+          else
+            echo "Web push build flag disabled"
+          fi
       - working-directory: ./react
         run: npm ci  && npm run build
         env:
