@@ -18,6 +18,18 @@ import Button from "../UI/Button";
 import ReschedulePollModal from "./ReschedulePollModal";
 import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
+
+/**
+ * Ensure a user-supplied URL is absolute so browsers don't treat it as relative.
+ * Prepends https:// if no protocol is present.
+ * @param {string | undefined} url
+ * @returns {string | undefined}
+ */
+function ensureAbsoluteUrl(url) {
+  if (!url) return undefined;
+  if (/^https?:\/\//i.test(url)) return url;
+  return `https://${url}`;
+}
 import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
@@ -100,20 +112,20 @@ function PastEvent({ value, pub_parameters }) {
           </div>
         )}
         <div className="card-body d-flex flex-column">
-          <h5 className="card-title mb-2">{pubName}</h5>
-          <p className="card-text text-body-secondary mb-3">{value.date}</p>
-          <div className="mt-auto">
-            {pubWebsite && (
+          <h5 className="card-title mb-2">
+            {pubWebsite ? (
               <a
-                href={pubWebsite}
+                href={ensureAbsoluteUrl(pubWebsite)}
                 target="_blank"
                 rel="noreferrer"
-                className="btn btn-outline-primary btn-sm"
               >
-                Pub website
+                {pubName}
               </a>
+            ) : (
+              pubName
             )}
-          </div>
+          </h5>
+          <p className="card-text text-body-secondary mb-3">{value.date}</p>
         </div>
       </div>
     </div>
@@ -311,7 +323,7 @@ function CurrentEvent({
             {mainVenue.website ? (
               <h2 className="h4 mb-1">
                 <a
-                  href={mainVenue.website}
+                  href={ensureAbsoluteUrl(mainVenue.website)}
                   target="_blank"
                   rel="noreferrer"
                   className="link-primary text-decoration-none"

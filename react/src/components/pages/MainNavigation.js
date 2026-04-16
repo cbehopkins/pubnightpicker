@@ -6,6 +6,7 @@ import styles from "./MainNavigation.module.css";
 import { logout } from "../../firebase";
 import useAdmin from "../../hooks/useAdmin";
 import useRole from "../../hooks/useRole";
+import useUsers from "../../hooks/useUsers";
 import Button from "../UI/Button";
 import { applyThemeMode, getStoredThemeMode, subscribeToSystemThemeChanges } from "../../utils/themeMode";
 
@@ -23,11 +24,14 @@ const LoggedInElement = (params) => {
 };
 
 function MainNavigation() {
-  const name = useSelector((state) => state.auth.name);
+  const authName = useSelector((state) => state.auth.name);
+  const uid = useSelector((state) => state.auth.uid);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
   const admin = useAdmin();
   const canChat = useRole("canChat");
   const email = useSelector((state) => state.auth.email);
+  const users = useUsers();
+  const name = (uid && users[uid]?.name) || authName;
   useEffect(() => {
     const mode = getStoredThemeMode();
     applyThemeMode(mode);
@@ -68,7 +72,7 @@ function MainNavigation() {
             </Nav>
 
             <div className={`${styles.controls} d-flex flex-column flex-lg-row align-items-start align-items-lg-center gap-2 gap-lg-3`}>
-              {loggedIn && <LoggedInElement name={name} email={email} />}
+              {loggedIn && <LoggedInElement name={name || email} email={email} />}
             </div>
           </Navbar.Collapse>
         </Container>

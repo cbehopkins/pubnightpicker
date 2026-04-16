@@ -41,7 +41,7 @@ function PreferencesForm({ method }) {
     loadProfiles();
   }, [loggedIn, uid]);
 
-  const name = loggedIn ? currUserDoc?.name || publicUserDoc?.name : "";
+  const name = loggedIn ? publicUserDoc?.name || currUserDoc?.name || "" : "";
   const notificationEmail = loggedIn ? currUserDoc?.notificationEmail || currUserDoc.email : "";
   const notificationEnabled = loggedIn ? currUserDoc?.notificationEmailEnabled : false;
   const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;

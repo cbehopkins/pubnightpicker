@@ -7,6 +7,7 @@ import styles from "./chat.module.css"
 import Button from "../UI/Button";
 import { useSelector } from "react-redux";
 import { notifyError } from "../../utils/notify";
+import useUsers from "../../hooks/useUsers";
 
 /** @typedef {import("../../store").RootState} RootState */
 
@@ -15,6 +16,7 @@ import { notifyError } from "../../utils/notify";
  */
 const SendMessage = ({ scroll }) => {
   const [message, setMessage] = useState("");
+  const users = useUsers();
   const name = useSelector(/** @param {RootState} state */(state) => state.auth.name);
   const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
   // const photoURL = useSelector((state) => state.auth.photoUrl);
@@ -25,9 +27,11 @@ const SendMessage = ({ scroll }) => {
       notifyError("Enter valid message");
       return;
     }
+    const preferredName = uid ? users?.[uid]?.name : null;
+    const messageName = preferredName || name || "Name not set";
     await addDoc(collection(db, "messages"), {
       text: message,
-      name: name,
+      name: messageName,
       createdAt: serverTimestamp(),
       uid,
     });
