@@ -67,6 +67,33 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Validate Firestore index config for push endpoints
+        shell: bash
+        working-directory: ./react
+        run: |
+          set -euo pipefail
+
+          if [ ! -f firestore.indexes.json ]; then
+            echo "Missing firestore.indexes.json"
+            exit 1
+          fi
+
+          if ! grep -q '"collectionGroup"[[:space:]]*:[[:space:]]*"push_endpoints"' firestore.indexes.json; then
+            echo "firestore.indexes.json must define collectionGroup push_endpoints"
+            exit 1
+          fi
+
+          if ! grep -q '"fieldPath"[[:space:]]*:[[:space:]]*"active"' firestore.indexes.json; then
+            echo "firestore.indexes.json must include fieldPath active for push_endpoints"
+            exit 1
+          fi
+
+          if ! grep -q '"queryScope"[[:space:]]*:[[:space:]]*"COLLECTION_GROUP"' firestore.indexes.json; then
+            echo "firestore.indexes.json must include COLLECTION_GROUP index scope for push_endpoints active"
+            exit 1
+          fi
+
+          echo "Firestore push endpoint index config present"
       - name: Validate Firestore rules
         working-directory: ./react
         run: npx firebase-tools emulators:exec --only firestore "echo Firestore rules validated"
