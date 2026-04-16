@@ -1,52 +1,38 @@
 import { useCallback, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
-import { query, where, collection, onSnapshot, updateDoc, getDocs, doc, setDoc } from "firebase/firestore";
+import { onSnapshot, updateDoc, doc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
 import { notifyError } from "../utils/notify";
 
-function pickPreferredUserDoc(snapshot, uid) {
-    if (snapshot.empty) {
-        return null;
-    }
-    const canonicalDoc = snapshot.docs.find((d) => d.id === uid);
-    return canonicalDoc || snapshot.docs[0];
-}
+async function ensureCanonicalUserDocFromAuth(user) {
+    if (!user?.uid) return;
 
-async function ensureCanonicalUserDoc(uid, sourceDoc) {
-    if (!sourceDoc || sourceDoc.id === uid) {
-        return;
-    }
+    const nameFromAuth = user.displayName || user.email || "";
+    const authProvider = user.providerData?.[0]?.providerId || "password";
+
     try {
-        await setDoc(doc(db, "users", uid), {
-            ...sourceDoc.data(),
-            uid,
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            name: nameFromAuth,
+            email: user.email || "",
+            authProvider,
+            photoUrl: user.photoURL || null,
         }, { merge: true });
     } catch (err) {
-        console.error("Failed to self-heal canonical users doc", err);
+        console.error("Failed to self-heal canonical users doc from auth", err);
     }
 }
 
-function selfSubscription(uid, update_callback, remove_callback) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    return onSnapshot(q, (snapshot) => {
-        if (snapshot.empty) {
-            remove_callback();
+function selfSubscription(uid, update_callback) {
+    const selfDocRef = doc(db, "users", uid);
+    return onSnapshot(selfDocRef, (snapshot) => {
+        if (!snapshot.exists()) {
             return;
         }
-
-        const preferredDoc = pickPreferredUserDoc(snapshot, uid);
-        if (!preferredDoc) {
-            remove_callback();
-            return;
-        }
-
-        update_callback(preferredDoc.data());
-
-        // Gradual self-heal: create canonical users/{uid} from legacy auto-id docs.
-        void ensureCanonicalUserDoc(uid, preferredDoc);
+        update_callback(snapshot.data());
     }, (err) => {
         console.error(err);
         notifyError(err.message);
@@ -54,17 +40,12 @@ function selfSubscription(uid, update_callback, remove_callback) {
 }
 
 async function updatePhotoUrl(uid, photoUrl) {
-    // Update legacy doc (found by uid field) and canonical doc (by doc ID)
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    const docs = await getDocs(q);
-    docs.docs.forEach(async (d) => {
-        try {
-            await updateDoc(d.ref, { photoUrl });
-        } catch (err) {
-            console.error(err);
-            notifyError(err.message);
-        }
-    });
+    try {
+        await updateDoc(doc(db, "users", uid), { photoUrl });
+    } catch (err) {
+        console.error(err);
+        notifyError(err.message);
+    }
 
     try {
         await setDoc(doc(db, "user-public", uid), {
@@ -103,7 +84,10 @@ export default function useSelf() {
             logOutUser();
             return;
         }
-        const unsubscribe = selfSubscription(user.uid, logInUser, logOutUser);
+
+        // Ensure canonical users/{uid} exists before listening.
+        void ensureCanonicalUserDocFromAuth(user);
+        const unsubscribe = selfSubscription(user.uid, logInUser);
         return unsubscribe;
     }, [user, loading, logInUser, logOutUser]);
 };

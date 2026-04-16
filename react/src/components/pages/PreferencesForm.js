@@ -1,5 +1,5 @@
 import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
-import { query, getDocs, collection, where, doc as firestoreDoc, getDoc } from "firebase/firestore";
+import { doc as firestoreDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useSelector } from "react-redux";
 import { useEffect, useState } from "react";
@@ -20,16 +20,15 @@ function PreferencesForm({ method }) {
     }
 
     const loadProfiles = async () => {
-      const privateQuery = query(collection(db, "users"), where("uid", "==", uid));
-      const [privateDocs, publicDoc] = await Promise.all([
-        getDocs(privateQuery),
+      const [privateDoc, publicDoc] = await Promise.all([
+        getDoc(firestoreDoc(db, "users", uid)),
         getDoc(firestoreDoc(db, "user-public", uid)),
       ]);
 
-      if (privateDocs.empty) {
+      if (!privateDoc.exists()) {
         setCurrUserDoc({});
       } else {
-        setCurrUserDoc(privateDocs.docs[0].data());
+        setCurrUserDoc(privateDoc.data());
       }
 
       if (publicDoc.exists()) {
