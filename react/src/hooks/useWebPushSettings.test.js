@@ -91,4 +91,47 @@ describe("useWebPushSettings", () => {
         expect(enableWebPushMock).not.toHaveBeenCalled();
         expect(result.current.error).toBe("You must be logged in to enable web push");
     });
+
+    it("syncs enabled state when initialEnabled changes after mount", async () => {
+        const { result, rerender } = renderHook(
+            ({ uid, initialEnabled }) => useWebPushSettings(uid, initialEnabled),
+            {
+                initialProps: { uid: "user-1", initialEnabled: false },
+            },
+        );
+
+        expect(result.current.enabled).toBe(false);
+
+        rerender({ uid: "user-1", initialEnabled: true });
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(result.current.enabled).toBe(true);
+    });
+
+    it("updates permission to granted after enabling push", async () => {
+        let permission = "default";
+        webPushStatusMock.mockImplementation(() => ({
+            supported: true,
+            featureEnabled: true,
+            permission,
+        }));
+        enableWebPushMock.mockImplementation(async () => {
+            permission = "granted";
+            return { endpointId: "ep_123" };
+        });
+
+        const { result } = renderHook(() => useWebPushSettings("user-1", false));
+
+        expect(result.current.permission).toBe("default");
+
+        await act(async () => {
+            const success = await result.current.enable();
+            expect(success).toBe(true);
+        });
+
+        expect(result.current.permission).toBe("granted");
+    });
 });
