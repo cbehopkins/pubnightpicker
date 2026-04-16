@@ -4,6 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["Chris Hopkins <cbehopkins@gmail.com>"]
 readme = "README.md"
+requires-poetry = ">=2.0"
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -14,12 +15,18 @@ pydantic = "^2.11.7"
 pyserial = "^3.5"
 "Mastodon.py" = "1.8.1"
 croniter = "^2.0.5"
+pywebpush = "^2.0.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"
 black = "^24.0"
 isort = "^5.10"
 tox = "^4.24"
+
+[tool.black]
+force-exclude = '''
+/(\.tox|\.git|\.venv|\.eggs|build|dist|docs)/
+'''
 
 
 [build-system]

@@ -5,6 +5,7 @@ from functools import partial
 from typing import cast
 
 from firebase_admin import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1 import watch
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
@@ -13,6 +14,7 @@ from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.watch import DocumentChange
 
 from firebase_sub.action_track import ActionMan
+from firebase_sub.push_contract import PushDedupeKeys
 from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
@@ -22,19 +24,41 @@ from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
 _log = logging.getLogger(__name__)
 
 
-def _compute_action_key(poll_dict: PollDocument, pub_id: str) -> str:
-    """Build a composite action key encoding pub ID, restaurant ID, and meeting time.
+def _compute_action_key(poll_id: PollId, poll_dict: PollDocument, pub_id: str) -> str:
+    """Build the canonical completion action key for email/push dedupe."""
+    return PushDedupeKeys.complete_key(
+        poll_id=poll_id,
+        pub_id=pub_id,
+        restaurant_id=poll_dict.get("restaurant"),
+        restaurant_time=poll_dict.get("restaurant_time"),
+    )
 
-    Storing this composite value in the comp_actions EMAIL set means that any change
-    to the restaurant or its meeting time produces a new key and therefore triggers a
-    fresh (rescheduled) notification, while an identical poll state is still deduplicated.
-    """
+
+def _compute_legacy_complete_action_key(poll_dict: PollDocument, pub_id: str) -> str:
+    """Legacy completion key used before canonical complete:{pollId}:... format."""
     restaurant_id = poll_dict.get("restaurant") or ""
     restaurant_time = poll_dict.get("restaurant_time") or ""
     if not restaurant_id and not restaurant_time:
-        # If there is no restaurant or restaurant time, we can just use the pub ID as the key.
         return pub_id
     return f"{pub_id}:{restaurant_id}:{restaurant_time}"
+
+
+def _with_legacy_alias_key(
+    action_dict: dict | None, legacy_key: str, canonical_key: str
+) -> dict | None:
+    """Add canonical key when legacy key exists to avoid replay resend after migration."""
+    if action_dict is None or legacy_key == canonical_key:
+        return action_dict
+
+    normalized = dict(action_dict)
+    for action_type, values in list(normalized.items()):
+        if not isinstance(values, (list, tuple, set)):
+            continue
+        key_set = set(values)
+        if legacy_key in key_set and canonical_key not in key_set:
+            key_set.add(canonical_key)
+            normalized[action_type] = list(key_set)
+    return normalized
 
 
 class DbHandler:
@@ -71,12 +95,52 @@ class DbHandler:
             "openPollEmailEnabled"
         )
 
+    def query_active_push_endpoints(self):
+        """Query active web push endpoints across users with web push enabled."""
+        query = self.db.collection_group("push_endpoints").where(
+            filter=FieldFilter("active", "==", True)
+        )
+        user_preference_cache: dict[str, bool] = {}
+        for endpoint_doc in query.stream():
+            parent_user_doc = endpoint_doc.reference.parent.parent
+            if parent_user_doc is None:
+                continue
+            user_id = parent_user_doc.id
+            if user_id not in user_preference_cache:
+                user_payload = parent_user_doc.get().to_dict() or {}
+                if "webPushEnabled" not in user_payload:
+                    # Temporary rollout observability: missing preference now defaults off.
+                    _log.warning(
+                        "Skipping push endpoints for user %s because webPushEnabled is missing",
+                        user_id,
+                    )
+                    user_preference_cache[user_id] = False
+                else:
+                    user_preference_cache[user_id] = bool(
+                        user_payload["webPushEnabled"]
+                    )
+                    if not user_preference_cache[user_id]:
+                        # Temporary rollout observability: explicit opt-out.
+                        _log.info(
+                            "Skipping push endpoints for user %s because webPushEnabled is false",
+                            user_id,
+                        )
+            if user_preference_cache[user_id]:
+                yield endpoint_doc
+
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
         action_snapshot = cast(DocumentSnapshot, action_document.get())
+        canonical_open_key = PushDedupeKeys.open_key(poll_id)
+        action_dict = _with_legacy_alias_key(
+            action_snapshot.to_dict(),
+            legacy_key=poll_id,
+            canonical_key=canonical_open_key,
+        )
         new_action_dict = am.action_event(
-            action_dict=action_snapshot.to_dict(),
-            action_key=poll_id,
+            action_dict=action_dict,
+            action_key=canonical_open_key,
+            poll_id=poll_id,
         )
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
@@ -99,9 +163,17 @@ class DbHandler:
                 "This indicates a coding error or database consistency issue."
             )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
+        canonical_complete_key = _compute_action_key(poll_id, poll_dict, pub_id)
+        legacy_complete_key = _compute_legacy_complete_action_key(poll_dict, pub_id)
+        action_dict = _with_legacy_alias_key(
+            action_snapshot.to_dict(),
+            legacy_key=legacy_complete_key,
+            canonical_key=canonical_complete_key,
+        )
         new_action_dict = am.action_event(
-            action_dict=action_snapshot.to_dict(),
-            action_key=_compute_action_key(poll_dict, pub_id),
+            action_dict=action_dict,
+            action_key=canonical_complete_key,
+            poll_id=poll_id,
             poll_dict=poll_dict,
             pub_dict=pubs_list,
         )

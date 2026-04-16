@@ -29,6 +29,7 @@ import Homepage from "./components/pages/Homepage";
 import HelpPage from "./components/pages/HelpPage";
 import PrivacyPage from "./components/pages/PrivacyPage";
 import useSelf from "./hooks/useSelf";
+import useWebPushLifecycle from "./hooks/useWebPushLifecycle";
 import { setRoles } from "./store/authSlice";
 import ChatPage from "./components/pages/ChatPage";
 
@@ -44,6 +45,7 @@ function App() {
   const dispatch = useDispatch();
   const [user, loading] = useAuthState(auth);
   useSelf();
+  useWebPushLifecycle(user?.uid || null);
   const [databaseError, setDatabaseError] = useState("")
   const databaseErrorHandler = useCallback((error) => {
     setDatabaseError(error)

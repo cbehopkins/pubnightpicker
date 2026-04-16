@@ -11,6 +11,7 @@ const {
   useRolesMock,
   useUsersSourceMock,
   useSelfMock,
+  useWebPushLifecycleMock,
 } = vi.hoisted(() => {
   return {
     createBrowserRouterMock: vi.fn(() => ({ id: "router" })),
@@ -19,6 +20,7 @@ const {
     useRolesMock: vi.fn(),
     useUsersSourceMock: vi.fn(),
     useSelfMock: vi.fn(),
+    useWebPushLifecycleMock: vi.fn(),
   };
 });
 
@@ -65,6 +67,12 @@ vi.mock("./hooks/useUsers", () => {
 vi.mock("./hooks/useSelf", () => {
   return {
     default: useSelfMock,
+  };
+});
+
+vi.mock("./hooks/useWebPushLifecycle", () => {
+  return {
+    default: useWebPushLifecycleMock,
   };
 });
 
@@ -122,6 +130,7 @@ describe("App routes", () => {
     useRolesMock.mockReset();
     useUsersSourceMock.mockReset();
     useSelfMock.mockReset();
+    useWebPushLifecycleMock.mockReset();
 
     useDispatchMock.mockReturnValue(vi.fn());
     useAuthStateMock.mockReturnValue([null, false]);
@@ -141,5 +150,13 @@ describe("App routes", () => {
 
     const indexChild = pubsRoute.children.find((child) => child.index);
     expect(indexChild.element.props.to).toBe("/venues");
+  });
+
+  it("starts web push lifecycle with the current user uid", () => {
+    useAuthStateMock.mockReturnValue([{ uid: "user-123" }, false]);
+
+    render(<App />);
+
+    expect(useWebPushLifecycleMock).toHaveBeenCalledWith("user-123");
   });
 });

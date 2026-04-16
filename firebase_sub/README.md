@@ -83,7 +83,17 @@ and prune
 Local CLI:
 
 ```bash
-poetry run python -m firebase_sub.cli.sub_events --no-dummy --loglevel info
+poetry run python -m firebase_sub.cli.sub_events --loglevel info
+```
+
+Push can be toggled independently from email dummy mode:
+
+```bash
+# Real push, dummy email
+poetry run python -m firebase_sub.cli.sub_events --dummy-email --no-dummy-push --loglevel info
+
+# Dummy push, real email
+poetry run python -m firebase_sub.cli.sub_events --no-dummy-email --dummy-push --loglevel info
 ```
 
 Docker:

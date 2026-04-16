@@ -5,6 +5,80 @@ import { useSelector } from "react-redux";
 import { useEffect, useState } from "react";
 import { Card, Col, Form, Row } from "react-bootstrap";
 import Button from "../UI/Button";
+import useWebPushSettings from "../../hooks/useWebPushSettings";
+
+function PushPreferences({ uid, initialEnabled }) {
+  const {
+    busy,
+    disable,
+    enable,
+    enabled,
+    error,
+    featureEnabled,
+    permission,
+    supported,
+  } = useWebPushSettings(uid, initialEnabled);
+
+  if (!featureEnabled) {
+    return null;
+  }
+
+  const permissionLabel =
+    permission === "granted"
+      ? "Granted"
+      : permission === "denied"
+        ? "Denied"
+        : permission === "default"
+          ? "Not requested"
+          : "Unsupported";
+
+  return (
+    <Col xs={12}>
+      <Card>
+        <Card.Body>
+          <div className="d-flex flex-column gap-2">
+            <div>
+              <h3 className="h5 mb-1">Web Push Notifications</h3>
+              <p className="mb-0 text-body-secondary">
+                Receive browser notifications when polls open, complete, or are rescheduled.
+              </p>
+            </div>
+            <div className="small text-body-secondary">
+              Status: {enabled ? "Enabled" : "Disabled"} | Permission: {permissionLabel}
+            </div>
+            {!supported && (
+              <div className="text-danger small">
+                This browser does not support web push notifications.
+              </div>
+            )}
+            {error && <div className="text-danger small">{error}</div>}
+            <div className="d-flex gap-2">
+              <Button
+                type="button"
+                onClick={() => {
+                  void enable();
+                }}
+                disabled={busy || !supported || enabled}
+              >
+                {busy && !enabled ? "Enabling..." : "Enable Push"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  void disable();
+                }}
+                disabled={busy || !supported || !enabled}
+              >
+                {busy && enabled ? "Disabling..." : "Disable Push"}
+              </Button>
+            </div>
+          </div>
+        </Card.Body>
+      </Card>
+    </Col>
+  );
+}
 
 function PreferencesForm({ method }) {
   const uid = useSelector((state) => state.auth.uid);
@@ -46,6 +120,7 @@ function PreferencesForm({ method }) {
   const notificationEnabled = loggedIn ? currUserDoc?.notificationEmailEnabled : false;
   const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;
   const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
+  const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
   const photoUrl = useSelector((state) => state.auth.photoUrl);
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -143,6 +218,8 @@ function PreferencesForm({ method }) {
                 label="Email me when a poll opens"
               />
             </Col>
+
+            <PushPreferences uid={uid} initialEnabled={webPushEnabled} />
 
             <Col xs={12} className="d-flex gap-2">
               <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
