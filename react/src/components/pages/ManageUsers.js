@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { NavLink, useParams } from "react-router-dom";
 import { Form, Table } from "react-bootstrap";
 import useUsers from "../../hooks/useUsers";
@@ -6,13 +6,11 @@ import { useAllRoles } from "../../hooks/useRoles";
 import { useIsMobileView } from "../../hooks/useIsMobileView";
 import ProtectedRoute from "../ProtectedRoute";
 import { db } from "../../firebase";
-import { doc, deleteField, updateDoc, setDoc } from "firebase/firestore";
+import { collection, doc, deleteField, onSnapshot, updateDoc, setDoc } from "firebase/firestore";
 import Modal from "../UI/Modal";
 import Button from "../UI/Button";
 import {
-    ADMIN_DEFAULT_PERMISSIONS,
     CONSOLIDATED_PERMISSION_COLUMNS,
-    KNOWN_DEFAULT_PERMISSIONS,
 } from "../../permissions";
 
 const MANAGE_USERS_NARROW_BREAKPOINT = 1200;
@@ -80,14 +78,53 @@ function UIDModal({ uid, onClose }) {
 }
 
 function useManageUsersState() {
-    const users = useUsers();
+    const publicUsers = useUsers();
+    const [privateUsers, setPrivateUsers] = useState({});
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(
+            collection(db, "users"),
+            (snapshot) => {
+                const nextPrivateUsers = {};
+                snapshot.forEach((userDoc) => {
+                    const data = userDoc.data();
+                    const normalizedUid = data?.uid || userDoc.id;
+                    nextPrivateUsers[normalizedUid] = {
+                        ...data,
+                        uid: normalizedUid,
+                    };
+                });
+                setPrivateUsers(nextPrivateUsers);
+            },
+            (error) => {
+                console.error("Error loading private users for admin view", error);
+                setPrivateUsers({});
+            }
+        );
+        return unsubscribe;
+    }, []);
+
+    const mergedUsers = useMemo(() => {
+        // users/{uid} is canonical for Manage Users (admin-only page).
+        // user-public/{uid} is only used to overlay preferred display fields.
+        const merged = {};
+        Object.keys(privateUsers).forEach((uid) => {
+            merged[uid] = {
+                ...(privateUsers[uid] || {}),
+                ...(publicUsers[uid] || {}),
+                uid,
+            };
+        });
+        return merged;
+    }, [privateUsers, publicUsers]);
+
     const sortedUsers = useMemo(() => {
-        return Object.entries(users).sort(([, a], [, b]) => {
+        return Object.entries(mergedUsers).sort(([, a], [, b]) => {
             const nameA = (a?.name || a?.email || "").trim();
             const nameB = (b?.name || b?.email || "").trim();
             return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
         });
-    }, [users]);
+    }, [mergedUsers]);
 
     const roles = useAllRoles();
 
@@ -133,47 +170,8 @@ function useManageUsersState() {
         await clearRole(roleName, uid);
     }, [hasRole]);
 
-    const handleAutoSyncKnownToChat = useCallback(async () => {
-        const knownDict = roles["known"] || {};
-        const adminDict = roles["admin"] || {};
-
-        const updates = {
-            knownUsersScanned: 0,
-            adminUsersScanned: 0,
-            roleWrites: 0,
-        };
-
-        for (const [uid, isKnownUser] of Object.entries(knownDict)) {
-            if (!isKnownUser) {
-                continue;
-            }
-            updates.knownUsersScanned += 1;
-            for (const roleName of KNOWN_DEFAULT_PERMISSIONS) {
-                if (!hasRole(uid, roleName)) {
-                    await setRole(roleName, uid);
-                    updates.roleWrites += 1;
-                }
-            }
-        }
-
-        for (const [uid, isAdminUser] of Object.entries(adminDict)) {
-            if (!isAdminUser) {
-                continue;
-            }
-            updates.adminUsersScanned += 1;
-            for (const roleName of ADMIN_DEFAULT_PERMISSIONS) {
-                if (!hasRole(uid, roleName)) {
-                    await setRole(roleName, uid);
-                    updates.roleWrites += 1;
-                }
-            }
-        }
-
-        console.log("Permission backfill complete", updates);
-    }, [hasRole, roles]);
-
     return {
-        users,
+        users: mergedUsers,
         sortedUsers,
         isAdmin,
         isKnown,
@@ -181,7 +179,6 @@ function useManageUsersState() {
         handleAdminClick,
         handleKnownClick,
         handleRoleClick,
-        handleAutoSyncKnownToChat,
     };
 }
 
@@ -305,7 +302,7 @@ function ManageUsersTable({
                                         {value?.name || value?.email || key}
                                     </NavLink>
                                 </td>
-                                <td>{value?.email}</td>
+                                <td>{value?.email || "No email"}</td>
                                 <td>
                                     <Form.Check
                                         type="checkbox"
@@ -347,6 +344,23 @@ function ManageUsersTable({
     );
 }
 
+function EmptyUsersNotice() {
+    return (
+        <div className="alert alert-info" role="alert">
+            <h2 className="h6 mb-2">No users to display yet</h2>
+            <p className="mb-2">
+                Manage Users reads from the <code>user-public</code> collection.
+            </p>
+            <p className="mb-2">
+                Run this one-time backfill command in the browser console while logged in as admin:
+            </p>
+            <p className="mb-0 small text-break">
+                <code>import('/src/dbtools/migrateUserPublicData.js').then((m) =&gt; m.migrateUserPublicData()).then((result) =&gt; console.log('Done:', result));</code>
+            </p>
+        </div>
+    );
+}
+
 function ManageUsers() {
     const [selectedUID, setSelectedUID] = useState(null);
     const isMobileView = useIsMobileView(MANAGE_USERS_NARROW_BREAKPOINT);
@@ -358,22 +372,15 @@ function ManageUsers() {
         handleAdminClick,
         handleKnownClick,
         handleRoleClick,
-        handleAutoSyncKnownToChat,
     } = useManageUsersState();
 
     return (
         <div className="container py-3 text-body">
             <h1 className="mb-3">Manage Users</h1>
-            <Button
-                type="button"
-                variant="secondary"
-                className="mb-3"
-                onClick={handleAutoSyncKnownToChat}
-            >
-                Auto-sync Known/Admin to Consolidated Permissions
-            </Button>
 
-            {isMobileView ? (
+            {sortedUsers.length === 0 ? (
+                <EmptyUsersNotice />
+            ) : isMobileView ? (
                 <ManageUsersList sortedUsers={sortedUsers} />
             ) : (
                 <ManageUsersTable

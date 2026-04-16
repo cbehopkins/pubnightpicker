@@ -1,19 +1,18 @@
-import { query, getDocs, collection, where } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
 export default async function getUserDoc(uid, onSuccess = null, onFail = null) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    const docs = await getDocs(q);
+    const userDoc = await getDoc(doc(db, "users", uid));
 
-    if (docs.empty || docs.docs.length !== 1) {
+    if (!userDoc.exists()) {
         if (onFail === null) {
-            console.error("Error with user doc fetch", docs.docs.length, docs)
+            console.error("Error with user doc fetch", uid)
             return null
         }
-        return onFail(docs)
+        return onFail(userDoc)
     }
     if (onSuccess === null) {
-        return docs.docs[0]
+        return userDoc
     }
-    return onSuccess(docs.docs[0])
+    return onSuccess(userDoc)
 }

@@ -1,56 +1,98 @@
 import { useCallback, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
-import { query, where, collection, onSnapshot, updateDoc, getDocs } from "firebase/firestore";
+import { onSnapshot, updateDoc, doc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
 import { notifyError } from "../utils/notify";
 
-function selfSubscription(uid, update_callback, remove_callback) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    return onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === "added") {
-                update_callback(change.doc.data())
-            }
-            if (change.type === "modified") {
-                update_callback(change.doc.data())
-            }
-            if (change.type === "removed") {
-                remove_callback()
-            }
-        });
+async function ensureCanonicalUserDocFromAuth(user) {
+    if (!user?.uid) return;
+
+    const nameFromAuth = user.displayName || user.email || "";
+    const authProvider = user.providerData?.[0]?.providerId || "password";
+
+    try {
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            name: nameFromAuth,
+            email: user.email || "",
+            authProvider,
+            photoUrl: user.photoURL || null,
+        }, { merge: true });
+    } catch (err) {
+        console.error("Failed to self-heal canonical users doc from auth", err);
+    }
+}
+
+function selfSubscription(uid, update_callback) {
+    const selfDocRef = doc(db, "users", uid);
+    return onSnapshot(selfDocRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            return;
+        }
+        update_callback(snapshot.data());
+    }, (err) => {
+        console.error(err);
+        notifyError(err.message);
     });
 }
 
 async function updatePhotoUrl(uid, photoUrl) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    const docs = await getDocs(q);
-    docs.docs.forEach(async (doc) => {
-        try {
-            await updateDoc(doc.ref, { photoUrl: photoUrl })
-        } catch (err) {
-            console.error(err);
-            notifyError(err.message);
-        }
-    });
+    try {
+        await updateDoc(doc(db, "users", uid), { photoUrl });
+    } catch (err) {
+        console.error(err);
+        notifyError(err.message);
+    }
+
+    try {
+        await setDoc(doc(db, "user-public", uid), {
+            uid,
+            photoUrl,
+        }, { merge: true });
+    } catch (err) {
+        console.error(err);
+        notifyError(err.message);
+    }
 }
 
 export default function useSelf() {
     const [user, loading] = useAuthState(auth);
     const dispatch = useDispatch();
+    const logInFromAuthUser = useCallback((authUser) => {
+        if (!authUser?.uid) {
+            return;
+        }
+        dispatch(authAdded({
+            uid: authUser.uid,
+            name: authUser.displayName || authUser.email || "",
+            email: authUser.email || "",
+            photoUrl: authUser.photoURL || null,
+        }));
+    }, [dispatch]);
     const logInUser = useCallback(async (data) => {
+        const resolvedUid = data?.uid || auth.currentUser?.uid;
+        if (!resolvedUid) {
+            return;
+        }
+
         if (data.authProvider === "google" && !data?.customPhotoUrl) {
             if (data?.photoUrl !== auth.currentUser.photoURL) {
                 data.photoUrl = auth.currentUser.photoURL
                 // FIXME await this after the dispatch
-                await updatePhotoUrl(data.uid, data.photoUrl)
+                await updatePhotoUrl(resolvedUid, data.photoUrl)
             }
         }
-        const photoUrl = data.photoUrl
+        const photoUrl = data?.photoUrl ?? auth.currentUser?.photoURL ?? null
         dispatch(
-            authAdded({ name: data.name, uid: data.uid, email: data?.email, photoUrl })
+            authAdded({
+                name: data?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
+                uid: resolvedUid,
+                email: data?.email || auth.currentUser?.email || "",
+                photoUrl,
+            })
         );
     }, [dispatch]);
     const logOutUser = useCallback(() => {
@@ -63,7 +105,13 @@ export default function useSelf() {
             logOutUser();
             return;
         }
-        const unsubscribe = selfSubscription(user.uid, logInUser, logOutUser);
+
+        // Keep auth/uid available for role-gated UI even if users/{uid} hydration is delayed.
+        logInFromAuthUser(user);
+
+        // Ensure canonical users/{uid} exists before listening.
+        void ensureCanonicalUserDocFromAuth(user);
+        const unsubscribe = selfSubscription(user.uid, logInUser);
         return unsubscribe;
-    }, [user, loading, logInUser, logOutUser]);
+    }, [user, loading, logInFromAuthUser, logInUser, logOutUser]);
 };

@@ -1,11 +1,14 @@
 import PreferencesForm from "./PreferencesForm";
-import { redirect, useNavigate } from "react-router-dom";
+import { NavLink, redirect, useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react"
 import { useSelector } from "react-redux";
 import { store } from "../../store";
 import {
+  setDoc,
   updateDoc,
+  doc as firestoreDoc,
 } from "firebase/firestore";
+import { db } from "../../firebase";
 import TextModal from "../UI/TextModal";
 import ConfirmModal from "../UI/ConfirmModal";
 import Button from "../UI/Button";
@@ -13,7 +16,6 @@ import {
   EmailAuthProvider, getAuth, updatePassword, reauthenticateWithCredential,
 } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
-import getUserDoc from "../../dbtools/getUserDoc";
 import styles from "./Preferences.module.css";
 import { notifyError } from "../../utils/notify";
 import { Card, Form } from "react-bootstrap";
@@ -207,6 +209,13 @@ function Preferences(params) {
     </Card>
     {/* Only allow change of password here, if it is a local password*/}
     {isPassword && <ChangeMyPassword />}
+    <Card>
+      <Card.Body>
+        <p className="mb-0">
+          Read how your data is handled in the <NavLink to="/privacy">Privacy Notice</NavLink>.
+        </p>
+      </Card.Body>
+    </Card>
     <PreferencesForm method="post" />
     <MyRoles />
   </div>
@@ -226,12 +235,6 @@ export async function action({ request, params }) {
 
   const method = request.method;
   const data = await request.formData();
-  const doc = await getUserDoc(uid);
-
-  if (!doc) {
-    console.error("Error accessing user document");
-    return;
-  }
   const avatarUrl = data.get("avatar")
   const photoUrl = authObj.photoUrl
   const defaultAvatar = avatarUrl === "" || avatarUrl === photoUrl
@@ -248,15 +251,47 @@ export async function action({ request, params }) {
   };
   if (method === "POST") {
     try {
-      // Firestore rejects fields with value `undefined`. Remove any undefined
-      // values before calling updateDoc.
+      // Firestore rejects fields with value `undefined`. Remove any undefined values
       const cleaned = Object.fromEntries(
         Object.entries(notificationParams).filter(([, v]) => v !== undefined)
       );
-      await updateDoc(doc.ref, cleaned);
+
+      // Write private data to users collection
+      const privateData = {
+        notificationEmail: cleaned.notificationEmail,
+        notificationEmailEnabled: cleaned.notificationEmailEnabled,
+        openPollEmailEnabled: cleaned.openPollEmailEnabled,
+        customPhotoUrl: cleaned.customPhotoUrl,
+      };
+
+      // Remove undefined private fields
+      const cleanedPrivate = Object.fromEntries(
+        Object.entries(privateData).filter(([, v]) => v !== undefined)
+      );
+
+      if (Object.keys(cleanedPrivate).length > 0) {
+        await updateDoc(firestoreDoc(db, "users", uid), cleanedPrivate);
+      }
+
+      // Write public data to user-public collection
+      const publicData = {
+        uid,
+        name: cleaned.name,
+        photoUrl: cleaned.photoUrl,
+        votesVisible: cleaned.votesVisible,
+      };
+
+      // Remove undefined public fields
+      const cleanedPublic = Object.fromEntries(
+        Object.entries(publicData).filter(([, v]) => v !== undefined)
+      );
+
+      if (Object.keys(cleanedPublic).length > 0) {
+        await setDoc(firestoreDoc(db, "user-public", uid), cleanedPublic, { merge: true });
+      }
     } catch (err) {
-      console.error(err);
-      notifyError(err.message);
+      console.error("[Preferences save error]", err?.code, err?.message, err);
+      notifyError(`[${err?.code ?? "unknown"}] ${err?.message}`);
     }
   }
   return redirect("/");

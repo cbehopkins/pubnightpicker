@@ -4,10 +4,10 @@ import { createSlice } from "@reduxjs/toolkit";
 
 /**
  * @typedef {Object} UserProfile
+ * @property {string=} uid
  * @property {string=} name
- * @property {string=} email
- * @property {boolean=} votesVisible
  * @property {string | null=} photoUrl
+ * @property {boolean=} votesVisible
  */
 
 /** @typedef {Record<string, UserProfile>} UsersState */
@@ -16,9 +16,8 @@ import { createSlice } from "@reduxjs/toolkit";
  * @typedef {Object} UserPayload
  * @property {string} uid
  * @property {string=} name
- * @property {string=} email
- * @property {boolean=} votesVisible
  * @property {string | null=} photoUrl
+ * @property {boolean=} votesVisible
  */
 
 /** @type {UsersState} */
@@ -31,9 +30,9 @@ const usersSlice = createSlice({
     /** @param {UsersState} state @param {{ payload: UserPayload }} action */
     userAdded(state, action) {
       state[action.payload.uid] = {
+        uid: action.payload.uid,
         name: action.payload.name,
-        email: action.payload.email,
-        votesVisible: action.payload.votesVisible,
+        votesVisible: action.payload.votesVisible !== false,
         photoUrl: action.payload.photoUrl
       };
     },

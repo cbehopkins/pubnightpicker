@@ -1,5 +1,5 @@
 import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
-import { query, getDocs, collection, where } from "firebase/firestore";
+import { doc as firestoreDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useSelector } from "react-redux";
 import { useEffect, useState } from "react";
@@ -10,26 +10,41 @@ function PreferencesForm({ method }) {
   const uid = useSelector((state) => state.auth.uid);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
   const [currUserDoc, setCurrUserDoc] = useState({});
+  const [publicUserDoc, setPublicUserDoc] = useState({});
 
   useEffect(() => {
     if (!loggedIn) {
       setCurrUserDoc({});
+      setPublicUserDoc({});
       return;
     }
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    getDocs(q).then((docs) => {
-      if (docs.length === 0) {
+
+    const loadProfiles = async () => {
+      const [privateDoc, publicDoc] = await Promise.all([
+        getDoc(firestoreDoc(db, "users", uid)),
+        getDoc(firestoreDoc(db, "user-public", uid)),
+      ]);
+
+      if (!privateDoc.exists()) {
         setCurrUserDoc({});
-        return;
+      } else {
+        setCurrUserDoc(privateDoc.data());
       }
-      setCurrUserDoc(docs.docs[0].data());
-    });
+
+      if (publicDoc.exists()) {
+        setPublicUserDoc(publicDoc.data());
+      } else {
+        setPublicUserDoc({});
+      }
+    };
+
+    loadProfiles();
   }, [loggedIn, uid]);
 
-  const name = loggedIn ? currUserDoc?.name : "";
+  const name = loggedIn ? currUserDoc?.name || publicUserDoc?.name : "";
   const notificationEmail = loggedIn ? currUserDoc?.notificationEmail || currUserDoc.email : "";
   const notificationEnabled = loggedIn ? currUserDoc?.notificationEmailEnabled : false;
-  const votesVisible = loggedIn ? currUserDoc?.votesVisible : false;
+  const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;
   const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
   const photoUrl = useSelector((state) => state.auth.photoUrl);
   const navigate = useNavigate();
@@ -47,7 +62,7 @@ function PreferencesForm({ method }) {
         <Card.Body className="text-body">
           <Row className="g-3">
             <Col xs={12}>
-              <Form.Group controlId="name">
+              <Form.Group>
                 <Form.Label>My Preferred Name</Form.Label>
                 <Form.Control
                   id="name"
@@ -61,7 +76,7 @@ function PreferencesForm({ method }) {
             </Col>
 
             <Col xs={12}>
-              <Form.Group controlId="avatar">
+              <Form.Group>
                 <Form.Label>Chat Avatar</Form.Label>
                 {photoUrl && (
                   <div className="mb-2">
@@ -96,7 +111,7 @@ function PreferencesForm({ method }) {
             </Col>
 
             <Col xs={12}>
-              <Form.Group controlId="email">
+              <Form.Group>
                 <Form.Label>Email Address</Form.Label>
                 <Form.Control
                   id="email"

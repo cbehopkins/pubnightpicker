@@ -15,8 +15,8 @@ vi.mock("./Modal", () => {
 vi.mock("../../hooks/useUsers", () => {
     return {
         default: () => ({
-            "user-1": { name: "Alex" },
-            "user-2": { name: "Sam" },
+            "user-1": { name: "Alex", votesVisible: true },
+            "user-2": { name: "Sam", votesVisible: false },
             "user-3": { name: "Jamie" },
         }),
     };
@@ -67,5 +67,31 @@ describe("ShowAttendance", () => {
         expect(screen.getByText("Can Come")).toBeTruthy();
         // Alex should appear exactly once as a row name
         expect(screen.getAllByText("Alex")).toHaveLength(1);
+    });
+
+    it("hides vote identity when votesVisible is false", () => {
+        render(
+            <ShowAttendance
+                voters={["user-2"]}
+                canCome={[]}
+                cannotCome={[]}
+            />,
+        );
+
+        expect(screen.queryByText("Sam")).toBeNull();
+        expect(screen.queryByText("Voted")).toBeNull();
+    });
+
+    it("defaults to visible when votesVisible is missing", () => {
+        render(
+            <ShowAttendance
+                voters={["user-3"]}
+                canCome={[]}
+                cannotCome={[]}
+            />,
+        );
+
+        expect(screen.getByText("Jamie")).toBeTruthy();
+        expect(screen.getByText("Voted")).toBeTruthy();
     });
 });

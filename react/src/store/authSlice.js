@@ -34,12 +34,13 @@ const authSlice = createSlice({
       const uid = typeof action.payload.uid === "string" && action.payload.uid.length > 0
         ? action.payload.uid
         : null;
+      const sameUser = uid !== null && state.uid === uid;
 
       state.name = action.payload.name || "";
       state.uid = uid;
       state.loggedIn = uid !== null;
       state.email = action.payload.email || "";
-      state.roles = {};
+      state.roles = sameUser ? state.roles : {};
       state.photoUrl = action.payload.photoUrl ?? null;
     },
     /** @param {AuthState} state */
