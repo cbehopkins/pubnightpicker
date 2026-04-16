@@ -115,7 +115,9 @@ service cloud.firestore {
     
     // Users collection - private data, restricted to self and admins
     match /users/{userId} {
-      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      // Allow reads by canonical doc ID OR by legacy auto-generated IDs where uid field matches auth uid
+      // TODO(remove-legacy-users-read): delete `resource.data.uid == request.auth.uid` after users docs are migrated to canonical users/{uid} IDs.
+      allow read: if request.auth != null && (request.auth.uid == userId || resource.data.uid == request.auth.uid || isAdmin());
       allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
 
