@@ -10,16 +10,15 @@ import { notifyError } from "../utils/notify";
 async function ensureCanonicalUserDocFromAuth(user) {
     if (!user?.uid) return;
 
-    const nameFromAuth = user.displayName || user.email || "";
     const authProvider = user.providerData?.[0]?.providerId || "password";
 
     try {
+        // Only ensure canonical identity fields exist here. Preferred display fields
+        // are managed in user-public and should not be overwritten by auth defaults.
         await setDoc(doc(db, "users", user.uid), {
             uid: user.uid,
-            name: nameFromAuth,
             email: user.email || "",
             authProvider,
-            photoUrl: user.photoURL || null,
         }, { merge: true });
     } catch (err) {
         console.error("Failed to self-heal canonical users doc from auth", err);
