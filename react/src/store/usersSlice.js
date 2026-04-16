@@ -31,7 +31,7 @@ const usersSlice = createSlice({
     userAdded(state, action) {
       state[action.payload.uid] = {
         uid: action.payload.uid,
-        name: action.payload.name,,
+        name: action.payload.name,
         votesVisible: action.payload.votesVisible !== false,
         photoUrl: action.payload.photoUrl
       };
