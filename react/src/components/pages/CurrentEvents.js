@@ -112,20 +112,20 @@ function PastEvent({ value, pub_parameters }) {
           </div>
         )}
         <div className="card-body d-flex flex-column">
-          <h5 className="card-title mb-2">{pubName}</h5>
-          <p className="card-text text-body-secondary mb-3">{value.date}</p>
-          <div className="mt-auto">
-            {pubWebsite && (
+          <h5 className="card-title mb-2">
+            {pubWebsite ? (
               <a
                 href={ensureAbsoluteUrl(pubWebsite)}
                 target="_blank"
                 rel="noreferrer"
-                className="btn btn-outline-primary btn-sm"
               >
-                Pub website
+                {pubName}
               </a>
+            ) : (
+              pubName
             )}
-          </div>
+          </h5>
+          <p className="card-text text-body-secondary mb-3">{value.date}</p>
         </div>
       </div>
     </div>
