@@ -51,31 +51,6 @@ jobs:
             echo "$BODY"
             exit 1
           fi
-
-          INDEX_PERM_RESPONSE=$(curl -sS -w "\n%{http_code}" \
-            -X POST "https://firestore.googleapis.com/v1/projects/pubnightpicker/databases/(default):testIamPermissions" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"permissions":["datastore.indexes.create","datastore.indexes.list"]}')
-
-          INDEX_HTTP_CODE=$(printf '%s\n' "$INDEX_PERM_RESPONSE" | tail -n 1)
-          INDEX_BODY=$(printf '%s\n' "$INDEX_PERM_RESPONSE" | sed '$d')
-
-          if [ "$INDEX_HTTP_CODE" != "200" ]; then
-            echo "Unable to verify Firestore index permissions (HTTP ${INDEX_HTTP_CODE})"
-            echo "$INDEX_BODY"
-            echo "Grant roles/datastore.indexAdmin to serviceAccount:${ACTIVE_ACCOUNT}"
-            exit 1
-          fi
-
-          if ! printf '%s' "$INDEX_BODY" | grep -q 'datastore.indexes.create'; then
-            echo "Missing Firestore index create permission for serviceAccount:${ACTIVE_ACCOUNT}"
-            echo "$INDEX_BODY"
-            echo "Grant roles/datastore.indexAdmin to the service account in FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER"
-            exit 1
-          fi
-
-          echo "Verified Firestore index deploy permissions for serviceAccount:${ACTIVE_ACCOUNT}"
       - name: Validate web push build env
         shell: bash
         env:
@@ -125,4 +100,14 @@ jobs:
           entryPoint: react
       - name: Deploy Firestore rules
         working-directory: ./react
-        run: npx firebase-tools deploy --only firestore:rules,firestore:indexes --project pubnightpicker
+        run: npx firebase-tools deploy --only firestore:rules --project pubnightpicker
+      - name: Deploy Firestore indexes
+        shell: bash
+        working-directory: ./react
+        run: |
+          set -euo pipefail
+          if ! npx firebase-tools deploy --only firestore:indexes --project pubnightpicker; then
+            echo "Firestore index deployment failed."
+            echo "Ensure the service account in FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER has roles/datastore.indexAdmin."
+            exit 1
+          fi
