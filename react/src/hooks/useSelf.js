@@ -1,40 +1,30 @@
 import { useCallback, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
-import { query, where, collection, onSnapshot, updateDoc, getDocs, doc, setDoc } from "firebase/firestore";
+import { onSnapshot, updateDoc, doc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
 import { notifyError } from "../utils/notify";
 
 function selfSubscription(uid, update_callback, remove_callback) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    return onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === "added") {
-                update_callback(change.doc.data())
-            }
-            if (change.type === "modified") {
-                update_callback(change.doc.data())
-            }
-            if (change.type === "removed") {
-                remove_callback()
-            }
-        });
+    const docRef = doc(db, "users", uid);
+    return onSnapshot(docRef, (snapshot) => {
+        if (snapshot.exists()) {
+            update_callback(snapshot.data());
+        } else {
+            remove_callback();
+        }
     });
 }
 
 async function updatePhotoUrl(uid, photoUrl) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    const docs = await getDocs(q);
-    docs.docs.forEach(async (doc) => {
-        try {
-            await updateDoc(doc.ref, { photoUrl: photoUrl })
-        } catch (err) {
-            console.error(err);
-            notifyError(err.message);
-        }
-    });
+    try {
+        await updateDoc(doc(db, "users", uid), { photoUrl });
+    } catch (err) {
+        console.error(err);
+        notifyError(err.message);
+    }
 
     try {
         await setDoc(doc(db, "user-public", uid), {

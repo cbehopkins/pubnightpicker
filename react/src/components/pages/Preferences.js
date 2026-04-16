@@ -16,7 +16,6 @@ import {
   EmailAuthProvider, getAuth, updatePassword, reauthenticateWithCredential,
 } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
-import getUserDoc from "../../dbtools/getUserDoc";
 import styles from "./Preferences.module.css";
 import { notifyError } from "../../utils/notify";
 import { Card, Form } from "react-bootstrap";
@@ -229,12 +228,6 @@ export async function action({ request, params }) {
 
   const method = request.method;
   const data = await request.formData();
-  const doc = await getUserDoc(uid);
-
-  if (!doc) {
-    console.error("Error accessing user document");
-    return;
-  }
   const avatarUrl = data.get("avatar")
   const photoUrl = authObj.photoUrl
   const defaultAvatar = avatarUrl === "" || avatarUrl === photoUrl
@@ -270,7 +263,7 @@ export async function action({ request, params }) {
       );
 
       if (Object.keys(cleanedPrivate).length > 0) {
-        await updateDoc(doc.ref, cleanedPrivate);
+        await updateDoc(firestoreDoc(db, "users", uid), cleanedPrivate);
       }
 
       // Write public data to user-public collection
