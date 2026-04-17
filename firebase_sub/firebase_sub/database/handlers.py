@@ -142,13 +142,18 @@ class DbHandler:
             )
             return
 
-        query = (
+        endpoint_collection = (
             self.db.collection("users")
             .document(user_id)
             .collection("push_endpoints")
-            .where(filter=FieldFilter("active", "==", True))
         )
-        for endpoint_doc in query.stream():
+        # TODO(revisit-indexed-query): switch back to .where(active == True)
+        # once COLLECTION-scope index rollout for push_endpoints.active is
+        # confirmed in all deployed projects.
+        for endpoint_doc in endpoint_collection.stream():
+            payload = endpoint_doc.to_dict() or {}
+            if not bool(payload.get("active")):
+                continue
             yield endpoint_doc
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:

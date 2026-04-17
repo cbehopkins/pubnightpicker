@@ -240,6 +240,41 @@ def test_query_active_push_endpoints_excludes_missing_user_preference(firestore_
 
 
 @pytest.mark.integration
+def test_query_active_push_endpoints_for_user_filters_active_without_index(
+    firestore_client,
+):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "webPushEnabled": True,
+        }
+    )
+
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-active").set(
+        {
+            "endpoint": "https://push.example/u1-active",
+            "active": True,
+        }
+    )
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-inactive").set(
+        {
+            "endpoint": "https://push.example/u1-inactive",
+            "active": False,
+        }
+    )
+
+    handler = DbHandler()
+    docs = list(handler.query_active_push_endpoints_for_user("u1"))
+
+    assert len(docs) == 1
+    assert docs[0].id == "ep-active"
+
+
+@pytest.mark.integration
 def test_complete_poll_event_handler_no_selected_field_does_not_persist(
     firestore_client,
 ):
