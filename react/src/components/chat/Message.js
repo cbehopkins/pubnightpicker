@@ -4,7 +4,6 @@ import React from "react";
 import { useSelector } from "react-redux";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase";
-import UnknownUser from "../../img/unknown_user.png";
 import DeleteIcon from "../../img/x-close-delete.svg";
 import useRole from "../../hooks/useRole";
 import { getUserFacingErrorMessage } from "../../permissions";
@@ -32,7 +31,7 @@ import styles from "./chat.module.css"
 const Message = ({ message, users }) => {
     const canDeleteAnyMessage = useRole("canDeleteAnyMessage");
     const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
-    const avatar = users[message.uid]?.photoUrl || UnknownUser;
+    const avatar = users[message.uid]?.photoUrl || "/unknown_user.webp";
     const name = message.name || "Name not set"
     const messageFromMe = message.uid === uid
     const deleteAllowed = canDeleteAnyMessage || messageFromMe
@@ -55,6 +54,8 @@ const Message = ({ message, users }) => {
                     src={avatar}
                     alt="user avatar"
                     referrerPolicy="no-referrer"
+                    loading="lazy"
+                    decoding="async"
                 />
             )}
 
@@ -84,6 +85,8 @@ const Message = ({ message, users }) => {
                     src={avatar}
                     alt="user avatar"
                     referrerPolicy="no-referrer"
+                    loading="lazy"
+                    decoding="async"
                 />
             )}
         </div>
