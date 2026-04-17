@@ -3,7 +3,7 @@ from typing import cast
 import pytest
 
 from firebase_sub.action_track import ActionMan
-from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.handlers import DbHandler, RetryablePollDataNotReadyError
 from firebase_sub.push_contract import PushDedupeKeys
 
 
@@ -99,7 +99,6 @@ def test_complete_poll_event_handler_persists_action_doc(firestore_client):
     assert len(fake_am.calls) == 1
     assert fake_am.calls[0]["poll_dict"]["restaurant"] == "rest-1"
     assert fake_am.calls[0]["action_key"] == PushDedupeKeys.complete_key(
-        poll_id=poll_id,
         pub_id=selected_venue_id,
         restaurant_id="rest-1",
         restaurant_time=None,
@@ -241,6 +240,41 @@ def test_query_active_push_endpoints_excludes_missing_user_preference(firestore_
 
 
 @pytest.mark.integration
+def test_query_active_push_endpoints_for_user_filters_active_without_index(
+    firestore_client,
+):
+    firestore_client.collection("users").document("u1").set(
+        {
+            "uid": "u1",
+            "webPushEnabled": True,
+        }
+    )
+
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-active").set(
+        {
+            "endpoint": "https://push.example/u1-active",
+            "active": True,
+        }
+    )
+    firestore_client.collection("users").document("u1").collection(
+        "push_endpoints"
+    ).document("ep-inactive").set(
+        {
+            "endpoint": "https://push.example/u1-inactive",
+            "active": False,
+        }
+    )
+
+    handler = DbHandler()
+    docs = list(handler.query_active_push_endpoints_for_user("u1"))
+
+    assert len(docs) == 1
+    assert docs[0].id == "ep-active"
+
+
+@pytest.mark.integration
 def test_complete_poll_event_handler_no_selected_field_does_not_persist(
     firestore_client,
 ):
@@ -268,7 +302,9 @@ def test_complete_poll_event_handler_no_selected_field_does_not_persist(
 
 
 @pytest.mark.integration
-def test_complete_poll_event_handler_raises_on_missing_selected_pub(firestore_client):
+def test_complete_poll_event_handler_raises_retryable_when_selected_pub_missing(
+    firestore_client,
+):
     poll_id = "poll-missing-pub"
 
     firestore_client.collection("polls").document(poll_id).set(
@@ -282,7 +318,7 @@ def test_complete_poll_event_handler_raises_on_missing_selected_pub(firestore_cl
     handler = DbHandler()
     fake_am = FakeActionMan({"email": ["missing-venue"]})
 
-    with pytest.raises(ValueError, match="not in pubs_list"):
+    with pytest.raises(RetryablePollDataNotReadyError, match="not in pubs_list"):
         handler.complete_poll_event_handler(
             pubs_list={}, am=cast(ActionMan, fake_am), poll_id=poll_id
         )

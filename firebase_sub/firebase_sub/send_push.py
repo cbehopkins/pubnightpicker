@@ -1,9 +1,10 @@
 import json
 import logging
 import os
+import hashlib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, date, datetime
 from typing import Any
 
 from firebase_sub.constants import ADMIN_EMAIL_ADDR
@@ -14,6 +15,7 @@ from pywebpush import WebPushException, webpush
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.my_types import PollDocument, VenueDocument
 from firebase_sub.push_contract import (
+    PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
     PUSH_EVENT_POLL_COMPLETED,
     PUSH_EVENT_POLL_OPENED,
     PUSH_EVENT_POLL_RESCHEDULED,
@@ -22,6 +24,9 @@ from firebase_sub.send_email import _resolve_payloads
 
 _log = logging.getLogger("SendPush")
 _DEFAULT_BASE_URL = "https://ampubnight.org/"
+_TOPIC_MAX_LEN = 32
+_TTL_MIN_SECONDS = 60 * 60
+_TTL_MAX_SECONDS = 5 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -76,8 +81,52 @@ def _vapid_private_key() -> str:
 
 
 def _vapid_claims() -> dict[str, str | int]:
-    subject = os.getenv("WEB_PUSH_VAPID_SUBJECT", ADMIN_EMAIL_ADDR)
-    return {"sub": subject}
+    raw_subject = os.getenv("WEB_PUSH_VAPID_SUBJECT", ADMIN_EMAIL_ADDR).strip()
+    if not raw_subject:
+        raise CallbackExceptionRetry(
+            "WEB_PUSH_VAPID_SUBJECT is empty; expected email or URL"
+        )
+
+    if raw_subject.startswith(("mailto:", "https://", "http://")):
+        return {"sub": raw_subject}
+
+    if "@" in raw_subject:
+        return {"sub": f"mailto:{raw_subject}"}
+
+    raise CallbackExceptionRetry(
+        "WEB_PUSH_VAPID_SUBJECT must be an email, mailto:, or http(s) URL"
+    )
+
+
+def _topic_for_poll_id(poll_id: str) -> str:
+    sanitized = "".join(
+        character if character.isalnum() or character in "-_" else "-"
+        for character in poll_id
+    )
+    if not sanitized:
+        return hashlib.sha256(poll_id.encode("utf-8")).hexdigest()[:_TOPIC_MAX_LEN]
+    if len(sanitized) <= _TOPIC_MAX_LEN:
+        return sanitized
+    digest = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
+    prefix_len = _TOPIC_MAX_LEN - 1 - 12
+    return f"{sanitized[:prefix_len]}-{digest[:12]}"
+
+
+def _ttl_for_poll_date(poll_date: str, *, now: datetime | None = None) -> int:
+    now_utc = now or datetime.now(UTC)
+    try:
+        event_day = date.fromisoformat(poll_date)
+    except ValueError:
+        _log.warning(
+            "Failed to parse poll date %r for push TTL. Falling back to minimum TTL.",
+            poll_date,
+        )
+        return _TTL_MIN_SECONDS
+
+    # Policy: midnight UTC on event day, clamped to [1h, 5d].
+    event_cutoff = datetime.combine(event_day, datetime.min.time(), tzinfo=UTC)
+    ttl_seconds = int((event_cutoff - now_utc).total_seconds())
+    return max(_TTL_MIN_SECONDS, min(_TTL_MAX_SECONDS, ttl_seconds))
 
 
 def _document_user_id(document: DocumentSnapshot) -> str | None:
@@ -115,10 +164,21 @@ def _deactivate_endpoint(endpoint: PushEndpoint | ValidPushEndpoint) -> None:
 
 
 def _send_to_endpoint(
-    endpoint: ValidPushEndpoint, payload: dict[str, Any], dummy_run: bool
+    endpoint: ValidPushEndpoint,
+    payload: dict[str, Any],
+    *,
+    ttl_seconds: int,
+    topic: str,
+    dummy_run: bool,
 ) -> None:
     if dummy_run:
-        _log.info("Dummy web push to %s: %s", endpoint.endpoint, payload)
+        _log.info(
+            "Dummy web push to %s: %s (ttl=%s topic=%s)",
+            endpoint.endpoint,
+            payload,
+            ttl_seconds,
+            topic,
+        )
         return
     webpush(
         subscription_info={
@@ -129,6 +189,8 @@ def _send_to_endpoint(
             },
         },
         data=json.dumps(payload),
+        ttl=ttl_seconds,
+        headers={"Topic": topic},
         vapid_private_key=_vapid_private_key(),
         vapid_claims=_vapid_claims(),
     )
@@ -137,6 +199,8 @@ def _send_to_endpoint(
 def _deliver_pushes(
     *,
     payload: dict[str, Any],
+    ttl_seconds: int,
+    topic: str,
     endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
     dummy_run: bool,
 ) -> PushDeliveryResult:
@@ -158,7 +222,13 @@ def _deliver_pushes(
             invalid += 1
             continue
         try:
-            _send_to_endpoint(endpoint, payload, dummy_run=dummy_run)
+            _send_to_endpoint(
+                endpoint,
+                payload,
+                ttl_seconds=ttl_seconds,
+                topic=topic,
+                dummy_run=dummy_run,
+            )
             delivered += 1
         except WebPushException as exc:
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
@@ -216,6 +286,7 @@ def _deliver_pushes(
     return result
 
 
+# FIXME Payloads here should have dataclass
 def _build_open_payload(poll_id: str) -> dict[str, Any]:
     return {
         "eventType": PUSH_EVENT_POLL_OPENED,
@@ -228,6 +299,19 @@ def _build_open_payload(poll_id: str) -> dict[str, Any]:
     }
 
 
+def _build_diagnostic_payload(user_id: str, request_value: Any) -> dict[str, Any]:
+    return {
+        "eventType": PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
+        "title": "Push diagnostics",
+        "body": "This is a test push notification from admin diagnostics.",
+        "url": f"{_base_url()}/preferences",
+        "tag": f"push-diagnostic:{user_id}",
+        "requestedValue": request_value,
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
+# FIXME again - dataclass this
 def _build_complete_payload(
     poll_id: str,
     poll_dict: PollDocument,
@@ -266,14 +350,19 @@ def _build_complete_payload(
 def send_poll_open_push(
     *,
     poll_id: str,
+    poll_date: str,
     previously_actioned: bool,
     endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
     dummy_run: bool = False,
 ) -> PushDeliveryResult:
     _ = previously_actioned
     payload = _build_open_payload(poll_id)
+    ttl_seconds = _ttl_for_poll_date(poll_date)
+    topic = _topic_for_poll_id(poll_id)
     return _deliver_pushes(
         payload=payload,
+        ttl_seconds=ttl_seconds,
+        topic=topic,
         endpoints_src=endpoints_src,
         dummy_run=dummy_run,
     )
@@ -294,8 +383,30 @@ def send_poll_complete_push(
         pub_dict=pub_dict,
         previously_actioned=previously_actioned,
     )
+    ttl_seconds = _ttl_for_poll_date(poll_dict["date"])
+    topic = _topic_for_poll_id(poll_id)
     return _deliver_pushes(
         payload=payload,
+        ttl_seconds=ttl_seconds,
+        topic=topic,
+        endpoints_src=endpoints_src,
+        dummy_run=dummy_run,
+    )
+
+
+def send_diagnostic_push(
+    *,
+    user_id: str,
+    request_value: Any,
+    endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
+    dummy_run: bool = False,
+) -> PushDeliveryResult:
+    payload = _build_diagnostic_payload(user_id=user_id, request_value=request_value)
+    topic = _topic_for_poll_id(f"diag-{user_id}")
+    return _deliver_pushes(
+        payload=payload,
+        ttl_seconds=_TTL_MIN_SECONDS,
+        topic=topic,
         endpoints_src=endpoints_src,
         dummy_run=dummy_run,
     )

@@ -7,11 +7,15 @@ import useWebPushSettings from "./useWebPushSettings";
 const {
     deactivateCurrentWebPushEndpointMock,
     enableWebPushMock,
+    hasCurrentWebPushSubscriptionMock,
+    setWebPushPreferenceMock,
     webPushStatusMock,
 } = vi.hoisted(() => {
     return {
         deactivateCurrentWebPushEndpointMock: vi.fn(),
         enableWebPushMock: vi.fn(),
+        hasCurrentWebPushSubscriptionMock: vi.fn(),
+        setWebPushPreferenceMock: vi.fn(),
         webPushStatusMock: vi.fn(),
     };
 });
@@ -20,6 +24,8 @@ vi.mock("../push/webPush", () => {
     return {
         deactivateCurrentWebPushEndpoint: deactivateCurrentWebPushEndpointMock,
         enableWebPush: enableWebPushMock,
+        hasCurrentWebPushSubscription: hasCurrentWebPushSubscriptionMock,
+        setWebPushPreference: setWebPushPreferenceMock,
         webPushStatus: webPushStatusMock,
     };
 });
@@ -28,7 +34,11 @@ describe("useWebPushSettings", () => {
     beforeEach(() => {
         deactivateCurrentWebPushEndpointMock.mockReset();
         enableWebPushMock.mockReset();
+        hasCurrentWebPushSubscriptionMock.mockReset();
+        setWebPushPreferenceMock.mockReset();
         webPushStatusMock.mockReset();
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(false);
+        setWebPushPreferenceMock.mockResolvedValue(undefined);
         webPushStatusMock.mockReturnValue({
             supported: true,
             featureEnabled: true,
@@ -93,6 +103,8 @@ describe("useWebPushSettings", () => {
     });
 
     it("syncs enabled state when initialEnabled changes after mount", async () => {
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(true);
+
         const { result, rerender } = renderHook(
             ({ uid, initialEnabled }) => useWebPushSettings(uid, initialEnabled),
             {
@@ -109,6 +121,31 @@ describe("useWebPushSettings", () => {
         });
 
         expect(result.current.enabled).toBe(true);
+    });
+
+    it("keeps local enabled false when account preference is true but this device is unsubscribed", async () => {
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(false);
+
+        const { result } = renderHook(() => useWebPushSettings("user-1", true));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(result.current.enabled).toBe(false);
+    });
+
+    it("shows enabled when this device is subscribed even if account flag is stale", async () => {
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(true);
+
+        const { result } = renderHook(() => useWebPushSettings("user-1", false));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(result.current.enabled).toBe(true);
+        expect(setWebPushPreferenceMock).toHaveBeenCalledWith("user-1", true);
     });
 
     it("updates permission to granted after enabling push", async () => {

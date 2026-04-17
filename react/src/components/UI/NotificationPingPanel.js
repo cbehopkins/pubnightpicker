@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotificationPing } from "../../hooks/useNotificationPing";
 import { notifyError, notifyInfo } from "../../utils/notify";
 
@@ -32,11 +32,25 @@ function NotificationPingPanel({
     documentId,
     eventKey,
     timeoutMs = 60000,
+    statusPrefix = "Notification Tool",
+    showStatusBadge = true,
+    showClearButton = true,
+    preSendDelaySeconds = 0,
 }) {
     const { status, lastPingValue, runPing, clearPing } = useNotificationPing(documentId, eventKey, timeoutMs);
     const lastPingFriendlyTime = formatPingTimestamp(lastPingValue);
+    const [countdownSecondsRemaining, setCountdownSecondsRemaining] = useState(0);
+    const countdownTimerRef = useRef(null);
 
-    const handlePing = useCallback(async () => {
+    useEffect(() => {
+        return () => {
+            if (countdownTimerRef.current !== null) {
+                clearInterval(countdownTimerRef.current);
+            }
+        };
+    }, []);
+
+    const runPingWithNotifications = useCallback(async () => {
         try {
             const result = await runPing();
             if (result.acknowledged) {
@@ -51,6 +65,30 @@ function NotificationPingPanel({
             notifyError("Unable to run notification diagnostics ping.");
         }
     }, [runPing, timeoutMs]);
+
+    const handlePing = useCallback(async () => {
+        if (countdownTimerRef.current !== null || status === "checking") {
+            return;
+        }
+
+        if (preSendDelaySeconds <= 0) {
+            await runPingWithNotifications();
+            return;
+        }
+
+        setCountdownSecondsRemaining(preSendDelaySeconds);
+        countdownTimerRef.current = setInterval(() => {
+            setCountdownSecondsRemaining((currentValue) => {
+                if (currentValue <= 1) {
+                    clearInterval(countdownTimerRef.current);
+                    countdownTimerRef.current = null;
+                    void runPingWithNotifications();
+                    return 0;
+                }
+                return currentValue - 1;
+            });
+        }, 1000);
+    }, [preSendDelaySeconds, runPingWithNotifications, status]);
 
     const handleClear = useCallback(async () => {
         try {
@@ -73,14 +111,21 @@ function NotificationPingPanel({
 
     const statusLabel =
         status === "ok"
-            ? "Notification Tool: OK"
+            ? `${statusPrefix}: OK`
             : status === "checking"
-                ? "Notification Tool: Checking"
+                ? `${statusPrefix}: Checking`
                 : status === "timeout"
-                    ? "Notification Tool: Timeout"
+                    ? `${statusPrefix}: Timeout`
                     : status === "error"
-                        ? "Notification Tool: Error"
-                        : "Notification Tool: Not Checked";
+                        ? `${statusPrefix}: Error`
+                        : `${statusPrefix}: Not Checked`;
+
+    const buttonText =
+        countdownSecondsRemaining > 0
+            ? `Sending in ${countdownSecondsRemaining}...`
+            : status === "checking"
+                ? checkingLabel
+                : buttonLabel;
 
     return (
         <section className="mb-4">
@@ -91,19 +136,21 @@ function NotificationPingPanel({
                     type="button"
                     className="btn btn-outline-secondary"
                     onClick={handlePing}
-                    disabled={status === "checking"}
+                    disabled={status === "checking" || countdownSecondsRemaining > 0}
                 >
-                    {status === "checking" ? checkingLabel : buttonLabel}
+                    {buttonText}
                 </button>
-                <button
-                    type="button"
-                    className="btn btn-outline-danger"
-                    onClick={handleClear}
-                    disabled={status === "checking"}
-                >
-                    Clear Ping
-                </button>
-                <span className={`badge ${badgeClassName}`}>{statusLabel}</span>
+                {showClearButton && (
+                    <button
+                        type="button"
+                        className="btn btn-outline-danger"
+                        onClick={handleClear}
+                        disabled={status === "checking"}
+                    >
+                        Clear Ping
+                    </button>
+                )}
+                {showStatusBadge && <span className={`badge ${badgeClassName}`}>{statusLabel}</span>}
             </div>
             {lastPingValue !== null && (
                 <p className="small text-body-secondary mt-2 mb-0">

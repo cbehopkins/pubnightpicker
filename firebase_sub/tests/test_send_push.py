@@ -1,14 +1,21 @@
 from types import SimpleNamespace
 from unittest.mock import ANY
+from datetime import UTC, datetime
 
 import pytest
 from pywebpush import WebPushException
 
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.send_push import (
+    _build_diagnostic_payload,
     _build_complete_payload,
     _build_open_payload,
     _deliver_pushes,
+    _topic_for_poll_id,
+    _ttl_for_poll_date,
+    _vapid_claims,
+    send_diagnostic_push,
+    send_poll_complete_push,
 )
 
 
@@ -56,6 +63,15 @@ def test_build_open_payload_contains_expected_fields():
     assert payload["tag"] == "poll-open:poll-1"
 
 
+def test_build_diagnostic_payload_contains_expected_fields():
+    payload = _build_diagnostic_payload("uid-1", 123)
+
+    assert payload["eventType"] == "diagnostic_push_test"
+    assert payload["url"].endswith("/preferences")
+    assert payload["tag"] == "push-diagnostic:uid-1"
+    assert payload["requestedValue"] == 123
+
+
 def test_build_complete_payload_marks_reschedule_when_previously_actioned():
     payload = _build_complete_payload(
         poll_id="poll-9",
@@ -74,6 +90,8 @@ def test_deliver_pushes_supports_dummy_delivery_without_retry_failures():
 
     result = _deliver_pushes(
         payload={"eventType": "poll_opened"},
+        ttl_seconds=3600,
+        topic="poll-1",
         endpoints_src=lambda: docs,
         dummy_run=True,
     )
@@ -95,6 +113,8 @@ def test_deliver_pushes_deactivates_malformed_endpoint_missing_keys(p256dh, auth
 
     result = _deliver_pushes(
         payload={"eventType": "poll_opened"},
+        ttl_seconds=3600,
+        topic="poll-1",
         endpoints_src=lambda: [doc],
         dummy_run=False,
     )
@@ -125,6 +145,8 @@ def test_deliver_pushes_raises_retry_exception_on_retryable_failure(monkeypatch)
     with pytest.raises(CallbackExceptionRetry):
         _deliver_pushes(
             payload={"eventType": "poll_opened"},
+            ttl_seconds=3600,
+            topic="poll-1",
             endpoints_src=lambda: docs,
             dummy_run=False,
         )
@@ -145,6 +167,8 @@ def test_deliver_pushes_deactivates_endpoint_on_non_retryable_403(monkeypatch):
 
     result = _deliver_pushes(
         payload={"eventType": "poll_opened"},
+        ttl_seconds=3600,
+        topic="poll-1",
         endpoints_src=lambda: docs,
         dummy_run=False,
     )
@@ -169,6 +193,106 @@ def test_deliver_pushes_raises_retry_on_webpush_500(monkeypatch):
     with pytest.raises(CallbackExceptionRetry):
         _deliver_pushes(
             payload={"eventType": "poll_opened"},
+            ttl_seconds=3600,
+            topic="poll-1",
             endpoints_src=lambda: docs,
             dummy_run=False,
         )
+
+
+def test_topic_for_poll_id_short_value_unchanged():
+    assert _topic_for_poll_id("poll-1") == "poll-1"
+
+
+def test_topic_for_poll_id_truncates_long_values_to_32():
+    topic = _topic_for_poll_id("poll-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+    assert len(topic) == 32
+
+
+def test_ttl_for_poll_date_clamps_to_max_when_far_future():
+    ttl = _ttl_for_poll_date("2026-12-31", now=datetime(2026, 4, 1, tzinfo=UTC))
+
+    assert ttl == 5 * 24 * 60 * 60
+
+
+def test_ttl_for_poll_date_clamps_to_min_when_past_date():
+    ttl = _ttl_for_poll_date("2026-01-01", now=datetime(2026, 4, 1, tzinfo=UTC))
+
+    assert ttl == 60 * 60
+
+
+def test_ttl_for_poll_date_uses_midnight_utc_cutoff():
+    ttl = _ttl_for_poll_date("2026-04-10", now=datetime(2026, 4, 9, 21, 0, tzinfo=UTC))
+
+    assert ttl == 3 * 60 * 60
+
+
+def test_ttl_for_poll_date_invalid_value_falls_back_to_min():
+    ttl = _ttl_for_poll_date("invalid-date", now=datetime(2026, 4, 1, tzinfo=UTC))
+
+    assert ttl == 60 * 60
+
+
+def test_send_poll_complete_push_passes_topic_and_ttl_to_delivery(monkeypatch):
+    captured = {}
+
+    def _fake_deliver_pushes(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=0, invalid=0, retryable_failures=0)
+
+    monkeypatch.setattr("firebase_sub.send_push._deliver_pushes", _fake_deliver_pushes)
+
+    send_poll_complete_push(
+        poll_id="poll-9",
+        poll_dict={"selected": "pub-1", "date": "2026-04-16"},
+        pub_dict={"pub-1": {"name": "The Swan", "venueType": "pub"}},
+        previously_actioned=False,
+        endpoints_src=lambda: [],
+        dummy_run=True,
+    )
+
+    assert captured["topic"] == "poll-9"
+    assert 60 * 60 <= captured["ttl_seconds"] <= 5 * 24 * 60 * 60
+
+
+def test_send_diagnostic_push_uses_min_ttl_and_diagnostic_topic(monkeypatch):
+    captured = {}
+
+    def _fake_deliver_pushes(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=1, invalid=0, retryable_failures=0)
+
+    monkeypatch.setattr("firebase_sub.send_push._deliver_pushes", _fake_deliver_pushes)
+
+    send_diagnostic_push(
+        user_id="uid-1",
+        request_value=123,
+        endpoints_src=lambda: [],
+        dummy_run=True,
+    )
+
+    assert captured["ttl_seconds"] == 60 * 60
+    assert captured["topic"].startswith("diag-uid-1")
+    assert captured["payload"]["eventType"] == "diagnostic_push_test"
+
+
+def test_vapid_claims_converts_plain_email_to_mailto(monkeypatch):
+    monkeypatch.setenv("WEB_PUSH_VAPID_SUBJECT", "ops@example.com")
+
+    assert _vapid_claims()["sub"] == "mailto:ops@example.com"
+
+
+def test_vapid_claims_accepts_mailto_or_url(monkeypatch):
+    monkeypatch.setenv("WEB_PUSH_VAPID_SUBJECT", "mailto:ops@example.com")
+    assert _vapid_claims()["sub"] == "mailto:ops@example.com"
+
+    monkeypatch.setenv("WEB_PUSH_VAPID_SUBJECT", "https://ampubnight.org")
+    assert _vapid_claims()["sub"] == "https://ampubnight.org"
+
+
+def test_vapid_claims_rejects_invalid_subject(monkeypatch):
+    monkeypatch.setenv("WEB_PUSH_VAPID_SUBJECT", "not-a-valid-subject")
+
+    with pytest.raises(CallbackExceptionRetry):
+        _vapid_claims()

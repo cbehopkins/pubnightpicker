@@ -4,6 +4,7 @@ import { db } from "../firebase";
 export const NOTIFICATION_REQ_COLLECTION = "notification_req";
 export const NOTIFICATION_ACK_COLLECTION = "notification_ack";
 export const NOTIFICATION_DIAGNOSTICS_DOC = "diagnostics";
+export const NOTIFICATION_PUSH_TEST_DOC = "push_test";
 
 export function createNotificationPingValue() {
     return Date.now();

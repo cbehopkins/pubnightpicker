@@ -198,6 +198,14 @@ export async function touchCurrentWebPushEndpoint(uid) {
     return true;
 }
 
+export async function hasCurrentWebPushSubscription() {
+    if (!FEATURE_ENABLED || !supportsWebPush()) {
+        return false;
+    }
+    const subscription = await getCurrentSubscription();
+    return Boolean(subscription);
+}
+
 export async function registerPushServiceWorker() {
     if (!FEATURE_ENABLED || !supportsWebPush()) {
         return null;

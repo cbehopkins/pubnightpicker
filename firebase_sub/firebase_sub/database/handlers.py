@@ -24,23 +24,18 @@ from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
 _log = logging.getLogger(__name__)
 
 
+class RetryablePollDataNotReadyError(RuntimeError):
+    """Raised when event handling should retry because dependent data is not ready."""
+
+
 def _compute_action_key(poll_id: PollId, poll_dict: PollDocument, pub_id: str) -> str:
     """Build the canonical completion action key for email/push dedupe."""
+    _ = poll_id
     return PushDedupeKeys.complete_key(
-        poll_id=poll_id,
         pub_id=pub_id,
         restaurant_id=poll_dict.get("restaurant"),
         restaurant_time=poll_dict.get("restaurant_time"),
     )
-
-
-def _compute_legacy_complete_action_key(poll_dict: PollDocument, pub_id: str) -> str:
-    """Legacy completion key used before canonical complete:{pollId}:... format."""
-    restaurant_id = poll_dict.get("restaurant") or ""
-    restaurant_time = poll_dict.get("restaurant_time") or ""
-    if not restaurant_id and not restaurant_time:
-        return pub_id
-    return f"{pub_id}:{restaurant_id}:{restaurant_time}"
 
 
 def _with_legacy_alias_key(
@@ -128,9 +123,57 @@ class DbHandler:
             if user_preference_cache[user_id]:
                 yield endpoint_doc
 
+    def query_active_push_endpoints_for_user(self, user_id: str):
+        """Query active web push endpoints for one user when web push is enabled."""
+        if not user_id:
+            return
+        user_document = self.db.collection("users").document(user_id).get()
+        user_payload = user_document.to_dict() or {}
+        if "webPushEnabled" not in user_payload:
+            _log.warning(
+                "Skipping push endpoints for user %s because webPushEnabled is missing",
+                user_id,
+            )
+            return
+        if not bool(user_payload.get("webPushEnabled")):
+            _log.info(
+                "Skipping push endpoints for user %s because webPushEnabled is false",
+                user_id,
+            )
+            return
+
+        endpoint_collection = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("push_endpoints")
+        )
+        # TODO(revisit-indexed-query): switch back to .where(active == True)
+        # once COLLECTION-scope index rollout for push_endpoints.active is
+        # confirmed in all deployed projects.
+        for endpoint_doc in endpoint_collection.stream():
+            payload = endpoint_doc.to_dict() or {}
+            if not bool(payload.get("active")):
+                continue
+            yield endpoint_doc
+
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
         action_snapshot = cast(DocumentSnapshot, action_document.get())
+        poll_dict_raw = self.poll_repo.get_poll(poll_id)
+        try:
+            if not isinstance(poll_dict_raw, dict):
+                raise TypeError("poll payload is not a dict")
+            raw_date = poll_dict_raw["date"]
+            if not isinstance(raw_date, str):
+                raise TypeError("poll date is not a string")
+            poll_date = raw_date
+        except (KeyError, TypeError) as exc:
+            _log.warning(
+                "Poll %s has missing/invalid date for open push TTL; using default TTL path (%s)",
+                poll_id,
+                exc,
+            )
+            poll_date = ""
         canonical_open_key = PushDedupeKeys.open_key(poll_id)
         action_dict = _with_legacy_alias_key(
             action_snapshot.to_dict(),
@@ -141,6 +184,7 @@ class DbHandler:
             action_dict=action_dict,
             action_key=canonical_open_key,
             poll_id=poll_id,
+            poll_date=poll_date,
         )
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
@@ -158,18 +202,14 @@ class DbHandler:
             return
         pub_id = poll_dict["selected"]
         if pub_id not in pubs_list:
-            raise ValueError(
-                f"Poll {poll_id} selected pub {pub_id} that is not in pubs_list. "
-                "This indicates a coding error or database consistency issue."
+            raise RetryablePollDataNotReadyError(
+                "Poll "
+                f"{poll_id} selected pub {pub_id} that is not in pubs_list. "
+                "This usually indicates startup race while pubs list is warming."
             )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         canonical_complete_key = _compute_action_key(poll_id, poll_dict, pub_id)
-        legacy_complete_key = _compute_legacy_complete_action_key(poll_dict, pub_id)
-        action_dict = _with_legacy_alias_key(
-            action_snapshot.to_dict(),
-            legacy_key=legacy_complete_key,
-            canonical_key=canonical_complete_key,
-        )
+        action_dict = action_snapshot.to_dict()
         new_action_dict = am.action_event(
             action_dict=action_dict,
             action_key=canonical_complete_key,
@@ -180,15 +220,24 @@ class DbHandler:
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
 
+    def query_polls_by_status(
+        self, *, completed: bool, min_date: str | None = None
+    ) -> Query:
+        """Query polls by completion state, optionally constrained by minimum date."""
+        query = self.poll_repo.get_polls_by_status(completed=completed)
+        if min_date is None:
+            return query
+        return query.where(filter=FieldFilter("date", ">=", min_date))
+
     @property
     def query_completed_true(self) -> Query:
         """Query completed polls."""
-        return self.poll_repo.get_polls_by_status(completed=True)
+        return self.query_polls_by_status(completed=True)
 
     @property
     def query_completed_false(self) -> Query:
         """Query open (incomplete) polls."""
-        return self.poll_repo.get_polls_by_status(completed=False)
+        return self.query_polls_by_status(completed=False)
 
     @property
     def query_all_polls(self) -> Query:
@@ -198,7 +247,7 @@ class DbHandler:
     @property
     def query_notification_requests(self) -> Query:
         """Return a query for notification request health-check documents."""
-        return self.db.collection("notification_req")
+        return cast(Query, self.db.collection("notification_req"))
 
     @staticmethod
     def wrapped_callback(

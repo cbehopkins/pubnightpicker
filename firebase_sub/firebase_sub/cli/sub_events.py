@@ -1,5 +1,6 @@
 import logging
 import queue
+from datetime import date, timedelta
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -20,6 +21,7 @@ from firebase_sub.database.housekeeping import (
 )
 from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
+from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
@@ -101,11 +103,18 @@ def sub_events(
     restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
+    all_history: bool,
+    poll_lookback_days: int,
 ) -> None:
     configure_logging(loglevel, logfile)
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
     notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
+    notification_push_test = NotificationPushTestHandler(
+        DB_HANDLER.db,
+        DB_HANDLER.query_active_push_endpoints_for_user,
+        dummy_push=dummy_push,
+    )
     housekeeping_runner = HousekeepingRunner(
         tasks=build_housekeeping_tasks(DB_HANDLER.db),
         schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
@@ -118,6 +127,8 @@ def sub_events(
         q.put(Event(type=EventType.COMP_POLL, doc=document))
 
     def notification_request_callback(document: DocumentSnapshot) -> None:
+        if notification_push_test.handle_request_document(document):
+            return
         notification_mirror.mirror_request_document(document)
 
     def enqueue_housekeeping_tick() -> None:
@@ -130,6 +141,18 @@ def sub_events(
         )
 
     _log.info("Notification request/ack mirror listener started")
+
+    poll_min_date = None
+    if all_history:
+        _log.info("Poll listeners using full history")
+    else:
+        poll_min_date = (date.today() - timedelta(days=poll_lookback_days)).isoformat()
+        _log.info(
+            "Poll listeners using recent history (min_date=%s lookback_days=%s)",
+            poll_min_date,
+            poll_lookback_days,
+        )
+
     if housekeeping_cron:
         _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
     else:
@@ -140,11 +163,17 @@ def sub_events(
 
     with (
         PollManager(
-            DB_HANDLER.query_completed_false,
+            DB_HANDLER.query_polls_by_status(
+                completed=False,
+                min_date=poll_min_date,
+            ),
             add=open_poll_event_callback,
         ).start_periodic_restart(restart_interval),
         PollManager(
-            DB_HANDLER.query_completed_true,
+            DB_HANDLER.query_polls_by_status(
+                completed=True,
+                min_date=poll_min_date,
+            ),
             add=comp_poll_event_callback,
             modify=comp_poll_event_callback,
         ).start_periodic_restart(restart_interval),
@@ -188,19 +217,19 @@ def sub_events(
                         event.type,
                         event.doc.id,
                     )
-                    date = None
+                    event_date = None
                     completed = False
                 else:
-                    date = doc.get("date")
+                    event_date = doc.get("date")
                     completed = doc.get("completed", False)
                     _log.info(
                         "New Event: Type:%s, Date:%s, Completed:%s",
                         event.type,
-                        date,
+                        event_date,
                         completed,
                     )
             else:
-                date = None
+                event_date = None
                 completed = False
 
             event.handle_queue_item(
@@ -210,7 +239,7 @@ def sub_events(
                 complete_am,
             )
             _log.info(
-                f"Completed Event: Type:{event.type}, Date:{date}, Completed:{completed}"
+                f"Completed Event: Type:{event.type}, Date:{event_date}, Completed:{completed}"
             )
 
 
@@ -246,6 +275,18 @@ def sub_events(
     default=None,
     help="Cron expression for housekeeping trigger (e.g. '0 0 * * 4')",
 )
+@click.option(
+    "--all-history/--recent-history",
+    default=False,
+    help="Watch all historical polls, not just recent polls",
+)
+@click.option(
+    "--poll-lookback-days",
+    type=click.IntRange(min=0),
+    default=7,
+    show_default=True,
+    help="When using recent-history, include polls from this many days ago",
+)
 def cli(
     dummy_email: bool,
     dummy_push: bool,
@@ -254,6 +295,8 @@ def cli(
     restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
+    all_history: bool,
+    poll_lookback_days: int,
 ) -> None:
     sub_events(
         dummy_email,
@@ -263,6 +306,8 @@ def cli(
         restart_interval,
         housekeeping_interval_seconds,
         housekeeping_cron,
+        all_history,
+        poll_lookback_days,
     )
 
 

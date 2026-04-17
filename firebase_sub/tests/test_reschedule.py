@@ -131,7 +131,7 @@ def test_action_man_same_pub_fires_only_once():
 def test_compute_action_key_pub_only():
     """A poll with no restaurant produces a canonical complete key."""
     poll: PollDocument = {"selected": "pub_A", "date": "2026-04-01"}
-    assert _compute_action_key("poll-1", poll, "pub_A") == "complete:poll-1:pub_A::"
+    assert _compute_action_key("poll-1", poll, "pub_A") == "pub_A"
 
 
 def test_compute_action_key_with_restaurant():
@@ -142,7 +142,7 @@ def test_compute_action_key_with_restaurant():
         "restaurant": "rest_B",
     }
     key = _compute_action_key("poll-1", poll, "pub_A")
-    assert key.startswith("complete:poll-1:pub_A:")
+    assert key.startswith("pub_A:")
     assert "rest_B" in key
 
 
