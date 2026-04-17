@@ -9,7 +9,16 @@ export default defineConfig({
     open: true
   },
   build: {
-    outDir: 'build'
+    outDir: 'build',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/firebase/') || id.includes('/node_modules/@firebase/')) {
+            return 'firebase';
+          }
+        },
+      },
+    },
   },
   esbuild: {
     loader: 'jsx',

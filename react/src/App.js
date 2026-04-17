@@ -2,19 +2,16 @@ import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-
 import { useDispatch } from "react-redux";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "./firebase";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import useRoles from "./hooks/useRoles";
 import Login from "./components/login/Login";
 import Register from "./components/login/Register";
 import Reset from "./components/login/Reset";
-import ManagePubs from "./components/pages/ManagePubs";
-import ManageUsers, { ManageUserDetail } from "./components/pages/ManageUsers";
 import ErrorPage from "./components/pages/Error";
 import NewPubPage, {
   action as manipulatePubAction,
 } from "./components/pages/NewPub";
 import ActivePolls from "./components/pages/ActivePolls";
-import CurrentEvents, { PastEvents } from "./components/pages/CurrentEvents";
 
 import RootLayout from "./components/pages/RootLayout";
 import EditPubPage, { loader as pubLoader } from "./components/pages/EditPub";
@@ -27,11 +24,29 @@ import NotificationUnsub, {
 import { useUsersSource } from "./hooks/useUsers";
 import Homepage from "./components/pages/Homepage";
 import HelpPage from "./components/pages/HelpPage";
-import PrivacyPage from "./components/pages/PrivacyPage";
 import useSelf from "./hooks/useSelf";
 import useWebPushLifecycle from "./hooks/useWebPushLifecycle";
 import { setRoles } from "./store/authSlice";
-import ChatPage from "./components/pages/ChatPage";
+
+const ManagePubs = lazy(() => import("./components/pages/ManagePubs"));
+const ManageUsers = lazy(() => import("./components/pages/ManageUsers"));
+const ManageUserDetail = lazy(() =>
+  import("./components/pages/ManageUsers").then((module) => ({
+    default: module.ManageUserDetail,
+  })),
+);
+const PrivacyPage = lazy(() => import("./components/pages/PrivacyPage"));
+const ChatPage = lazy(() => import("./components/pages/ChatPage"));
+const CurrentEvents = lazy(() => import("./components/pages/CurrentEvents"));
+const PastEvents = lazy(() =>
+  import("./components/pages/CurrentEvents").then((module) => ({
+    default: module.PastEvents,
+  })),
+);
+
+function LazyRoute({ children }) {
+  return <Suspense fallback={<div className="p-3">Loading...</div>}>{children}</Suspense>;
+}
 
 function LegacyPubRouteRedirect() {
   const { pubId } = useParams();
@@ -71,7 +86,7 @@ function App() {
         },
         {
           path: "privacy",
-          element: <PrivacyPage />,
+          element: <LazyRoute><PrivacyPage /></LazyRoute>,
         },
         {
           path: "login",
@@ -90,7 +105,7 @@ function App() {
           children: [
             {
               index: true,
-              element: <ManagePubs />,
+              element: <LazyRoute><ManagePubs /></LazyRoute>,
             },
             {
               path: ":pubId",
@@ -128,17 +143,17 @@ function App() {
           children: [
             {
               index: true,
-              element: <ManageUsers />,
+              element: <LazyRoute><ManageUsers /></LazyRoute>,
             },
             {
               path: ":userId",
-              element: <ManageUserDetail />,
+              element: <LazyRoute><ManageUserDetail /></LazyRoute>,
             },
           ],
         },
         {
           path: "chat",
-          element: <ChatPage />
+          element: <LazyRoute><ChatPage /></LazyRoute>
         },
         {
           path: "active_polls",
@@ -146,11 +161,11 @@ function App() {
         },
         {
           path: "current_events",
-          element: <CurrentEvents />,
+          element: <LazyRoute><CurrentEvents /></LazyRoute>,
         },
         {
           path: "past_events",
-          element: <PastEvents />,
+          element: <LazyRoute><PastEvents /></LazyRoute>,
         },
         {
           path: "preferences",

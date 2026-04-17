@@ -7,7 +7,6 @@ import {
   signInWithGoogle,
 } from "../../firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
-import GoogleSignin from "../../img/btn_google_signin_dark_pressed_web.png";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -41,8 +40,9 @@ function Login() {
                 aria-label="Sign in with Google"
               >
                 <Image
-                  src={GoogleSignin}
+                  src="/btn_google_signin_dark_pressed_web.png"
                   alt="Sign in with Google"
+                  loading="lazy"
                   fluid
                   rounded
                 />
