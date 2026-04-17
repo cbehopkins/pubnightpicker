@@ -3,6 +3,7 @@ from dataclasses import dataclass
 PUSH_EVENT_POLL_OPENED = "poll_opened"
 PUSH_EVENT_POLL_COMPLETED = "poll_completed"
 PUSH_EVENT_POLL_RESCHEDULED = "poll_rescheduled"
+PUSH_EVENT_DIAGNOSTIC_PUSH_TEST = "diagnostic_push_test"
 
 
 @dataclass(frozen=True)

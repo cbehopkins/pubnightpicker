@@ -11,6 +11,27 @@ import {
 import { db } from "../firebase";
 import { notifyInfo } from "../utils/notify";
 
+function showForegroundBrowserNotification(notificationPayload) {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") {
+        return false;
+    }
+
+    try {
+        new Notification(notificationPayload?.title || "Notification", {
+            body: notificationPayload?.body || "You have a new notification.",
+            tag: notificationPayload?.tag || undefined,
+            data: {
+                url: notificationPayload?.url || "/",
+                eventType: notificationPayload?.eventType || null,
+                pollId: notificationPayload?.pollId || null,
+            },
+        });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export default function useWebPushLifecycle(uid) {
     const previousUidRef = useRef(uid || null);
 
@@ -81,7 +102,17 @@ export default function useWebPushLifecycle(uid) {
             if (payload.type !== "push-received") {
                 return;
             }
-            const title = payload.notification?.title || "Notification";
+            const notificationPayload = payload.notification || {};
+            const title = notificationPayload.title || "Notification";
+
+            if (notificationPayload.eventType === "diagnostic_push_test") {
+                const shown = showForegroundBrowserNotification(notificationPayload);
+                if (!shown) {
+                    notifyInfo(title);
+                }
+                return;
+            }
+
             notifyInfo(title);
         };
 

@@ -15,6 +15,7 @@ from pywebpush import WebPushException, webpush
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.my_types import PollDocument, VenueDocument
 from firebase_sub.push_contract import (
+    PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
     PUSH_EVENT_POLL_COMPLETED,
     PUSH_EVENT_POLL_OPENED,
     PUSH_EVENT_POLL_RESCHEDULED,
@@ -297,6 +298,19 @@ def _build_open_payload(poll_id: str) -> dict[str, Any]:
         "sentAt": datetime.now(UTC).isoformat(),
     }
 
+
+def _build_diagnostic_payload(user_id: str, request_value: Any) -> dict[str, Any]:
+    return {
+        "eventType": PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
+        "title": "Push diagnostics",
+        "body": "This is a test push notification from admin diagnostics.",
+        "url": f"{_base_url()}/preferences",
+        "tag": f"push-diagnostic:{user_id}",
+        "requestedValue": request_value,
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
 # FIXME again - dataclass this
 def _build_complete_payload(
     poll_id: str,
@@ -374,6 +388,24 @@ def send_poll_complete_push(
     return _deliver_pushes(
         payload=payload,
         ttl_seconds=ttl_seconds,
+        topic=topic,
+        endpoints_src=endpoints_src,
+        dummy_run=dummy_run,
+    )
+
+
+def send_diagnostic_push(
+    *,
+    user_id: str,
+    request_value: Any,
+    endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
+    dummy_run: bool = False,
+) -> PushDeliveryResult:
+    payload = _build_diagnostic_payload(user_id=user_id, request_value=request_value)
+    topic = _topic_for_poll_id(f"diag-{user_id}")
+    return _deliver_pushes(
+        payload=payload,
+        ttl_seconds=_TTL_MIN_SECONDS,
         topic=topic,
         endpoints_src=endpoints_src,
         dummy_run=dummy_run,

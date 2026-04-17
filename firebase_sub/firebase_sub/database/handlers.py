@@ -123,6 +123,34 @@ class DbHandler:
             if user_preference_cache[user_id]:
                 yield endpoint_doc
 
+    def query_active_push_endpoints_for_user(self, user_id: str):
+        """Query active web push endpoints for one user when web push is enabled."""
+        if not user_id:
+            return
+        user_document = self.db.collection("users").document(user_id).get()
+        user_payload = user_document.to_dict() or {}
+        if "webPushEnabled" not in user_payload:
+            _log.warning(
+                "Skipping push endpoints for user %s because webPushEnabled is missing",
+                user_id,
+            )
+            return
+        if not bool(user_payload.get("webPushEnabled")):
+            _log.info(
+                "Skipping push endpoints for user %s because webPushEnabled is false",
+                user_id,
+            )
+            return
+
+        query = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("push_endpoints")
+            .where(filter=FieldFilter("active", "==", True))
+        )
+        for endpoint_doc in query.stream():
+            yield endpoint_doc
+
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
         action_snapshot = cast(DocumentSnapshot, action_document.get())

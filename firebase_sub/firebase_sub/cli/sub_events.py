@@ -21,6 +21,7 @@ from firebase_sub.database.housekeeping import (
 )
 from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
+from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
@@ -109,6 +110,11 @@ def sub_events(
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
     notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
+    notification_push_test = NotificationPushTestHandler(
+        DB_HANDLER.db,
+        DB_HANDLER.query_active_push_endpoints_for_user,
+        dummy_push=dummy_push,
+    )
     housekeeping_runner = HousekeepingRunner(
         tasks=build_housekeeping_tasks(DB_HANDLER.db),
         schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
@@ -121,6 +127,8 @@ def sub_events(
         q.put(Event(type=EventType.COMP_POLL, doc=document))
 
     def notification_request_callback(document: DocumentSnapshot) -> None:
+        if notification_push_test.handle_request_document(document):
+            return
         notification_mirror.mirror_request_document(document)
 
     def enqueue_housekeeping_tick() -> None:

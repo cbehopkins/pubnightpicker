@@ -7,12 +7,14 @@ from pywebpush import WebPushException
 
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.send_push import (
+    _build_diagnostic_payload,
     _build_complete_payload,
     _build_open_payload,
     _deliver_pushes,
     _topic_for_poll_id,
     _ttl_for_poll_date,
     _vapid_claims,
+    send_diagnostic_push,
     send_poll_complete_push,
 )
 
@@ -59,6 +61,15 @@ def test_build_open_payload_contains_expected_fields():
     assert payload["pollId"] == "poll-1"
     assert payload["url"].endswith("/active_polls")
     assert payload["tag"] == "poll-open:poll-1"
+
+
+def test_build_diagnostic_payload_contains_expected_fields():
+    payload = _build_diagnostic_payload("uid-1", 123)
+
+    assert payload["eventType"] == "diagnostic_push_test"
+    assert payload["url"].endswith("/preferences")
+    assert payload["tag"] == "push-diagnostic:uid-1"
+    assert payload["requestedValue"] == 123
 
 
 def test_build_complete_payload_marks_reschedule_when_previously_actioned():
@@ -243,6 +254,27 @@ def test_send_poll_complete_push_passes_topic_and_ttl_to_delivery(monkeypatch):
 
     assert captured["topic"] == "poll-9"
     assert 60 * 60 <= captured["ttl_seconds"] <= 5 * 24 * 60 * 60
+
+
+def test_send_diagnostic_push_uses_min_ttl_and_diagnostic_topic(monkeypatch):
+    captured = {}
+
+    def _fake_deliver_pushes(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=1, invalid=0, retryable_failures=0)
+
+    monkeypatch.setattr("firebase_sub.send_push._deliver_pushes", _fake_deliver_pushes)
+
+    send_diagnostic_push(
+        user_id="uid-1",
+        request_value=123,
+        endpoints_src=lambda: [],
+        dummy_run=True,
+    )
+
+    assert captured["ttl_seconds"] == 60 * 60
+    assert captured["topic"].startswith("diag-uid-1")
+    assert captured["payload"]["eventType"] == "diagnostic_push_test"
 
 
 def test_vapid_claims_converts_plain_email_to_mailto(monkeypatch):

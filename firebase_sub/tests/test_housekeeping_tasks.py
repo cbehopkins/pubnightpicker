@@ -6,10 +6,12 @@ from firebase_sub.database.housekeeping_tasks import (
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,
     POLLS_COLLECTION,
+    PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
     delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
+    delete_stale_push_diagnostic_entries,
 )
 
 
@@ -118,7 +120,10 @@ def test_delete_inactive_push_endpoints_deletes_matching_docs():
 
     db.collection_group.return_value = query_active
     query_active.where.return_value = query_disabled
-    query_disabled.where.return_value.stream.return_value = [endpoint_doc_1, endpoint_doc_2]
+    query_disabled.where.return_value.stream.return_value = [
+        endpoint_doc_1,
+        endpoint_doc_2,
+    ]
 
     now = datetime(2026, 4, 17, tzinfo=UTC)
     delete_inactive_push_endpoints(db, now=now, retention_days=30)
@@ -147,6 +152,79 @@ def test_delete_inactive_push_endpoints_rejects_negative_retention():
 
     try:
         delete_inactive_push_endpoints(db, retention_days=-1)
+        raise AssertionError("Expected ValueError")
+    except ValueError as exc:
+        assert "retention_days" in str(exc)
+
+
+def test_delete_stale_push_diagnostic_entries_deletes_only_stale_fields():
+    db = MagicMock()
+    now = datetime(2026, 4, 17, 12, 0, tzinfo=UTC)
+    stale_value = int(datetime(2026, 4, 16, 10, 0, tzinfo=UTC).timestamp() * 1000)
+    fresh_value = int(datetime(2026, 4, 17, 11, 0, tzinfo=UTC).timestamp() * 1000)
+
+    req_doc = MagicMock()
+    req_doc.get.return_value.to_dict.return_value = {
+        "stale-user": stale_value,
+        "fresh-user": fresh_value,
+    }
+    ack_doc = MagicMock()
+    ack_doc.get.return_value.to_dict.return_value = {
+        "stale-user": stale_value,
+        "fresh-user": fresh_value,
+    }
+
+    def collection_side_effect(name: str):
+        collection = MagicMock()
+        if name == NOTIFICATION_REQ_COLLECTION:
+            collection.document.return_value = req_doc
+        elif name == NOTIFICATION_ACK_COLLECTION:
+            collection.document.return_value = ack_doc
+        return collection
+
+    db.collection.side_effect = collection_side_effect
+
+    delete_stale_push_diagnostic_entries(db, now=now)
+
+    req_doc.set.assert_called_once()
+    ack_doc.set.assert_called_once()
+    assert req_doc.set.call_args.args[0].keys() == {"stale-user"}
+    assert ack_doc.set.call_args.args[0].keys() == {"stale-user"}
+    assert req_doc.set.call_args.kwargs == {"merge": True}
+    assert ack_doc.set.call_args.kwargs == {"merge": True}
+
+
+def test_delete_stale_push_diagnostic_entries_no_stale_fields_no_write():
+    db = MagicMock()
+    now = datetime(2026, 4, 17, 12, 0, tzinfo=UTC)
+    fresh_value = int(datetime(2026, 4, 17, 11, 0, tzinfo=UTC).timestamp() * 1000)
+
+    req_doc = MagicMock()
+    req_doc.get.return_value.to_dict.return_value = {"fresh-user": fresh_value}
+    ack_doc = MagicMock()
+    ack_doc.get.return_value.to_dict.return_value = {"fresh-user": fresh_value}
+
+    def collection_side_effect(name: str):
+        collection = MagicMock()
+        if name == NOTIFICATION_REQ_COLLECTION:
+            collection.document.return_value = req_doc
+        elif name == NOTIFICATION_ACK_COLLECTION:
+            collection.document.return_value = ack_doc
+        return collection
+
+    db.collection.side_effect = collection_side_effect
+
+    delete_stale_push_diagnostic_entries(db, now=now)
+
+    req_doc.set.assert_not_called()
+    ack_doc.set.assert_not_called()
+
+
+def test_delete_stale_push_diagnostic_entries_rejects_negative_retention():
+    db = MagicMock()
+
+    try:
+        delete_stale_push_diagnostic_entries(db, retention_days=-1)
         raise AssertionError("Expected ValueError")
     except ValueError as exc:
         assert "retention_days" in str(exc)

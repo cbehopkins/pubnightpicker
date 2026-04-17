@@ -93,6 +93,12 @@ describe("useWebPushLifecycle", () => {
                 __listeners: listeners,
             },
         });
+
+        const notificationMock = vi.fn();
+        Object.defineProperty(globalThis, "Notification", {
+            configurable: true,
+            value: Object.assign(notificationMock, { permission: "granted" }),
+        });
     });
 
     it("registers the service worker and touches the current endpoint", async () => {
@@ -182,6 +188,43 @@ describe("useWebPushLifecycle", () => {
         });
 
         expect(notifyInfoMock).toHaveBeenCalledWith("Poll opened");
+    });
+
+    it("raises a browser notification for diagnostic push messages", async () => {
+        renderHook(() => useWebPushLifecycle("user-1"));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const handler = navigator.serviceWorker.__listeners.get("message");
+        expect(handler).toBeTypeOf("function");
+
+        act(() => {
+            handler({
+                data: {
+                    type: "push-received",
+                    notification: {
+                        title: "Push diagnostics",
+                        body: "This is a test push notification from admin diagnostics.",
+                        eventType: "diagnostic_push_test",
+                        url: "/preferences",
+                        tag: "push-diagnostic:user-1",
+                    },
+                },
+            });
+        });
+
+        expect(globalThis.Notification).toHaveBeenCalledWith("Push diagnostics", {
+            body: "This is a test push notification from admin diagnostics.",
+            tag: "push-diagnostic:user-1",
+            data: {
+                url: "/preferences",
+                eventType: "diagnostic_push_test",
+                pollId: null,
+            },
+        });
+        expect(notifyInfoMock).not.toHaveBeenCalled();
     });
 
     it("touches the endpoint when the service worker reports subscription change", async () => {
