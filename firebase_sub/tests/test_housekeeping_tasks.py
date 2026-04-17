@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 from firebase_sub.database.housekeeping_tasks import (
@@ -6,6 +6,8 @@ from firebase_sub.database.housekeeping_tasks import (
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,
     POLLS_COLLECTION,
+    PUSH_ENDPOINTS_COLLECTION,
+    delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
 )
@@ -105,3 +107,46 @@ def test_delete_notification_docs_for_past_polls_no_past_polls_no_deletes():
 
     req_collection.document.assert_not_called()
     ack_collection.document.assert_not_called()
+
+
+def test_delete_inactive_push_endpoints_deletes_matching_docs():
+    db = MagicMock()
+    query_active = MagicMock()
+    query_disabled = MagicMock()
+    endpoint_doc_1 = MagicMock()
+    endpoint_doc_2 = MagicMock()
+
+    db.collection_group.return_value = query_active
+    query_active.where.return_value = query_disabled
+    query_disabled.where.return_value.stream.return_value = [endpoint_doc_1, endpoint_doc_2]
+
+    now = datetime(2026, 4, 17, tzinfo=UTC)
+    delete_inactive_push_endpoints(db, now=now, retention_days=30)
+
+    endpoint_doc_1.reference.delete.assert_called_once_with()
+    endpoint_doc_2.reference.delete.assert_called_once_with()
+
+
+def test_delete_inactive_push_endpoints_no_matches_no_deletes():
+    db = MagicMock()
+    query_active = MagicMock()
+    query_disabled = MagicMock()
+
+    db.collection_group.return_value = query_active
+    query_active.where.return_value = query_disabled
+    query_disabled.where.return_value.stream.return_value = []
+
+    now = datetime(2026, 4, 17, tzinfo=UTC)
+    delete_inactive_push_endpoints(db, now=now, retention_days=30)
+
+    db.collection_group.assert_called_once_with(PUSH_ENDPOINTS_COLLECTION)
+
+
+def test_delete_inactive_push_endpoints_rejects_negative_retention():
+    db = MagicMock()
+
+    try:
+        delete_inactive_push_endpoints(db, retention_days=-1)
+        raise AssertionError("Expected ValueError")
+    except ValueError as exc:
+        assert "retention_days" in str(exc)

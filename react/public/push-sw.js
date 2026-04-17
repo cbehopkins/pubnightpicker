@@ -54,3 +54,43 @@ self.addEventListener("notificationclick", (event) => {
         }),
     );
 });
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+    const broadcast = async (message) => {
+        const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        for (const client of clientList) {
+            client.postMessage(message);
+        }
+    };
+
+    const recoverSubscription = async () => {
+        try {
+            let subscription = event.newSubscription || null;
+
+            if (!subscription) {
+                const oldOptions = event.oldSubscription?.options || {};
+                const subscribeOptions = {
+                    userVisibleOnly: oldOptions.userVisibleOnly !== false,
+                };
+
+                if (oldOptions.applicationServerKey) {
+                    subscribeOptions.applicationServerKey = oldOptions.applicationServerKey;
+                }
+
+                subscription = await self.registration.pushManager.subscribe(subscribeOptions);
+            }
+
+            await broadcast({
+                type: "push-subscription-changed",
+                subscription: subscription?.toJSON?.() || null,
+            });
+        } catch (error) {
+            console.error("Failed to recover push subscription", error);
+            await broadcast({
+                type: "push-subscription-change-failed",
+            });
+        }
+    };
+
+    event.waitUntil(recoverSubscription());
+});

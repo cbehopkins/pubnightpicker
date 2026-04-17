@@ -33,7 +33,7 @@ export default function useWebPushLifecycle(uid) {
                 await touchCurrentWebPushEndpoint(uid);
 
                 const currentStatus = webPushStatus();
-                if (currentStatus.permission !== "default") {
+                if (currentStatus.permission === "denied") {
                     return;
                 }
 
@@ -50,7 +50,11 @@ export default function useWebPushLifecycle(uid) {
                     return;
                 }
 
-                await enableWebPush(uid);
+                // Re-subscribe this device when opted in but local subscription is missing.
+                // If permission is already granted this does not re-prompt the user.
+                if (currentStatus.permission === "default" || currentStatus.permission === "granted") {
+                    await enableWebPush(uid);
+                }
             } catch (err) {
                 console.error("Web push lifecycle bootstrap failed", err);
             }
@@ -63,7 +67,18 @@ export default function useWebPushLifecycle(uid) {
                 return;
             }
             const payload = event?.data;
-            if (!payload || payload.type !== "push-received") {
+            if (!payload) {
+                return;
+            }
+
+            if (payload.type === "push-subscription-changed") {
+                if (uid) {
+                    void touchCurrentWebPushEndpoint(uid);
+                }
+                return;
+            }
+
+            if (payload.type !== "push-received") {
                 return;
             }
             const title = payload.notification?.title || "Notification";

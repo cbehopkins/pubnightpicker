@@ -124,6 +124,24 @@ describe("useWebPushLifecycle", () => {
         expect(enableWebPushMock).toHaveBeenCalledWith("user-1");
     });
 
+    it("re-subscribes when permission is granted but the current endpoint is missing", async () => {
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(false);
+        webPushStatusMock.mockReturnValue({ featureEnabled: true, supported: true, permission: "granted" });
+        getDocMock.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ webPushEnabled: true }),
+        });
+
+        renderHook(() => useWebPushLifecycle("user-1"));
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(enableWebPushMock).toHaveBeenCalledWith("user-1");
+    });
+
     it("deactivates the previous endpoint on logout", async () => {
         const { rerender } = renderHook(({ uid }) => useWebPushLifecycle(uid), {
             initialProps: { uid: "user-1" },
@@ -164,5 +182,28 @@ describe("useWebPushLifecycle", () => {
         });
 
         expect(notifyInfoMock).toHaveBeenCalledWith("Poll opened");
+    });
+
+    it("touches the endpoint when the service worker reports subscription change", async () => {
+        renderHook(() => useWebPushLifecycle("user-1"));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        touchCurrentWebPushEndpointMock.mockClear();
+
+        const handler = navigator.serviceWorker.__listeners.get("message");
+        expect(handler).toBeTypeOf("function");
+
+        act(() => {
+            handler({
+                data: {
+                    type: "push-subscription-changed",
+                },
+            });
+        });
+
+        expect(touchCurrentWebPushEndpointMock).toHaveBeenCalledWith("user-1");
     });
 });
