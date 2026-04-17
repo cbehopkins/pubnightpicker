@@ -8,22 +8,20 @@ def test_open_key_uses_poll_scoped_prefix():
 def test_complete_key_normalizes_missing_restaurant_fields():
     assert (
         PushDedupeKeys.complete_key(
-            poll_id="poll-123",
             pub_id="pub-1",
             restaurant_id=None,
             restaurant_time=None,
         )
-        == "complete:poll-123:pub-1::"
+        == "pub-1"
     )
 
 
 def test_complete_key_includes_restaurant_and_time():
     assert (
         PushDedupeKeys.complete_key(
-            poll_id="poll-999",
             pub_id="pub-7",
             restaurant_id="rest-2",
             restaurant_time="18:30",
         )
-        == "complete:poll-999:pub-7:rest-2:18:30"
+        == "pub-7:rest-2:18:30"
     )

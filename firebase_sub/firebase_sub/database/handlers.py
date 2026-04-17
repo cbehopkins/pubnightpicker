@@ -26,21 +26,12 @@ _log = logging.getLogger(__name__)
 
 def _compute_action_key(poll_id: PollId, poll_dict: PollDocument, pub_id: str) -> str:
     """Build the canonical completion action key for email/push dedupe."""
+    _ = poll_id
     return PushDedupeKeys.complete_key(
-        poll_id=poll_id,
         pub_id=pub_id,
         restaurant_id=poll_dict.get("restaurant"),
         restaurant_time=poll_dict.get("restaurant_time"),
     )
-
-
-def _compute_legacy_complete_action_key(poll_dict: PollDocument, pub_id: str) -> str:
-    """Legacy completion key used before canonical complete:{pollId}:... format."""
-    restaurant_id = poll_dict.get("restaurant") or ""
-    restaurant_time = poll_dict.get("restaurant_time") or ""
-    if not restaurant_id and not restaurant_time:
-        return pub_id
-    return f"{pub_id}:{restaurant_id}:{restaurant_time}"
 
 
 def _with_legacy_alias_key(
@@ -131,6 +122,21 @@ class DbHandler:
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)
         action_snapshot = cast(DocumentSnapshot, action_document.get())
+        poll_dict_raw = self.poll_repo.get_poll(poll_id)
+        try:
+            if not isinstance(poll_dict_raw, dict):
+                raise TypeError("poll payload is not a dict")
+            raw_date = poll_dict_raw["date"]
+            if not isinstance(raw_date, str):
+                raise TypeError("poll date is not a string")
+            poll_date = raw_date
+        except (KeyError, TypeError) as exc:
+            _log.warning(
+                "Poll %s has missing/invalid date for open push TTL; using default TTL path (%s)",
+                poll_id,
+                exc,
+            )
+            poll_date = ""
         canonical_open_key = PushDedupeKeys.open_key(poll_id)
         action_dict = _with_legacy_alias_key(
             action_snapshot.to_dict(),
@@ -141,6 +147,7 @@ class DbHandler:
             action_dict=action_dict,
             action_key=canonical_open_key,
             poll_id=poll_id,
+            poll_date=poll_date,
         )
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
@@ -164,12 +171,7 @@ class DbHandler:
             )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         canonical_complete_key = _compute_action_key(poll_id, poll_dict, pub_id)
-        legacy_complete_key = _compute_legacy_complete_action_key(poll_dict, pub_id)
-        action_dict = _with_legacy_alias_key(
-            action_snapshot.to_dict(),
-            legacy_key=legacy_complete_key,
-            canonical_key=canonical_complete_key,
-        )
+        action_dict = action_snapshot.to_dict()
         new_action_dict = am.action_event(
             action_dict=action_dict,
             action_key=canonical_complete_key,
@@ -198,7 +200,7 @@ class DbHandler:
     @property
     def query_notification_requests(self) -> Query:
         """Return a query for notification request health-check documents."""
-        return self.db.collection("notification_req")
+        return cast(Query, self.db.collection("notification_req"))
 
     @staticmethod
     def wrapped_callback(

@@ -99,7 +99,6 @@ def test_complete_poll_event_handler_persists_action_doc(firestore_client):
     assert len(fake_am.calls) == 1
     assert fake_am.calls[0]["poll_dict"]["restaurant"] == "rest-1"
     assert fake_am.calls[0]["action_key"] == PushDedupeKeys.complete_key(
-        poll_id=poll_id,
         pub_id=selected_venue_id,
         restaurant_id="rest-1",
         restaurant_time=None,
