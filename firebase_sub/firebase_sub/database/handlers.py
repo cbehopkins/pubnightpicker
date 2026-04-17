@@ -24,6 +24,10 @@ from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
 _log = logging.getLogger(__name__)
 
 
+class RetryablePollDataNotReadyError(RuntimeError):
+    """Raised when event handling should retry because dependent data is not ready."""
+
+
 def _compute_action_key(poll_id: PollId, poll_dict: PollDocument, pub_id: str) -> str:
     """Build the canonical completion action key for email/push dedupe."""
     _ = poll_id
@@ -165,9 +169,10 @@ class DbHandler:
             return
         pub_id = poll_dict["selected"]
         if pub_id not in pubs_list:
-            raise ValueError(
-                f"Poll {poll_id} selected pub {pub_id} that is not in pubs_list. "
-                "This indicates a coding error or database consistency issue."
+            raise RetryablePollDataNotReadyError(
+                "Poll "
+                f"{poll_id} selected pub {pub_id} that is not in pubs_list. "
+                "This usually indicates startup race while pubs list is warming."
             )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         canonical_complete_key = _compute_action_key(poll_id, poll_dict, pub_id)
@@ -182,15 +187,24 @@ class DbHandler:
         if new_action_dict:
             action_document.set(new_action_dict, merge=True)
 
+    def query_polls_by_status(
+        self, *, completed: bool, min_date: str | None = None
+    ) -> Query:
+        """Query polls by completion state, optionally constrained by minimum date."""
+        query = self.poll_repo.get_polls_by_status(completed=completed)
+        if min_date is None:
+            return query
+        return query.where(filter=FieldFilter("date", ">=", min_date))
+
     @property
     def query_completed_true(self) -> Query:
         """Query completed polls."""
-        return self.poll_repo.get_polls_by_status(completed=True)
+        return self.query_polls_by_status(completed=True)
 
     @property
     def query_completed_false(self) -> Query:
         """Query open (incomplete) polls."""
-        return self.poll_repo.get_polls_by_status(completed=False)
+        return self.query_polls_by_status(completed=False)
 
     @property
     def query_all_polls(self) -> Query:

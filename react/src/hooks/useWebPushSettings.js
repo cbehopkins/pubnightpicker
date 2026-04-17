@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
     deactivateCurrentWebPushEndpoint,
     enableWebPush,
+    hasCurrentWebPushSubscription,
+    setWebPushPreference,
     webPushStatus,
 } from "../push/webPush";
 
@@ -12,7 +14,34 @@ export default function useWebPushSettings(uid, initialEnabled = false) {
     const [error, setError] = useState("");
 
     useEffect(() => {
-        setEnabled(Boolean(initialEnabled));
+        let cancelled = false;
+
+        const syncLocalEnabledState = async () => {
+            if (!uid) {
+                setEnabled(false);
+                return;
+            }
+            try {
+                const hasSubscription = await hasCurrentWebPushSubscription();
+                if (!cancelled) {
+                    setEnabled(hasSubscription);
+                }
+
+                if (hasSubscription && !initialEnabled) {
+                    await setWebPushPreference(uid, true);
+                }
+            } catch {
+                if (!cancelled) {
+                    setEnabled(false);
+                }
+            }
+        };
+
+        void syncLocalEnabledState();
+
+        return () => {
+            cancelled = true;
+        };
     }, [initialEnabled, uid]);
 
     const enable = useCallback(async () => {

@@ -6,6 +6,10 @@ import useWebPushLifecycle from "./useWebPushLifecycle";
 
 const {
     deactivateCurrentWebPushEndpointMock,
+    enableWebPushMock,
+    getDocMock,
+    hasCurrentWebPushSubscriptionMock,
+    firestoreDocMock,
     registerPushServiceWorkerMock,
     touchCurrentWebPushEndpointMock,
     webPushStatusMock,
@@ -13,6 +17,10 @@ const {
 } = vi.hoisted(() => {
     return {
         deactivateCurrentWebPushEndpointMock: vi.fn(),
+        enableWebPushMock: vi.fn(),
+        getDocMock: vi.fn(),
+        hasCurrentWebPushSubscriptionMock: vi.fn(),
+        firestoreDocMock: vi.fn((...args) => ({ path: args.join("/") })),
         registerPushServiceWorkerMock: vi.fn(),
         touchCurrentWebPushEndpointMock: vi.fn(),
         webPushStatusMock: vi.fn(),
@@ -23,9 +31,24 @@ const {
 vi.mock("../push/webPush", () => {
     return {
         deactivateCurrentWebPushEndpoint: deactivateCurrentWebPushEndpointMock,
+        enableWebPush: enableWebPushMock,
+        hasCurrentWebPushSubscription: hasCurrentWebPushSubscriptionMock,
         registerPushServiceWorker: registerPushServiceWorkerMock,
         touchCurrentWebPushEndpoint: touchCurrentWebPushEndpointMock,
         webPushStatus: webPushStatusMock,
+    };
+});
+
+vi.mock("../firebase", () => {
+    return {
+        db: { __mocked: true },
+    };
+});
+
+vi.mock("firebase/firestore", () => {
+    return {
+        doc: firestoreDocMock,
+        getDoc: getDocMock,
     };
 });
 
@@ -38,14 +61,24 @@ vi.mock("../utils/notify", () => {
 describe("useWebPushLifecycle", () => {
     beforeEach(() => {
         deactivateCurrentWebPushEndpointMock.mockReset();
+        enableWebPushMock.mockReset();
+        getDocMock.mockReset();
+        hasCurrentWebPushSubscriptionMock.mockReset();
+        firestoreDocMock.mockClear();
         registerPushServiceWorkerMock.mockReset();
         touchCurrentWebPushEndpointMock.mockReset();
         webPushStatusMock.mockReset();
         notifyInfoMock.mockReset();
-        webPushStatusMock.mockReturnValue({ featureEnabled: true, supported: true });
+        webPushStatusMock.mockReturnValue({ featureEnabled: true, supported: true, permission: "default" });
         registerPushServiceWorkerMock.mockResolvedValue(null);
         touchCurrentWebPushEndpointMock.mockResolvedValue(true);
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(true);
+        getDocMock.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ webPushEnabled: false }),
+        });
         deactivateCurrentWebPushEndpointMock.mockResolvedValue({ endpointId: "ep_1" });
+        enableWebPushMock.mockResolvedValue({ endpointId: "ep_new" });
 
         const listeners = new Map();
         Object.defineProperty(globalThis.navigator, "serviceWorker", {
@@ -71,6 +104,24 @@ describe("useWebPushLifecycle", () => {
 
         expect(registerPushServiceWorkerMock).toHaveBeenCalledTimes(1);
         expect(touchCurrentWebPushEndpointMock).toHaveBeenCalledWith("user-1");
+    });
+
+    it("auto-enables push on a new device when account preference is already enabled", async () => {
+        hasCurrentWebPushSubscriptionMock.mockResolvedValue(false);
+        getDocMock.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ webPushEnabled: true }),
+        });
+
+        renderHook(() => useWebPushLifecycle("user-1"));
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(getDocMock).toHaveBeenCalledTimes(1);
+        expect(enableWebPushMock).toHaveBeenCalledWith("user-1");
     });
 
     it("deactivates the previous endpoint on logout", async () => {

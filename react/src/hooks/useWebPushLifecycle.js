@@ -1,10 +1,14 @@
 import { useEffect, useRef } from "react";
+import { doc as firestoreDoc, getDoc } from "firebase/firestore";
 import {
     deactivateCurrentWebPushEndpoint,
+    enableWebPush,
+    hasCurrentWebPushSubscription,
     registerPushServiceWorker,
     touchCurrentWebPushEndpoint,
     webPushStatus,
 } from "../push/webPush";
+import { db } from "../firebase";
 import { notifyInfo } from "../utils/notify";
 
 export default function useWebPushLifecycle(uid) {
@@ -19,10 +23,36 @@ export default function useWebPushLifecycle(uid) {
         let cancelled = false;
 
         const boot = async () => {
-            await registerPushServiceWorker();
+            try {
+                await registerPushServiceWorker();
 
-            if (uid) {
+                if (!uid) {
+                    return;
+                }
+
                 await touchCurrentWebPushEndpoint(uid);
+
+                const currentStatus = webPushStatus();
+                if (currentStatus.permission !== "default") {
+                    return;
+                }
+
+                const hasSubscription = await hasCurrentWebPushSubscription();
+                if (hasSubscription) {
+                    return;
+                }
+
+                const userDoc = await getDoc(firestoreDoc(db, "users", uid));
+                if (!userDoc.exists()) {
+                    return;
+                }
+                if (userDoc.data()?.webPushEnabled !== true) {
+                    return;
+                }
+
+                await enableWebPush(uid);
+            } catch (err) {
+                console.error("Web push lifecycle bootstrap failed", err);
             }
         };
 

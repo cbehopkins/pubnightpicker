@@ -3,7 +3,7 @@ from typing import cast
 import pytest
 
 from firebase_sub.action_track import ActionMan
-from firebase_sub.database.handlers import DbHandler
+from firebase_sub.database.handlers import DbHandler, RetryablePollDataNotReadyError
 from firebase_sub.push_contract import PushDedupeKeys
 
 
@@ -267,7 +267,9 @@ def test_complete_poll_event_handler_no_selected_field_does_not_persist(
 
 
 @pytest.mark.integration
-def test_complete_poll_event_handler_raises_on_missing_selected_pub(firestore_client):
+def test_complete_poll_event_handler_raises_retryable_when_selected_pub_missing(
+    firestore_client,
+):
     poll_id = "poll-missing-pub"
 
     firestore_client.collection("polls").document(poll_id).set(
@@ -281,7 +283,7 @@ def test_complete_poll_event_handler_raises_on_missing_selected_pub(firestore_cl
     handler = DbHandler()
     fake_am = FakeActionMan({"email": ["missing-venue"]})
 
-    with pytest.raises(ValueError, match="not in pubs_list"):
+    with pytest.raises(RetryablePollDataNotReadyError, match="not in pubs_list"):
         handler.complete_poll_event_handler(
             pubs_list={}, am=cast(ActionMan, fake_am), poll_id=poll_id
         )

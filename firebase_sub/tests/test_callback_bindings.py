@@ -108,3 +108,32 @@ def test_cli_exposes_independent_dummy_push_flag():
             option_values.append(str(decorator.args[0].value))
 
     assert "--dummy-push/--no-dummy-push" in option_values
+
+
+def test_cli_exposes_poll_history_controls():
+    sub_events_path = (
+        Path(__file__).resolve().parent.parent
+        / "firebase_sub"
+        / "cli"
+        / "sub_events.py"
+    )
+    source = sub_events_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    click_options = [
+        decorator
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "cli"
+        for decorator in node.decorator_list
+        if isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr == "option"
+    ]
+
+    option_values = []
+    for decorator in click_options:
+        if decorator.args and isinstance(decorator.args[0], ast.Constant):
+            option_values.append(str(decorator.args[0].value))
+
+    assert "--all-history/--recent-history" in option_values
+    assert "--poll-lookback-days" in option_values
