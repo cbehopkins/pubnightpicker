@@ -13,19 +13,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes('node_modules')) {
-            return;
-          }
           if (id.includes('/node_modules/firebase/') || id.includes('/node_modules/@firebase/')) {
             return 'firebase';
           }
-          if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/')) {
-            return 'react-core';
-          }
-          if (id.includes('/node_modules/react-router/') || id.includes('/node_modules/react-router-dom/') || id.includes('/node_modules/@remix-run/router/')) {
-            return 'router';
-          }
-          return 'vendor';
         },
       },
     },
