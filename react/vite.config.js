@@ -25,9 +25,6 @@ export default defineConfig({
           if (id.includes('/node_modules/react-router/') || id.includes('/node_modules/react-router-dom/') || id.includes('/node_modules/@remix-run/router/')) {
             return 'router';
           }
-          if (id.includes('/node_modules/react-markdown/') || id.includes('/node_modules/remark-gfm/') || id.includes('/node_modules/micromark/') || id.includes('/node_modules/mdast-util-')) {
-            return 'markdown';
-          }
           return 'vendor';
         },
       },
