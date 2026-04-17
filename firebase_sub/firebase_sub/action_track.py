@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from typing import Callable
 
 from firebase_sub.my_types import ActionDict, ActionType, DocumentId
@@ -24,29 +25,36 @@ class CallbackExceptionRetry(_CallbackException):
     """An exception in the callback to retry later - leave the action unhappened"""
 
 
-class ActionTrack(dict[str, set[DocumentId]]):
+class ActionTrack(defaultdict[str, set[DocumentId]]):
     def __init__(self, obj=None):
-        super().__init__()
+        super().__init__(set)
         if obj is None:
             return
         for at, pub_id_list in obj.items():
-            self[at] = set(pub_id_list)
+            self[str(at)] = set(pub_id_list)
 
-    def to_action(self, at: ActionType, action_key: DocumentId) -> bool:
-        # FIXME this must be possible with a defaultdict
-        already_actioned = self.get(str(at), set())
-        return action_key not in already_actioned
+    def needs_action(self, at: ActionType, action_key: DocumentId) -> bool:
+        """Return whether this specific action key has not been actioned yet."""
+        return action_key not in self.get(str(at), set())
 
-    def previously_actioned(self, at: ActionType):
+    def has_any_actioned(self, at: ActionType) -> bool:
+        """Return whether this action type has ever been actioned."""
         return str(at) in self
 
+    def mark_actioned(self, at: ActionType, action_key: DocumentId) -> None:
+        self[str(at)].add(action_key)
+
+    def to_action(self, at: ActionType, action_key: DocumentId) -> bool:
+        return self.needs_action(at, action_key)
+
+    def previously_actioned(self, at: ActionType):
+        return self.has_any_actioned(at)
+
     def action(self, at: ActionType, action_key: DocumentId) -> None:
-        current = self.get(str(at), set())
-        current.add(action_key)
-        self[str(at)] = current
+        self.mark_actioned(at, action_key)
 
     @property
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, set[DocumentId]]:
         return dict(self)
 
 
@@ -78,8 +86,8 @@ class ActionMan:
         ad = ActionTrack(action_dict)
         anything_actioned = False
         for action_type, callback in self._callbacks.items():
-            previously_actioned = ad.previously_actioned(action_type)
-            if ad.to_action(action_type, action_key):
+            previously_actioned = ad.has_any_actioned(action_type)
+            if ad.needs_action(action_type, action_key):
                 anything_actioned = True
                 callback_dummy_run = self._dummy_run_overrides.get(
                     action_type, self.dummy_run
@@ -91,12 +99,12 @@ class ActionMan:
                         dummy_run=callback_dummy_run,
                         **kwargs,
                     )
-                    ad.action(action_type, action_key=action_key)
+                    ad.mark_actioned(action_type, action_key=action_key)
                 except CallbackExceptionIgnore as exc:
                     _log.exception(
                         f"got an ignorable exception running {action_type}:{exc}"
                     )
-                    ad.action(action_type, action_key=action_key)
+                    ad.mark_actioned(action_type, action_key=action_key)
                 except CallbackExceptionRetry as exc:
                     _log.exception(
                         f"got an retry exception running {action_type}:{exc}"

@@ -143,9 +143,7 @@ class DbHandler:
             return
 
         endpoint_collection = (
-            self.db.collection("users")
-            .document(user_id)
-            .collection("push_endpoints")
+            self.db.collection("users").document(user_id).collection("push_endpoints")
         )
         # TODO(revisit-indexed-query): switch back to .where(active == True)
         # once COLLECTION-scope index rollout for push_endpoints.active is
