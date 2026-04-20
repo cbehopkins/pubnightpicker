@@ -57,10 +57,10 @@ class PollManager:
 
     def _poll_updater(
         self,
-        doc_snapshot: DocumentSnapshot,
+        doc_snapshot: Sequence[DocumentSnapshot],
         changes: Sequence[DocumentChange],
         read_time: Datetime,
-    ):
+    ) -> None:
         for change in changes:
             if change.type.name == "ADDED":
                 if self.add is None:

@@ -13,11 +13,28 @@ _log = logging.getLogger(__name__)
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
+_FIREBASE_APP_INITIALIZED = False
+_DB = None
 
-cred = credentials.Certificate(CRED_PATH)
-app = firebase_admin.initialize_app(cred)
 
-db = firestore.client()
+def _ensure_firebase_app() -> None:
+    global _FIREBASE_APP_INITIALIZED
+    if _FIREBASE_APP_INITIALIZED:
+        return
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        cred = credentials.Certificate(CRED_PATH)
+        firebase_admin.initialize_app(cred)
+    _FIREBASE_APP_INITIALIZED = True
+
+
+def _get_db():
+    global _DB
+    if _DB is None:
+        _ensure_firebase_app()
+        _DB = firestore.client()
+    return _DB
 
 
 @click.command()
@@ -36,6 +53,7 @@ db = firestore.client()
 )
 def main(loglevel: str, logfile: Path | None, infile: Path) -> None:
     configure_logging(loglevel, logfile)
+    db = _get_db()
 
     with open(infile, "r", encoding="utf-8") as f:
         try:

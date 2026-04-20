@@ -11,7 +11,7 @@ from firebase_admin import credentials
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
-from firebase_sub.common.logging import log_level_to_int
+from firebase_sub.common.logging import configure_logging, log_level_to_int
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.housekeeping import (
     CroniterTrigger,
@@ -37,16 +37,37 @@ _log = logging.getLogger(__name__)
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
-cred = credentials.Certificate(CRED_PATH)
-app = firebase_admin.initialize_app(cred)
-
-DB_HANDLER = DbHandler()
+_FIREBASE_APP_INITIALIZED = False
+_DB_HANDLER: DbHandler | None = None
 
 
-def poll_open_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
+def _ensure_firebase_app() -> None:
+    global _FIREBASE_APP_INITIALIZED
+    if _FIREBASE_APP_INITIALIZED:
+        return
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        cred = credentials.Certificate(CRED_PATH)
+        firebase_admin.initialize_app(cred)
+    _FIREBASE_APP_INITIALIZED = True
+
+
+def _get_db_handler() -> DbHandler:
+    global _DB_HANDLER
+    if _DB_HANDLER is None:
+        _ensure_firebase_app()
+        _DB_HANDLER = DbHandler()
+    return _DB_HANDLER
+
+
+def poll_open_actions(
+    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
+) -> ActionMan:
+    db_handler = db_handler or _get_db_handler()
     send_poll_open_email_i = cast(
         ActionCallbackProtocol,
-        partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails),
+        partial(send_poll_open_email, emails_src=db_handler.query_open_emails),
     )
     open_am = ActionMan(dummy_email)
     open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
@@ -55,21 +76,24 @@ def poll_open_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
             ActionCallbackProtocol,
             partial(
                 send_poll_open_push,
-                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+                endpoints_src=db_handler.query_active_push_endpoints,
             ),
         )
         open_am.bind(ActionType.PUSH, send_poll_open_push_i, dummy_run=dummy_push)
     return open_am
 
 
-def poll_complete_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
+def poll_complete_actions(
+    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
+) -> ActionMan:
+    db_handler = db_handler or _get_db_handler()
     send_mail_list_email = cast(
         ActionCallbackProtocol,
         partial(send_ampub_email),  # defaults to Google Groups mailing list
     )
     send_personal_email = cast(
         ActionCallbackProtocol,
-        partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails),
+        partial(send_ampub_email, emails_src=db_handler.query_personal_emails),
     )
     complete_am = ActionMan(dummy_email)
     complete_am.bind(ActionType.EMAIL, send_mail_list_email)
@@ -79,20 +103,11 @@ def poll_complete_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
             ActionCallbackProtocol,
             partial(
                 send_poll_complete_push,
-                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+                endpoints_src=db_handler.query_active_push_endpoints,
             ),
         )
         complete_am.bind(ActionType.PUSH, send_push_i, dummy_run=dummy_push)
     return complete_am
-
-
-def configure_logging(log_level: int, logfile: Path | None) -> None:
-    if logfile:
-        print(f"Logging to {logfile}")
-        logging.basicConfig(level=log_level, filename=str(logfile), encoding="utf-8")
-    else:
-        logging.basicConfig(level=log_level)
-    logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
 def sub_events(
@@ -107,19 +122,26 @@ def sub_events(
     poll_lookback_days: int,
 ) -> None:
     configure_logging(loglevel, logfile)
+    db_handler = _get_db_handler()
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
-    notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
+    notification_mirror = NotificationAckMirrorHandler(db_handler.db)
     notification_push_test = NotificationPushTestHandler(
-        DB_HANDLER.db,
-        DB_HANDLER.query_active_push_endpoints_for_user,
+        db_handler.db,
+        db_handler.query_active_push_endpoints_for_user,
         dummy_push=dummy_push,
     )
     housekeeping_runner = HousekeepingRunner(
-        tasks=build_housekeeping_tasks(DB_HANDLER.db),
+        tasks=build_housekeeping_tasks(db_handler.db),
         schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
     )
 
+    # FIXME: Turn this inside out:
+    # I want the enqueue callback to be added to the EventHandling
+    # alongside the callback that handles the dequeue
+    # That way you can associate the query with what you are doing with the data
+    # and all logic associated with a type lives together in one place
+    # sub events then just adds queries and workers for those queries
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
         q.put(Event(type=EventType.NEW_POLL, doc=document))
 
@@ -163,14 +185,14 @@ def sub_events(
 
     with (
         PollManager(
-            DB_HANDLER.query_polls_by_status(
+            db_handler.query_polls_by_status(
                 completed=False,
                 min_date=poll_min_date,
             ),
             add=open_poll_event_callback,
         ).start_periodic_restart(restart_interval),
         PollManager(
-            DB_HANDLER.query_polls_by_status(
+            db_handler.query_polls_by_status(
                 completed=True,
                 min_date=poll_min_date,
             ),
@@ -178,7 +200,7 @@ def sub_events(
             modify=comp_poll_event_callback,
         ).start_periodic_restart(restart_interval),
         PollManager(
-            DB_HANDLER.query_notification_requests,
+            db_handler.query_notification_requests,
             add=notification_request_callback,
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
@@ -194,18 +216,18 @@ def sub_events(
             )
         ),
         PubsList(
-            DB_HANDLER.pub_collection,
+            db_handler.pub_collection,
         ) as pubs_list,
     ):
         pubs_list.start_periodic_restart(restart_interval)
-        open_am = poll_open_actions(dummy_email, dummy_push)
-        complete_am = poll_complete_actions(dummy_email, dummy_push)
+        open_am = poll_open_actions(dummy_email, dummy_push, db_handler)
+        complete_am = poll_complete_actions(dummy_email, dummy_push, db_handler)
 
         while True:
             try:
                 event = q.get(timeout=healthcheck_interval_seconds)
             except queue.Empty:
-                if not DB_HANDLER.okay:
+                if not db_handler.okay:
                     raise SystemExit("Exiting due to db is not okay")
                 continue
 
@@ -233,7 +255,7 @@ def sub_events(
                 completed = False
 
             event.handle_queue_item(
-                DB_HANDLER,
+                db_handler,
                 pubs_list,
                 open_am,
                 complete_am,

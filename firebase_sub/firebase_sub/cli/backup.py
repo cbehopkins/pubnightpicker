@@ -16,10 +16,28 @@ _log = logging.getLogger("bob")
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
-cred = credentials.Certificate(CRED_PATH)
-app = firebase_admin.initialize_app(cred)
+_FIREBASE_APP_INITIALIZED = False
+_DB_HANDLER: DbHandler | None = None
 
-DB_HANDLER = DbHandler()
+
+def _ensure_firebase_app() -> None:
+    global _FIREBASE_APP_INITIALIZED
+    if _FIREBASE_APP_INITIALIZED:
+        return
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        cred = credentials.Certificate(CRED_PATH)
+        firebase_admin.initialize_app(cred)
+    _FIREBASE_APP_INITIALIZED = True
+
+
+def _get_db_handler() -> DbHandler:
+    global _DB_HANDLER
+    if _DB_HANDLER is None:
+        _ensure_firebase_app()
+        _DB_HANDLER = DbHandler()
+    return _DB_HANDLER
 
 
 @click.command()
@@ -46,6 +64,7 @@ DB_HANDLER = DbHandler()
 )
 def main(loglevel: int, logfile: Path | None, outfile: Path, timeout: int) -> None:
     configure_logging(loglevel, logfile)
+    db_handler = _get_db_handler()
 
     stop_event = threading.Event()
     timer = None
@@ -76,7 +95,7 @@ def main(loglevel: int, logfile: Path | None, outfile: Path, timeout: int) -> No
             reset_timer()
 
         reset_timer()
-        DB_HANDLER.all_events_except_users(backup_item)
+        db_handler.all_events_except_users(backup_item)
         # Wait for timeout after last item
         stop_event.wait()
         if timer:
