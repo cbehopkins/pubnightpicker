@@ -1,7 +1,4 @@
-function sortVenueOptions(options) {
-  options.sort((a, b) => a.name.localeCompare(b.name));
-  return options;
-}
+import { sortVenueOptionsByName } from "./venueSort";
 
 export function getRestaurantOptionsForPoll(poll, venues) {
   const pollPubs = poll?.pubs || {};
@@ -21,7 +18,7 @@ export function getRestaurantOptionsForPoll(poll, venues) {
     });
   }
 
-  return sortVenueOptions(restaurantOptions);
+  return sortVenueOptionsByName(restaurantOptions);
 }
 
 export function getAllRestaurantVenues(venues) {
@@ -31,7 +28,7 @@ export function getAllRestaurantVenues(venues) {
       results.push({ id: venueId, name: venue?.name || venueId });
     }
   }
-  return sortVenueOptions(results);
+  return sortVenueOptionsByName(results);
 }
 
 export function getAllMainVenueOptions(venues) {
@@ -41,7 +38,7 @@ export function getAllMainVenueOptions(venues) {
       results.push({ id: venueId, name: venue?.name || venueId });
     }
   }
-  return sortVenueOptions(results);
+  return sortVenueOptionsByName(results);
 }
 
 export function getDefaultRestaurantTime(restaurantId, currentTime) {

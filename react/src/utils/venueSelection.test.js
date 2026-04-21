@@ -60,6 +60,21 @@ describe("getAllMainVenueOptions", () => {
       { id: "venue-pub-food", name: "The Oak" },
     ]);
   });
+
+  it("sorts main venues ignoring a leading The", () => {
+    const venues = {
+      "venue-anchor": { name: "The Anchor", venueType: "pub" },
+      "venue-beer": { name: "Beer House", venueType: "pub" },
+      "venue-maypole": { name: "The Maypole", venueType: "pub" },
+      "venue-restaurant": { name: "Pizza Town", venueType: "restaurant" },
+    };
+
+    expect(getAllMainVenueOptions(venues)).toEqual([
+      { id: "venue-anchor", name: "The Anchor" },
+      { id: "venue-beer", name: "Beer House" },
+      { id: "venue-maypole", name: "The Maypole" },
+    ]);
+  });
 });
 
 describe("getDefaultRestaurantTime", () => {

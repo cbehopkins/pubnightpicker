@@ -12,7 +12,8 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
 from firebase_sub.common.logging import configure_logging, log_level_to_int
-from firebase_sub.database.handlers import DbHandler
+from firebase_sub.common.retry import retry
+from firebase_sub.database.handlers import DbHandler, RetryablePollDataNotReadyError
 from firebase_sub.database.housekeeping import (
     CroniterTrigger,
     HousekeepingRunner,
@@ -39,7 +40,8 @@ CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
 _FIREBASE_APP_INITIALIZED = False
 _DB_HANDLER: DbHandler | None = None
-
+_COMP_POLL_MAX_RETRIES = 10
+_COMP_POLL_RETRY_DELAY_SECONDS = 1.0
 
 def _ensure_firebase_app() -> None:
     global _FIREBASE_APP_INITIALIZED
@@ -136,31 +138,62 @@ def sub_events(
         schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
     )
 
-    # FIXME: Turn this inside out:
-    # I want the enqueue callback to be added to the EventHandling
-    # alongside the callback that handles the dequeue
-    # That way you can associate the query with what you are doing with the data
-    # and all logic associated with a type lives together in one place
-    # sub events then just adds queries and workers for those queries
+    open_am = poll_open_actions(dummy_email, dummy_push, db_handler)
+
+    def new_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
+        if document is None:
+            raise ValueError(
+                f"New Event has no document. This indicates a coding error."
+            )
+        db_handler.new_poll_event_handler(open_am, poll_id=document.id)
+
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(Event(type=EventType.NEW_POLL, doc=document))
+        q.put(Event(type=EventType.NEW_POLL, doc=document, callback=new_handler))
+
+    complete_am = poll_complete_actions(dummy_email, dummy_push, db_handler)
+
+    @retry(
+        retry_errors=(RetryablePollDataNotReadyError,),
+        max_retries=_COMP_POLL_MAX_RETRIES,
+        delay_seconds=_COMP_POLL_RETRY_DELAY_SECONDS,
+        operation_name="completed poll event after pubs not ready",
+    )
+    def comp_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
+        if document is None:
+            raise ValueError(
+                "Completed Event has no document. This indicates a coding error."
+            )
+        db_handler.complete_poll_event_handler(
+            pubs_list, complete_am, poll_id=document.id
+        )
 
     def comp_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(Event(type=EventType.COMP_POLL, doc=document))
-
-    def notification_request_callback(document: DocumentSnapshot) -> None:
-        if notification_push_test.handle_request_document(document):
-            return
-        notification_mirror.mirror_request_document(document)
-
-    def enqueue_housekeeping_tick() -> None:
         q.put(
             Event(
-                type=EventType.TICK,
-                doc=None,
-                callback=lambda: housekeeping_runner.maybe_run(),
+                type=EventType.COMP_POLL,
+                doc=document,
+                callback=comp_handler,
             )
         )
+
+    def notification_request_callback(document: DocumentSnapshot) -> None:
+        if notification_push_test.is_push_test_request(document):
+            q.put(
+                Event(
+                    type=EventType.PUSH_TEST,
+                    doc=document,
+                    callback=lambda doc, pubs_list: notification_push_test.handle_request_document(doc),
+                )
+            )
+        else:
+            q.put(
+                Event(
+                    type=EventType.PUSH,
+                    doc=document,
+                    callback=lambda doc, pubs_list: notification_mirror.mirror_request_document(doc),
+                )
+            )
+
 
     _log.info("Notification request/ack mirror listener started")
 
@@ -175,12 +208,28 @@ def sub_events(
             poll_lookback_days,
         )
 
+    def enqueue_housekeeping_tick() -> None:
+        q.put(
+            Event(
+                type=EventType.TICK,
+                doc=None,
+                callback=lambda doc=None, pubs_list=None: housekeeping_runner.maybe_run(),
+            )
+        )
     if housekeeping_cron:
         _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
+        housekeeping_trigger = CroniterTrigger(
+            cron_expression=housekeeping_cron,
+            callback=enqueue_housekeeping_tick,
+        )
     else:
         _log.info(
             "Housekeeping runner started (interval=%ss)",
             housekeeping_interval_seconds,
+        )
+        housekeeping_trigger = PeriodicTrigger(
+            interval_seconds=housekeeping_interval_seconds,
+            callback=enqueue_housekeeping_tick,
         )
 
     with (
@@ -204,24 +253,12 @@ def sub_events(
             add=notification_request_callback,
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
-        (
-            CroniterTrigger(
-                cron_expression=housekeeping_cron,
-                callback=enqueue_housekeeping_tick,
-            )
-            if housekeeping_cron
-            else PeriodicTrigger(
-                interval_seconds=housekeeping_interval_seconds,
-                callback=enqueue_housekeeping_tick,
-            )
-        ),
+        housekeeping_trigger,
         PubsList(
             db_handler.pub_collection,
-        ) as pubs_list,
+        ).start_periodic_restart(restart_interval) as pubs_list,
     ):
-        pubs_list.start_periodic_restart(restart_interval)
-        open_am = poll_open_actions(dummy_email, dummy_push, db_handler)
-        complete_am = poll_complete_actions(dummy_email, dummy_push, db_handler)
+        
 
         while True:
             try:
@@ -231,38 +268,35 @@ def sub_events(
                     raise SystemExit("Exiting due to db is not okay")
                 continue
 
-            if event.doc:
-                doc = event.doc.to_dict()
-                if doc is None:
-                    _log.warning(
-                        "Received event %s for doc %s with no payload",
-                        event.type,
-                        event.doc.id,
-                    )
-                    event_date = None
-                    completed = False
-                else:
-                    event_date = doc.get("date")
-                    completed = doc.get("completed", False)
-                    _log.info(
-                        "New Event: Type:%s, Date:%s, Completed:%s",
-                        event.type,
-                        event_date,
-                        completed,
-                    )
-            else:
-                event_date = None
-                completed = False
-
             event.handle_queue_item(
-                db_handler,
                 pubs_list,
-                open_am,
-                complete_am,
             )
+            event_date, completed = doc_props(event)
             _log.info(
                 f"Completed Event: Type:{event.type}, Date:{event_date}, Completed:{completed}"
             )
+
+
+def doc_props(event: Event) -> tuple[str | None, bool]:
+    if not event.doc:
+        return None, False
+    doc = event.doc.to_dict()
+    if doc is None:
+        _log.warning(
+            "Received event %s for doc %s with no payload",
+            event.type,
+            event.doc.id,
+        )
+        return None, False
+    event_date = doc.get("date")
+    completed = doc.get("completed", False)
+    _log.info(
+        "New Event: Type:%s, Date:%s, Completed:%s",
+        event.type,
+        event_date,
+        completed,
+    )
+    return event_date, completed
 
 
 @click.command()

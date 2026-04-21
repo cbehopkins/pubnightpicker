@@ -2,8 +2,8 @@ import os
 from datetime import UTC, date, datetime, timedelta
 from typing import cast
 
-from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.transforms import DELETE_FIELD
 from google.cloud.firestore_v1.client import Client
 
 from firebase_sub.database.housekeeping import HousekeepingTask
@@ -91,7 +91,7 @@ def delete_stale_push_diagnostic_entries(
         push_doc = db.collection(collection_name).document(PUSH_TEST_DOC_ID)
         payload = cast(dict[str, object] | None, push_doc.get().to_dict()) or {}
         stale_keys = {
-            key: firestore.DELETE_FIELD
+            key: DELETE_FIELD
             for key, value in payload.items()
             if (timestamp_ms := _notification_entry_timestamp_ms(value)) is not None
             and timestamp_ms <= cutoff_ms

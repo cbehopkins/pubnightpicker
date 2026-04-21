@@ -7,14 +7,12 @@ import Button from "../UI/Button";
 import { deletePub } from "../../dbtools/pubs";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
+import { compareVenueNames } from "../../utils/venueSort";
 
 const venueTypeOptions = ["all", "pub", "restaurant", "event"];
 
 const ManagePubs = (params) => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
-  // This mess is the best way I can find to get the pubs printed out
-  // ordered by name
-  // First get a list that of [pubName, key] sorted by pubname
   const pub_parameters = usePubs();
   const sortedPubsByName = Object.entries(pub_parameters)
     .filter(([, value]) => {
@@ -23,11 +21,15 @@ const ManagePubs = (params) => {
       }
       return (value.venueType || "pub") === venueTypeFilter;
     })
-    .map(([key, value]) => {
-      const sortValue = value.name.replace("The ", "");
-      return [sortValue, value.name, key];
+    .sort(([keyA, valueA], [keyB, valueB]) => {
+      const byName = compareVenueNames(valueA?.name, valueB?.name);
+      if (byName !== 0) {
+        return byName;
+      }
+
+      return keyA.localeCompare(keyB, undefined, { sensitivity: "base", numeric: true });
     })
-    .sort();
+    .map(([key, value]) => [value.name, key]);
 
   const canManagePubs = useRole("canManagePubs");
   return (
@@ -60,7 +62,7 @@ const ManagePubs = (params) => {
       </div>
 
       <div className={`${styles.content} d-flex flex-column gap-2`}>
-        {sortedPubsByName.map(([, pubName, key]) => {
+        {sortedPubsByName.map(([pubName, key]) => {
           return (
             <div key={key} className="d-flex align-items-center gap-2 flex-wrap">
               {canManagePubs && (

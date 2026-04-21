@@ -7,7 +7,7 @@ readme = "README.md"
 requires-poetry = ">=2.0"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 firebase-admin = "^6.3.0"
 mailtrap = "2.0.1"
 click = "^8.2.1"
