@@ -2,8 +2,8 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
-from firebase_admin import firestore
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
 from firebase_sub.send_push import send_diagnostic_push
 
@@ -42,16 +42,19 @@ class NotificationPushTestHandler:
 
     def _delete_request_key(self, uid: str) -> None:
         try:
-            self._request_document().set({uid: firestore.DELETE_FIELD}, merge=True)
+            self._request_document().set({uid: DELETE_FIELD}, merge=True)
         except Exception:
             _log.exception(
                 "Failed to clear processed push test request key for uid=%s", uid
             )
-
-    def handle_request_document(self, request_document: DocumentSnapshot) -> bool:
-        if request_document.id != PUSH_TEST_DOC_ID:
-            return False
-
+    def is_push_test_request(self, request_document: DocumentSnapshot|None) -> bool:
+        if request_document is None:
+            raise ValueError("request_document cannot be None")
+        return request_document.id == PUSH_TEST_DOC_ID
+    
+    def handle_request_document(self, request_document: DocumentSnapshot|None) -> None:
+        if request_document is None:
+            raise ValueError("request_document cannot be None")
         request_payload = cast(dict[str, Any] | None, request_document.to_dict()) or {}
         ack_document = self._ack_document()
         ack_snapshot = cast(DocumentSnapshot, ack_document.get())
@@ -91,5 +94,3 @@ class NotificationPushTestHandler:
             ack_document.set({uid: request_value}, merge=True)
             self._delete_request_key(uid)
             _log.info("Push test request acknowledged for uid=%s", uid)
-
-        return True

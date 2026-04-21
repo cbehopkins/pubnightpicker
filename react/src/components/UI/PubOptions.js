@@ -1,5 +1,7 @@
 // @ts-check
 
+import { compareVenueNames } from "../../utils/venueSort";
+
 /** @typedef {{ name?: string }} PubOptionEntry */
 /** @typedef {Record<string, PubOptionEntry | undefined>} PubOptionsMap */
 
@@ -12,22 +14,16 @@
 
 /** @param {PubOptionsProps} props */
 function PubOptions({ pub_parameters, optionText, selectPubHandler }) {
-
-  /** @type {{ sortBy: string, id: string, pub: PubOptionEntry }[]} */
-  const sortableEntries = Object.entries(pub_parameters).map(([id, pub]) => {
-    const safePub = pub || {};
-    const name = typeof safePub.name === "string" ? safePub.name : "";
-    return {
-      sortBy: name.toLowerCase().replace("the ", ""),
-      id,
-      pub: safePub,
-    };
-  });
-
   /** @type {[string, PubOptionEntry][]} */
-  const sortedPubsByName = sortableEntries
-    .sort((a, b) => a.sortBy.localeCompare(b.sortBy))
-    .map(({ id, pub }) => [id, pub]);
+  const sortedPubsByName = Object.entries(pub_parameters)
+    .map(([id, pub]) => [id, pub || {}])
+    .sort(([idA, pubA], [idB, pubB]) => {
+      const byName = compareVenueNames(pubA?.name, pubB?.name);
+      if (byName !== 0) {
+        return byName;
+      }
+      return idA.localeCompare(idB, undefined, { sensitivity: "base", numeric: true });
+    });
 
   const optionTextI = optionText || "Select a venue to add here";
   return (

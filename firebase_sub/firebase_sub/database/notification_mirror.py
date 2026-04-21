@@ -30,7 +30,9 @@ class NotificationAckMirrorHandler:
             if key not in ack_payload or ack_payload[key] != value
         }
 
-    def mirror_request_document(self, request_document: DocumentSnapshot) -> None:
+    def mirror_request_document(self, request_document: DocumentSnapshot|None) -> None:
+        if request_document is None:
+            raise ValueError("request_document cannot be None")
         doc_id = request_document.id
         try:
             request_payload = cast(dict[str, Any] | None, request_document.to_dict())

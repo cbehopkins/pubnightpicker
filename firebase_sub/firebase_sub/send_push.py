@@ -5,7 +5,7 @@ import hashlib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Literal, TypedDict
 
 from firebase_sub.constants import ADMIN_EMAIL_ADDR
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -63,6 +63,36 @@ class PushDeliveryResult:
     delivered: int = 0
     invalid: int = 0
     retryable_failures: int = 0
+
+
+JSONPrimitive = str | int | float | bool | None
+JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
+
+
+class _BasePushPayload(TypedDict):
+    title: str
+    body: str
+    url: str
+    tag: str
+    sentAt: str
+
+
+class OpenPushPayload(_BasePushPayload):
+    eventType: Literal["poll_opened"]
+    pollId: str
+
+
+class DiagnosticPushPayload(_BasePushPayload):
+    eventType: Literal["diagnostic_push_test"]
+    requestedValue: JSONValue
+
+
+class CompletePushPayload(_BasePushPayload):
+    eventType: Literal["poll_completed", "poll_rescheduled"]
+    pollId: str
+
+
+PushPayload = OpenPushPayload | DiagnosticPushPayload | CompletePushPayload
 
 
 def web_push_enabled() -> bool:
@@ -165,7 +195,7 @@ def _deactivate_endpoint(endpoint: PushEndpoint | ValidPushEndpoint) -> None:
 
 def _send_to_endpoint(
     endpoint: ValidPushEndpoint,
-    payload: dict[str, Any],
+    payload: PushPayload,
     *,
     ttl_seconds: int,
     topic: str,
@@ -198,7 +228,7 @@ def _send_to_endpoint(
 
 def _deliver_pushes(
     *,
-    payload: dict[str, Any],
+    payload: PushPayload,
     ttl_seconds: int,
     topic: str,
     endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
@@ -286,8 +316,7 @@ def _deliver_pushes(
     return result
 
 
-# FIXME Payloads here should have dataclass
-def _build_open_payload(poll_id: str) -> dict[str, Any]:
+def _build_open_payload(poll_id: str) -> OpenPushPayload:
     return {
         "eventType": PUSH_EVENT_POLL_OPENED,
         "pollId": poll_id,
@@ -299,7 +328,9 @@ def _build_open_payload(poll_id: str) -> dict[str, Any]:
     }
 
 
-def _build_diagnostic_payload(user_id: str, request_value: Any) -> dict[str, Any]:
+def _build_diagnostic_payload(
+    user_id: str, request_value: JSONValue
+) -> DiagnosticPushPayload:
     return {
         "eventType": PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
         "title": "Push diagnostics",
@@ -311,13 +342,12 @@ def _build_diagnostic_payload(user_id: str, request_value: Any) -> dict[str, Any
     }
 
 
-# FIXME again - dataclass this
 def _build_complete_payload(
     poll_id: str,
     poll_dict: PollDocument,
     pub_dict: dict[str, VenueDocument],
     previously_actioned: bool,
-) -> dict[str, Any]:
+) -> CompletePushPayload:
     poll, selected_venue, restaurant_venue = _resolve_payloads(
         poll_dict=poll_dict,
         pub_dict=pub_dict,
@@ -397,7 +427,7 @@ def send_poll_complete_push(
 def send_diagnostic_push(
     *,
     user_id: str,
-    request_value: Any,
+    request_value: JSONValue,
     endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
     dummy_run: bool = False,
 ) -> PushDeliveryResult:

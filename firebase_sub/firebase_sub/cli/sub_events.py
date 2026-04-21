@@ -11,8 +11,9 @@ from firebase_admin import credentials
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
-from firebase_sub.common.logging import log_level_to_int
-from firebase_sub.database.handlers import DbHandler
+from firebase_sub.common.logging import configure_logging, log_level_to_int
+from firebase_sub.common.retry import retry
+from firebase_sub.database.handlers import DbHandler, RetryablePollDataNotReadyError
 from firebase_sub.database.housekeeping import (
     CroniterTrigger,
     HousekeepingRunner,
@@ -37,16 +38,38 @@ _log = logging.getLogger(__name__)
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
-cred = credentials.Certificate(CRED_PATH)
-app = firebase_admin.initialize_app(cred)
+_FIREBASE_APP_INITIALIZED = False
+_DB_HANDLER: DbHandler | None = None
+_COMP_POLL_MAX_RETRIES = 10
+_COMP_POLL_RETRY_DELAY_SECONDS = 1.0
 
-DB_HANDLER = DbHandler()
+def _ensure_firebase_app() -> None:
+    global _FIREBASE_APP_INITIALIZED
+    if _FIREBASE_APP_INITIALIZED:
+        return
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        cred = credentials.Certificate(CRED_PATH)
+        firebase_admin.initialize_app(cred)
+    _FIREBASE_APP_INITIALIZED = True
 
 
-def poll_open_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
+def _get_db_handler() -> DbHandler:
+    global _DB_HANDLER
+    if _DB_HANDLER is None:
+        _ensure_firebase_app()
+        _DB_HANDLER = DbHandler()
+    return _DB_HANDLER
+
+
+def poll_open_actions(
+    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
+) -> ActionMan:
+    db_handler = db_handler or _get_db_handler()
     send_poll_open_email_i = cast(
         ActionCallbackProtocol,
-        partial(send_poll_open_email, emails_src=DB_HANDLER.query_open_emails),
+        partial(send_poll_open_email, emails_src=db_handler.query_open_emails),
     )
     open_am = ActionMan(dummy_email)
     open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
@@ -55,21 +78,24 @@ def poll_open_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
             ActionCallbackProtocol,
             partial(
                 send_poll_open_push,
-                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+                endpoints_src=db_handler.query_active_push_endpoints,
             ),
         )
         open_am.bind(ActionType.PUSH, send_poll_open_push_i, dummy_run=dummy_push)
     return open_am
 
 
-def poll_complete_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
+def poll_complete_actions(
+    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
+) -> ActionMan:
+    db_handler = db_handler or _get_db_handler()
     send_mail_list_email = cast(
         ActionCallbackProtocol,
         partial(send_ampub_email),  # defaults to Google Groups mailing list
     )
     send_personal_email = cast(
         ActionCallbackProtocol,
-        partial(send_ampub_email, emails_src=DB_HANDLER.query_personal_emails),
+        partial(send_ampub_email, emails_src=db_handler.query_personal_emails),
     )
     complete_am = ActionMan(dummy_email)
     complete_am.bind(ActionType.EMAIL, send_mail_list_email)
@@ -79,20 +105,11 @@ def poll_complete_actions(dummy_email: bool, dummy_push: bool) -> ActionMan:
             ActionCallbackProtocol,
             partial(
                 send_poll_complete_push,
-                endpoints_src=DB_HANDLER.query_active_push_endpoints,
+                endpoints_src=db_handler.query_active_push_endpoints,
             ),
         )
         complete_am.bind(ActionType.PUSH, send_push_i, dummy_run=dummy_push)
     return complete_am
-
-
-def configure_logging(log_level: int, logfile: Path | None) -> None:
-    if logfile:
-        print(f"Logging to {logfile}")
-        logging.basicConfig(level=log_level, filename=str(logfile), encoding="utf-8")
-    else:
-        logging.basicConfig(level=log_level)
-    logging.getLogger("google.api_core.bidi").setLevel(logging.WARNING)
 
 
 def sub_events(
@@ -107,38 +124,76 @@ def sub_events(
     poll_lookback_days: int,
 ) -> None:
     configure_logging(loglevel, logfile)
+    db_handler = _get_db_handler()
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
-    notification_mirror = NotificationAckMirrorHandler(DB_HANDLER.db)
+    notification_mirror = NotificationAckMirrorHandler(db_handler.db)
     notification_push_test = NotificationPushTestHandler(
-        DB_HANDLER.db,
-        DB_HANDLER.query_active_push_endpoints_for_user,
+        db_handler.db,
+        db_handler.query_active_push_endpoints_for_user,
         dummy_push=dummy_push,
     )
     housekeeping_runner = HousekeepingRunner(
-        tasks=build_housekeeping_tasks(DB_HANDLER.db),
+        tasks=build_housekeeping_tasks(db_handler.db),
         schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
     )
 
+    open_am = poll_open_actions(dummy_email, dummy_push, db_handler)
+
+    def new_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
+        if document is None:
+            raise ValueError(
+                f"New Event has no document. This indicates a coding error."
+            )
+        db_handler.new_poll_event_handler(open_am, poll_id=document.id)
+
     def open_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(Event(type=EventType.NEW_POLL, doc=document))
+        q.put(Event(type=EventType.NEW_POLL, doc=document, callback=new_handler))
+
+    complete_am = poll_complete_actions(dummy_email, dummy_push, db_handler)
+
+    @retry(
+        retry_errors=(RetryablePollDataNotReadyError,),
+        max_retries=_COMP_POLL_MAX_RETRIES,
+        delay_seconds=_COMP_POLL_RETRY_DELAY_SECONDS,
+        operation_name="completed poll event after pubs not ready",
+    )
+    def comp_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
+        if document is None:
+            raise ValueError(
+                "Completed Event has no document. This indicates a coding error."
+            )
+        db_handler.complete_poll_event_handler(
+            pubs_list, complete_am, poll_id=document.id
+        )
 
     def comp_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(Event(type=EventType.COMP_POLL, doc=document))
-
-    def notification_request_callback(document: DocumentSnapshot) -> None:
-        if notification_push_test.handle_request_document(document):
-            return
-        notification_mirror.mirror_request_document(document)
-
-    def enqueue_housekeeping_tick() -> None:
         q.put(
             Event(
-                type=EventType.TICK,
-                doc=None,
-                callback=lambda: housekeeping_runner.maybe_run(),
+                type=EventType.COMP_POLL,
+                doc=document,
+                callback=comp_handler,
             )
         )
+
+    def notification_request_callback(document: DocumentSnapshot) -> None:
+        if notification_push_test.is_push_test_request(document):
+            q.put(
+                Event(
+                    type=EventType.PUSH_TEST,
+                    doc=document,
+                    callback=lambda doc, pubs_list: notification_push_test.handle_request_document(doc),
+                )
+            )
+        else:
+            q.put(
+                Event(
+                    type=EventType.PUSH,
+                    doc=document,
+                    callback=lambda doc, pubs_list: notification_mirror.mirror_request_document(doc),
+                )
+            )
+
 
     _log.info("Notification request/ack mirror listener started")
 
@@ -153,24 +208,40 @@ def sub_events(
             poll_lookback_days,
         )
 
+    def enqueue_housekeeping_tick() -> None:
+        q.put(
+            Event(
+                type=EventType.TICK,
+                doc=None,
+                callback=lambda doc=None, pubs_list=None: housekeeping_runner.maybe_run(),
+            )
+        )
     if housekeeping_cron:
         _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
+        housekeeping_trigger = CroniterTrigger(
+            cron_expression=housekeeping_cron,
+            callback=enqueue_housekeeping_tick,
+        )
     else:
         _log.info(
             "Housekeeping runner started (interval=%ss)",
             housekeeping_interval_seconds,
         )
+        housekeeping_trigger = PeriodicTrigger(
+            interval_seconds=housekeeping_interval_seconds,
+            callback=enqueue_housekeeping_tick,
+        )
 
     with (
         PollManager(
-            DB_HANDLER.query_polls_by_status(
+            db_handler.query_polls_by_status(
                 completed=False,
                 min_date=poll_min_date,
             ),
             add=open_poll_event_callback,
         ).start_periodic_restart(restart_interval),
         PollManager(
-            DB_HANDLER.query_polls_by_status(
+            db_handler.query_polls_by_status(
                 completed=True,
                 min_date=poll_min_date,
             ),
@@ -178,69 +249,54 @@ def sub_events(
             modify=comp_poll_event_callback,
         ).start_periodic_restart(restart_interval),
         PollManager(
-            DB_HANDLER.query_notification_requests,
+            db_handler.query_notification_requests,
             add=notification_request_callback,
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
-        (
-            CroniterTrigger(
-                cron_expression=housekeeping_cron,
-                callback=enqueue_housekeeping_tick,
-            )
-            if housekeeping_cron
-            else PeriodicTrigger(
-                interval_seconds=housekeeping_interval_seconds,
-                callback=enqueue_housekeeping_tick,
-            )
-        ),
+        housekeeping_trigger,
         PubsList(
-            DB_HANDLER.pub_collection,
-        ) as pubs_list,
+            db_handler.pub_collection,
+        ).start_periodic_restart(restart_interval) as pubs_list,
     ):
-        pubs_list.start_periodic_restart(restart_interval)
-        open_am = poll_open_actions(dummy_email, dummy_push)
-        complete_am = poll_complete_actions(dummy_email, dummy_push)
+        
 
         while True:
             try:
                 event = q.get(timeout=healthcheck_interval_seconds)
             except queue.Empty:
-                if not DB_HANDLER.okay:
+                if not db_handler.okay:
                     raise SystemExit("Exiting due to db is not okay")
                 continue
 
-            if event.doc:
-                doc = event.doc.to_dict()
-                if doc is None:
-                    _log.warning(
-                        "Received event %s for doc %s with no payload",
-                        event.type,
-                        event.doc.id,
-                    )
-                    event_date = None
-                    completed = False
-                else:
-                    event_date = doc.get("date")
-                    completed = doc.get("completed", False)
-                    _log.info(
-                        "New Event: Type:%s, Date:%s, Completed:%s",
-                        event.type,
-                        event_date,
-                        completed,
-                    )
-            else:
-                event_date = None
-                completed = False
-
             event.handle_queue_item(
-                DB_HANDLER,
                 pubs_list,
-                open_am,
-                complete_am,
             )
+            event_date, completed = doc_props(event)
             _log.info(
                 f"Completed Event: Type:{event.type}, Date:{event_date}, Completed:{completed}"
             )
+
+
+def doc_props(event: Event) -> tuple[str | None, bool]:
+    if not event.doc:
+        return None, False
+    doc = event.doc.to_dict()
+    if doc is None:
+        _log.warning(
+            "Received event %s for doc %s with no payload",
+            event.type,
+            event.doc.id,
+        )
+        return None, False
+    event_date = doc.get("date")
+    completed = doc.get("completed", False)
+    _log.info(
+        "New Event: Type:%s, Date:%s, Completed:%s",
+        event.type,
+        event_date,
+        completed,
+    )
+    return event_date, completed
 
 
 @click.command()
