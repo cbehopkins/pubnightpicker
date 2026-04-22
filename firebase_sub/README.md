@@ -28,6 +28,14 @@ Current defaults:
 
 
 # Running/Building the docker
+
+## Build process
+The Docker image uses a multi-stage build process:
+1. **Builder stage**: Poetry builds a Python wheel from `pyproject.toml` and the source code
+2. **Runtime stage**: Dependencies are installed via Poetry (from `poetry.lock`), then the wheel is installed via pip
+
+This approach keeps the package installation clean and production-ready without embedding the full source tree in the image.
+
 To build/run the docker on the pi:
 cd ~/home/git/src/github.com/cbehopkins/pubnightpicker
 sudo docker build -t sub_events .
