@@ -344,23 +344,6 @@ function ManageUsersTable({
     );
 }
 
-function EmptyUsersNotice() {
-    return (
-        <div className="alert alert-info" role="alert">
-            <h2 className="h6 mb-2">No users to display yet</h2>
-            <p className="mb-2">
-                Manage Users reads from the <code>user-public</code> collection.
-            </p>
-            <p className="mb-2">
-                Run this one-time backfill command in the browser console while logged in as admin:
-            </p>
-            <p className="mb-0 small text-break">
-                <code>import('/src/dbtools/migrateUserPublicData.js').then((m) =&gt; m.migrateUserPublicData()).then((result) =&gt; console.log('Done:', result));</code>
-            </p>
-        </div>
-    );
-}
-
 function ManageUsers() {
     const [selectedUID, setSelectedUID] = useState(null);
     const isMobileView = useIsMobileView(MANAGE_USERS_NARROW_BREAKPOINT);
@@ -379,7 +362,7 @@ function ManageUsers() {
             <h1 className="mb-3">Manage Users</h1>
 
             {sortedUsers.length === 0 ? (
-                <EmptyUsersNotice />
+                <p className="text-muted">No users to display.</p>
             ) : isMobileView ? (
                 <ManageUsersList sortedUsers={sortedUsers} />
             ) : (
