@@ -6,6 +6,7 @@ import {
   getAuth,
   signInWithPopup,
   signInWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   signOut,
@@ -14,6 +15,7 @@ import {
   connectFirestoreEmulator,
   getFirestore,
   doc,
+  getDoc,
   setDoc,
   query,
   getDocs,
@@ -40,6 +42,10 @@ if (useFirebaseEmulators) {
 }
 
 const googleProvider = new GoogleAuthProvider();
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
 
 /**
  * Write user public profile data to user-public collection
@@ -134,27 +140,68 @@ const signInWithGoogle = async () => {
 //   }
 // };
 const logInWithEmailAndPassword = async (email, password) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPassword = String(password || "");
+
+  if (!normalizedEmail || !normalizedPassword) {
+    notifyError("Please enter your email and password");
+    return;
+  }
+
   try {
-    const res = await signInWithEmailAndPassword(auth, email, password);
+    const res = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
     const user = res.user;
-    const q = query(collection(db, "users"), where("uid", "==", user.uid));
-    const docs = await getDocs(q);
-    const name = user?.displayName
-    if (docs.docs.length === 0) {
-      await addUserDoc(
-        user.uid,
-        name,
-        "local",
-        user.email,
-      )
+
+    // Keep post-login users/{uid} hydration best-effort so auth success is never masked.
+    try {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (!userDoc.exists()) {
+        await addUserDoc(
+          user.uid,
+          user?.displayName || user?.email || "",
+          "local",
+          user.email,
+        );
+      }
+    } catch (profileErr) {
+      console.error("Signed in, but could not sync users doc", profileErr);
     }
   } catch (err) {
     if (err.name === "FirebaseError") {
+      if (err.code === "auth/user-not-found") {
+        notifyError("No account exists for that email")
+        return
+      }
+      if (err.code === "auth/wrong-password") {
+        notifyError("Incorrect password")
+        return
+      }
       if (err.code === "auth/invalid-email") {
         notifyError("Invalid email address")
         return
       }
-      if (err.code === "auth/invalid-login-credentials") {
+      if (
+        err.code === "auth/invalid-login-credentials"
+        || err.code === "auth/invalid-credential"
+      ) {
+        try {
+          const methods = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+          if (!methods.length) {
+            notifyError("No account exists for that email")
+            return
+          }
+          if (!methods.includes("password")) {
+            if (methods.includes("google.com")) {
+              notifyError("This account uses Google sign-in. Use Google login or reset password after linking email/password.")
+              return
+            }
+            notifyError(`This account does not support password sign-in (providers: ${methods.join(", ")})`)
+            return
+          }
+        } catch (methodErr) {
+          console.error("Failed to fetch sign-in methods", methodErr);
+        }
+
         notifyError("Invalid login details (check email and password)")
         return
       }
