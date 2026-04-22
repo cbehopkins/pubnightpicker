@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /usr/src/app
 
-ENV POETRY_VERSION=1.8.3
+ENV POETRY_VERSION=2.1.3
 ENV POETRY_VIRTUALENVS_CREATE=false
 
 RUN apt-get update \
