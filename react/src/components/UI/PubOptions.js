@@ -14,11 +14,10 @@ import { compareVenueNames } from "../../utils/venueSort";
 
 /** @param {PubOptionsProps} props */
 function PubOptions({ pub_parameters, optionText, selectPubHandler }) {
-  /** @type {[string, PubOptionEntry][]} */
   const sortedPubsByName = Object.entries(pub_parameters)
-    .map(([id, pub]) => [id, pub || {}])
+    .map(([id, pub]) => /** @type {[string, PubOptionEntry]} */ ([id, pub || {}]))
     .sort(([idA, pubA], [idB, pubB]) => {
-      const byName = compareVenueNames(pubA?.name, pubB?.name);
+      const byName = compareVenueNames(pubA.name, pubB.name);
       if (byName !== 0) {
         return byName;
       }
