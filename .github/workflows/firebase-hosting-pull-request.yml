@@ -56,10 +56,14 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           VITE_ENABLE_WEB_PUSH: ${{ secrets.VITE_ENABLE_WEB_PUSH }}
           VITE_WEB_PUSH_PUBLIC_KEY: ${{ secrets.VITE_WEB_PUSH_PUBLIC_KEY }}
+      - name: Run typecheck
+        working-directory: ./react
+        run: npm run typecheck
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER }}
+          firebaseToolsVersion: 15.15.0
           projectId: pubnightpicker
           entryPoint: react
       - name: Set up Java 21
