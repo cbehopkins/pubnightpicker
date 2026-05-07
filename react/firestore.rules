@@ -180,7 +180,12 @@ service cloud.firestore {
       allow delete: if canDeleteAnyMessage() || 
                       (request.auth != null && resource.data.uid == request.auth.uid);
     }
-    
+
+    // Chat push actions - written by admin SDK notifier only; no client access
+    match /chat_push_actions/{messageId} {
+      allow read, write: if false;
+    }
+
     // Default deny all other collections
     match /{document=**} {
       allow read, write: if false;

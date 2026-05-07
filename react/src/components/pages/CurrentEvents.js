@@ -340,149 +340,149 @@ function CurrentEvent({
     <>
       <article className="card shadow-sm mb-4">
         <div className="card-body">
-        <div className="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
-          <div>
-            {mainVenue.website ? (
-              <h2 className="h4 mb-1">
-                <a
-                  href={ensureAbsoluteUrl(mainVenue.website)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="link-primary text-decoration-none"
-                >
-                  {mainVenue.name}
-                </a>
-              </h2>
-            ) : (
-              <h2 className="h4 mb-1">{mainVenue.name}</h2>
+          <div className="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+            <div>
+              {mainVenue.website ? (
+                <h2 className="h4 mb-1">
+                  <a
+                    href={ensureAbsoluteUrl(mainVenue.website)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="link-primary text-decoration-none"
+                  >
+                    {mainVenue.name}
+                  </a>
+                </h2>
+              ) : (
+                <h2 className="h4 mb-1">{mainVenue.name}</h2>
+              )}
+              <p className="text-body-secondary mb-0">{date}</p>
+            </div>
+            {can_chat && (
+              <Button
+                type="button"
+                variant="outline-secondary"
+                className="btn-sm flex-shrink-0"
+                onClick={() => setIsChatOpen(true)}
+              >
+                Event Chat
+              </Button>
             )}
-            <p className="text-body-secondary mb-0">{date}</p>
           </div>
-          {can_chat && (
-            <Button
-              type="button"
-              variant="outline-secondary"
-              className="btn-sm flex-shrink-0"
-              onClick={() => setIsChatOpen(true)}
-            >
-              Event Chat
-            </Button>
+
+          {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
+
+          {shouldShowMainImage && (
+            <div className="mb-3">
+              <img
+                src={mainVenueImage}
+                alt="What the venue looks like"
+                className={`img-fluid rounded ${styles.image}`}
+                loading="lazy"
+                decoding="async"
+                onError={() => setHasMainImageLoadError(true)}
+              />
+            </div>
           )}
-        </div>
 
-        {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
+          {!shouldShowMainImage && (
+            <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
+              <span className="text-body-secondary">No image available</span>
+            </div>
+          )}
 
-        {shouldShowMainImage && (
-          <div className="mb-3">
-            <img
-              src={mainVenueImage}
-              alt="What the venue looks like"
-              className={`img-fluid rounded ${styles.image}`}
-              loading="lazy"
-              decoding="async"
-              onError={() => setHasMainImageLoadError(true)}
+          {currUserId && (
+            <AttendanceActions
+              className={styles.attendanceActions}
+              buttonClassName="btn-sm"
+              canComeSelected={mainVenue.userCanCome}
+              cannotComeSelected={mainVenue.userCannotCome}
+              canComeSelectedLabel="Can come confirmed"
+              cannotComeSelectedLabel="Cannot come confirmed"
+              clearMode="button"
+              onSetStatus={attendanceHandlers.setMainAttendanceStatus}
+              onClear={attendanceHandlers.clearMainAttendance}
             />
-          </div>
-        )}
+          )}
 
-        {!shouldShowMainImage && (
-          <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
-            <span className="text-body-secondary">No image available</span>
-          </div>
-        )}
+          {mainVenue.allowShowVoters && (
+            <div className="mb-3">
+              <QuestionRender className={styles.actionBlock} question="Show venue attendance">
+                <ShowAttendance
+                  voters={mainVenue.dedupedVotes}
+                  canCome={mainVenue.canCome}
+                  cannotCome={mainVenue.cannotCome}
+                />
+              </QuestionRender>
+            </div>
+          )}
 
-        {currUserId && (
-          <AttendanceActions
-            className={styles.attendanceActions}
-            buttonClassName="btn-sm"
-            canComeSelected={mainVenue.userCanCome}
-            cannotComeSelected={mainVenue.userCannotCome}
-            canComeSelectedLabel="Can come confirmed"
-            cannotComeSelectedLabel="Cannot come confirmed"
-            clearMode="button"
-            onSetStatus={attendanceHandlers.setMainAttendanceStatus}
-            onClear={attendanceHandlers.clearMainAttendance}
-          />
-        )}
+          {restaurantVenue && (
+            <section className="border rounded p-3 bg-body-tertiary mb-3">
+              <h3 className="h6 mb-2">
+                Restaurant: {restaurantVenue.name}
+                {restaurantVenue.restaurantTime ? ` (${restaurantVenue.restaurantTime})` : ""}
+              </h3>
+              {restaurantVenue.address && <p className="mb-3">{restaurantVenue.address}</p>}
 
-        {mainVenue.allowShowVoters && (
-          <div className="mb-3">
-            <QuestionRender className={styles.actionBlock} question="Show venue attendance">
-              <ShowAttendance
-                voters={mainVenue.dedupedVotes}
-                canCome={mainVenue.canCome}
-                cannotCome={mainVenue.cannotCome}
-              />
-            </QuestionRender>
-          </div>
-        )}
+              {currUserId && (
+                <AttendanceActions
+                  className={styles.attendanceActions}
+                  buttonClassName="btn-sm"
+                  canComeSelected={restaurantVenue.userCanCome}
+                  cannotComeSelected={restaurantVenue.userCannotCome}
+                  canComeSelectedLabel="Can come confirmed"
+                  cannotComeSelectedLabel="Cannot come confirmed"
+                  clearMode="button"
+                  onSetStatus={attendanceHandlers.setRestaurantAttendanceStatus}
+                  onClear={attendanceHandlers.clearRestaurantAttendance}
+                />
+              )}
 
-        {restaurantVenue && (
-          <section className="border rounded p-3 bg-body-tertiary mb-3">
-            <h3 className="h6 mb-2">
-              Restaurant: {restaurantVenue.name}
-              {restaurantVenue.restaurantTime ? ` (${restaurantVenue.restaurantTime})` : ""}
-            </h3>
-            {restaurantVenue.address && <p className="mb-3">{restaurantVenue.address}</p>}
+              {restaurantVenue.allowShowVoters && (
+                <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
+                  <ShowAttendance
+                    voters={restaurantVenue.dedupedVotes}
+                    canCome={restaurantVenue.canCome}
+                    cannotCome={restaurantVenue.cannotCome}
+                  />
+                </QuestionRender>
+              )}
+            </section>
+          )}
 
-            {currUserId && (
-              <AttendanceActions
-                className={styles.attendanceActions}
-                buttonClassName="btn-sm"
-                canComeSelected={restaurantVenue.userCanCome}
-                cannotComeSelected={restaurantVenue.userCannotCome}
-                canComeSelectedLabel="Can come confirmed"
-                cannotComeSelectedLabel="Cannot come confirmed"
-                clearMode="button"
-                onSetStatus={attendanceHandlers.setRestaurantAttendanceStatus}
-                onClear={attendanceHandlers.clearRestaurantAttendance}
-              />
+          <div className="d-flex flex-wrap gap-2">
+            {can_reschedule && (
+              <Button
+                type="button"
+                variant="outline-primary"
+                onClick={() =>
+                  on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
+                }
+              >
+                Reschedule Event
+              </Button>
             )}
 
-            {restaurantVenue.allowShowVoters && (
-              <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
-                <ShowAttendance
-                  voters={restaurantVenue.dedupedVotes}
-                  canCome={restaurantVenue.canCome}
-                  cannotCome={restaurantVenue.cannotCome}
+
+            {can_delete_event && (
+              <QuestionRender className={styles.actionBlock} question="Delete This Event">
+                <ConfirmModal
+                  title="Delete Current event"
+                  detail="The current event will be deleted"
+                  confirm_text="Do Nothing"
+                  cancel_text="Delete it"
+                  on_cancel={async () => {
+                    try {
+                      await deletePoll(poll_id);
+                    } catch (error) {
+                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
+                    }
+                  }}
                 />
               </QuestionRender>
             )}
-          </section>
-        )}
-
-        <div className="d-flex flex-wrap gap-2">
-          {can_reschedule && (
-            <Button
-              type="button"
-              variant="outline-primary"
-              onClick={() =>
-                on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
-              }
-            >
-              Reschedule Event
-            </Button>
-          )}
-
-
-          {can_delete_event && (
-            <QuestionRender className={styles.actionBlock} question="Delete This Event">
-              <ConfirmModal
-                title="Delete Current event"
-                detail="The current event will be deleted"
-                confirm_text="Do Nothing"
-                cancel_text="Delete it"
-                on_cancel={async () => {
-                  try {
-                    await deletePoll(poll_id);
-                  } catch (error) {
-                    notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
-                  }
-                }}
-              />
-            </QuestionRender>
-          )}
-        </div>
+          </div>
         </div>
       </article>
 

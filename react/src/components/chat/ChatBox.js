@@ -67,12 +67,12 @@ const ChatBox = ({ scope }) => {
     return (<div className={styles.chatBox}>
         <div className={styles.messagesWrapper}>
             <div >
-            {messages?.map((message) => (
-                <Message key={message.id} message={message} users={users} />
-            ))}
-        </div>
-        {/* when a new message enters the chat, the screen scrolls down to the scroll div */}
-        <span ref={scroll}></span>
+                {messages?.map((message) => (
+                    <Message key={message.id} message={message} users={users} />
+                ))}
+            </div>
+            {/* when a new message enters the chat, the screen scrolls down to the scroll div */}
+            <span ref={scroll}></span>
         </div>
         <div><SendMessage scroll={scroll} scope={scope} /></div>
     </div>

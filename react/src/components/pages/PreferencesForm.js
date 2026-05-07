@@ -7,7 +7,7 @@ import { Card, Col, Form, Row } from "react-bootstrap";
 import Button from "../UI/Button";
 import useWebPushSettings from "../../hooks/useWebPushSettings";
 
-function PushPreferences({ uid, initialEnabled }) {
+function PushPreferences({ uid, initialEnabled, pushPreferences }) {
   const {
     busy,
     disable,
@@ -40,7 +40,7 @@ function PushPreferences({ uid, initialEnabled }) {
             <div>
               <h3 className="h5 mb-1">Web Push Notifications</h3>
               <p className="mb-0 text-body-secondary">
-                Receive browser notifications when polls open, complete, or are rescheduled.
+                Receive browser notifications for the events you care about.
               </p>
             </div>
             <div className="small text-body-secondary">
@@ -73,6 +73,40 @@ function PushPreferences({ uid, initialEnabled }) {
                 {busy && enabled ? "Disabling..." : "Disable Push"}
               </Button>
             </div>
+            {enabled && (
+              <div className="d-flex flex-column gap-1 mt-1">
+                <input type="hidden" name="push_prefs_visible" value="1" />
+                <p className="mb-1 small fw-semibold">Notify me when:</p>
+                <Form.Check
+                  id="push_poll_opens"
+                  type="checkbox"
+                  name="push_poll_opens"
+                  defaultChecked={pushPreferences?.pollOpens !== false}
+                  label="A poll opens"
+                />
+                <Form.Check
+                  id="push_poll_completes"
+                  type="checkbox"
+                  name="push_poll_completes"
+                  defaultChecked={pushPreferences?.pollCompletes !== false}
+                  label="A poll completes"
+                />
+                <Form.Check
+                  id="push_global_chat"
+                  type="checkbox"
+                  name="push_global_chat"
+                  defaultChecked={pushPreferences?.globalChat === true}
+                  label="A message is sent in global chat"
+                />
+                <Form.Check
+                  id="push_event_chat"
+                  type="checkbox"
+                  name="push_event_chat"
+                  defaultChecked={pushPreferences?.eventChat === true}
+                  label="A message is sent in an event chat I am attending"
+                />
+              </div>
+            )}
           </div>
         </Card.Body>
       </Card>
@@ -121,6 +155,7 @@ function PreferencesForm({ method }) {
   const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;
   const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
   const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
+  const pushPreferences = loggedIn ? currUserDoc?.pushPreferences ?? null : null;
   const photoUrl = useSelector((state) => state.auth.photoUrl);
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -219,7 +254,7 @@ function PreferencesForm({ method }) {
               />
             </Col>
 
-            <PushPreferences uid={uid} initialEnabled={webPushEnabled} />
+            <PushPreferences uid={uid} initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />
 
             <Col xs={12} className="d-flex gap-2">
               <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>

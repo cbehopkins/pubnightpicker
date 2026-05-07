@@ -4,9 +4,18 @@
             "collectionGroup": "messages",
             "queryScope": "COLLECTION",
             "fields": [
-                { "fieldPath": "scopeType", "order": "ASCENDING" },
-                { "fieldPath": "scopeId", "order": "ASCENDING" },
-                { "fieldPath": "createdAt", "order": "DESCENDING" }
+                {
+                    "fieldPath": "scopeType",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "scopeId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "createdAt",
+                    "order": "DESCENDING"
+                }
             ]
         }
     ],
