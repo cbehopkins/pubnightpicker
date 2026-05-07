@@ -7,7 +7,16 @@ import { Card, Col, Form, Row } from "react-bootstrap";
 import Button from "../UI/Button";
 import useWebPushSettings from "../../hooks/useWebPushSettings";
 
-function PushPreferences({ uid, initialEnabled, pushPreferences }) {
+function normalizePushPreferences(pushPreferences) {
+  return {
+    pollOpens: pushPreferences?.pollOpens !== false,
+    pollCompletes: pushPreferences?.pollCompletes !== false,
+    globalChat: pushPreferences?.globalChat === true,
+    eventChat: pushPreferences?.eventChat === true,
+  };
+}
+
+export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
   const {
     busy,
     disable,
@@ -18,6 +27,13 @@ function PushPreferences({ uid, initialEnabled, pushPreferences }) {
     permission,
     supported,
   } = useWebPushSettings(uid, initialEnabled);
+  const [formPreferences, setFormPreferences] = useState(
+    normalizePushPreferences(pushPreferences)
+  );
+
+  useEffect(() => {
+    setFormPreferences(normalizePushPreferences(pushPreferences));
+  }, [pushPreferences]);
 
   if (!featureEnabled) {
     return null;
@@ -81,28 +97,32 @@ function PushPreferences({ uid, initialEnabled, pushPreferences }) {
                   id="push_poll_opens"
                   type="checkbox"
                   name="push_poll_opens"
-                  defaultChecked={pushPreferences?.pollOpens !== false}
+                  checked={formPreferences.pollOpens}
+                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollOpens: event.target.checked }))}
                   label="A poll opens"
                 />
                 <Form.Check
                   id="push_poll_completes"
                   type="checkbox"
                   name="push_poll_completes"
-                  defaultChecked={pushPreferences?.pollCompletes !== false}
+                  checked={formPreferences.pollCompletes}
+                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollCompletes: event.target.checked }))}
                   label="A poll completes"
                 />
                 <Form.Check
                   id="push_global_chat"
                   type="checkbox"
                   name="push_global_chat"
-                  defaultChecked={pushPreferences?.globalChat === true}
+                  checked={formPreferences.globalChat}
+                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, globalChat: event.target.checked }))}
                   label="A message is sent in global chat"
                 />
                 <Form.Check
                   id="push_event_chat"
                   type="checkbox"
                   name="push_event_chat"
-                  defaultChecked={pushPreferences?.eventChat === true}
+                  checked={formPreferences.eventChat}
+                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, eventChat: event.target.checked }))}
                   label="A message is sent in an event chat I am attending"
                 />
               </div>

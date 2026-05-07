@@ -19,6 +19,8 @@ class EventType(enum.StrEnum):
     TICK = "tick"
     PUSH_TEST = "push_test"
     PUSH = "push"
+    CHAT_MESSAGE = "chat_message"
+
 
 @dataclass
 class Event:

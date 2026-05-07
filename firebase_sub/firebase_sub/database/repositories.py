@@ -13,6 +13,7 @@ from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
+from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
 

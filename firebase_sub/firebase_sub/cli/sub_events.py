@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import queue
 from datetime import date, timedelta
@@ -26,6 +27,11 @@ from firebase_sub.database.notification_push_diag import NotificationPushTestHan
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
+from firebase_sub.push_contract import (
+    PUSH_PREFERENCE_FIELD,
+    PUSH_EVENT_POLL_OPENED,
+    PUSH_EVENT_POLL_COMPLETED,
+)
 from firebase_sub.send_email import send_ampub_email, send_poll_open_email
 from firebase_sub.send_push import (
     send_poll_complete_push,
@@ -41,6 +47,7 @@ _FIREBASE_APP_INITIALIZED = False
 _DB_HANDLER: DbHandler | None = None
 _COMP_POLL_MAX_RETRIES = 10
 _COMP_POLL_RETRY_DELAY_SECONDS = 1.0
+
 
 def _ensure_firebase_app() -> None:
     global _FIREBASE_APP_INITIALIZED
@@ -77,7 +84,10 @@ def poll_open_actions(
             ActionCallbackProtocol,
             partial(
                 send_poll_open_push,
-                endpoints_src=db_handler.query_active_push_endpoints,
+                endpoints_src=partial(
+                    db_handler.query_active_push_endpoints,
+                    PUSH_PREFERENCE_FIELD[PUSH_EVENT_POLL_OPENED],
+                ),
             ),
         )
         open_am.bind(ActionType.PUSH, send_poll_open_push_i, dummy_run=dummy_push)
@@ -104,7 +114,10 @@ def poll_complete_actions(
             ActionCallbackProtocol,
             partial(
                 send_poll_complete_push,
-                endpoints_src=db_handler.query_active_push_endpoints,
+                endpoints_src=partial(
+                    db_handler.query_active_push_endpoints,
+                    PUSH_PREFERENCE_FIELD[PUSH_EVENT_POLL_COMPLETED],
+                ),
             ),
         )
         complete_am.bind(ActionType.PUSH, send_push_i, dummy_run=dummy_push)
@@ -181,7 +194,9 @@ def sub_events(
                 Event(
                     type=EventType.PUSH_TEST,
                     doc=document,
-                    callback=lambda doc, pubs_list: notification_push_test.handle_request_document(doc),
+                    callback=lambda doc, pubs_list: notification_push_test.handle_request_document(
+                        doc
+                    ),
                 )
             )
         else:
@@ -189,10 +204,11 @@ def sub_events(
                 Event(
                     type=EventType.PUSH,
                     doc=document,
-                    callback=lambda doc, pubs_list: notification_mirror.mirror_request_document(doc),
+                    callback=lambda doc, pubs_list: notification_mirror.mirror_request_document(
+                        doc
+                    ),
                 )
             )
-
 
     _log.info("Notification request/ack mirror listener started")
 
@@ -215,6 +231,7 @@ def sub_events(
                 callback=lambda doc=None, pubs_list=None: housekeeping_runner.maybe_run(),
             )
         )
+
     if housekeeping_cron:
         _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
         housekeeping_trigger = CroniterTrigger(
@@ -231,7 +248,36 @@ def sub_events(
             callback=enqueue_housekeeping_tick,
         )
 
-    with (
+    def chat_message_callback(document: DocumentSnapshot) -> None:
+        message_id = document.id
+        q.put(
+            Event(
+                type=EventType.CHAT_MESSAGE,
+                doc=document,
+                callback=lambda doc, pubs_list: (
+                    db_handler.chat_message_push_handler(
+                        message_id=message_id,
+                        message_doc=cast(DocumentSnapshot, doc),
+                        dummy_run=dummy_push,
+                    )
+                    if doc is not None
+                    else None
+                ),
+            )
+        )
+
+    messages_manager = (
+        PollManager(
+            db_handler.query_messages,
+            add=chat_message_callback,
+        ).start_periodic_restart(restart_interval)
+        if web_push_enabled()
+        else None
+    )
+    if web_push_enabled():
+        _log.info("Chat message push listener started")
+
+    context_managers = [
         PollManager(
             db_handler.query_polls_by_status(
                 completed=False,
@@ -253,11 +299,18 @@ def sub_events(
             modify=notification_request_callback,
         ).start_periodic_restart(restart_interval),
         housekeeping_trigger,
-        PubsList(
-            db_handler.pub_collection,
-        ).start_periodic_restart(restart_interval) as pubs_list,
-    ):
-        
+    ]
+    if messages_manager is not None:
+        context_managers.append(messages_manager)
+
+    pubs_list_manager = PubsList(
+        db_handler.pub_collection,
+    ).start_periodic_restart(restart_interval)
+
+    with contextlib.ExitStack() as stack:
+        for cm in context_managers:
+            stack.enter_context(cm)
+        pubs_list = stack.enter_context(pubs_list_manager)
 
         while True:
             try:
