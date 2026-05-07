@@ -38,6 +38,16 @@ service cloud.firestore {
       return hasRole("canDeleteAnyMessage");
     }
 
+    function isValidNewMessage() {
+      let d = request.resource.data;
+      // scopeType and scopeId are required on all new messages.
+      // scopeType must be one of the two valid scope values.
+      return d.keys().hasAll(["scopeType", "scopeId"])
+        && d.scopeType in ["global", "event"]
+        && d.scopeId is string
+        && d.scopeId.size() > 0;
+    }
+
     function canUseNotificationPing() {
       return isAdmin() || canCreatePoll() || canCompletePoll();
     }
@@ -166,7 +176,7 @@ service cloud.firestore {
     // Messages collection - known users can read/create, admins have full access, users can delete their own
     match /messages/{messageId} {
       allow read: if canChat();
-      allow create: if canChat();
+      allow create: if canChat() && isValidNewMessage();
       allow delete: if canDeleteAnyMessage() || 
                       (request.auth != null && resource.data.uid == request.auth.uid);
     }

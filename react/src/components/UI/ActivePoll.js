@@ -12,6 +12,7 @@ import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import NotificationPingStatus from "./NotificationPingStatus";
+import EventChatModal from "../pages/EventChatModal";
 
 const venueTypeOptions = ["all", "pub", "restaurant", "event"];
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
@@ -107,6 +108,8 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, 
 function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile }) {
     const canDeletePoll = useRole("canCreatePoll");
     const canAddPub = useRole("canAddPubToPoll");
+    const canChat = useRole("canChat");
+    const [isChatOpen, setIsChatOpen] = useState(false);
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [pubFilters, setPubFilters] = useState({});
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
@@ -161,6 +164,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const styleToUse = mobile ? styles.poll_mobile : styles.poll;
 
     return (
+        <>
         <div className={styleToUse}>
             <h2>{poll_data.date}</h2>
             {canAddPub && (
@@ -228,6 +232,15 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                         timeoutMs={60000}
                     />
                 )}
+                {canChat && (
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        onClick={() => setIsChatOpen(true)}
+                    >
+                        Event Chat
+                    </Button>
+                )}
             </div>
             <PollVote
                 poll_data={poll_data}
@@ -235,6 +248,11 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                 on_complete={on_complete}
             />
         </div>
+
+        {isChatOpen && (
+            <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+        )}
+        </>
     );
 }
 

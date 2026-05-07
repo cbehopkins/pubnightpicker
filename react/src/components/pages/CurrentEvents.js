@@ -18,6 +18,7 @@ import Button from "../UI/Button";
 import ReschedulePollModal from "./ReschedulePollModal";
 import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
+import EventChatModal from "./EventChatModal";
 
 /**
  * Ensure a user-supplied URL is absolute so browsers don't treat it as relative.
@@ -78,7 +79,7 @@ function normalizeImageUrl(value) {
 /**
  * @param {{ value: EventPollValue, pub_parameters: PubParametersMap }} props
  */
-function PastEvent({ value, pub_parameters }) {
+function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   if (!pub_parameters[value.selected]) {
     return <div></div>;
   }
@@ -87,6 +88,7 @@ function PastEvent({ value, pub_parameters }) {
   const pubWebsite = pub_parameters[value.selected]?.web_site;
   const pubImage = normalizeImageUrl(pub_parameters[value.selected]?.pubImage);
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     setHasImageLoadError(false);
@@ -126,8 +128,22 @@ function PastEvent({ value, pub_parameters }) {
             )}
           </h5>
           <p className="card-text text-body-secondary mb-3">{value.date}</p>
+          {can_chat && (
+            <Button
+              type="button"
+              variant="outline-secondary"
+              className="mt-auto align-self-start"
+              onClick={() => setIsChatOpen(true)}
+            >
+              Event Chat
+            </Button>
+          )}
         </div>
       </div>
+
+      {isChatOpen && (
+        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+      )}
     </div>
   );
 }
@@ -150,6 +166,7 @@ export function PastEvents() {
   const pageIndex = cursorTrail.length;
   const pub_parameters = usePubs();
   const sortedPollsByDate = [...pollData.sortedByDate(true)];
+  const canChat = useRole("canChat");
 
   const writePaginationParams = useCallback(
     (nextPageSize, nextCursorTrail) => {
@@ -216,7 +233,7 @@ export function PastEvents() {
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
           {sortedPollsByDate.map(([key, value]) => {
-            return <PastEvent key={key} value={value} pub_parameters={pub_parameters} />;
+            return <PastEvent key={key} poll_id={key} value={value} pub_parameters={pub_parameters} can_chat={canChat} />;
           })}
         </div>
 
@@ -269,6 +286,7 @@ function CurrentEvent({
   pub_parameters,
   can_reschedule,
   can_delete_event,
+  can_chat,
   show_voters,
   on_open_reschedule,
 }) {
@@ -278,6 +296,7 @@ function CurrentEvent({
   );
   const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
   const canReadProtectedEventData = Boolean(normalizedUserId);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [votes] = useVotes(poll_id, canReadProtectedEventData);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(
     poll_id,
@@ -316,8 +335,9 @@ function CurrentEvent({
   );
 
   return (
-    <article className="card shadow-sm mb-4">
-      <div className="card-body">
+    <>
+      <article className="card shadow-sm mb-4">
+        <div className="card-body">
         <div className="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
           <div>
             {mainVenue.website ? (
@@ -432,6 +452,16 @@ function CurrentEvent({
             </Button>
           )}
 
+          {can_chat && (
+            <Button
+              type="button"
+              variant="outline-secondary"
+              onClick={() => setIsChatOpen(true)}
+            >
+              Event Chat
+            </Button>
+          )}
+
           {can_delete_event && (
             <QuestionRender className={styles.actionBlock} question="Delete This Event">
               <ConfirmModal
@@ -450,8 +480,13 @@ function CurrentEvent({
             </QuestionRender>
           )}
         </div>
-      </div>
-    </article>
+        </div>
+      </article>
+
+      {isChatOpen && (
+        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+      )}
+    </>
   );
 }
 
@@ -461,6 +496,7 @@ function CurrentEvents() {
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
+  const canChat = useRole("canChat");
   const rescheduleState = useReschedulePoll(pub_parameters, canReschedule);
 
   return (
@@ -499,6 +535,7 @@ function CurrentEvents() {
               pub_parameters={pub_parameters}
               can_reschedule={canReschedule}
               can_delete_event={canDeleteEvent}
+              can_chat={canChat}
               show_voters={canShowVoters}
               on_open_reschedule={rescheduleState.openRescheduleModal}
             />
