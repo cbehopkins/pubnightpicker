@@ -28,7 +28,12 @@ class TestSeedSmokeIntegration:
 
     def test_smoke_admin_private_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = firestore_client.collection("users").document(SMOKE_ADMIN_UID).get().to_dict()
+        doc = (
+            firestore_client.collection("users")
+            .document(SMOKE_ADMIN_UID)
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         assert doc["uid"] == SMOKE_ADMIN_UID
         assert doc["name"] == "Smoke Admin"
@@ -37,7 +42,12 @@ class TestSeedSmokeIntegration:
 
     def test_smoke_admin_public_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = firestore_client.collection("user-public").document(SMOKE_ADMIN_UID).get().to_dict()
+        doc = (
+            firestore_client.collection("user-public")
+            .document(SMOKE_ADMIN_UID)
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         assert doc["uid"] == SMOKE_ADMIN_UID
 
@@ -50,22 +60,42 @@ class TestSeedSmokeIntegration:
 
         for role in ADMIN_DEFAULT_ROLES:
             role_doc = roles_ref.document(role).get().to_dict() or {}
-            assert role_doc.get(SMOKE_ADMIN_UID) is True, f"Expected {SMOKE_ADMIN_UID} in roles/{role}"
+            assert (
+                role_doc.get(SMOKE_ADMIN_UID) is True
+            ), f"Expected {SMOKE_ADMIN_UID} in roles/{role}"
 
     def test_smoke_user_a_docs(self, firestore_client):
         seed_smoke_data(firestore_client)
-        priv = firestore_client.collection("users").document(SMOKE_USER_A_UID).get().to_dict()
-        pub = firestore_client.collection("user-public").document(SMOKE_USER_A_UID).get().to_dict()
+        priv = (
+            firestore_client.collection("users")
+            .document(SMOKE_USER_A_UID)
+            .get()
+            .to_dict()
+        )
+        pub = (
+            firestore_client.collection("user-public")
+            .document(SMOKE_USER_A_UID)
+            .get()
+            .to_dict()
+        )
         assert priv is not None
         assert pub is not None
         assert priv["webPushEnabled"] is False
         # User A has canChat
-        role_doc = firestore_client.collection("roles").document("canChat").get().to_dict() or {}
+        role_doc = (
+            firestore_client.collection("roles").document("canChat").get().to_dict()
+            or {}
+        )
         assert role_doc.get(SMOKE_USER_A_UID) is True
 
     def test_smoke_user_b_push_enabled(self, firestore_client):
         seed_smoke_data(firestore_client)
-        priv = firestore_client.collection("users").document(SMOKE_USER_B_UID).get().to_dict()
+        priv = (
+            firestore_client.collection("users")
+            .document(SMOKE_USER_B_UID)
+            .get()
+            .to_dict()
+        )
         assert priv is not None
         assert priv["webPushEnabled"] is True
         assert priv["pushPreferences"]["globalChat"] is True
@@ -97,7 +127,12 @@ class TestSeedSmokeIntegration:
 
         seed_smoke_data(firestore_client)
 
-        doc = firestore_client.collection("users").document(SMOKE_USER_A_UID).get().to_dict()
+        doc = (
+            firestore_client.collection("users")
+            .document(SMOKE_USER_A_UID)
+            .get()
+            .to_dict()
+        )
         # The second seed call must not overwrite the manually set name
         assert doc["name"] == "Custom Name"
 
@@ -107,35 +142,61 @@ class TestSeedSmokeIntegration:
         second = seed_smoke_data(firestore_client)
 
         assert len(first.wrote_docs) > 0, "First seed should report written docs"
-        assert len(second.skipped_docs) > 0, "Second seed should report skipped docs (already exist)"
+        assert (
+            len(second.skipped_docs) > 0
+        ), "Second seed should report skipped docs (already exist)"
 
 
 @pytest.mark.integration
 class TestSetDocIfMissingIntegration:
     def test_writes_when_absent(self, firestore_client):
-        _set_doc_if_missing(firestore_client, "users", "__test-absent__", {"x": 1}, dry_run=False)
-        doc = firestore_client.collection("users").document("__test-absent__").get().to_dict()
+        _set_doc_if_missing(
+            firestore_client, "users", "test-absent", {"x": 1}, dry_run=False
+        )
+        doc = (
+            firestore_client.collection("users")
+            .document("test-absent")
+            .get()
+            .to_dict()
+        )
         assert doc == {"x": 1}
 
     def test_skips_when_present(self, firestore_client):
-        firestore_client.collection("users").document("__test-present__").set({"x": 99})
+        firestore_client.collection("users").document("test-present").set({"x": 99})
         written = _set_doc_if_missing(
-            firestore_client, "users", "__test-present__", {"x": 1}, dry_run=False
+            firestore_client, "users", "test-present", {"x": 1}, dry_run=False
         )
         assert written is False
-        doc = firestore_client.collection("users").document("__test-present__").get().to_dict()
+        doc = (
+            firestore_client.collection("users")
+            .document("test-present")
+            .get()
+            .to_dict()
+        )
         assert doc["x"] == 99  # unchanged
 
 
 @pytest.mark.integration
 class TestGrantRoleIntegration:
     def test_grants_new_role(self, firestore_client):
-        result = _grant_role(firestore_client, role="__test-role__", uid="__test-uid__", dry_run=False)
+        result = _grant_role(
+            firestore_client, role="test-role", uid="test-uid", dry_run=False
+        )
         assert result.already_granted is False
-        doc = firestore_client.collection("roles").document("__test-role__").get().to_dict() or {}
-        assert doc.get("__test-uid__") is True
+        doc = (
+            firestore_client.collection("roles")
+            .document("test-role")
+            .get()
+            .to_dict()
+            or {}
+        )
+        assert doc.get("test-uid") is True
 
     def test_detects_existing_grant(self, firestore_client):
-        firestore_client.collection("roles").document("__test-role2__").set({"__uid2__": True})
-        result = _grant_role(firestore_client, role="__test-role2__", uid="__uid2__", dry_run=False)
+        firestore_client.collection("roles").document("test-role2").set(
+            {"uid2": True}
+        )
+        result = _grant_role(
+            firestore_client, role="test-role2", uid="uid2", dry_run=False
+        )
         assert result.already_granted is True

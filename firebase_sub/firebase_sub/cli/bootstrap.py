@@ -104,7 +104,9 @@ def _grant_role(db, role: str, uid: str, dry_run: bool) -> RoleGrantResult:
 # ---------------------------------------------------------------------------
 
 
-def _set_doc_if_missing(db: Client, collection: str, doc_id: str, data: dict[str, Any], dry_run: bool) -> bool:
+def _set_doc_if_missing(
+    db: Client, collection: str, doc_id: str, data: dict[str, Any], dry_run: bool
+) -> bool:
     """Write *data* only when the document does not exist yet. Returns True when a write occurred."""
     ref = db.collection(collection).document(doc_id)
     if ref.get().to_dict() is not None:
@@ -149,8 +151,14 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         "photoUrl": None,
         "votesVisible": True,
     }
-    _record(f"users/{SMOKE_ADMIN_UID}", _set_doc_if_missing(db, "users", SMOKE_ADMIN_UID, admin_private, dry_run))
-    _record(f"user-public/{SMOKE_ADMIN_UID}", _set_doc_if_missing(db, "user-public", SMOKE_ADMIN_UID, admin_public, dry_run))
+    _record(
+        f"users/{SMOKE_ADMIN_UID}",
+        _set_doc_if_missing(db, "users", SMOKE_ADMIN_UID, admin_private, dry_run),
+    )
+    _record(
+        f"user-public/{SMOKE_ADMIN_UID}",
+        _set_doc_if_missing(db, "user-public", SMOKE_ADMIN_UID, admin_public, dry_run),
+    )
 
     for role in ["admin", *ADMIN_DEFAULT_ROLES]:
         result = _grant_role(db, role=role, uid=SMOKE_ADMIN_UID, dry_run=dry_run)
@@ -174,9 +182,20 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         "photoUrl": None,
         "votesVisible": False,
     }
-    _record(f"users/{SMOKE_USER_A_UID}", _set_doc_if_missing(db, "users", SMOKE_USER_A_UID, user_a_private, dry_run))
-    _record(f"user-public/{SMOKE_USER_A_UID}", _set_doc_if_missing(db, "user-public", SMOKE_USER_A_UID, user_a_public, dry_run))
-    _record(f"roles/canChat → {SMOKE_USER_A_UID}", not _grant_role(db, "canChat", SMOKE_USER_A_UID, dry_run).already_granted)
+    _record(
+        f"users/{SMOKE_USER_A_UID}",
+        _set_doc_if_missing(db, "users", SMOKE_USER_A_UID, user_a_private, dry_run),
+    )
+    _record(
+        f"user-public/{SMOKE_USER_A_UID}",
+        _set_doc_if_missing(
+            db, "user-public", SMOKE_USER_A_UID, user_a_public, dry_run
+        ),
+    )
+    _record(
+        f"roles/canChat → {SMOKE_USER_A_UID}",
+        not _grant_role(db, "canChat", SMOKE_USER_A_UID, dry_run).already_granted,
+    )
 
     # User B (recipient, push-enabled, global chat opted in) -------------------
     user_b_private: dict[str, Any] = {
@@ -196,9 +215,20 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         "photoUrl": None,
         "votesVisible": False,
     }
-    _record(f"users/{SMOKE_USER_B_UID}", _set_doc_if_missing(db, "users", SMOKE_USER_B_UID, user_b_private, dry_run))
-    _record(f"user-public/{SMOKE_USER_B_UID}", _set_doc_if_missing(db, "user-public", SMOKE_USER_B_UID, user_b_public, dry_run))
-    _record(f"roles/canChat → {SMOKE_USER_B_UID}", not _grant_role(db, "canChat", SMOKE_USER_B_UID, dry_run).already_granted)
+    _record(
+        f"users/{SMOKE_USER_B_UID}",
+        _set_doc_if_missing(db, "users", SMOKE_USER_B_UID, user_b_private, dry_run),
+    )
+    _record(
+        f"user-public/{SMOKE_USER_B_UID}",
+        _set_doc_if_missing(
+            db, "user-public", SMOKE_USER_B_UID, user_b_public, dry_run
+        ),
+    )
+    _record(
+        f"roles/canChat → {SMOKE_USER_B_UID}",
+        not _grant_role(db, "canChat", SMOKE_USER_B_UID, dry_run).already_granted,
+    )
 
     # User B push endpoint (stub values; real push not used in tests) ----------
     endpoint_ref = (
@@ -238,7 +268,9 @@ def cli() -> None:
 @cli.command("create-admin")
 @click.option("--uid", required=True, help="Firebase Auth UID for the admin user")
 @click.option("--name", default="Admin User", show_default=True)
-@click.option("--email", default="", show_default=False, help="Optional notification email")
+@click.option(
+    "--email", default="", show_default=False, help="Optional notification email"
+)
 @click.option("--dry-run", is_flag=True, help="Print changes without writing them")
 @click.option(
     "--loglevel",
@@ -304,9 +336,7 @@ def create_admin(uid: str, name: str, email: str, dry_run: bool, loglevel: int) 
         if result.already_granted:
             click.echo(f"roles/{role}: {uid} already granted")
         else:
-            click.echo(
-                f"roles/{role}: {'would grant' if dry_run else 'granted'} {uid}"
-            )
+            click.echo(f"roles/{role}: {'would grant' if dry_run else 'granted'} {uid}")
 
 
 @cli.command("grant-role")
@@ -333,9 +363,7 @@ def grant_role(uid: str, roles: tuple[str, ...], dry_run: bool, loglevel: int) -
         if result.already_granted:
             click.echo(f"roles/{role}: {uid} already granted")
         else:
-            click.echo(
-                f"roles/{role}: {'would grant' if dry_run else 'granted'} {uid}"
-            )
+            click.echo(f"roles/{role}: {'would grant' if dry_run else 'granted'} {uid}")
 
 
 @cli.command("seed-smoke")

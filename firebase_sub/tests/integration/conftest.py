@@ -8,6 +8,7 @@ import pytest
 from firebase_admin import firestore
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.document import DocumentReference
+from firebase_admin import auth as firebase_auth
 
 TEST_PROJECT_ID = "demo-firebase-sub-integration"
 
@@ -68,6 +69,35 @@ def firestore_emulator_host() -> str:
 
 
 @pytest.fixture(scope="session")
+def auth_emulator_host() -> str:
+    """Session-scoped fixture that resolves the Auth emulator host.
+
+    Skips the test (rather than erroring) when the emulator is not configured
+    or not yet reachable, so the suite degrades gracefully in unit-only runs.
+    """
+    host = os.getenv("FIREBASE_AUTH_EMULATOR_HOST")
+    if not host:
+        pytest.skip(
+            "FIREBASE_AUTH_EMULATOR_HOST is not set. "
+            "Auth emulator required – start via firebase.integration.json."
+        )
+
+    hostname, _, port_str = host.rpartition(":")
+    try:
+        with socket.create_connection(
+            (hostname or "127.0.0.1", int(port_str)), timeout=1.0
+        ):
+            pass
+    except OSError:
+        pytest.skip(
+            f"Firebase Auth emulator at {host} is not reachable. "
+            "Start the emulator before running these integration tests."
+        )
+
+    return host
+
+
+@pytest.fixture(scope="session")
 def firebase_test_app(firestore_emulator_host: str):
     os.environ.setdefault("GOOGLE_CLOUD_PROJECT", TEST_PROJECT_ID)
 
@@ -97,3 +127,26 @@ def clean_firestore(firestore_client: Client) -> Generator[None, None, None]:
     _clear_firestore(firestore_client)
     yield
     _clear_firestore(firestore_client)
+
+
+def _clear_auth(app: firebase_admin.App) -> None:
+    """Delete every user from the Auth emulator. Safe to call when emulator is empty."""
+    page = firebase_auth.list_users(app=app)
+    while page:
+        uids = [u.uid for u in page.users]
+        if uids:
+            firebase_auth.delete_users(uids, app=app)
+        page = page.get_next_page()
+
+
+@pytest.fixture()
+def clean_auth(firebase_test_app, auth_emulator_host: str) -> Generator[None, None, None]:
+    """Function-scoped fixture that wipes the Auth emulator before and after each test.
+
+    Tests that create Auth users should request this fixture explicitly so they
+    don't bleed state into subsequent tests.  It depends on ``auth_emulator_host``
+    so it is auto-skipped when the Auth emulator isn't running.
+    """
+    _clear_auth(firebase_test_app)
+    yield
+    _clear_auth(firebase_test_app)

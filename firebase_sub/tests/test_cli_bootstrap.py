@@ -14,7 +14,9 @@ class _FakeDocRef:
 
     def __init__(self, backing_store: dict[tuple, dict], path: tuple[str, ...]):
         self._store = backing_store
-        self._path = path  # e.g. ("users", "uid") or ("users", "uid", "push_endpoints", "ep-id")
+        self._path = (
+            path  # e.g. ("users", "uid") or ("users", "uid", "push_endpoints", "ep-id")
+        )
 
     def get(self):
         return _FakeSnapshot(self._store.get(self._path))
@@ -107,7 +109,15 @@ def test_create_admin_keeps_existing_values(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         module.cli,
-        ["create-admin", "--uid", "u1", "--name", "New Name", "--email", "new@example.com"],
+        [
+            "create-admin",
+            "--uid",
+            "u1",
+            "--name",
+            "New Name",
+            "--email",
+            "new@example.com",
+        ],
     )
 
     assert result.exit_code == 0
@@ -140,9 +150,18 @@ def test_seed_smoke_creates_expected_documents(monkeypatch):
     result = module.seed_smoke_data(fake_db)
 
     # All three private user docs
-    assert fake_db.store[("users", module.SMOKE_ADMIN_UID)]["uid"] == module.SMOKE_ADMIN_UID
-    assert fake_db.store[("users", module.SMOKE_USER_A_UID)]["uid"] == module.SMOKE_USER_A_UID
-    assert fake_db.store[("users", module.SMOKE_USER_B_UID)]["uid"] == module.SMOKE_USER_B_UID
+    assert (
+        fake_db.store[("users", module.SMOKE_ADMIN_UID)]["uid"]
+        == module.SMOKE_ADMIN_UID
+    )
+    assert (
+        fake_db.store[("users", module.SMOKE_USER_A_UID)]["uid"]
+        == module.SMOKE_USER_A_UID
+    )
+    assert (
+        fake_db.store[("users", module.SMOKE_USER_B_UID)]["uid"]
+        == module.SMOKE_USER_B_UID
+    )
 
     # User B has push enabled and global chat opted in
     user_b = fake_db.store[("users", module.SMOKE_USER_B_UID)]
@@ -150,7 +169,12 @@ def test_seed_smoke_creates_expected_documents(monkeypatch):
     assert user_b["pushPreferences"]["globalChat"] is True
 
     # User B push endpoint exists as a sub-collection document
-    ep_key = ("users", module.SMOKE_USER_B_UID, "push_endpoints", module.SMOKE_USER_B_ENDPOINT_ID)
+    ep_key = (
+        "users",
+        module.SMOKE_USER_B_UID,
+        "push_endpoints",
+        module.SMOKE_USER_B_ENDPOINT_ID,
+    )
     assert ep_key in fake_db.store
     ep = fake_db.store[ep_key]
     assert ep["active"] is True
@@ -172,7 +196,10 @@ def test_seed_smoke_is_idempotent(monkeypatch):
 
     fake_db = _FakeDb()
     # Mutate user B name before first seed so it differs from defaults
-    fake_db.store[("users", module.SMOKE_USER_B_UID)] = {"uid": module.SMOKE_USER_B_UID, "name": "Pre-existing"}
+    fake_db.store[("users", module.SMOKE_USER_B_UID)] = {
+        "uid": module.SMOKE_USER_B_UID,
+        "name": "Pre-existing",
+    }
 
     first = module.seed_smoke_data(fake_db)
     second = module.seed_smoke_data(fake_db)
