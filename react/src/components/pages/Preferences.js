@@ -248,6 +248,14 @@ export async function action({ request, params }) {
     openPollEmailEnabled: Boolean(data.get("open_poll_email")),
     customPhotoUrl,
     photoUrl: defaultAvatar ? photoUrl : avatarUrl,
+    pushPreferences: data.get("push_prefs_visible")
+      ? {
+        pollOpens: Boolean(data.get("push_poll_opens")),
+        pollCompletes: Boolean(data.get("push_poll_completes")),
+        globalChat: Boolean(data.get("push_global_chat")),
+        eventChat: Boolean(data.get("push_event_chat")),
+      }
+      : undefined,
   };
   if (method === "POST") {
     try {
@@ -262,6 +270,7 @@ export async function action({ request, params }) {
         notificationEmailEnabled: cleaned.notificationEmailEnabled,
         openPollEmailEnabled: cleaned.openPollEmailEnabled,
         customPhotoUrl: cleaned.customPhotoUrl,
+        pushPreferences: cleaned.pushPreferences,
       };
 
       // Remove undefined private fields

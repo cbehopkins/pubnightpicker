@@ -11,10 +11,12 @@ import useUsers from "../../hooks/useUsers";
 
 /** @typedef {import("../../store").RootState} RootState */
 
+/** @typedef {import('./ChatBox').ChatScope} ChatScope */
+
 /**
- * @param {{ scroll: { current: { scrollIntoView: (options?: ScrollIntoViewOptions) => void } | null } }} props
+ * @param {{ scroll: { current: { scrollIntoView: (options?: ScrollIntoViewOptions) => void } | null }, scope?: ChatScope }} props
  */
-const SendMessage = ({ scroll }) => {
+const SendMessage = ({ scroll, scope }) => {
   const [message, setMessage] = useState("");
   const users = useUsers();
   const name = useSelector(/** @param {RootState} state */(state) => state.auth.name);
@@ -29,11 +31,15 @@ const SendMessage = ({ scroll }) => {
     }
     const preferredName = uid ? users?.[uid]?.name : null;
     const messageName = preferredName || name || "Name not set";
+    const scopeType = scope?.scopeType ?? "global";
+    const scopeId = scope?.scopeId ?? "main";
     await addDoc(collection(db, "messages"), {
       text: message,
       name: messageName,
       createdAt: serverTimestamp(),
       uid,
+      scopeType,
+      scopeId,
     });
     setMessage("");
     setTimeout(() => { scroll.current?.scrollIntoView({ behavior: "smooth" }); }, 100);

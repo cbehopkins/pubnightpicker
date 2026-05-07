@@ -47,14 +47,21 @@ class NotificationPushTestHandler:
             _log.exception(
                 "Failed to clear processed push test request key for uid=%s", uid
             )
-    def is_push_test_request(self, request_document: DocumentSnapshot|None) -> bool:
+
+    def is_push_test_request(self, request_document: DocumentSnapshot | None) -> bool:
         if request_document is None:
             raise ValueError("request_document cannot be None")
         return request_document.id == PUSH_TEST_DOC_ID
-    
-    def handle_request_document(self, request_document: DocumentSnapshot|None) -> None:
+
+    def handle_request_document(
+        self, request_document: DocumentSnapshot | None
+    ) -> None:
         if request_document is None:
             raise ValueError("request_document cannot be None")
+        if request_document.id != PUSH_TEST_DOC_ID:
+            raise ValueError(
+                f"request_document must have id={PUSH_TEST_DOC_ID!r}; got {request_document.id!r}"
+            )
         request_payload = cast(dict[str, Any] | None, request_document.to_dict()) or {}
         ack_document = self._ack_document()
         ack_snapshot = cast(DocumentSnapshot, ack_document.get())

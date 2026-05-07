@@ -154,7 +154,7 @@ def test_query_active_push_endpoints_returns_only_active(firestore_client):
     )
 
     handler = DbHandler()
-    docs = list(handler.query_active_push_endpoints())
+    docs = list(handler.query_active_push_endpoints("pollOpens"))
 
     assert len(docs) == 1
     assert docs[0].id == "ep-active"
@@ -195,7 +195,7 @@ def test_query_active_push_endpoints_excludes_disabled_user_preference(
     )
 
     handler = DbHandler()
-    docs = list(handler.query_active_push_endpoints())
+    docs = list(handler.query_active_push_endpoints("pollOpens"))
 
     assert len(docs) == 1
     assert docs[0].id == "ep-u1"
@@ -233,7 +233,7 @@ def test_query_active_push_endpoints_excludes_missing_user_preference(firestore_
     )
 
     handler = DbHandler()
-    docs = list(handler.query_active_push_endpoints())
+    docs = list(handler.query_active_push_endpoints("pollOpens"))
 
     assert len(docs) == 1
     assert docs[0].id == "ep-u1"

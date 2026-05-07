@@ -19,6 +19,8 @@ from firebase_sub.push_contract import (
     PUSH_EVENT_POLL_COMPLETED,
     PUSH_EVENT_POLL_OPENED,
     PUSH_EVENT_POLL_RESCHEDULED,
+    PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
+    PUSH_EVENT_CHAT_MESSAGE_EVENT,
 )
 from firebase_sub.send_email import _resolve_payloads
 
@@ -92,7 +94,15 @@ class CompletePushPayload(_BasePushPayload):
     pollId: str
 
 
-PushPayload = OpenPushPayload | DiagnosticPushPayload | CompletePushPayload
+class ChatPushPayload(_BasePushPayload):
+    eventType: Literal["chat_message_sent_global", "chat_message_sent_event"]
+    messageId: str
+    pollId: str | None
+
+
+PushPayload = (
+    OpenPushPayload | DiagnosticPushPayload | CompletePushPayload | ChatPushPayload
+)
 
 
 def web_push_enabled() -> bool:
@@ -440,3 +450,110 @@ def send_diagnostic_push(
         endpoints_src=endpoints_src,
         dummy_run=dummy_run,
     )
+
+
+def _build_chat_global_payload(
+    message_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return {
+        "eventType": PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
+        "messageId": message_id,
+        "pollId": None,
+        "title": f"{sender_name} in Global Chat",
+        "body": body_text[:100],
+        "url": f"{_base_url()}/chat",
+        "tag": "chat:main",
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
+def _build_chat_event_payload(
+    message_id: str,
+    poll_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return {
+        "eventType": PUSH_EVENT_CHAT_MESSAGE_EVENT,
+        "messageId": message_id,
+        "pollId": poll_id,
+        "title": f"{sender_name} in Event Chat",
+        "body": body_text[:100],
+        "url": f"{_base_url()}/current_events",
+        "tag": f"chat:{poll_id}",
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
+def send_chat_push(
+    endpoints: list[ValidPushEndpoint],
+    *,
+    payload: ChatPushPayload,
+    dummy_run: bool = False,
+) -> list[str]:
+    """Send a chat push notification to a pre-resolved list of endpoints.
+
+    Returns the list of user_ids successfully delivered to.
+    Raises CallbackExceptionRetry if any retryable failures occurred.
+    Deactivates invalid/stale endpoints as a side-effect.
+    """
+    delivered_uids: list[str] = []
+    retryable_failures = 0
+
+    for endpoint in endpoints:
+        try:
+            _send_to_endpoint(
+                endpoint,
+                payload,
+                ttl_seconds=_TTL_MIN_SECONDS,
+                topic=f"chat-{hashlib.sha256(payload['tag'].encode()).hexdigest()[:_TOPIC_MAX_LEN]}",
+                dummy_run=dummy_run,
+            )
+            if endpoint.user_id:
+                delivered_uids.append(endpoint.user_id)
+        except WebPushException as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            response_text = getattr(getattr(exc, "response", None), "text", None)
+            if status_code in {404, 410}:
+                _log.info(
+                    "Deactivating stale push endpoint for user %s", endpoint.user_id
+                )
+                _deactivate_endpoint(endpoint)
+                continue
+            if status_code in {400, 401, 403}:
+                _log.warning(
+                    "Deactivating push endpoint after non-retryable failure: "
+                    "status=%s user=%s response=%s",
+                    status_code,
+                    endpoint.user_id,
+                    response_text,
+                )
+                _deactivate_endpoint(endpoint)
+                continue
+            retryable_failures += 1
+            _log.exception(
+                "Retryable web push failure for user %s status=%s response=%s",
+                endpoint.user_id,
+                status_code,
+                response_text,
+            )
+        except Exception:
+            retryable_failures += 1
+            _log.exception(
+                "Unexpected web push failure for user %s endpoint=%s",
+                endpoint.user_id,
+                endpoint.endpoint,
+            )
+
+    _log.info(
+        "Chat push delivery: delivered=%s retryable_failures=%s",
+        len(delivered_uids),
+        retryable_failures,
+    )
+    if retryable_failures:
+        raise CallbackExceptionRetry(
+            f"Retryable chat push failures (retryable={retryable_failures}, delivered={len(delivered_uids)})"
+        )
+    return delivered_uids

@@ -101,11 +101,34 @@ Common fields used:
 - openPollEmailEnabled
 - photoUrl
 - customPhotoUrl
+- webPushEnabled: boolean, master web push switch
+- pushPreferences: map (see below)
+
+pushPreferences map fields:
+- pollOpens: boolean (default true when absent)
+- pollCompletes: boolean (default true when absent)
+- globalChat: boolean (default false when absent)
+- eventChat: boolean (default false when absent)
+
+Migration default: if `pushPreferences` is missing, treat as
+`{ pollOpens: true, pollCompletes: true, globalChat: false, eventChat: false }`.
 
 ### messages collection
 Document id: message id.
 
 Chat message payload, read/write controlled by chat permissions.
+
+Fields:
+- uid: string (author uid)
+- name: string (author display name)
+- text: string (message body)
+- createdAt: timestamp
+- scopeType: string, one of "global" or "event" (required on all new writes)
+- scopeId: string ("main" for global chat, pollId for event chat)
+
+Lazy migration note: legacy messages written before the scoped fields feature may
+lack `scopeType`/`scopeId`. The ChatBox component treats any message without
+`scopeType=="event"` as belonging to global chat.
 
 ### open_actions and comp_actions collections
 Support collections used in poll lifecycle workflows and cleanup.
@@ -127,6 +150,20 @@ Examples:
 - notification_ack/diagnostics.manual: 1743600000000
 - notification_req/{pollId}.open: 1743600001234
 - notification_ack/{pollId}.open: 1743600001234
+
+### chat_push_actions collection
+Document id: message id (same id as the corresponding `messages` doc).
+
+Written exclusively by the Python notifier via admin SDK. No client read/write access.
+
+Fields:
+- scopeType: string ("global" or "event")
+- scopeId: string ("main" for global, pollId for event)
+- notified: array of uid strings (users who have already received a push for this message)
+- createdAt: timestamp
+
+Purpose: per-message dedup for chat push notifications. The notifier checks this
+doc before sending to avoid re-notifying users across retries or trigger replays.
 
 ## Normal Event Data Flow
 
