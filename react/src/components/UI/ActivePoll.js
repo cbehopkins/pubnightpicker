@@ -166,7 +166,19 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     return (
         <>
         <div className={styleToUse}>
-            <h2>{poll_data.date}</h2>
+            <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+                <h2 className="mb-0">{poll_data.date}</h2>
+                {canChat && (
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        className="btn-sm"
+                        onClick={() => setIsChatOpen(true)}
+                    >
+                        Event Chat
+                    </Button>
+                )}
+            </div>
             {canAddPub && (
                 <PubFilter
                     title="Filter venue list to contain only items that have:"
@@ -231,15 +243,6 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                         eventKey="create"
                         timeoutMs={60000}
                     />
-                )}
-                {canChat && (
-                    <Button
-                        type="button"
-                        variant="outline-secondary"
-                        onClick={() => setIsChatOpen(true)}
-                    >
-                        Event Chat
-                    </Button>
                 )}
             </div>
             <PollVote

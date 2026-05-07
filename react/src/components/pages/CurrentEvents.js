@@ -127,17 +127,19 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
               pubName
             )}
           </h5>
-          <p className="card-text text-body-secondary mb-3">{value.date}</p>
-          {can_chat && (
-            <Button
-              type="button"
-              variant="outline-secondary"
-              className="mt-auto align-self-start"
-              onClick={() => setIsChatOpen(true)}
-            >
-              Event Chat
-            </Button>
-          )}
+          <div className="d-flex align-items-center justify-content-between mt-auto pt-2">
+            <p className="card-text text-body-secondary mb-0">{value.date}</p>
+            {can_chat && (
+              <Button
+                type="button"
+                variant="outline-secondary"
+                className="btn-sm"
+                onClick={() => setIsChatOpen(true)}
+              >
+                Event Chat
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -356,6 +358,16 @@ function CurrentEvent({
             )}
             <p className="text-body-secondary mb-0">{date}</p>
           </div>
+          {can_chat && (
+            <Button
+              type="button"
+              variant="outline-secondary"
+              className="btn-sm flex-shrink-0"
+              onClick={() => setIsChatOpen(true)}
+            >
+              Event Chat
+            </Button>
+          )}
         </div>
 
         {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
@@ -452,15 +464,6 @@ function CurrentEvent({
             </Button>
           )}
 
-          {can_chat && (
-            <Button
-              type="button"
-              variant="outline-secondary"
-              onClick={() => setIsChatOpen(true)}
-            >
-              Event Chat
-            </Button>
-          )}
 
           {can_delete_event && (
             <QuestionRender className={styles.actionBlock} question="Delete This Event">
