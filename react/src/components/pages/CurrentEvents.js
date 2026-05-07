@@ -77,7 +77,7 @@ function normalizeImageUrl(value) {
 }
 
 /**
- * @param {{ value: EventPollValue, pub_parameters: PubParametersMap }} props
+ * @param {{ value: EventPollValue, pub_parameters: PubParametersMap, poll_id: string, can_chat: boolean }} props
  */
 function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   if (!pub_parameters[value.selected]) {
@@ -275,6 +275,7 @@ export function PastEvents() {
  *  pub_parameters: PubParametersMap,
  *  can_reschedule: boolean,
  *  can_delete_event: boolean,
+ *  can_chat: boolean,
  *  show_voters: boolean,
  *  on_open_reschedule: (pollId: string, pubId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
  * }} props
