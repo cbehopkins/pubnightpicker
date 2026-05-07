@@ -34,7 +34,6 @@ from firebase_sub.send_push import (
 )
 
 _log = logging.getLogger(__name__)
-# Based on https://firebase.google.com/docs/firestore/query-data/listen#python_5
 
 CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
