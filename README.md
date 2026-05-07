@@ -128,3 +128,39 @@ For detailed verification commands and expected behavior, see:
 - `react/docs/web-push-test-plan.md`
 - `react/docs/web-push-verification-summary.md`
 - `react/docs/web-push-local-testing.md`
+
+## Integration Tests
+
+The Python notifier has an emulator-backed integration test suite.  A single top-level
+command manages the full lifecycle (start emulator → run pytest → stop emulator):
+
+```bash
+python run_integration_tests.py
+```
+
+**Prerequisites (one-time)**
+
+| Tool | Install |
+|------|---------|
+| Java (JDK 11+) | https://adoptium.net |
+| firebase-tools | `npm install -g firebase-tools` |
+| Python deps | `cd firebase_sub && poetry install` |
+
+Optional flags:
+
+```bash
+# Also run unit tests before integration tests
+python run_integration_tests.py --unit
+
+# Forward extra arguments to pytest (e.g. run only bootstrap tests)
+python run_integration_tests.py -k bootstrap
+```
+
+To run integration tests without the top-level runner (requires emulator already started):
+
+```bash
+cd firebase_sub
+tox -e integration
+```
+
+See `firebase_sub/README.md` for bootstrap CLI docs (create-admin, seed-smoke, grant-role).
