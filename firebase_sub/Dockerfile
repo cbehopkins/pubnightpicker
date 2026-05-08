@@ -33,4 +33,4 @@ RUN pip install *.whl && rm *.whl
 
 # Run sub_events
 # set housekeeping cron to run every Thursday at 12:00 PM
-CMD [ "python", "-m", "firebase_sub.cli.sub_events", "--housekeeping-cron", "0 12 * * 4" ]
+CMD [ "python", "-m", "firebase_sub.cli.sub_events", "--housekeeping-cron", "0 12 * * 4", "--canary-interval-seconds", "21600" ]
