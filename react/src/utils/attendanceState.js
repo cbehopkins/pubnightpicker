@@ -6,6 +6,7 @@ export const ATTENDANCE_GLOBAL_KEY = "any";
  * @typedef {Object} AttendanceEntry
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
+ * @property {Record<string, string>=} eta
  */
 
 /**
@@ -19,6 +20,7 @@ export const ATTENDANCE_GLOBAL_KEY = "any";
  * @property {boolean} userCanCome
  * @property {boolean} userCannotCome
  * @property {boolean} hasAttendanceData
+ * @property {string | undefined} userEta
  */
 
 /** @param {string[]} [values] */
@@ -51,11 +53,16 @@ export function getEffectiveAttendanceState(attendance, venueId, currentUserId) 
     const canCome = dedupe([...globalCanCome, ...localCanCome]).filter((userId) => !localCannotCome.includes(userId));
     const cannotCome = dedupe([...globalCannotCome, ...localCannotCome]).filter((userId) => !localCanCome.includes(userId));
 
+    const userEta = (currentUserIdOrNull && localAttendance.eta)
+        ? (localAttendance.eta[currentUserIdOrNull] ?? undefined)
+        : undefined;
+
     return {
         canCome,
         cannotCome,
         userCanCome: Boolean(currentUserIdOrNull) && canCome.includes(/** @type {string} */(currentUserIdOrNull)),
         userCannotCome: Boolean(currentUserIdOrNull) && cannotCome.includes(/** @type {string} */(currentUserIdOrNull)),
         hasAttendanceData: canCome.length > 0 || cannotCome.length > 0,
+        userEta,
     };
 }

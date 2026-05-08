@@ -1,7 +1,7 @@
 // @ts-check
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { arrayRemove, arrayUnion, doc, onSnapshot } from "firebase/firestore";
+import { arrayRemove, arrayUnion, deleteField, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 import { updateDocWithInitialization } from "../utils/firestoreDocOps";
@@ -11,6 +11,7 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
  * @typedef {Object} AttendanceEntry
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
+ * @property {Record<string, string>=} eta
  */
 
 /** @typedef {Record<string, AttendanceEntry | undefined>} AttendanceMap */
@@ -22,7 +23,9 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
  *  (pubId: string, userId: string, status: AttendanceStatus) => Promise<void>,
  *  (pubId: string, userId: string) => Promise<void>,
  *  (pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
- *  (pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>
+ *  (pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
+ *  (pubId: string, userId: string, eta: string) => Promise<void>,
+ *  (pubId: string, userId: string) => Promise<void>
  * ]} UseAttendanceResult
  */
 
@@ -56,10 +59,16 @@ function useAttendance(pollId, enabled = true) {
     /** @type {(pubId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setAttendanceStatus = useCallback(async (pubId, userId, status) => {
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
-        await updateAttendanceDoc({
+        /** @type {Record<string, unknown>} */
+        const payload = {
             [`${pubId}.${status}`]: arrayUnion(userId),
             [`${pubId}.${oppositeStatus}`]: arrayRemove(userId),
-        });
+        };
+        // ETA only makes sense alongside canCome; clear it when switching to cannotCome
+        if (status === "cannotCome") {
+            payload[`${pubId}.eta.${userId}`] = deleteField();
+        }
+        await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
     /** @type {(pubId: string, userId: string) => Promise<void>} */
@@ -67,6 +76,7 @@ function useAttendance(pollId, enabled = true) {
         await updateAttendanceDoc({
             [`${pubId}.canCome`]: arrayRemove(userId),
             [`${pubId}.cannotCome`]: arrayRemove(userId),
+            [`${pubId}.eta.${userId}`]: deleteField(),
         });
     }, [updateAttendanceDoc]);
 
@@ -104,12 +114,28 @@ function useAttendance(pollId, enabled = true) {
         await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
+    /** @type {(pubId: string, userId: string, eta: string) => Promise<void>} */
+    const setEta = useCallback(async (pubId, userId, eta) => {
+        await updateAttendanceDoc({
+            [`${pubId}.eta.${userId}`]: eta,
+        });
+    }, [updateAttendanceDoc]);
+
+    /** @type {(pubId: string, userId: string) => Promise<void>} */
+    const clearEta = useCallback(async (pubId, userId) => {
+        await updateAttendanceDoc({
+            [`${pubId}.eta.${userId}`]: deleteField(),
+        });
+    }, [updateAttendanceDoc]);
+
     return [
         attendance,
         setAttendanceStatus,
         clearAttendance,
         setAttendanceForMultiplePubs,
         setGlobalAttendanceStatus,
+        setEta,
+        clearEta,
     ];
 }
 

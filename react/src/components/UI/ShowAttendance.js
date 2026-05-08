@@ -24,6 +24,7 @@ function normalizeUserId(value) {
  * @property {string[]=} voters
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
+ * @property {Record<string, string>=} eta
  * @property {() => void=} on_cancel
  */
 
@@ -35,6 +36,7 @@ export default function ShowAttendance(params) {
     const voters = (params.voters || []).map(normalizeUserId).filter(Boolean);
     const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
     const cannotCome = (params.cannotCome || []).map(normalizeUserId).filter(Boolean);
+    const etaMap = params.eta || {};
 
     const usersByUid = useMemo(() => {
         /** @type {Record<string, UserEntry>} */
@@ -68,6 +70,7 @@ export default function ShowAttendance(params) {
     const showVoters = visibleVoters.length > 0;
     const showCanCome = canCome.length > 0;
     const showCannotCome = cannotCome.length > 0;
+    const showEta = canCome.some((id) => Boolean(etaMap[id]));
 
     return (
         <Modal>
@@ -79,6 +82,7 @@ export default function ShowAttendance(params) {
                             {showVoters && <th>Voted</th>}
                             {showCanCome && <th>Can Come</th>}
                             {showCannotCome && <th>Cannot Come</th>}
+                            {showEta && <th>ETA</th>}
                         </tr>
                     </thead>
                     <tbody>
@@ -99,6 +103,9 @@ export default function ShowAttendance(params) {
                                     <td className={cannotComeSet.has(id) ? styles.attendanceCheckNo : ""}>
                                         {cannotComeSet.has(id) ? "✓" : ""}
                                     </td>
+                                )}
+                                {showEta && (
+                                    <td>{etaMap[id] ?? ""}</td>
                                 )}
                             </tr>
                         ))}

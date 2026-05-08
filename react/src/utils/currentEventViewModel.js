@@ -3,7 +3,7 @@
 import { getEffectiveAttendanceState } from "./attendanceState";
 
 /** @typedef {Record<string, string[]>} VotesMap */
-/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[] } | undefined>} AttendanceMap */
+/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 
 /**
  * @typedef {Object} PubParametersEntry
@@ -29,6 +29,8 @@ import { getEffectiveAttendanceState } from "./attendanceState";
  * @property {boolean} userCanCome
  * @property {boolean} userCannotCome
  * @property {boolean} hasAttendanceData
+ * @property {string | undefined} userEta
+ * @property {Record<string, string>} etaMap
  */
 
 /**
@@ -92,6 +94,7 @@ export function buildCurrentEventViewModel({
     const mainAttendance = getEffectiveAttendanceState(attendance, current_pub_id, currUserId);
     const mainVotes = getDedupedVotesForVenue(votes, current_pub_id);
     const pubWasVotedFor = current_pub_id in votes || Boolean(votes.any);
+    const mainEtaMap = (attendance && attendance[current_pub_id]?.eta) || {};
 
     /** @type {EventVenueViewModel} */
     const mainVenue = {
@@ -102,6 +105,7 @@ export function buildCurrentEventViewModel({
         address: currentVenue.address,
         dedupedVotes: mainVotes,
         allowShowVoters: show_voters && (pubWasVotedFor || mainAttendance.hasAttendanceData),
+        etaMap: mainEtaMap,
         ...mainAttendance,
     };
 
@@ -111,6 +115,7 @@ export function buildCurrentEventViewModel({
     if (restaurantSource) {
         const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurant_id, currUserId);
         const restaurantVotes = getDedupedVotesForVenue(votes, restaurant_id);
+        const restaurantEtaMap = (attendance && restaurant_id && attendance[restaurant_id]?.eta) || {};
         restaurantVenue = {
             id: restaurant_id,
             name: restaurantSource.name,
@@ -120,6 +125,7 @@ export function buildCurrentEventViewModel({
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
             allowShowVoters: show_voters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),
+            etaMap: restaurantEtaMap,
             ...restaurantAttendance,
         };
     }

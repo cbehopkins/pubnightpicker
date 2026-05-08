@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Card, Col, Form, Row } from "react-bootstrap";
 import Button from "../UI/Button";
 import useWebPushSettings from "../../hooks/useWebPushSettings";
+import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 function normalizePushPreferences(pushPreferences) {
   return {
@@ -176,6 +177,7 @@ function PreferencesForm({ method }) {
   const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
   const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
   const pushPreferences = loggedIn ? currUserDoc?.pushPreferences ?? null : null;
+  const defaultArrivalTime = normalizeArrivalTime(loggedIn ? currUserDoc?.defaultArrivalTime : undefined);
   const photoUrl = useSelector((state) => state.auth.photoUrl);
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -272,6 +274,19 @@ function PreferencesForm({ method }) {
                 defaultChecked={openPollEmail}
                 label="Email me when a poll opens"
               />
+            </Col>
+
+            <Col xs={12}>
+              <Form.Group>
+                <Form.Label>Default arrival time (ETA)</Form.Label>
+                <Form.Control
+                  id="default_arrival_time"
+                  type="time"
+                  name="default_arrival_time"
+                  defaultValue={defaultArrivalTime}
+                  title="Default time to prefill when adding ETA"
+                />
+              </Form.Group>
             </Col>
 
             <PushPreferences uid={uid} initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />

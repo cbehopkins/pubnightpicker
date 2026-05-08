@@ -7,6 +7,7 @@ import useAttendance from "./useAttendance";
 const {
     arrayRemoveMock,
     arrayUnionMock,
+    deleteFieldMock,
     docMock,
     onSnapshotMock,
     setDocMock,
@@ -15,6 +16,7 @@ const {
     return {
         arrayRemoveMock: vi.fn((value) => `arrayRemove:${value}`),
         arrayUnionMock: vi.fn((value) => `arrayUnion:${value}`),
+        deleteFieldMock: vi.fn(() => "deleteField"),
         docMock: vi.fn(() => ({ id: "attendance-doc-ref" })),
         onSnapshotMock: vi.fn(),
         setDocMock: vi.fn(async () => undefined),
@@ -32,6 +34,7 @@ vi.mock("firebase/firestore", () => {
     return {
         arrayRemove: arrayRemoveMock,
         arrayUnion: arrayUnionMock,
+        deleteField: deleteFieldMock,
         doc: docMock,
         onSnapshot: onSnapshotMock,
         setDoc: setDocMock,
@@ -43,6 +46,7 @@ describe("useAttendance", () => {
     beforeEach(() => {
         arrayRemoveMock.mockClear();
         arrayUnionMock.mockClear();
+        deleteFieldMock.mockClear();
         docMock.mockClear();
         onSnapshotMock.mockReset();
         setDocMock.mockClear();
@@ -147,6 +151,7 @@ describe("useAttendance", () => {
             {
                 "pub-1.canCome": "arrayRemove:user-1",
                 "pub-1.cannotCome": "arrayRemove:user-1",
+                "pub-1.eta.user-1": "deleteField",
             },
         );
     });
@@ -174,6 +179,7 @@ describe("useAttendance", () => {
             {
                 "pub-1.cannotCome": "arrayUnion:user-1",
                 "pub-1.canCome": "arrayRemove:user-1",
+                "pub-1.eta.user-1": "deleteField",
             },
         );
     });
@@ -275,5 +281,86 @@ describe("useAttendance", () => {
             { merge: true },
         );
         expect(updateDocMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("clearAttendance also deletes the ETA key for the user", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[2]("pub-1", "user-1");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {
+                "pub-1.canCome": "arrayRemove:user-1",
+                "pub-1.cannotCome": "arrayRemove:user-1",
+                "pub-1.eta.user-1": "deleteField",
+            },
+        );
+    });
+
+    it("setting cannotCome also deletes the ETA key for the user", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "cannotCome");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            {
+                "pub-1.cannotCome": "arrayUnion:user-1",
+                "pub-1.canCome": "arrayRemove:user-1",
+                "pub-1.eta.user-1": "deleteField",
+            },
+        );
+    });
+
+    it("setting canCome does not delete the ETA key", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[1]("pub-1", "user-1", "canCome");
+        });
+
+        const payload = updateDocMock.mock.calls[0][1];
+        expect(payload).not.toHaveProperty("pub-1.eta.user-1");
+    });
+
+    it("setEta writes the HH:MM string to the eta sub-map", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[5]("pub-1", "user-1", "18:30");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            { "pub-1.eta.user-1": "18:30" },
+        );
+    });
+
+    it("clearEta deletes the eta key for the user", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[6]("pub-1", "user-1");
+        });
+
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { id: "attendance-doc-ref" },
+            { "pub-1.eta.user-1": "deleteField" },
+        );
     });
 });

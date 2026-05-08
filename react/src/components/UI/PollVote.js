@@ -9,15 +9,18 @@ import useRole from "../../hooks/useRole";
 import { useVotableRow } from "../../hooks/useVotableRow";
 import { usePollRows } from "../../hooks/usePollRows";
 import { useBallotActions } from "../../hooks/useBallotActions";
+import useUserPrivateData from "../../hooks/useUserPrivateData";
 import ShowAttendance from "./ShowAttendance";
 import AttendanceActions from "./AttendanceActions";
+import ETAInput from "./ETAInput";
 import { QuestionRender } from "./ConfirmModal";
 import Button from "./Button";
+import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 /** @typedef {import("../../store").RootState} RootState */
 
 /** @typedef {Record<string, string[]>} VotesMap */
-/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[] } | undefined>} AttendanceMap */
+/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollPubEntry */
 /** @typedef {{ pubs?: Record<string, PollPubEntry> }} PollData */
 
@@ -26,11 +29,15 @@ import Button from "./Button";
  * @property {boolean} votedFor
  * @property {boolean} userCanCome
  * @property {boolean} userCannotCome
+ * @property {string | undefined} userEta
  * @property {boolean} allowAttendanceControls
  * @property {boolean} allowGlobalAttendanceControls
  * @property {() => Promise<void>} onVote
  * @property {(status: "canCome" | "cannotCome") => Promise<void>} onSetAttendanceStatus
  * @property {() => Promise<void>} onClearAttendance
+ * @property {(eta: string) => Promise<void>} onSetEta
+ * @property {() => Promise<void>} onClearEta
+ * @property {string} defaultEta
  * @property {() => Promise<void>} onSetAllCanCome
  * @property {() => Promise<void>} onSetAllCannotCome
  */
@@ -47,6 +54,9 @@ import Button from "./Button";
  * @property {(pubId: string, userId: string) => Promise<void>} clearVote
  * @property {(pubId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
  * @property {(pubId: string, userId: string) => Promise<void>} clearAttendance
+ * @property {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
+ * @property {(pubId: string, userId: string) => Promise<void>} clearEta
+ * @property {string} defaultEta
  * @property {() => Promise<void>} setAllAttendanceToCanCome
  * @property {() => Promise<void>} setAllAttendanceToCannotCome
  * @property {string[]} pollPubIds
@@ -69,11 +79,15 @@ function RespondMenu({
   votedFor,
   userCanCome,
   userCannotCome,
+  userEta,
   allowAttendanceControls,
   allowGlobalAttendanceControls,
   onVote,
   onSetAttendanceStatus,
   onClearAttendance,
+  onSetEta,
+  onClearEta,
+  defaultEta,
   onSetAllCanCome,
   onSetAllCannotCome,
 }) {
@@ -175,6 +189,14 @@ function RespondMenu({
     setShowActions((prev) => !prev);
   }, []);
 
+  /** @type {(eta: string) => Promise<void>} */
+  const setEtaAndEnsureAttending = useCallback(async (eta) => {
+    if (!userCanCome) {
+      await onSetAttendanceStatus("canCome");
+    }
+    await onSetEta(eta);
+  }, [userCanCome, onSetAttendanceStatus, onSetEta]);
+
   return (
     <div className={styles.respondMenu} ref={menuRef}>
       <Button
@@ -226,6 +248,17 @@ function RespondMenu({
               onAfterAction={() => setShowActions(false)}
             />
           )}
+          {allowAttendanceControls && (
+            <ETAInput
+              userEta={userEta}
+              onSetEta={setEtaAndEnsureAttending}
+              onClearEta={onClearEta}
+              defaultEta={defaultEta}
+              className={styles.etaInput}
+              addButtonVariant="warning"
+              addButtonClassName={styles.attendanceButton}
+            />
+          )}
           {allowGlobalAttendanceControls && (
             <>
               <div className={styles.panelDivider}></div>
@@ -273,6 +306,9 @@ function VotablePub({
   clearVote,
   setAttendanceStatus,
   clearAttendance,
+  setEta,
+  clearEta,
+  defaultEta,
   setAllAttendanceToCanCome,
   setAllAttendanceToCannotCome,
   pollPubIds,
@@ -291,6 +327,8 @@ function VotablePub({
     clearAttendance,
     makeVote,
     clearVote,
+    setEta,
+    clearEta,
     pollId
   );
 
@@ -340,11 +378,15 @@ function VotablePub({
             votedFor={rowData.votedFor}
             userCanCome={rowData.userCanCome}
             userCannotCome={rowData.userCannotCome}
+            userEta={rowData.userEta}
             allowAttendanceControls={rowData.allowAttendanceControls}
             allowGlobalAttendanceControls={allowGlobalAttendanceControls}
             onVote={rowData.voteHandler}
             onSetAttendanceStatus={rowData.setAttendanceStatusHandler}
             onClearAttendance={rowData.clearAttendanceHandler}
+            onSetEta={rowData.setEtaHandler}
+            onClearEta={rowData.clearEtaHandler}
+            defaultEta={defaultEta}
             onSetAllCanCome={setAllAttendanceToCanCome}
             onSetAllCannotCome={setAllAttendanceToCannotCome}
           />
@@ -362,6 +404,7 @@ function VotablePub({
                 voters={votes[pubId] || []}
                 canCome={rowData.canCome}
                 cannotCome={rowData.cannotCome}
+                eta={attendance[pubId]?.eta}
               />
             </QuestionRender>
           )}
@@ -384,8 +427,10 @@ function PollVote(props) {
   const canShowAttendance = useRole("canShowVoters");
   const canVote = Boolean(currUserId);
   const canReadProtectedPollData = canVote;
+  const privateData = useUserPrivateData(currUserId);
+  const defaultEta = normalizeArrivalTime(privateData?.defaultArrivalTime);
   const [votes, makeVote, clearVote] = useVotes(props.poll_id, canReadProtectedPollData);
-  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus] = useAttendance(
+  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus, setEta, clearEta] = useAttendance(
     props.poll_id,
     canReadProtectedPollData
   );
@@ -429,6 +474,8 @@ function PollVote(props) {
                 clearVote={clearVote}
                 setAttendanceStatus={setAttendanceStatus}
                 clearAttendance={clearAttendance}
+                setEta={setEta}
+                clearEta={clearEta}
                 setAllAttendanceToCanCome={setAllAttendanceToCanCome}
                 setAllAttendanceToCannotCome={setAllAttendanceToCannotCome}
                 pollPubIds={pollPubIds}
@@ -439,6 +486,7 @@ function PollVote(props) {
                 completeHandler={() => {
                   props.on_complete(key, pubName, props.poll_id);
                 }}
+                defaultEta={defaultEta}
               />
             );
           })}

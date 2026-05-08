@@ -8,6 +8,7 @@ import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
+import useUserPrivateData from "../../hooks/useUserPrivateData";
 import { useReschedulePoll } from "../../hooks/useReschedulePoll";
 import { useEventAttendance } from "../../hooks/useEventAttendance";
 import styles from "./CurrentEvents.module.css";
@@ -19,6 +20,8 @@ import ReschedulePollModal from "./ReschedulePollModal";
 import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import EventChatModal from "./EventChatModal";
+import ETAInput from "../UI/ETAInput";
+import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 /**
  * Ensure a user-supplied URL is absolute so browsers don't treat it as relative.
@@ -80,19 +83,30 @@ function normalizeImageUrl(value) {
  * @param {{ value: EventPollValue, pub_parameters: PubParametersMap, poll_id: string, can_chat: boolean }} props
  */
 function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
-  if (!pub_parameters[value.selected]) {
-    return <div></div>;
-  }
-
-  const pubName = pub_parameters[value.selected].name;
-  const pubWebsite = pub_parameters[value.selected]?.web_site;
-  const pubImage = normalizeImageUrl(pub_parameters[value.selected]?.pubImage);
+  const currUserId = useSelector(
+    /** @param {RootState} state */
+    (state) => {
+      const uid = state.auth?.uid;
+      return typeof uid === "string" && uid.length > 0 ? uid : null;
+    }
+  );
+  const [attendance, , , , , , clearEta] = useAttendance(poll_id, Boolean(currUserId));
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+
+  const pubEntry = pub_parameters[value.selected];
+  const pubName = pubEntry?.name;
+  const pubWebsite = pubEntry?.web_site;
+  const pubImage = normalizeImageUrl(pubEntry?.pubImage);
+  const userEta = (currUserId && pubEntry && attendance[value.selected]?.eta?.[currUserId]) || null;
 
   useEffect(() => {
     setHasImageLoadError(false);
   }, [pubImage]);
+
+  if (!pubEntry) {
+    return <div></div>;
+  }
 
   const shouldShowImage = pubImage && !hasImageLoadError;
 
@@ -127,6 +141,19 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
               pubName
             )}
           </h5>
+          {userEta && currUserId && (
+            <div className="d-flex align-items-center gap-2 mb-2">
+              <span className="text-body-secondary small">Your ETA: <strong>{userEta}</strong></span>
+              <Button
+                type="button"
+                variant="outline-danger"
+                className="btn-sm"
+                onClick={() => clearEta(value.selected, currUserId)}
+              >
+                Remove ETA
+              </Button>
+            </div>
+          )}
           <div className="d-flex align-items-center justify-content-between mt-auto pt-2">
             <p className="card-text text-body-secondary mb-0">{value.date}</p>
             {can_chat && (
@@ -276,6 +303,7 @@ export function PastEvents() {
  *  can_reschedule: boolean,
  *  can_delete_event: boolean,
  *  can_chat: boolean,
+ *  eta_default_time: string,
  *  show_voters: boolean,
  *  on_open_reschedule: (pollId: string, pubId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
  * }} props
@@ -290,6 +318,7 @@ function CurrentEvent({
   can_reschedule,
   can_delete_event,
   can_chat,
+  eta_default_time,
   show_voters,
   on_open_reschedule,
 }) {
@@ -301,7 +330,7 @@ function CurrentEvent({
   const canReadProtectedEventData = Boolean(normalizedUserId);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [votes] = useVotes(poll_id, canReadProtectedEventData);
-  const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(
+  const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
     poll_id,
     canReadProtectedEventData
   );
@@ -334,7 +363,9 @@ function CurrentEvent({
     setAttendanceStatus,
     clearAttendance,
     mainVenue.id,
-    restaurantVenue?.id
+    restaurantVenue?.id,
+    setEta,
+    clearEta
   );
 
   return (
@@ -406,6 +437,16 @@ function CurrentEvent({
             />
           )}
 
+          {currUserId && mainVenue.userCanCome && (
+            <ETAInput
+              className="mb-3"
+              userEta={mainVenue.userEta}
+              defaultEta={eta_default_time}
+              onSetEta={attendanceHandlers.setMainEta}
+              onClearEta={attendanceHandlers.clearMainEta}
+            />
+          )}
+
           {mainVenue.allowShowVoters && (
             <div className="mb-3">
               <QuestionRender className={styles.actionBlock} question="Show venue attendance">
@@ -413,6 +454,7 @@ function CurrentEvent({
                   voters={mainVenue.dedupedVotes}
                   canCome={mainVenue.canCome}
                   cannotCome={mainVenue.cannotCome}
+                  eta={mainVenue.etaMap}
                 />
               </QuestionRender>
             </div>
@@ -440,12 +482,23 @@ function CurrentEvent({
                 />
               )}
 
+              {currUserId && restaurantVenue.userCanCome && (
+                <ETAInput
+                  className="mb-3"
+                  userEta={restaurantVenue.userEta}
+                  defaultEta={eta_default_time}
+                  onSetEta={attendanceHandlers.setRestaurantEta}
+                  onClearEta={attendanceHandlers.clearRestaurantEta}
+                />
+              )}
+
               {restaurantVenue.allowShowVoters && (
                 <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
                   <ShowAttendance
                     voters={restaurantVenue.dedupedVotes}
                     canCome={restaurantVenue.canCome}
                     cannotCome={restaurantVenue.cannotCome}
+                    eta={restaurantVenue.etaMap}
                   />
                 </QuestionRender>
               )}
@@ -495,6 +548,15 @@ function CurrentEvent({
 }
 
 function CurrentEvents() {
+  const currUserId = useSelector(
+    /** @param {RootState} state */
+    (state) => {
+      const uid = state.auth?.uid;
+      return typeof uid === "string" && uid.length > 0 ? uid : null;
+    }
+  );
+  const privateData = useUserPrivateData(currUserId);
+  const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
   const pollData = useFutureCompletePolls();
   const pub_parameters = usePubs();
   const canReschedule = useRole("canCompletePoll");
@@ -540,6 +602,7 @@ function CurrentEvents() {
               can_reschedule={canReschedule}
               can_delete_event={canDeleteEvent}
               can_chat={canChat}
+              eta_default_time={etaDefaultTime}
               show_voters={canShowVoters}
               on_open_reschedule={rescheduleState.openRescheduleModal}
             />
