@@ -88,6 +88,24 @@ VITE_USE_FIREBASE_EMULATORS="false"
 ## Deployment
 Deployment is now handled by the github runners.
 PRs get a temp URL generated that allows you to test it
+
+## PWA Icon Generation
+
+PWA app icons are generated automatically as part of the normal build flow.
+
+- `npm run build` runs `prebuild`, which runs `npm run generate:icons`.
+- The generator script is `scripts/generate-pwa-icons.mjs`.
+- Generated files are written to `public/`:
+   - `icon-192.png`
+   - `icon-512.png`
+   - `icon-maskable-192.png`
+   - `icon-maskable-512.png`
+
+If you update `public/app_logo.png` and want to preview icon changes without a full build, run:
+
+```
+npm run generate:icons
+```
 <!-- # After Changes to deploy it
 npm run build  
 firebase deploy -->
