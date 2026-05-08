@@ -16,7 +16,6 @@ class PubsList:
 
     Usage:
         with PubsList(pub_collection) as pubs:
-            pubs.start_periodic_restart(10)  # restart every 10 minutes
             venue = pubs["venue-id"]  # access like a dict
     """
 
@@ -55,9 +54,8 @@ class PubsList:
         self._poll_manager.__exit__(exc_type, exc_val, exc_tb)
 
     def start_periodic_restart(self, minutes: int):
-        """Start periodic restart of the watch every N minutes."""
-        self._poll_manager.start_periodic_restart(minutes)
-        return self
+        """Retained for compatibility; periodic watch restarts are disabled."""
+        raise NotImplementedError("Periodic watch restarts are disabled for PubsList.")
 
     def _add(self, document: DocumentSnapshot) -> None:
         data = document.to_dict()

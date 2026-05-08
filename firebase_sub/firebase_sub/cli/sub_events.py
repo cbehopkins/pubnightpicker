@@ -22,6 +22,7 @@ from firebase_sub.database.housekeeping import (
     PeriodicTrigger,
 )
 from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
+from firebase_sub.database.canary import CanaryWatcher
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.poll_manager import PollManager
@@ -134,8 +135,14 @@ def sub_events(
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
+    canary_interval_seconds: int = 300,
 ) -> None:
     configure_logging(loglevel, logfile)
+    if restart_interval:
+        _log.info(
+            "Ignoring restart interval of %s minutes; periodic Firestore watch restarts are disabled",
+            restart_interval,
+        )
     db_handler = _get_db_handler()
     q: queue.Queue[Event] = queue.Queue()
     healthcheck_interval_seconds = 10.0
@@ -248,6 +255,15 @@ def sub_events(
             callback=enqueue_housekeeping_tick,
         )
 
+    canary = CanaryWatcher(
+        db_handler.db,
+        timeout_seconds=canary_interval_seconds * 2,
+    )
+    canary_trigger = PeriodicTrigger(
+        interval_seconds=canary_interval_seconds,
+        callback=canary.send_canary,
+    )
+
     def chat_message_callback(document: DocumentSnapshot) -> None:
         message_id = document.id
         q.put(
@@ -270,21 +286,21 @@ def sub_events(
         PollManager(
             db_handler.query_messages,
             add=chat_message_callback,
-        ).start_periodic_restart(restart_interval)
+        )
         if web_push_enabled()
-        else None
+        else contextlib.nullcontext()
     )
     if web_push_enabled():
         _log.info("Chat message push listener started")
 
-    context_managers = [
+    with (
         PollManager(
             db_handler.query_polls_by_status(
                 completed=False,
                 min_date=poll_min_date,
             ),
             add=open_poll_event_callback,
-        ).start_periodic_restart(restart_interval),
+        ),
         PollManager(
             db_handler.query_polls_by_status(
                 completed=True,
@@ -292,25 +308,18 @@ def sub_events(
             ),
             add=comp_poll_event_callback,
             modify=comp_poll_event_callback,
-        ).start_periodic_restart(restart_interval),
+        ),
         PollManager(
             db_handler.query_notification_requests,
             add=notification_request_callback,
             modify=notification_request_callback,
-        ).start_periodic_restart(restart_interval),
+        ),
+        messages_manager,
         housekeeping_trigger,
-    ]
-    if messages_manager is not None:
-        context_managers.append(messages_manager)
-
-    pubs_list_manager = PubsList(
-        db_handler.pub_collection,
-    ).start_periodic_restart(restart_interval)
-
-    with contextlib.ExitStack() as stack:
-        for cm in context_managers:
-            stack.enter_context(cm)
-        pubs_list = stack.enter_context(pubs_list_manager)
+        canary,
+        canary_trigger,
+        PubsList(db_handler.pub_collection) as pubs_list,
+    ):
 
         while True:
             try:
@@ -318,6 +327,10 @@ def sub_events(
             except queue.Empty:
                 if not db_handler.okay:
                     raise SystemExit("Exiting due to db is not okay")
+                if canary.is_stale():
+                    raise SystemExit(
+                        "Exiting due to stale Firestore listener (canary not observed)"
+                    )
                 continue
 
             event.handle_queue_item(
@@ -368,7 +381,7 @@ def doc_props(event: Event) -> tuple[str | None, bool]:
     "--restart-interval",
     type=int,
     default=60 * 24,
-    help="Restart interval in minutes (default: 1 day)",
+    help="Deprecated and ignored; periodic watch restarts are disabled",
 )
 @click.option(
     "--housekeeping-interval-seconds",
@@ -395,6 +408,13 @@ def doc_props(event: Event) -> tuple[str | None, bool]:
     show_default=True,
     help="When using recent-history, include polls from this many days ago",
 )
+@click.option(
+    "--canary-interval-seconds",
+    type=click.IntRange(min=10),
+    default=300,
+    show_default=True,
+    help="How often (seconds) to write a canary nonce to verify Firestore listener health",
+)
 def cli(
     dummy_email: bool,
     dummy_push: bool,
@@ -405,6 +425,7 @@ def cli(
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
+    canary_interval_seconds: int,
 ) -> None:
     sub_events(
         dummy_email,
@@ -416,6 +437,7 @@ def cli(
         housekeeping_cron,
         all_history,
         poll_lookback_days,
+        canary_interval_seconds,
     )
 
 
