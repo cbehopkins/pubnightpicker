@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir "poetry==$POETRY_VERSION"
 
 WORKDIR /build
 COPY pyproject.toml poetry.lock ./
+COPY README.md ./
 COPY firebase_sub ./firebase_sub
 
 RUN poetry build --format wheel
@@ -26,6 +27,7 @@ RUN apt-get update \
 RUN pip install --no-cache-dir "poetry==$POETRY_VERSION"
 
 COPY pyproject.toml poetry.lock ./
+COPY README.md ./
 RUN poetry install --only main --no-interaction --no-ansi --no-root
 
 COPY --from=builder /build/dist/*.whl .
