@@ -36,11 +36,10 @@ const ChatBox = ({ scope }) => {
                 limit(50)
             );
         } else {
-            // Global chat: load recent messages ordered by time.
-            // Lazy migration: event-scoped messages are excluded client-side
-            // until legacy docs are fully backfilled with scope fields.
             q = query(
                 collection(db, "messages"),
+                where("scopeType", "==", "global"),
+                where("scopeId", "==", "main"),
                 orderBy("createdAt", "desc"),
                 limit(50)
             );
@@ -49,12 +48,7 @@ const ChatBox = ({ scope }) => {
         const unsubscribe = onSnapshot(q, (QuerySnapshot) => {
             const fetchedMessages = [];
             QuerySnapshot.forEach((doc) => {
-                const data = doc.data();
-                // Exclude event-scoped messages from the global chat view
-                if (scopeType === "global" && data.scopeType === "event") {
-                    return;
-                }
-                fetchedMessages.push({ ...data, id: doc.id });
+                fetchedMessages.push({ ...doc.data(), id: doc.id });
             });
             const sortedMessages = fetchedMessages.sort(
                 (a, b) => a.createdAt - b.createdAt
