@@ -17,27 +17,31 @@ export default function PwaUpdateBanner() {
 
     return (
         <div
-            className="alert alert-warning alert-dismissible d-flex align-items-center gap-2 m-0 rounded-0 border-0 border-bottom py-2 px-3"
+            className="alert alert-warning m-0 rounded-0 border-0 border-bottom py-2 px-3"
             role="alert"
         >
-            <span className="flex-grow-1 small">
-                A new version of Pub Night Picker is available.
-            </span>
+            <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 w-100">
+                <span className="small">
+                    A new version of Pub Night Picker is available.
+                </span>
 
-            <button
-                type="button"
-                className="btn btn-sm btn-outline-dark"
-                onClick={applyUpdate}
-            >
-                Refresh
-            </button>
+                <div className="d-flex align-items-center gap-2 ms-sm-auto">
+                    <button
+                        type="button"
+                        className="btn btn-sm btn-outline-dark"
+                        onClick={applyUpdate}
+                    >
+                        Refresh
+                    </button>
 
-            <button
-                type="button"
-                className="btn-close"
-                aria-label="Dismiss"
-                onClick={dismiss}
-            />
+                    <button
+                        type="button"
+                        className="btn-close"
+                        aria-label="Dismiss"
+                        onClick={dismiss}
+                    />
+                </div>
+            </div>
         </div>
     );
 }
