@@ -229,7 +229,9 @@ class DbHandler:
                 participants.add(uid)
         return participants
 
-    def _muted_event_chat_uids(self, poll_id: str, candidate_uids: set[str]) -> set[str]:
+    def _muted_event_chat_uids(
+        self, poll_id: str, candidate_uids: set[str]
+    ) -> set[str]:
         """Return candidate uids that muted notifications for a specific event."""
         if not poll_id or not candidate_uids:
             return set()
