@@ -99,6 +99,7 @@ def _valid_endpoint(
 def _make_db_handler(
     user_docs: list,
     attendance_data: dict | None = None,
+    event_chat_participant_uids: list[str] | None = None,
     chat_actions_exists: bool = False,
     chat_actions_notified: list | None = None,
     chat_actions_delivered_endpoints: list | None = None,
@@ -156,6 +157,22 @@ def _make_db_handler(
                 return user_doc_ref
 
             col.document.side_effect = user_doc_router
+        elif name == "messages":
+            first_query = MagicMock()
+            second_query = MagicMock()
+
+            participant_docs = []
+            for uid in event_chat_participant_uids or []:
+                participant_doc = MagicMock()
+                participant_doc.to_dict.return_value = {
+                    "uid": uid,
+                    "scopeType": "event",
+                }
+                participant_docs.append(participant_doc)
+
+            col.where.return_value = first_query
+            first_query.where.return_value = second_query
+            second_query.stream.return_value = participant_docs
         return col
 
     db.collection.side_effect = collection_router
@@ -642,6 +659,35 @@ def test_chat_handler_event_payload_includes_poll_id():
     assert payloads[0]["pollId"] == "poll-42"
     assert payloads[0]["tag"] == "chat:poll-42"
     assert payloads[0]["eventType"] == PUSH_EVENT_CHAT_MESSAGE_EVENT
+
+
+def test_chat_handler_event_includes_prior_chat_participant_not_attending():
+    users = [
+        _user_doc("attendee", web_push_enabled=True, push_prefs={"eventChat": True}),
+        _user_doc("participant", web_push_enabled=True, push_prefs={"eventChat": True}),
+    ]
+    attendance = {"venue-A": {"canCome": ["attendee"]}}
+    ep_attendee = _endpoint_doc("attendee")
+    ep_participant = _endpoint_doc("participant")
+    handler, _ = _make_db_handler(
+        users,
+        attendance_data=attendance,
+        event_chat_participant_uids=["participant"],
+        endpoint_docs={"attendee": [ep_attendee], "participant": [ep_participant]},
+    )
+
+    msg = _message_doc("msg-5b", uid="author", scope_type="event", scope_id="poll-42")
+    recipient_uids = []
+
+    def fake_send(endpoints, *, payload, **kwargs):
+        recipient_uids.extend(ep.user_id for ep in endpoints)
+        return list(dict.fromkeys(recipient_uids))
+
+    with patch("firebase_sub.database.handlers.send_chat_push", side_effect=fake_send):
+        handler.chat_message_push_handler("msg-5b", msg)
+
+    assert "attendee" in recipient_uids
+    assert "participant" in recipient_uids
 
 
 # ---------------------------------------------------------------------------

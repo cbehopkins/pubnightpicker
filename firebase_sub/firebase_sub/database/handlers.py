@@ -210,6 +210,25 @@ class DbHandler:
             uids.update(can_come)
         return uids
 
+    def _event_chat_participant_uids(self, poll_id: str) -> set[str]:
+        """Return uids that have already authored messages in the event chat."""
+        if not poll_id:
+            return set()
+
+        query = (
+            self.db.collection("messages")
+            .where(filter=FieldFilter("scopeType", "==", "event"))
+            .where(filter=FieldFilter("scopeId", "==", poll_id))
+        )
+
+        participants: set[str] = set()
+        for message_doc in query.stream():
+            message_data = message_doc.to_dict() or {}
+            uid = message_data.get("uid")
+            if isinstance(uid, str) and uid:
+                participants.add(uid)
+        return participants
+
     def chat_message_push_handler(
         self,
         message_id: str,
@@ -242,12 +261,53 @@ class DbHandler:
         ]
         eligible_uids = self._users_with_push_preference(preference_field)
 
+        _log.info(
+            "Chat push debug: message=%s scope=%s/%s preference=%s initial_eligible=%s uids=%s",
+            message_id,
+            scope_type,
+            scope_id,
+            preference_field,
+            len(eligible_uids),
+            sorted(eligible_uids),
+        )
+
         if scope_type == "event":
             attendees = self._attendee_uids(scope_id)
-            eligible_uids &= attendees
+            participants = self._event_chat_participant_uids(scope_id)
+            eligible_event_uids = attendees | participants
+
+            # TODO(per-event-mute): once per-event mute is implemented, exclude
+            # muted users here before intersection with preference-enabled uids.
+            _log.info(
+                "Chat push debug: message=%s attendees_for_scope=%s attendee_uids=%s",
+                message_id,
+                len(attendees),
+                sorted(attendees),
+            )
+            _log.info(
+                "Chat push debug: message=%s participants_for_scope=%s participant_uids=%s",
+                message_id,
+                len(participants),
+                sorted(participants),
+            )
+            eligible_uids &= eligible_event_uids
+            _log.info(
+                "Chat push debug: message=%s eligible_after_event_scope_filter=%s uids=%s",
+                message_id,
+                len(eligible_uids),
+                sorted(eligible_uids),
+            )
 
         # Exclude the message author.
         eligible_uids.discard(author_uid)
+
+        _log.info(
+            "Chat push debug: message=%s author=%s eligible_after_author_exclusion=%s uids=%s",
+            message_id,
+            author_uid,
+            len(eligible_uids),
+            sorted(eligible_uids),
+        )
 
         if not eligible_uids:
             _log.info("No eligible recipients for chat push on message %s", message_id)
@@ -260,6 +320,12 @@ class DbHandler:
         actions_data = actions_snap.to_dict() or {}
         already_delivered_eps: set[str] = set(
             actions_data.get("delivered_endpoints") or []
+        )
+        _log.info(
+            "Chat push debug: message=%s actions_exists=%s delivered_endpoint_hashes=%s",
+            message_id,
+            actions_snap.exists,
+            len(already_delivered_eps),
         )
 
         # Build payload.
@@ -280,8 +346,11 @@ class DbHandler:
         # Collect active endpoints for eligible recipients, skipping any whose
         # delivery has already been recorded.
         endpoints = []
+        scanned_endpoints = 0
+        skipped_as_already_delivered = 0
         for uid in eligible_uids:
             for endpoint_doc in self.query_active_push_endpoints_for_user(uid):
+                scanned_endpoints += 1
                 raw_ep = _push_endpoint_from_snapshot(endpoint_doc)
                 if raw_ep is None:
                     continue
@@ -289,6 +358,17 @@ class DbHandler:
                 if valid_ep is not None:
                     if _endpoint_hash(valid_ep) not in already_delivered_eps:
                         endpoints.append(valid_ep)
+                    else:
+                        skipped_as_already_delivered += 1
+
+        _log.info(
+            "Chat push debug: message=%s scanned_endpoints=%s skipped_delivered=%s remaining_endpoints=%s remaining_uids=%s",
+            message_id,
+            scanned_endpoints,
+            skipped_as_already_delivered,
+            len(endpoints),
+            sorted({ep.user_id for ep in endpoints}),
+        )
 
         if not endpoints:
             _log.info("No remaining undelivered endpoints for message %s", message_id)
