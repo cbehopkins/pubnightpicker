@@ -24,7 +24,6 @@ from firebase_sub.cli.bootstrap import (
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.push_contract import PushDedupeKeys
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

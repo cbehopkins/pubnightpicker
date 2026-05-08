@@ -33,8 +33,25 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 FIREBASE_SUB_DIR = REPO_ROOT / "firebase_sub"
+REACT_DIR = REPO_ROOT / "react"
 INTEGRATION_CONFIG = "firebase.integration.json"
 EMULATOR_PROJECT = "demo-firebase-sub-integration"
+
+
+def _sync_firestore_emulator_config() -> None:
+    """Copy canonical Firestore rules/indexes from react/ into firebase_sub/."""
+    source_rules = REACT_DIR / "firestore.rules"
+    source_indexes = REACT_DIR / "firestore.indexes.json"
+    target_rules = FIREBASE_SUB_DIR / "firestore.rules"
+    target_indexes = FIREBASE_SUB_DIR / "firestore.indexes.json"
+
+    if not source_rules.exists():
+        raise FileNotFoundError(f"Missing canonical rules file: {source_rules}")
+    if not source_indexes.exists():
+        raise FileNotFoundError(f"Missing canonical indexes file: {source_indexes}")
+
+    shutil.copyfile(source_rules, target_rules)
+    shutil.copyfile(source_indexes, target_indexes)
 
 
 def _find_firebase_parts() -> list[str]:
@@ -171,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nUnit tests FAILED (exit code {unit_result.returncode})")
             return unit_result.returncode
         print("\nUnit tests PASSED.\n")
+
+    _sync_firestore_emulator_config()
 
     firebase_parts = _find_firebase_parts()
 

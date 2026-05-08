@@ -75,37 +75,27 @@ class VenueLookup(Protocol):
 
 _log = logging.getLogger("SendEmail")
 GOOGLEGROUPS_ADDR = "ampubnight@googlegroups.com"
-BASE_TEMPLATE = textwrap.dedent(
-    """\
+BASE_TEMPLATE = textwrap.dedent("""\
     Every week we have a pub night to which you are cordially invited.
     The venue changes each week, though we do tend to frequent a few favourites - suggestions for venues are always welcome.
     The earliest attendees get there between 6:30 & 7:30pm and we continue through to closing time.
-    """
-)
-PUB_TEMPLATE = textwrap.dedent(
-    """\
-    This week on {event_date} we will be visiting {pub_name}"""
-)
+    """)
+PUB_TEMPLATE = textwrap.dedent("""\
+    This week on {event_date} we will be visiting {pub_name}""")
 
-EVENT_TEMPLATE = textwrap.dedent(
-    """\
+EVENT_TEMPLATE = textwrap.dedent("""\
     Every week we have a pub night to which you are cordially invited.
     This week the destination is an event venue.
 
-    On {event_date} we will be attending {venue_name}."""
-)
-RESTAURANT_TEMPLATE = textwrap.dedent(
-    """\
+    On {event_date} we will be attending {venue_name}.""")
+RESTAURANT_TEMPLATE = textwrap.dedent("""\
     Every week we have a pub night to which you are cordially invited.
     This week the destination is a restaurant.
 
-    On {event_date} we will be visiting {venue_name}."""
-)
-RESTAURANT_BLOCK_TEMPLATE = textwrap.dedent(
-    """\
+    On {event_date} we will be visiting {venue_name}.""")
+RESTAURANT_BLOCK_TEMPLATE = textwrap.dedent("""\
 
-    Before the pub we are meeting at {venue_name}.{restaurant_time_block}"""
-)
+    Before the pub we are meeting at {venue_name}.{restaurant_time_block}""")
 OPEN_TEMPLATE = textwrap.dedent(
     """\
     Voting has opened for this week's pub night. Please visit https://pubnightpicker.web.app/active_polls to participate in the voting."""
