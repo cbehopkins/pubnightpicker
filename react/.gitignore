@@ -28,5 +28,3 @@ yarn-error.log*
 db_dir/
 *.log
 firebase-export-*/
-
-public/app_logo.png
