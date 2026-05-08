@@ -114,3 +114,34 @@ ul {
   margin: 0;
   padding: 0;
 }
+
+.pwa-update-banner {
+  background-color: #f0d27a;
+  color: #2a1f00;
+  border-bottom: 1px solid #b1892e !important;
+}
+
+.pwa-update-banner__refresh {
+  background-color: #0b5ed7;
+  border-color: #0b5ed7;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.pwa-update-banner__refresh:hover,
+.pwa-update-banner__refresh:focus-visible,
+.pwa-update-banner__refresh:active {
+  background-color: #0a58ca;
+  border-color: #0a58ca;
+  color: #ffffff;
+}
+
+.pwa-update-banner__dismiss {
+  opacity: 0.9;
+}
+
+:root[data-bs-theme="dark"] .pwa-update-banner {
+  background-color: #f6c85d;
+  color: #1f1400;
+  border-bottom: 1px solid #c79631 !important;
+}
