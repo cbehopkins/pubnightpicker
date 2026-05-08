@@ -5,7 +5,8 @@ decoupling business logic from Firebase/Firestore internals.
 """
 
 import logging
-from typing import Generator, Protocol
+from collections.abc import Generator
+from typing import Protocol
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client

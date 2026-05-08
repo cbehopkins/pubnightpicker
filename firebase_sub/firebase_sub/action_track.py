@@ -1,11 +1,11 @@
 import logging
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from firebase_sub.my_types import ActionDict, ActionType, DocumentId
 
 _log = logging.getLogger("ActionTrack")
-from typing import Any, Protocol
 
 
 class ActionCallbackProtocol(Protocol):

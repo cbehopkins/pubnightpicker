@@ -78,7 +78,7 @@ class PollManager:
                 else:
                     self.rm(change.document)
         # Track the last document seen for cursor
-        if isinstance(doc_snapshot, (list, tuple)) and len(doc_snapshot) > 0:
+        if isinstance(doc_snapshot, list | tuple) and len(doc_snapshot) > 0:
             with self._lock:
                 self._last_document = doc_snapshot[-1]
 

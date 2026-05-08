@@ -3,3 +3,5 @@
 node_modules/
 **/.medorg.xml
 __pycache__
+firebase_sub/firestore.rules
+firebase_sub/firestore.indexes.json
