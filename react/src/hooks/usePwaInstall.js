@@ -12,10 +12,14 @@ function detectIosSafari() {
 }
 
 function detectStandalone() {
+    const navigatorWithStandalone = /** @type {Navigator & { standalone?: boolean }} */ (
+        window.navigator
+    );
+
     return (
         window.matchMedia('(display-mode: standalone)').matches ||
         // Safari-specific property
-        window.navigator.standalone === true
+        navigatorWithStandalone.standalone === true
     );
 }
 
