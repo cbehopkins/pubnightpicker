@@ -1,0 +1,16 @@
+{
+    "name": "pubnightpicker-e2e-tests",
+    "version": "1.0.0",
+    "description": "End-to-end tests for PubNightPicker chat push notifications",
+    "type": "module",
+    "scripts": {
+        "test": "node frontend-client.js"
+    },
+    "dependencies": {
+        "firebase": "^10.0.0"
+    },
+    "devDependencies": {},
+    "engines": {
+        "node": ">=18.0.0"
+    }
+}
