@@ -72,7 +72,7 @@ describe("EventChatModal", () => {
             selector({ auth: { uid: "user-1" } })
         );
         docMock.mockReturnValue({});
-        getDocMock.mockResolvedValue({ data: () => ({ pushPreferences: {} }) });
+        getDocMock.mockResolvedValue({ data: () => ({ webPushEnabled: true, pushPreferences: {} }) });
         setEventChatMutedMock.mockResolvedValue(undefined);
     });
 
@@ -87,7 +87,7 @@ describe("EventChatModal", () => {
         expect(link.getAttribute("href")).toBe("/chat/event/poll-42");
     });
 
-    it("shows the mute button when user is logged in", async () => {
+    it("shows the mute button when push notifications are enabled", async () => {
         const rendered = render(
             <MemoryRouter>
                 <EventChatModal pollId="poll-42" onClose={() => undefined} />
@@ -97,6 +97,21 @@ describe("EventChatModal", () => {
         await waitFor(() => {
             expect(within(rendered.container).getByTestId("mute-button")).toBeTruthy();
         });
+    });
+
+    it("hides the mute button when push notifications are not enabled", async () => {
+        getDocMock.mockResolvedValue({ data: () => ({ webPushEnabled: false, pushPreferences: {} }) });
+
+        const rendered = render(
+            <MemoryRouter>
+                <EventChatModal pollId="poll-42" onClose={() => undefined} />
+            </MemoryRouter>,
+        );
+
+        await waitFor(() => {
+            expect(getDocMock).toHaveBeenCalled();
+        });
+        expect(within(rendered.container).queryByTestId("mute-button")).toBeNull();
     });
 
     it("toggles event chat mute via the mute button", async () => {

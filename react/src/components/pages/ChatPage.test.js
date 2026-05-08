@@ -79,7 +79,7 @@ describe("ChatPage", () => {
         useRoleMock.mockReturnValue(true);
         useNavigateMock.mockReturnValue(vi.fn());
         useParamsMock.mockReturnValue({});
-        getDocMock.mockResolvedValue({ data: () => ({ pushPreferences: {} }) });
+        getDocMock.mockResolvedValue({ data: () => ({ webPushEnabled: true, pushPreferences: {} }) });
         docMock.mockReturnValue({});
         setEventChatMutedMock.mockResolvedValue(undefined);
         setGlobalChatMutedMock.mockResolvedValue(undefined);
@@ -107,8 +107,21 @@ describe("ChatPage", () => {
             expect.anything(),
         );
         await waitFor(() => {
-            expect(screen.getByText("Event chat notifications are enabled for this event.")).toBeTruthy();
+            expect(within(document.body).getByText("Event chat notifications are enabled for this event.")).toBeTruthy();
         });
+    });
+
+    it("hides mute button when push notifications are not enabled", async () => {
+        getDocMock.mockResolvedValue({ data: () => ({ webPushEnabled: false, pushPreferences: {} }) });
+        useParamsMock.mockReturnValue({ pollId: "poll-42" });
+
+        const rendered = render(<ChatPage />);
+
+        // Wait for the async getDoc to settle
+        await waitFor(() => {
+            expect(getDocMock).toHaveBeenCalled();
+        });
+        expect(within(rendered.container).queryByRole("button", { name: /mute/i })).toBeNull();
     });
 
     it("toggles event chat mute for the current poll", async () => {
@@ -116,9 +129,11 @@ describe("ChatPage", () => {
 
         const rendered = render(<ChatPage />);
 
-        const button = within(rendered.container).getByRole("button", {
-            name: "Mute event chat notifications",
-        });
+        const button = await waitFor(() =>
+            within(rendered.container).getByRole("button", {
+                name: "Mute event chat notifications",
+            })
+        );
         fireEvent.click(button);
 
         await waitFor(() => {

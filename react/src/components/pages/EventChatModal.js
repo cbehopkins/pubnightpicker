@@ -24,6 +24,7 @@ export default function EventChatModal({ pollId, onClose }) {
     );
     const [eventChatMuted, setEventChatMutedState] = useState(false);
     const [eventChatMuteBusy, setEventChatMuteBusy] = useState(false);
+    const [webPushEnabled, setWebPushEnabled] = useState(false);
 
     useEffect(() => {
         const loadMuteState = async () => {
@@ -34,11 +35,13 @@ export default function EventChatModal({ pollId, onClose }) {
             try {
                 const userSnap = await getDoc(doc(db, "users", uid));
                 const userData = userSnap.data() || {};
+                setWebPushEnabled(userData.webPushEnabled === true);
                 const pushPreferences = userData.pushPreferences || {};
                 const mutedPollIds = pushPreferences.eventChatMutedPollIds || [];
                 setEventChatMutedState(mutedPollIds.includes(pollId));
             } catch {
                 setEventChatMutedState(false);
+                setWebPushEnabled(false);
             }
         };
 
@@ -66,7 +69,7 @@ export default function EventChatModal({ pollId, onClose }) {
                     <h2 className="h5 mb-0">
                         <Link to={`/chat/event/${pollId}`} onClick={onClose}>Event Chat</Link>
                     </h2>
-                    {uid && (
+                    {uid && webPushEnabled && (
                         <ChatMuteButton
                             muted={eventChatMuted}
                             busy={eventChatMuteBusy}
@@ -83,7 +86,7 @@ export default function EventChatModal({ pollId, onClose }) {
                         Close
                     </Button>
                 </div>
-                {uid && (
+                {uid && webPushEnabled && (
                     <small className="text-body-secondary">
                         {eventChatMuted
                             ? "Event chat notifications are muted for this event."
