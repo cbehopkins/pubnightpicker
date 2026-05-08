@@ -1,6 +1,7 @@
 // @ts-check
 
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import Modal from "../UI/Modal";
 import ChatBox from "../chat/ChatBox";
 import Button from "../UI/Button";
@@ -18,7 +19,9 @@ export default function EventChatModal({ pollId, onClose }) {
         <Modal onBackdropClick={onClose}>
             <div className="d-flex flex-column gap-2">
                 <div className="d-flex align-items-center justify-content-between">
-                    <h2 className="h5 mb-0">Event Chat</h2>
+                    <h2 className="h5 mb-0">
+                        <Link to={`/chat/event/${pollId}`} onClick={onClose}>Event Chat</Link>
+                    </h2>
                     <Button
                         type="button"
                         variant="secondary"

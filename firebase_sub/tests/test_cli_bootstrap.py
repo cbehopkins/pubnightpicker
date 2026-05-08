@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from click.testing import CliRunner
 
 
@@ -48,6 +50,46 @@ class _FakeDb:
 
     def collection(self, name: str):
         return _FakeCollection(self.store, (name,))
+
+
+def test_resolve_emulator_project_id_uses_cred_project_id(monkeypatch, tmp_path):
+    import firebase_sub.cli.bootstrap as module
+
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("FIREBASE_PROJECT", raising=False)
+    monkeypatch.delenv("REACT_APP_FIREBASE_PROJECT_ID", raising=False)
+
+    cred_path = tmp_path / "cred.json"
+    cred_path.write_text('{"project_id": "from-cred"}', encoding="utf-8")
+    monkeypatch.setattr(module, "CRED_PATH", Path(cred_path))
+
+    assert module._resolve_emulator_project_id() == "from-cred"
+
+
+def test_resolve_emulator_project_id_uses_default_when_cred_missing(
+    monkeypatch, tmp_path
+):
+    import firebase_sub.cli.bootstrap as module
+
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("FIREBASE_PROJECT", raising=False)
+    monkeypatch.delenv("REACT_APP_FIREBASE_PROJECT_ID", raising=False)
+    monkeypatch.setattr(module, "CRED_PATH", tmp_path / "missing-cred.json")
+
+    assert module._resolve_emulator_project_id() == "demo-firebase-sub-integration"
+
+
+def test_resolve_emulator_project_id_prefers_google_cloud_project(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "from-google-cloud")
+    monkeypatch.setenv("GCLOUD_PROJECT", "from-gcloud")
+    monkeypatch.setenv("FIREBASE_PROJECT", "from-firebase")
+    monkeypatch.setenv("REACT_APP_FIREBASE_PROJECT_ID", "from-react")
+
+    assert module._resolve_emulator_project_id() == "from-google-cloud"
 
 
 def test_create_admin_seeds_user_docs_and_roles(monkeypatch):
@@ -126,6 +168,105 @@ def test_create_admin_keeps_existing_values(monkeypatch):
     assert fake_db.store[("user-public", "u1")]["name"] == "Existing Public"
 
 
+def test_create_admin_generates_uid_when_missing(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(module, "_get_db", lambda: fake_db)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        module.cli,
+        [
+            "create-admin",
+            "--name",
+            "Generated Admin",
+            "--email",
+            "generated@example.com",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "generated uid: admin-" in result.output
+
+    user_doc_keys = [
+        key for key in fake_db.store if key[0] == "users" and len(key) == 2
+    ]
+    assert len(user_doc_keys) == 1
+    generated_uid = user_doc_keys[0][1]
+
+    assert generated_uid.startswith("admin-")
+    assert fake_db.store[("users", generated_uid)]["uid"] == generated_uid
+    assert fake_db.store[("user-public", generated_uid)]["uid"] == generated_uid
+    assert fake_db.store[("roles", "admin")][generated_uid] is True
+
+
+def test_create_admin_password_requires_auth_emulator(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(module, "_get_db", lambda: fake_db)
+    monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        module.cli,
+        [
+            "create-admin",
+            "--uid",
+            "u-auth",
+            "--name",
+            "Admin Name",
+            "--email",
+            "admin@example.com",
+            "--password",
+            "password123",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "FIREBASE_AUTH_EMULATOR_HOST" in result.output
+
+
+def test_create_admin_password_creates_auth_user_in_emulator(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(module, "_get_db", lambda: fake_db)
+    monkeypatch.setenv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
+
+    created_payload = {}
+
+    def _fake_create_user(**kwargs):
+        created_payload.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(module.firebase_auth, "create_user", _fake_create_user)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        module.cli,
+        [
+            "create-admin",
+            "--uid",
+            "u-auth",
+            "--name",
+            "Admin Name",
+            "--email",
+            "admin@example.com",
+            "--password",
+            "password123",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "auth/u-auth: created email/password user" in result.output
+    assert created_payload["uid"] == "u-auth"
+    assert created_payload["email"] == "admin@example.com"
+    assert created_payload["password"] == "password123"
+    assert created_payload["display_name"] == "Admin Name"
+
+
 def test_grant_role_dry_run_does_not_write(monkeypatch):
     import firebase_sub.cli.bootstrap as module
 
@@ -146,6 +287,7 @@ def test_seed_smoke_creates_expected_documents(monkeypatch):
     """seed_smoke_data() writes user/public/role/endpoint docs for all three smoke users."""
     import firebase_sub.cli.bootstrap as module
 
+    monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
     fake_db = _FakeDb()
     result = module.seed_smoke_data(fake_db)
 
@@ -194,6 +336,7 @@ def test_seed_smoke_is_idempotent(monkeypatch):
     """Calling seed_smoke_data twice does not overwrite any existing docs."""
     import firebase_sub.cli.bootstrap as module
 
+    monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
     fake_db = _FakeDb()
     # Mutate user B name before first seed so it differs from defaults
     fake_db.store[("users", module.SMOKE_USER_B_UID)] = {
@@ -215,6 +358,7 @@ def test_seed_smoke_dry_run_does_not_write(monkeypatch):
     """seed_smoke_data with dry_run=True must not mutate any Firestore document."""
     import firebase_sub.cli.bootstrap as module
 
+    monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
     fake_db = _FakeDb()
     result = module.seed_smoke_data(fake_db, dry_run=True)
 
