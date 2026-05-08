@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const SW_PATH = '/push-sw.js';
+const SW_PATH = '/sw.js';
 
 /**
  * Watches the registered service worker for a waiting update.

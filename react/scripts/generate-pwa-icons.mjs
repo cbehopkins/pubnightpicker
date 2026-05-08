@@ -8,8 +8,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '..', 'public');
 const sourcePath = path.join(publicDir, 'app_logo.png');
 
-const standardSizes = [192, 512];
-const maskableSizes = [192, 512];
+const iconSizes = [192, 512];
 const maskableBackground = '#f4efe4';
 
 async function createCleanLogoBuffer() {
@@ -39,34 +38,8 @@ async function createCleanLogoBuffer() {
         .toBuffer();
 }
 
-async function writeStandardIcons(cleanLogoBuffer) {
-    for (const size of standardSizes) {
-        const logoSize = Math.round(size * 0.86);
-
-        await sharp({
-            create: {
-                width: size,
-                height: size,
-                channels: 4,
-                background: { r: 0, g: 0, b: 0, alpha: 0 },
-            },
-        })
-            .composite([
-                {
-                    input: await sharp(cleanLogoBuffer)
-                        .resize({ width: logoSize, height: logoSize, fit: 'inside' })
-                        .png()
-                        .toBuffer(),
-                    gravity: 'center',
-                },
-            ])
-            .png()
-            .toFile(path.join(publicDir, `icon-${size}.png`));
-    }
-}
-
-async function writeMaskableIcons(cleanLogoBuffer) {
-    for (const size of maskableSizes) {
+async function writeLauncherIcons(cleanLogoBuffer) {
+    for (const size of iconSizes) {
         const safeLogoSize = Math.round(size * 0.66);
 
         await sharp({
@@ -87,15 +60,14 @@ async function writeMaskableIcons(cleanLogoBuffer) {
                 },
             ])
             .png()
-            .toFile(path.join(publicDir, `icon-maskable-${size}.png`));
+            .toFile(path.join(publicDir, `icon-app-${size}-v2.png`));
     }
 }
 
 async function main() {
     const cleanLogoBuffer = await createCleanLogoBuffer();
-    await writeStandardIcons(cleanLogoBuffer);
-    await writeMaskableIcons(cleanLogoBuffer);
-    process.stdout.write('Generated icon-192/512 and icon-maskable-192/512 in public/.\n');
+    await writeLauncherIcons(cleanLogoBuffer);
+    process.stdout.write('Generated icon-app-192-v2 and icon-app-512-v2 in public/.\n');
 }
 
 main().catch((error) => {

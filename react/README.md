@@ -96,10 +96,8 @@ PWA app icons are generated automatically as part of the normal build flow.
 - `npm run build` runs `prebuild`, which runs `npm run generate:icons`.
 - The generator script is `scripts/generate-pwa-icons.mjs`.
 - Generated files are written to `public/`:
-   - `icon-192.png`
-   - `icon-512.png`
-   - `icon-maskable-192.png`
-   - `icon-maskable-512.png`
+   - `icon-app-192-v2.png`
+   - `icon-app-512-v2.png`
 
 If you update `public/app_logo.png` and want to preview icon changes without a full build, run:
 
