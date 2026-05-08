@@ -9,7 +9,7 @@ const publicDir = path.resolve(__dirname, '..', 'public');
 const sourcePath = path.join(publicDir, 'app_logo.png');
 
 const iconSizes = [192, 512];
-const maskableBackground = '#f4efe4';
+const iconBackground = '#000000';
 
 async function createCleanLogoBuffer() {
     const source = sharp(sourcePath).ensureAlpha();
@@ -47,7 +47,7 @@ async function writeLauncherIcons(cleanLogoBuffer) {
                 width: size,
                 height: size,
                 channels: 4,
-                background: maskableBackground,
+                background: iconBackground,
             },
         })
             .composite([
