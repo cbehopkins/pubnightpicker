@@ -150,7 +150,7 @@ JSON payload sent by notifier for chat events:
 - pollId: string|null (null for global chat)
 - title: string
 - body: string (truncated message preview)
-- url: string (deep link to relevant page)
+- url: string (deep link to relevant page; event chat uses `/chat/event/{pollId}`)
 - tag: string ("chat:{scopeId}" — groups notifications by conversation)
 - sentAt: ISO timestamp
 

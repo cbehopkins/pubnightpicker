@@ -1,5 +1,7 @@
 import { db } from "../firebase";
 import {
+    arrayRemove,
+    arrayUnion,
     doc,
     getDoc,
     serverTimestamp,
@@ -128,6 +130,36 @@ export async function setWebPushPreference(uid, enabled) {
         {
             webPushEnabled: enabled,
         },
+        { merge: true },
+    );
+}
+
+export async function setEventChatMuted(uid, pollId, muted) {
+    if (!uid || !pollId) {
+        throw new Error("Missing uid or pollId for event chat mute preference");
+    }
+
+    await setDoc(
+        doc(db, "users", uid),
+        {
+            pushPreferences: {
+                eventChatMutedPollIds: muted
+                    ? arrayUnion(pollId)
+                    : arrayRemove(pollId),
+            },
+        },
+        { merge: true },
+    );
+}
+
+export async function setGlobalChatMuted(uid, muted) {
+    if (!uid) {
+        throw new Error("Missing uid for global chat mute preference");
+    }
+
+    await setDoc(
+        doc(db, "users", uid),
+        { pushPreferences: { globalChat: !muted } },
         { merge: true },
     );
 }

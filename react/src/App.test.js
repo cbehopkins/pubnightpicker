@@ -152,6 +152,16 @@ describe("App routes", () => {
     expect(indexChild.element.props.to).toBe("/venues");
   });
 
+  it("registers the dedicated event chat route", () => {
+    render(<App />);
+
+    const routeConfig = createBrowserRouterMock.mock.calls[0][0];
+    const rootRoute = routeConfig[0];
+    const eventChatRoute = rootRoute.children.find((child) => child.path === "chat/event/:pollId");
+
+    expect(eventChatRoute).toBeTruthy();
+  });
+
   it("starts web push lifecycle with the current user uid", () => {
     useAuthStateMock.mockReturnValue([{ uid: "user-123" }, false]);
 

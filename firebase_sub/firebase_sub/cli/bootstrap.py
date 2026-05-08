@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import SERVER_TIMESTAMP
 from google.cloud.firestore_v1.client import Client
+from uuid import uuid4
 
 from firebase_sub.common.logging import configure_logging, log_level_to_int
 
@@ -17,6 +19,7 @@ CWD = Path(__file__).resolve().parent
 CRED_PATH = CWD.parent.parent / "cred.json"
 _FIREBASE_APP_INITIALIZED = False
 _DB = None
+DEFAULT_EMULATOR_PROJECT_ID = "demo-firebase-sub-integration"
 
 ADMIN_DEFAULT_ROLES = [
     "canChat",
@@ -59,6 +62,32 @@ def _in_emulator_mode() -> bool:
     return bool(os.getenv("FIRESTORE_EMULATOR_HOST"))
 
 
+def _in_auth_emulator_mode() -> bool:
+    return bool(os.getenv("FIREBASE_AUTH_EMULATOR_HOST"))
+
+
+def _project_id_from_cred_file() -> str | None:
+    try:
+        payload = json.loads(CRED_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    value = str(payload.get("project_id", "")).strip()
+    return value or None
+
+
+def _resolve_emulator_project_id() -> str:
+    for env_key in (
+        "GOOGLE_CLOUD_PROJECT",
+        "GCLOUD_PROJECT",
+        "FIREBASE_PROJECT",
+        "REACT_APP_FIREBASE_PROJECT_ID",
+    ):
+        value = os.getenv(env_key, "").strip()
+        if value:
+            return value
+    return _project_id_from_cred_file() or DEFAULT_EMULATOR_PROJECT_ID
+
+
 def _ensure_firebase_app() -> None:
     global _FIREBASE_APP_INITIALIZED
     if _FIREBASE_APP_INITIALIZED:
@@ -68,7 +97,7 @@ def _ensure_firebase_app() -> None:
         firebase_admin.get_app()
     except ValueError:
         if _in_emulator_mode():
-            project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "demo-bootstrap")
+            project_id = _resolve_emulator_project_id()
             firebase_admin.initialize_app(
                 credential=google.oauth2.credentials.Credentials(token="owner"),
                 options={"projectId": project_id},
@@ -105,6 +134,11 @@ def _grant_role(db, role: str, uid: str, dry_run: bool) -> RoleGrantResult:
     if not already_granted and not dry_run:
         role_ref.set({uid: True}, merge=True)
     return RoleGrantResult(role=role, already_granted=already_granted)
+
+
+def _generate_admin_uid() -> str:
+    # Keep UID short, deterministic in format, and valid for Firebase Auth.
+    return f"admin-{uuid4().hex}"
 
 
 # ---------------------------------------------------------------------------
@@ -321,10 +355,21 @@ def cli() -> None:
 
 
 @cli.command("create-admin")
-@click.option("--uid", required=True, help="Firebase Auth UID for the admin user")
+@click.option(
+    "--uid",
+    default=None,
+    show_default=False,
+    help="Firebase Auth UID for the admin user; generated if omitted",
+)
 @click.option("--name", default="Admin User", show_default=True)
 @click.option(
     "--email", default="", show_default=False, help="Optional notification email"
+)
+@click.option(
+    "--password",
+    default="",
+    show_default=False,
+    help="Optional Firebase Auth password (emulator only)",
 )
 @click.option("--dry-run", is_flag=True, help="Print changes without writing them")
 @click.option(
@@ -333,10 +378,40 @@ def cli() -> None:
     callback=lambda ctx, param, value: log_level_to_int(value),
     show_default=True,
 )
-def create_admin(uid: str, name: str, email: str, dry_run: bool, loglevel: int) -> None:
+def create_admin(
+    uid: str | None,
+    name: str,
+    email: str,
+    password: str,
+    dry_run: bool,
+    loglevel: int,
+) -> None:
     """Create or update baseline admin user documents and grant admin roles."""
     configure_logging(loglevel, None)
     db = _get_db()
+
+    uid = uid.strip() if uid else ""
+    if not uid:
+        uid = _generate_admin_uid()
+        click.echo(f"generated uid: {uid}")
+
+    password = password.strip()
+    if password and not _in_auth_emulator_mode():
+        raise click.UsageError(
+            "--password is only supported when FIREBASE_AUTH_EMULATOR_HOST is set"
+        )
+    if password and not email.strip():
+        raise click.UsageError("--email is required when using --password")
+
+    if password:
+        if dry_run:
+            click.echo(f"auth/{uid}: would create email/password user ({email})")
+        else:
+            created = _create_auth_user_if_missing(uid, email, password, name)
+            if created:
+                click.echo(f"auth/{uid}: created email/password user ({email})")
+            else:
+                click.echo(f"auth/{uid}: already exists")
 
     private_ref = db.collection("users").document(uid)
     public_ref = db.collection("user-public").document(uid)

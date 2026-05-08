@@ -50,7 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    await testEnv.cleanup();
+    if (testEnv) await testEnv.cleanup();
 });
 
 beforeEach(async () => {

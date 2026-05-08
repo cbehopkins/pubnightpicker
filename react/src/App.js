@@ -156,6 +156,10 @@ function App() {
           element: <LazyRoute><ChatPage /></LazyRoute>
         },
         {
+          path: "chat/event/:pollId",
+          element: <LazyRoute><ChatPage /></LazyRoute>
+        },
+        {
           path: "active_polls",
           element: <ActivePolls />,
         },

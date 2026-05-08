@@ -5,7 +5,6 @@ from functools import partial
 from typing import cast
 
 from firebase_admin import firestore
-from google.cloud.firestore_v1 import ArrayUnion
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1 import watch
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -13,7 +12,6 @@ from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.watch import DocumentChange
-from google.cloud.firestore import SERVER_TIMESTAMP
 
 from firebase_sub.action_track import ActionMan
 from firebase_sub.push_contract import (
@@ -27,6 +25,7 @@ from firebase_sub.send_push import (
     send_chat_push,
     _build_chat_global_payload,
     _build_chat_event_payload,
+    _endpoint_hash,
     _push_endpoint_from_snapshot,
 )
 from firebase_sub.database.repositories import (
@@ -211,6 +210,44 @@ class DbHandler:
             uids.update(can_come)
         return uids
 
+    def _event_chat_participant_uids(self, poll_id: str) -> set[str]:
+        """Return uids that have already authored messages in the event chat."""
+        if not poll_id:
+            return set()
+
+        query = (
+            self.db.collection("messages")
+            .where(filter=FieldFilter("scopeType", "==", "event"))
+            .where(filter=FieldFilter("scopeId", "==", poll_id))
+        )
+
+        participants: set[str] = set()
+        for message_doc in query.stream():
+            message_data = message_doc.to_dict() or {}
+            uid = message_data.get("uid")
+            if isinstance(uid, str) and uid:
+                participants.add(uid)
+        return participants
+
+    def _muted_event_chat_uids(
+        self, poll_id: str, candidate_uids: set[str]
+    ) -> set[str]:
+        """Return candidate uids that muted notifications for a specific event."""
+        if not poll_id or not candidate_uids:
+            return set()
+
+        muted: set[str] = set()
+        for uid in candidate_uids:
+            user_document = cast(
+                DocumentSnapshot, self.db.collection("users").document(uid).get()
+            )
+            user_payload = user_document.to_dict() or {}
+            push_prefs = user_payload.get("pushPreferences") or {}
+            muted_poll_ids = push_prefs.get("eventChatMutedPollIds") or []
+            if poll_id in muted_poll_ids:
+                muted.add(uid)
+        return muted
+
     def chat_message_push_handler(
         self,
         message_id: str,
@@ -245,7 +282,11 @@ class DbHandler:
 
         if scope_type == "event":
             attendees = self._attendee_uids(scope_id)
-            eligible_uids &= attendees
+            participants = self._event_chat_participant_uids(scope_id)
+            eligible_event_uids = attendees | participants
+            eligible_uids &= eligible_event_uids
+            muted_uids = self._muted_event_chat_uids(scope_id, eligible_uids)
+            eligible_uids -= muted_uids
 
         # Exclude the message author.
         eligible_uids.discard(author_uid)
@@ -254,18 +295,14 @@ class DbHandler:
             _log.info("No eligible recipients for chat push on message %s", message_id)
             return
 
-        # Idempotency: subtract already-notified uids.
+        # Read per-endpoint delivery record for idempotency: endpoint hashes allow
+        # partial retries without re-delivering to already-succeeded endpoints.
         actions_ref = self.db.collection("chat_push_actions").document(message_id)
         actions_snap = cast(DocumentSnapshot, actions_ref.get())
         actions_data = actions_snap.to_dict() or {}
-        already_notified: set[str] = set(actions_data.get("notified") or [])
-        remaining_uids = eligible_uids - already_notified
-
-        if not remaining_uids:
-            _log.info(
-                "All eligible recipients already notified for message %s", message_id
-            )
-            return
+        already_delivered_eps: set[str] = set(
+            actions_data.get("delivered_endpoints") or []
+        )
 
         # Build payload.
         if scope_type == "event":
@@ -282,44 +319,38 @@ class DbHandler:
                 body_text=body_text,
             )
 
-        # Collect active endpoints for remaining recipients.
+        # Collect active endpoints for eligible recipients, skipping any whose
+        # delivery has already been recorded.
         endpoints = []
-        for uid in remaining_uids:
+        scanned_endpoints = 0
+        skipped_as_already_delivered = 0
+        for uid in eligible_uids:
             for endpoint_doc in self.query_active_push_endpoints_for_user(uid):
+                scanned_endpoints += 1
                 raw_ep = _push_endpoint_from_snapshot(endpoint_doc)
                 if raw_ep is None:
                     continue
                 valid_ep = raw_ep.validated()
                 if valid_ep is not None:
-                    endpoints.append(valid_ep)
+                    if _endpoint_hash(valid_ep) not in already_delivered_eps:
+                        endpoints.append(valid_ep)
+                    else:
+                        skipped_as_already_delivered += 1
 
         if not endpoints:
-            _log.info("No active valid endpoints for message %s", message_id)
+            _log.info("No remaining undelivered endpoints for message %s", message_id)
             return
 
-        # Send — raises CallbackExceptionRetry on retryable failure, so we only
-        # write chat_push_actions when this succeeds.
-        notified_uids = send_chat_push(
+        # Send — writes idempotency record inline per successful endpoint delivery.
+        send_chat_push(
             endpoints=endpoints,
             payload=payload,
+            actions_ref=actions_ref,
+            actions_doc_exists=actions_snap.exists,
+            scope_type=scope_type,
+            scope_id=scope_id,
             dummy_run=dummy_run,
         )
-
-        if not notified_uids:
-            return
-
-        # Write idempotency record.
-        if actions_snap.exists:
-            actions_ref.update({"notified": ArrayUnion(list(notified_uids))})
-        else:
-            actions_ref.set(
-                {
-                    "scopeType": scope_type,
-                    "scopeId": scope_id,
-                    "notified": list(notified_uids),
-                    "createdAt": SERVER_TIMESTAMP,
-                }
-            )
 
     @property
     def query_messages(self) -> Query:
