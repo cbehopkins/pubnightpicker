@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -8,8 +8,8 @@ from firebase_sub.common.serialization import convert_datetimes, restore_datetim
 
 
 def test_roundtrip_datetime():
-    dt = datetime(2024, 6, 1, 12, 34, 56, 789000, tzinfo=timezone.utc)
-    dtns = DatetimeWithNanoseconds(2024, 6, 1, 12, 34, 56, 789000, tzinfo=timezone.utc)
+    dt = datetime(2024, 6, 1, 12, 34, 56, 789000, tzinfo=UTC)
+    dtns = DatetimeWithNanoseconds(2024, 6, 1, 12, 34, 56, 789000, tzinfo=UTC)
     data = {
         "dt": dt,
         "dtns": dtns,

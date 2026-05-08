@@ -1,6 +1,7 @@
 import datetime
+from collections.abc import Callable, Sequence
 from enum import StrEnum, auto
-from typing import Callable, NotRequired, Sequence, TypedDict
+from typing import NotRequired, TypedDict
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange

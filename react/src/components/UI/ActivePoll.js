@@ -12,6 +12,7 @@ import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import NotificationPingStatus from "./NotificationPingStatus";
+import EventChatModal from "../pages/EventChatModal";
 
 const venueTypeOptions = ["all", "pub", "restaurant", "event"];
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
@@ -107,6 +108,8 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, 
 function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile }) {
     const canDeletePoll = useRole("canCreatePoll");
     const canAddPub = useRole("canAddPubToPoll");
+    const canChat = useRole("canChat");
+    const [isChatOpen, setIsChatOpen] = useState(false);
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [pubFilters, setPubFilters] = useState({});
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
@@ -161,80 +164,98 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const styleToUse = mobile ? styles.poll_mobile : styles.poll;
 
     return (
-        <div className={styleToUse}>
-            <h2>{poll_data.date}</h2>
-            {canAddPub && (
-                <PubFilter
-                    title="Filter venue list to contain only items that have:"
-                    set_pub_filters={setPubFilters}
-                />
-            )}
-            {canAddPub && (
-                <PubFilter
-                    title="Filter venue list to contain only items that do not have:"
-                    set_pub_filters={setPubAntiFilters}
-                    pub_params={AntiPubParams}
-                />
-            )}
-            {canAddPub && (
-                <div className={styles.filterRow}>
-                    <label htmlFor={`venue-type-filter-${poll_id}`}>Filter by venue type:</label>
-                    <select
-                        id={`venue-type-filter-${poll_id}`}
-                        value={venueTypeFilter}
-                        /** @param {import("react").ChangeEvent<HTMLSelectElement>} event */
-                        onChange={(event) => {
-                            setVenueTypeFilter(/** @type {VenueType} */(event.target.value));
-                        }}
-                    >
-                        {venueTypeOptions.map((venueType) => {
-                            const label =
-                                venueType === "all"
-                                    ? "All Types"
-                                    : venueType.charAt(0).toUpperCase() + venueType.slice(1);
-                            return (
-                                <option key={venueType} value={venueType}>
-                                    {label}
-                                </option>
-                            );
-                        })}
-                    </select>
-                </div>
-            )}
-            <div>
-                {canDeletePoll && (
-                    <Button
-                        type="button"
-                        variant="danger"
-                        className={styles["button--alt"]}
-                        onClick={deletePollHandler}
-                        title="Delete this entire poll and all associated voting data"
-                    >
-                        Delete Poll
-                    </Button>
-                )}
-                {canAddPub && (
-                    <>
-                        <PubOptions pub_parameters={filteredPubOptions} selectPubHandler={selectPubHandler} />
-                        <Button type="button" onClick={addNewPubToPoll}>
-                            Add Venue To Poll
+        <>
+            <div className={styleToUse}>
+                <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+                    <h2 className="mb-0">{poll_data.date}</h2>
+                    {canChat && (
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            className="btn-sm"
+                            onClick={() => setIsChatOpen(true)}
+                        >
+                            Event Chat
                         </Button>
-                    </>
-                )}
-                {canDeletePoll && (
-                    <NotificationPingStatus
-                        documentId={poll_id}
-                        eventKey="create"
-                        timeoutMs={60000}
+                    )}
+                </div>
+                {canAddPub && (
+                    <PubFilter
+                        title="Filter venue list to contain only items that have:"
+                        set_pub_filters={setPubFilters}
                     />
                 )}
+                {canAddPub && (
+                    <PubFilter
+                        title="Filter venue list to contain only items that do not have:"
+                        set_pub_filters={setPubAntiFilters}
+                        pub_params={AntiPubParams}
+                    />
+                )}
+                {canAddPub && (
+                    <div className={styles.filterRow}>
+                        <label htmlFor={`venue-type-filter-${poll_id}`}>Filter by venue type:</label>
+                        <select
+                            id={`venue-type-filter-${poll_id}`}
+                            value={venueTypeFilter}
+                            /** @param {import("react").ChangeEvent<HTMLSelectElement>} event */
+                            onChange={(event) => {
+                                setVenueTypeFilter(/** @type {VenueType} */(event.target.value));
+                            }}
+                        >
+                            {venueTypeOptions.map((venueType) => {
+                                const label =
+                                    venueType === "all"
+                                        ? "All Types"
+                                        : venueType.charAt(0).toUpperCase() + venueType.slice(1);
+                                return (
+                                    <option key={venueType} value={venueType}>
+                                        {label}
+                                    </option>
+                                );
+                            })}
+                        </select>
+                    </div>
+                )}
+                <div>
+                    {canDeletePoll && (
+                        <Button
+                            type="button"
+                            variant="danger"
+                            className={styles["button--alt"]}
+                            onClick={deletePollHandler}
+                            title="Delete this entire poll and all associated voting data"
+                        >
+                            Delete Poll
+                        </Button>
+                    )}
+                    {canAddPub && (
+                        <>
+                            <PubOptions pub_parameters={filteredPubOptions} selectPubHandler={selectPubHandler} />
+                            <Button type="button" onClick={addNewPubToPoll}>
+                                Add Venue To Poll
+                            </Button>
+                        </>
+                    )}
+                    {canDeletePoll && (
+                        <NotificationPingStatus
+                            documentId={poll_id}
+                            eventKey="create"
+                            timeoutMs={60000}
+                        />
+                    )}
+                </div>
+                <PollVote
+                    poll_data={poll_data}
+                    poll_id={poll_id}
+                    on_complete={on_complete}
+                />
             </div>
-            <PollVote
-                poll_data={poll_data}
-                poll_id={poll_id}
-                on_complete={on_complete}
-            />
-        </div>
+
+            {isChatOpen && (
+                <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+            )}
+        </>
     );
 }
 

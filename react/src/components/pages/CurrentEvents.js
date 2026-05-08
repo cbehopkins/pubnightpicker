@@ -18,6 +18,7 @@ import Button from "../UI/Button";
 import ReschedulePollModal from "./ReschedulePollModal";
 import { deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
+import EventChatModal from "./EventChatModal";
 
 /**
  * Ensure a user-supplied URL is absolute so browsers don't treat it as relative.
@@ -76,9 +77,9 @@ function normalizeImageUrl(value) {
 }
 
 /**
- * @param {{ value: EventPollValue, pub_parameters: PubParametersMap }} props
+ * @param {{ value: EventPollValue, pub_parameters: PubParametersMap, poll_id: string, can_chat: boolean }} props
  */
-function PastEvent({ value, pub_parameters }) {
+function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   if (!pub_parameters[value.selected]) {
     return <div></div>;
   }
@@ -87,6 +88,7 @@ function PastEvent({ value, pub_parameters }) {
   const pubWebsite = pub_parameters[value.selected]?.web_site;
   const pubImage = normalizeImageUrl(pub_parameters[value.selected]?.pubImage);
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     setHasImageLoadError(false);
@@ -125,9 +127,25 @@ function PastEvent({ value, pub_parameters }) {
               pubName
             )}
           </h5>
-          <p className="card-text text-body-secondary mb-3">{value.date}</p>
+          <div className="d-flex align-items-center justify-content-between mt-auto pt-2">
+            <p className="card-text text-body-secondary mb-0">{value.date}</p>
+            {can_chat && (
+              <Button
+                type="button"
+                variant="outline-secondary"
+                className="btn-sm"
+                onClick={() => setIsChatOpen(true)}
+              >
+                Event Chat
+              </Button>
+            )}
+          </div>
         </div>
       </div>
+
+      {isChatOpen && (
+        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+      )}
     </div>
   );
 }
@@ -150,6 +168,7 @@ export function PastEvents() {
   const pageIndex = cursorTrail.length;
   const pub_parameters = usePubs();
   const sortedPollsByDate = [...pollData.sortedByDate(true)];
+  const canChat = useRole("canChat");
 
   const writePaginationParams = useCallback(
     (nextPageSize, nextCursorTrail) => {
@@ -216,7 +235,7 @@ export function PastEvents() {
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
           {sortedPollsByDate.map(([key, value]) => {
-            return <PastEvent key={key} value={value} pub_parameters={pub_parameters} />;
+            return <PastEvent key={key} poll_id={key} value={value} pub_parameters={pub_parameters} can_chat={canChat} />;
           })}
         </div>
 
@@ -256,6 +275,7 @@ export function PastEvents() {
  *  pub_parameters: PubParametersMap,
  *  can_reschedule: boolean,
  *  can_delete_event: boolean,
+ *  can_chat: boolean,
  *  show_voters: boolean,
  *  on_open_reschedule: (pollId: string, pubId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
  * }} props
@@ -269,6 +289,7 @@ function CurrentEvent({
   pub_parameters,
   can_reschedule,
   can_delete_event,
+  can_chat,
   show_voters,
   on_open_reschedule,
 }) {
@@ -278,6 +299,7 @@ function CurrentEvent({
   );
   const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
   const canReadProtectedEventData = Boolean(normalizedUserId);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [votes] = useVotes(poll_id, canReadProtectedEventData);
   const [attendance, setAttendanceStatus, clearAttendance] = useAttendance(
     poll_id,
@@ -316,142 +338,159 @@ function CurrentEvent({
   );
 
   return (
-    <article className="card shadow-sm mb-4">
-      <div className="card-body">
-        <div className="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
-          <div>
-            {mainVenue.website ? (
-              <h2 className="h4 mb-1">
-                <a
-                  href={ensureAbsoluteUrl(mainVenue.website)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="link-primary text-decoration-none"
-                >
-                  {mainVenue.name}
-                </a>
-              </h2>
-            ) : (
-              <h2 className="h4 mb-1">{mainVenue.name}</h2>
+    <>
+      <article className="card shadow-sm mb-4">
+        <div className="card-body">
+          <div className="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+            <div>
+              {mainVenue.website ? (
+                <h2 className="h4 mb-1">
+                  <a
+                    href={ensureAbsoluteUrl(mainVenue.website)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="link-primary text-decoration-none"
+                  >
+                    {mainVenue.name}
+                  </a>
+                </h2>
+              ) : (
+                <h2 className="h4 mb-1">{mainVenue.name}</h2>
+              )}
+              <p className="text-body-secondary mb-0">{date}</p>
+            </div>
+            {can_chat && (
+              <Button
+                type="button"
+                variant="outline-secondary"
+                className="btn-sm flex-shrink-0"
+                onClick={() => setIsChatOpen(true)}
+              >
+                Event Chat
+              </Button>
             )}
-            <p className="text-body-secondary mb-0">{date}</p>
           </div>
-        </div>
 
-        {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
+          {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
 
-        {shouldShowMainImage && (
-          <div className="mb-3">
-            <img
-              src={mainVenueImage}
-              alt="What the venue looks like"
-              className={`img-fluid rounded ${styles.image}`}
-              loading="lazy"
-              decoding="async"
-              onError={() => setHasMainImageLoadError(true)}
+          {shouldShowMainImage && (
+            <div className="mb-3">
+              <img
+                src={mainVenueImage}
+                alt="What the venue looks like"
+                className={`img-fluid rounded ${styles.image}`}
+                loading="lazy"
+                decoding="async"
+                onError={() => setHasMainImageLoadError(true)}
+              />
+            </div>
+          )}
+
+          {!shouldShowMainImage && (
+            <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
+              <span className="text-body-secondary">No image available</span>
+            </div>
+          )}
+
+          {currUserId && (
+            <AttendanceActions
+              className={styles.attendanceActions}
+              buttonClassName="btn-sm"
+              canComeSelected={mainVenue.userCanCome}
+              cannotComeSelected={mainVenue.userCannotCome}
+              canComeSelectedLabel="Can come confirmed"
+              cannotComeSelectedLabel="Cannot come confirmed"
+              clearMode="button"
+              onSetStatus={attendanceHandlers.setMainAttendanceStatus}
+              onClear={attendanceHandlers.clearMainAttendance}
             />
-          </div>
-        )}
+          )}
 
-        {!shouldShowMainImage && (
-          <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
-            <span className="text-body-secondary">No image available</span>
-          </div>
-        )}
+          {mainVenue.allowShowVoters && (
+            <div className="mb-3">
+              <QuestionRender className={styles.actionBlock} question="Show venue attendance">
+                <ShowAttendance
+                  voters={mainVenue.dedupedVotes}
+                  canCome={mainVenue.canCome}
+                  cannotCome={mainVenue.cannotCome}
+                />
+              </QuestionRender>
+            </div>
+          )}
 
-        {currUserId && (
-          <AttendanceActions
-            className={styles.attendanceActions}
-            buttonClassName="btn-sm"
-            canComeSelected={mainVenue.userCanCome}
-            cannotComeSelected={mainVenue.userCannotCome}
-            canComeSelectedLabel="Can come confirmed"
-            cannotComeSelectedLabel="Cannot come confirmed"
-            clearMode="button"
-            onSetStatus={attendanceHandlers.setMainAttendanceStatus}
-            onClear={attendanceHandlers.clearMainAttendance}
-          />
-        )}
+          {restaurantVenue && (
+            <section className="border rounded p-3 bg-body-tertiary mb-3">
+              <h3 className="h6 mb-2">
+                Restaurant: {restaurantVenue.name}
+                {restaurantVenue.restaurantTime ? ` (${restaurantVenue.restaurantTime})` : ""}
+              </h3>
+              {restaurantVenue.address && <p className="mb-3">{restaurantVenue.address}</p>}
 
-        {mainVenue.allowShowVoters && (
-          <div className="mb-3">
-            <QuestionRender className={styles.actionBlock} question="Show venue attendance">
-              <ShowAttendance
-                voters={mainVenue.dedupedVotes}
-                canCome={mainVenue.canCome}
-                cannotCome={mainVenue.cannotCome}
-              />
-            </QuestionRender>
-          </div>
-        )}
+              {currUserId && (
+                <AttendanceActions
+                  className={styles.attendanceActions}
+                  buttonClassName="btn-sm"
+                  canComeSelected={restaurantVenue.userCanCome}
+                  cannotComeSelected={restaurantVenue.userCannotCome}
+                  canComeSelectedLabel="Can come confirmed"
+                  cannotComeSelectedLabel="Cannot come confirmed"
+                  clearMode="button"
+                  onSetStatus={attendanceHandlers.setRestaurantAttendanceStatus}
+                  onClear={attendanceHandlers.clearRestaurantAttendance}
+                />
+              )}
 
-        {restaurantVenue && (
-          <section className="border rounded p-3 bg-body-tertiary mb-3">
-            <h3 className="h6 mb-2">
-              Restaurant: {restaurantVenue.name}
-              {restaurantVenue.restaurantTime ? ` (${restaurantVenue.restaurantTime})` : ""}
-            </h3>
-            {restaurantVenue.address && <p className="mb-3">{restaurantVenue.address}</p>}
+              {restaurantVenue.allowShowVoters && (
+                <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
+                  <ShowAttendance
+                    voters={restaurantVenue.dedupedVotes}
+                    canCome={restaurantVenue.canCome}
+                    cannotCome={restaurantVenue.cannotCome}
+                  />
+                </QuestionRender>
+              )}
+            </section>
+          )}
 
-            {currUserId && (
-              <AttendanceActions
-                className={styles.attendanceActions}
-                buttonClassName="btn-sm"
-                canComeSelected={restaurantVenue.userCanCome}
-                cannotComeSelected={restaurantVenue.userCannotCome}
-                canComeSelectedLabel="Can come confirmed"
-                cannotComeSelectedLabel="Cannot come confirmed"
-                clearMode="button"
-                onSetStatus={attendanceHandlers.setRestaurantAttendanceStatus}
-                onClear={attendanceHandlers.clearRestaurantAttendance}
-              />
+          <div className="d-flex flex-wrap gap-2">
+            {can_reschedule && (
+              <Button
+                type="button"
+                variant="outline-primary"
+                onClick={() =>
+                  on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
+                }
+              >
+                Reschedule Event
+              </Button>
             )}
 
-            {restaurantVenue.allowShowVoters && (
-              <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
-                <ShowAttendance
-                  voters={restaurantVenue.dedupedVotes}
-                  canCome={restaurantVenue.canCome}
-                  cannotCome={restaurantVenue.cannotCome}
+
+            {can_delete_event && (
+              <QuestionRender className={styles.actionBlock} question="Delete This Event">
+                <ConfirmModal
+                  title="Delete Current event"
+                  detail="The current event will be deleted"
+                  confirm_text="Do Nothing"
+                  cancel_text="Delete it"
+                  on_cancel={async () => {
+                    try {
+                      await deletePoll(poll_id);
+                    } catch (error) {
+                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
+                    }
+                  }}
                 />
               </QuestionRender>
             )}
-          </section>
-        )}
-
-        <div className="d-flex flex-wrap gap-2">
-          {can_reschedule && (
-            <Button
-              type="button"
-              variant="outline-primary"
-              onClick={() =>
-                on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
-              }
-            >
-              Reschedule Event
-            </Button>
-          )}
-
-          {can_delete_event && (
-            <QuestionRender className={styles.actionBlock} question="Delete This Event">
-              <ConfirmModal
-                title="Delete Current event"
-                detail="The current event will be deleted"
-                confirm_text="Do Nothing"
-                cancel_text="Delete it"
-                on_cancel={async () => {
-                  try {
-                    await deletePoll(poll_id);
-                  } catch (error) {
-                    notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
-                  }
-                }}
-              />
-            </QuestionRender>
-          )}
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+
+      {isChatOpen && (
+        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+      )}
+    </>
   );
 }
 
@@ -461,6 +500,7 @@ function CurrentEvents() {
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
+  const canChat = useRole("canChat");
   const rescheduleState = useReschedulePoll(pub_parameters, canReschedule);
 
   return (
@@ -499,6 +539,7 @@ function CurrentEvents() {
               pub_parameters={pub_parameters}
               can_reschedule={canReschedule}
               can_delete_event={canDeleteEvent}
+              can_chat={canChat}
               show_voters={canShowVoters}
               on_open_reschedule={rescheduleState.openRescheduleModal}
             />

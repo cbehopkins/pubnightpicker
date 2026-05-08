@@ -65,11 +65,11 @@ def delete_inactive_push_endpoints(
 
 
 def _notification_entry_timestamp_ms(value: object) -> int | None:
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return int(value)
     if isinstance(value, dict):
         ts_value = value.get("ts")
-        if isinstance(ts_value, (int, float)):
+        if isinstance(ts_value, int | float):
             return int(ts_value)
     return None
 

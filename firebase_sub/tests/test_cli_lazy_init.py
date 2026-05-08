@@ -56,6 +56,22 @@ def test_restore_import_has_no_firebase_side_effects(monkeypatch):
     cert_mock.assert_not_called()
 
 
+def test_bootstrap_import_has_no_firebase_side_effects(monkeypatch):
+    init_mock = Mock()
+    cert_mock = Mock()
+
+    import firebase_admin
+    import firebase_admin.credentials
+
+    monkeypatch.setattr(firebase_admin, "initialize_app", init_mock)
+    monkeypatch.setattr(firebase_admin.credentials, "Certificate", cert_mock)
+
+    _import_fresh("firebase_sub.cli.bootstrap")
+
+    init_mock.assert_not_called()
+    cert_mock.assert_not_called()
+
+
 def test_sub_events_get_db_handler_initializes_once(monkeypatch):
     module = _import_fresh("firebase_sub.cli.sub_events")
 

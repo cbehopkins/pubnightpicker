@@ -9,7 +9,6 @@ from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.pubs_list import PubsList
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -19,6 +18,8 @@ class EventType(enum.StrEnum):
     TICK = "tick"
     PUSH_TEST = "push_test"
     PUSH = "push"
+    CHAT_MESSAGE = "chat_message"
+
 
 @dataclass
 class Event:

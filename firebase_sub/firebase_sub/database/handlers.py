@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable, Generator, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import cast
 
@@ -14,7 +14,20 @@ from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.watch import DocumentChange
 
 from firebase_sub.action_track import ActionMan
-from firebase_sub.push_contract import PushDedupeKeys
+from firebase_sub.push_contract import (
+    PUSH_PREFERENCE_DEFAULTS,
+    PUSH_PREFERENCE_FIELD,
+    PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
+    PUSH_EVENT_CHAT_MESSAGE_EVENT,
+    PushDedupeKeys,
+)
+from firebase_sub.send_push import (
+    send_chat_push,
+    _build_chat_global_payload,
+    _build_chat_event_payload,
+    _endpoint_hash,
+    _push_endpoint_from_snapshot,
+)
 from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
@@ -47,7 +60,7 @@ def _with_legacy_alias_key(
 
     normalized = dict(action_dict)
     for action_type, values in list(normalized.items()):
-        if not isinstance(values, (list, tuple, set)):
+        if not isinstance(values, list | tuple | set):
             continue
         key_set = set(values)
         if legacy_key in key_set and canonical_key not in key_set:
@@ -90,8 +103,13 @@ class DbHandler:
             "openPollEmailEnabled"
         )
 
-    def query_active_push_endpoints(self):
-        """Query active web push endpoints across users with web push enabled."""
+    def query_active_push_endpoints(self, preference_field: str):
+        """Query active web push endpoints across users with web push enabled.
+
+        Filters by both the webPushEnabled master switch and the per-type
+        pushPreferences field identified by ``preference_field`` (e.g.
+        "pollOpens", "pollCompletes", "globalChat", "eventChat").
+        """
         query = self.db.collection_group("push_endpoints").where(
             filter=FieldFilter("active", "==", True)
         )
@@ -110,15 +128,24 @@ class DbHandler:
                         user_id,
                     )
                     user_preference_cache[user_id] = False
+                elif not bool(user_payload["webPushEnabled"]):
+                    # Temporary rollout observability: explicit opt-out.
+                    _log.info(
+                        "Skipping push endpoints for user %s because webPushEnabled is false",
+                        user_id,
+                    )
+                    user_preference_cache[user_id] = False
                 else:
+                    push_prefs = user_payload.get("pushPreferences") or {}
+                    default = PUSH_PREFERENCE_DEFAULTS.get(preference_field, True)
                     user_preference_cache[user_id] = bool(
-                        user_payload["webPushEnabled"]
+                        push_prefs.get(preference_field, default)
                     )
                     if not user_preference_cache[user_id]:
-                        # Temporary rollout observability: explicit opt-out.
                         _log.info(
-                            "Skipping push endpoints for user %s because webPushEnabled is false",
+                            "Skipping push endpoints for user %s because pushPreferences.%s is false",
                             user_id,
+                            preference_field,
                         )
             if user_preference_cache[user_id]:
                 yield endpoint_doc
@@ -127,7 +154,9 @@ class DbHandler:
         """Query active web push endpoints for one user when web push is enabled."""
         if not user_id:
             return
-        user_document = self.db.collection("users").document(user_id).get()
+        user_document = cast(
+            DocumentSnapshot, self.db.collection("users").document(user_id).get()
+        )
         user_payload = user_document.to_dict() or {}
         if "webPushEnabled" not in user_payload:
             _log.warning(
@@ -153,6 +182,180 @@ class DbHandler:
             if not bool(payload.get("active")):
                 continue
             yield endpoint_doc
+
+    def _users_with_push_preference(self, preference_field: str) -> set[str]:
+        """Return uids of users with webPushEnabled=True and the given pushPreferences field True."""
+        uids: set[str] = set()
+        for user_doc in self.db.collection("users").stream():
+            user_payload = user_doc.to_dict() or {}
+            if not bool(user_payload.get("webPushEnabled")):
+                continue
+            push_prefs = user_payload.get("pushPreferences") or {}
+            default = PUSH_PREFERENCE_DEFAULTS.get(preference_field, True)
+            if bool(push_prefs.get(preference_field, default)):
+                uids.add(user_doc.id)
+        return uids
+
+    def _attendee_uids(self, poll_id: str) -> set[str]:
+        """Return uids of users attending the given poll (in any canCome array)."""
+        attendance_doc = cast(
+            DocumentSnapshot, self.db.collection("attendance").document(poll_id).get()
+        )
+        attendance_data = attendance_doc.to_dict() or {}
+        uids: set[str] = set()
+        for venue_data in attendance_data.values():
+            if not isinstance(venue_data, dict):
+                continue
+            can_come = venue_data.get("canCome") or []
+            uids.update(can_come)
+        return uids
+
+    def _event_chat_participant_uids(self, poll_id: str) -> set[str]:
+        """Return uids that have already authored messages in the event chat."""
+        if not poll_id:
+            return set()
+
+        query = (
+            self.db.collection("messages")
+            .where(filter=FieldFilter("scopeType", "==", "event"))
+            .where(filter=FieldFilter("scopeId", "==", poll_id))
+        )
+
+        participants: set[str] = set()
+        for message_doc in query.stream():
+            message_data = message_doc.to_dict() or {}
+            uid = message_data.get("uid")
+            if isinstance(uid, str) and uid:
+                participants.add(uid)
+        return participants
+
+    def _muted_event_chat_uids(
+        self, poll_id: str, candidate_uids: set[str]
+    ) -> set[str]:
+        """Return candidate uids that muted notifications for a specific event."""
+        if not poll_id or not candidate_uids:
+            return set()
+
+        muted: set[str] = set()
+        for uid in candidate_uids:
+            user_document = cast(
+                DocumentSnapshot, self.db.collection("users").document(uid).get()
+            )
+            user_payload = user_document.to_dict() or {}
+            push_prefs = user_payload.get("pushPreferences") or {}
+            muted_poll_ids = push_prefs.get("eventChatMutedPollIds") or []
+            if poll_id in muted_poll_ids:
+                muted.add(uid)
+        return muted
+
+    def chat_message_push_handler(
+        self,
+        message_id: str,
+        message_doc: DocumentSnapshot,
+        *,
+        dummy_run: bool = False,
+    ) -> None:
+        """Handle a new chat message and send push notifications to eligible users."""
+        message_data = message_doc.to_dict() or {}
+        scope_type = message_data.get("scopeType")
+        if scope_type != "event":
+            scope_type = "global"
+            scope_id = "main"
+        else:
+            scope_id = message_data.get("scopeId", "main")
+
+        author_uid = message_data.get("uid", "")
+        sender_name = (
+            message_data.get("displayName") or message_data.get("name") or "Someone"
+        )
+        raw_text = message_data.get("text") or message_data.get("message") or ""
+        body_text = raw_text[:100]
+
+        preference_field = PUSH_PREFERENCE_FIELD[
+            (
+                PUSH_EVENT_CHAT_MESSAGE_EVENT
+                if scope_type == "event"
+                else PUSH_EVENT_CHAT_MESSAGE_GLOBAL
+            )
+        ]
+        eligible_uids = self._users_with_push_preference(preference_field)
+
+        if scope_type == "event":
+            attendees = self._attendee_uids(scope_id)
+            participants = self._event_chat_participant_uids(scope_id)
+            eligible_event_uids = attendees | participants
+            eligible_uids &= eligible_event_uids
+            muted_uids = self._muted_event_chat_uids(scope_id, eligible_uids)
+            eligible_uids -= muted_uids
+
+        # Exclude the message author.
+        eligible_uids.discard(author_uid)
+
+        if not eligible_uids:
+            _log.info("No eligible recipients for chat push on message %s", message_id)
+            return
+
+        # Read per-endpoint delivery record for idempotency: endpoint hashes allow
+        # partial retries without re-delivering to already-succeeded endpoints.
+        actions_ref = self.db.collection("chat_push_actions").document(message_id)
+        actions_snap = cast(DocumentSnapshot, actions_ref.get())
+        actions_data = actions_snap.to_dict() or {}
+        already_delivered_eps: set[str] = set(
+            actions_data.get("delivered_endpoints") or []
+        )
+
+        # Build payload.
+        if scope_type == "event":
+            payload = _build_chat_event_payload(
+                message_id=message_id,
+                poll_id=scope_id,
+                sender_name=sender_name,
+                body_text=body_text,
+            )
+        else:
+            payload = _build_chat_global_payload(
+                message_id=message_id,
+                sender_name=sender_name,
+                body_text=body_text,
+            )
+
+        # Collect active endpoints for eligible recipients, skipping any whose
+        # delivery has already been recorded.
+        endpoints = []
+        scanned_endpoints = 0
+        skipped_as_already_delivered = 0
+        for uid in eligible_uids:
+            for endpoint_doc in self.query_active_push_endpoints_for_user(uid):
+                scanned_endpoints += 1
+                raw_ep = _push_endpoint_from_snapshot(endpoint_doc)
+                if raw_ep is None:
+                    continue
+                valid_ep = raw_ep.validated()
+                if valid_ep is not None:
+                    if _endpoint_hash(valid_ep) not in already_delivered_eps:
+                        endpoints.append(valid_ep)
+                    else:
+                        skipped_as_already_delivered += 1
+
+        if not endpoints:
+            _log.info("No remaining undelivered endpoints for message %s", message_id)
+            return
+
+        # Send — writes idempotency record inline per successful endpoint delivery.
+        send_chat_push(
+            endpoints=endpoints,
+            payload=payload,
+            actions_ref=actions_ref,
+            actions_doc_exists=actions_snap.exists,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            dummy_run=dummy_run,
+        )
+
+    @property
+    def query_messages(self) -> Query:
+        """Return a query for the messages collection (used for chat push listener)."""
+        return cast(Query, self.db.collection("messages"))
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
         action_document = self.db.collection("open_actions").document(poll_id)

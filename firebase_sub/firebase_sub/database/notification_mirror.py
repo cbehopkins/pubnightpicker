@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Mapping, cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
@@ -30,7 +31,9 @@ class NotificationAckMirrorHandler:
             if key not in ack_payload or ack_payload[key] != value
         }
 
-    def mirror_request_document(self, request_document: DocumentSnapshot|None) -> None:
+    def mirror_request_document(
+        self, request_document: DocumentSnapshot | None
+    ) -> None:
         if request_document is None:
             raise ValueError("request_document cannot be None")
         doc_id = request_document.id

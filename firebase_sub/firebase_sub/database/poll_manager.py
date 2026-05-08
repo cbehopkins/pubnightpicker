@@ -65,6 +65,7 @@ class PollManager:
                     _log.info(f"Removed : {change.document.id}")
                 else:
                     self.rm(change.document)
+
     def start_periodic_restart(self, minutes: int) -> Self:
         """Retained for compatibility; periodic watch restarts are disabled."""
         _log.info(

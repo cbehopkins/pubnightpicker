@@ -35,14 +35,14 @@ beforeAll(async () => {
         projectId: PROJECT_ID,
         firestore: {
             host: "127.0.0.1",
-            port: 8080,
+            port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "8080"),
             rules,
         },
     });
 });
 
 afterAll(async () => {
-    await testEnv.cleanup();
+    if (testEnv) await testEnv.cleanup();
 });
 
 beforeEach(async () => {

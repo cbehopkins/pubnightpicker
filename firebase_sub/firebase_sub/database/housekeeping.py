@@ -2,7 +2,7 @@ import logging
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from croniter import croniter
 
@@ -40,7 +40,7 @@ class HousekeepingRunner:
         self.last_run: datetime | None = None
 
     def maybe_run(self, now: datetime | None = None) -> None:
-        current_time = now or datetime.now()
+        current_time = now or datetime.now(UTC)
         if not self.schedule.is_due(current_time, self.last_run):
             return
 
@@ -94,11 +94,11 @@ class CroniterTrigger:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         # Validate expression once at startup.
-        croniter(self.cron_expression, datetime.now())
+        croniter(self.cron_expression, datetime.now(UTC))
 
     def _run(self) -> None:
         while True:
-            now = datetime.now()
+            now = datetime.now(UTC)
             cron = croniter(self.cron_expression, now)
             next_run = cron.get_next(datetime)
             wait_seconds = max((next_run - now).total_seconds(), 0.0)

@@ -45,6 +45,13 @@ In another terminal, start the Firebase emulators:
 npx firebase-tools emulators:start --import=./db_dir
 ```
 
+or to create from fresh:
+```
+npx firebase-tools emulators:start
+poetry run firebase_sub\cli\bootstrap.py create-admin --email admin@example.com --password password123
+```
+which will create an admin user with the specified email and password
+
 Export on exit
 ```
 npx firebase-tools emulators:start --import=./db_dir --export-on-exit=./db_dir.

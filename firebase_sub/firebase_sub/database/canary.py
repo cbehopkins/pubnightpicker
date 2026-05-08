@@ -48,7 +48,9 @@ class CanaryWatcher:
 
     def __enter__(self) -> "CanaryWatcher":
         self._unsubscribe = self._doc_ref.on_snapshot(self._on_snapshot).unsubscribe
-        _log.info("Canary watcher attached to %s/%s", _CANARY_COLLECTION, _CANARY_DOC_ID)
+        _log.info(
+            "Canary watcher attached to %s/%s", _CANARY_COLLECTION, _CANARY_DOC_ID
+        )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

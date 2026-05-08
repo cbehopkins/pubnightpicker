@@ -48,11 +48,24 @@ vi.mock("../../firebase", () => {
 });
 
 vi.mock("firebase/firestore", () => {
+    // Immediately call the snapshot callback with two fake users so privateUsers
+    // is populated and the component renders user data instead of the empty state.
+    const fakeUsers = [
+        { id: "uid-a", data: () => ({ uid: "uid-a", name: "Alpha User", email: "alpha@example.com" }) },
+        { id: "uid-b", data: () => ({ uid: "uid-b", name: "Bravo User", email: "bravo@example.com" }) },
+    ];
+    const fakeSnapshot = { forEach: (cb) => fakeUsers.forEach(cb) };
+
     return {
+        collection: vi.fn(() => ({})),
         doc: vi.fn(() => ({})),
         deleteField: vi.fn(() => "DELETE_FIELD"),
         updateDoc: vi.fn(async () => undefined),
         setDoc: vi.fn(async () => undefined),
+        onSnapshot: vi.fn((_ref, onNext) => {
+            onNext(fakeSnapshot);
+            return () => { };
+        }),
     };
 });
 

@@ -1,6 +1,6 @@
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from firebase_sub.common.output_file import OutputFile
@@ -25,7 +25,7 @@ def test_output_file_basic():
 
 
 def test_output_file_datetime():
-    dt = datetime(2024, 6, 1, 12, 34, 56, 789000, tzinfo=timezone.utc)
+    dt = datetime(2024, 6, 1, 12, 34, 56, 789000, tzinfo=UTC)
     with tempfile.TemporaryDirectory() as tmpdir:
         outpath = Path(tmpdir) / "test_dt.json"
         with OutputFile(outpath) as out:

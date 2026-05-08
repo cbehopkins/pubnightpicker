@@ -5,7 +5,8 @@ decoupling business logic from Firebase/Firestore internals.
 """
 
 import logging
-from typing import Generator, Protocol
+from collections.abc import Generator
+from typing import Protocol
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
@@ -13,6 +14,7 @@ from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
+from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
 

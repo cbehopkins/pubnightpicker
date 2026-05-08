@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Literal, TypedDict
 
 from firebase_sub.constants import ADMIN_EMAIL_ADDR
+from google.cloud.firestore_v1 import ArrayUnion
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore import SERVER_TIMESTAMP
 from pywebpush import WebPushException, webpush
@@ -19,6 +20,8 @@ from firebase_sub.push_contract import (
     PUSH_EVENT_POLL_COMPLETED,
     PUSH_EVENT_POLL_OPENED,
     PUSH_EVENT_POLL_RESCHEDULED,
+    PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
+    PUSH_EVENT_CHAT_MESSAGE_EVENT,
 )
 from firebase_sub.send_email import _resolve_payloads
 
@@ -92,7 +95,15 @@ class CompletePushPayload(_BasePushPayload):
     pollId: str
 
 
-PushPayload = OpenPushPayload | DiagnosticPushPayload | CompletePushPayload
+class ChatPushPayload(_BasePushPayload):
+    eventType: Literal["chat_message_sent_global", "chat_message_sent_event"]
+    messageId: str
+    pollId: str | None
+
+
+PushPayload = (
+    OpenPushPayload | DiagnosticPushPayload | CompletePushPayload | ChatPushPayload
+)
 
 
 def web_push_enabled() -> bool:
@@ -440,3 +451,141 @@ def send_diagnostic_push(
         endpoints_src=endpoints_src,
         dummy_run=dummy_run,
     )
+
+
+def _build_chat_global_payload(
+    message_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return {
+        "eventType": PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
+        "messageId": message_id,
+        "pollId": None,
+        "title": f"{sender_name} in Global Chat",
+        "body": body_text[:100],
+        "url": f"{_base_url()}/chat",
+        "tag": "chat:main",
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
+def _build_chat_event_payload(
+    message_id: str,
+    poll_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return {
+        "eventType": PUSH_EVENT_CHAT_MESSAGE_EVENT,
+        "messageId": message_id,
+        "pollId": poll_id,
+        "title": f"{sender_name} in Event Chat",
+        "body": body_text[:100],
+        "url": f"{_base_url()}/chat/event/{poll_id}",
+        "tag": f"chat:{poll_id}",
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
+def _endpoint_hash(endpoint: ValidPushEndpoint) -> str:
+    """Return a 32-char hex hash identifying this user+endpoint combination."""
+    raw = f"{endpoint.user_id}__{endpoint.endpoint}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def send_chat_push(
+    endpoints: list[ValidPushEndpoint],
+    *,
+    payload: ChatPushPayload,
+    actions_ref,
+    actions_doc_exists: bool,
+    scope_type: str,
+    scope_id: str,
+    dummy_run: bool = False,
+) -> list[str]:
+    """Send a chat push notification to a pre-resolved list of endpoints.
+
+    Writes a delivery record to ``actions_ref`` immediately after each
+    successful endpoint send so that retries can skip already-delivered
+    endpoints even when a later endpoint causes a retryable failure.
+
+    Returns a deduplicated list of user_ids successfully delivered to.
+    Raises CallbackExceptionRetry if any retryable failures occurred.
+    Deactivates invalid/stale endpoints as a side-effect.
+    """
+    delivered_uids: list[str] = []
+    retryable_failures = 0
+    _doc_initialized = actions_doc_exists
+
+    for endpoint in endpoints:
+        ep_hash = _endpoint_hash(endpoint)
+        try:
+            _send_to_endpoint(
+                endpoint,
+                payload,
+                ttl_seconds=_TTL_MIN_SECONDS,
+                topic=f"chat-{hashlib.sha256(payload['tag'].encode()).hexdigest()[:_TOPIC_MAX_LEN]}",
+                dummy_run=dummy_run,
+            )
+            uid = endpoint.user_id
+            if uid:
+                delivered_uids.append(uid)
+            # Write idempotency record inline so retries can skip this endpoint.
+            write_data: dict = {"delivered_endpoints": ArrayUnion([ep_hash])}
+            if uid:
+                write_data["notified"] = ArrayUnion([uid])
+            if not _doc_initialized:
+                write_data["scopeType"] = scope_type
+                write_data["scopeId"] = scope_id
+                write_data["createdAt"] = SERVER_TIMESTAMP
+                actions_ref.set(write_data, merge=True)
+                _doc_initialized = True
+            else:
+                actions_ref.update(write_data)
+        except WebPushException as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            response_text = getattr(getattr(exc, "response", None), "text", None)
+            if status_code in {404, 410}:
+                _log.info(
+                    "Deactivating stale push endpoint for user %s", endpoint.user_id
+                )
+                _deactivate_endpoint(endpoint)
+                continue
+            if status_code in {400, 401, 403}:
+                _log.warning(
+                    "Deactivating push endpoint after non-retryable failure: "
+                    "status=%s user=%s response=%s",
+                    status_code,
+                    endpoint.user_id,
+                    response_text,
+                )
+                _deactivate_endpoint(endpoint)
+                continue
+            retryable_failures += 1
+            _log.exception(
+                "Retryable web push failure for user %s status=%s response=%s",
+                endpoint.user_id,
+                status_code,
+                response_text,
+            )
+        except Exception:
+            retryable_failures += 1
+            _log.exception(
+                "Unexpected web push failure for user %s endpoint=%s",
+                endpoint.user_id,
+                endpoint.endpoint,
+            )
+
+    unique_notified = list(dict.fromkeys(delivered_uids))
+    _log.info(
+        "Chat push delivery: endpoints_delivered=%s unique_users=%s retryable_failures=%s",
+        len(delivered_uids),
+        len(unique_notified),
+        retryable_failures,
+    )
+    if retryable_failures:
+        raise CallbackExceptionRetry(
+            f"Retryable chat push failures (retryable={retryable_failures}, delivered={len(delivered_uids)})"
+        )
+    return unique_notified

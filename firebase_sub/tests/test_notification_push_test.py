@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 
 
@@ -44,9 +46,9 @@ def test_ignores_non_push_test_document():
     db, req_doc, ack_doc = _build_db()
     handler = NotificationPushTestHandler(db, lambda _uid: [], dummy_push=True)
 
-    handled = handler.handle_request_document(_Snapshot("diagnostics", {"manual": 1}))
+    with pytest.raises(ValueError, match="request_document must have id"):
+        handler.handle_request_document(_Snapshot("diagnostics", {"manual": 1}))
 
-    assert handled is False
     req_doc.set.assert_not_called()
     ack_doc.set.assert_not_called()
 
@@ -64,9 +66,8 @@ def test_processes_uid_request_and_acks_then_clears(monkeypatch):
 
     handler = NotificationPushTestHandler(db, query_mock, dummy_push=True)
 
-    handled = handler.handle_request_document(_Snapshot("push_test", {"uid-1": 123}))
+    handler.handle_request_document(_Snapshot("push_test", {"uid-1": 123}))
 
-    assert handled is True
     send_mock.assert_called_once()
     ack_doc.set.assert_called_once_with({"uid-1": 123}, merge=True)
     req_doc.set.assert_called_once()

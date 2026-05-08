@@ -8,19 +8,18 @@ requires-poetry = ">=2.0"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-firebase-admin = "^6.3.0"
-mailtrap = "2.0.1"
+firebase-admin = "^7.0"
+mailtrap = "^2.5"
 click = "^8.2.1"
 pydantic = "^2.11.7"
 pyserial = "^3.5"
-"Mastodon.py" = "1.8.1"
-croniter = "^2.0.5"
+croniter = "^6.0"
 pywebpush = "^2.0.3"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.0"
-black = "^24.0"
-isort = "^5.10"
+pytest = "^9.0"
+black = "^26.0"
+isort = "^6.0"
 tox = "^4.24"
 
 [tool.black]

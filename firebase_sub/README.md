@@ -20,7 +20,29 @@ Current defaults:
 
 `GOOGLE_CLOUD_PROJECT=demo-firebase-sub-integration`
 
+# Bootstrap CLI (admin and role setup)
 
+Use these commands to initialize a new local/emulator project without manual Firestore edits.
+
+Create or update a first admin user and grant default admin permissions:
+
+```bash
+poetry run python -m firebase_sub.cli.bootstrap create-admin --uid <auth-uid> --name "Admin User" --email admin@example.com
+```
+
+Preview changes without writing:
+
+```bash
+poetry run python -m firebase_sub.cli.bootstrap create-admin --uid <auth-uid> --dry-run
+```
+
+Grant one or more role docs explicitly:
+
+```bash
+poetry run python -m firebase_sub.cli.bootstrap grant-role --uid <auth-uid> --role canChat --role canCreatePoll
+```
+
+When `FIRESTORE_EMULATOR_HOST` is set, this command targets the emulator and uses `GOOGLE_CLOUD_PROJECT` for the project id.
 
 # Deisgn Overview
 
