@@ -26,7 +26,7 @@ const AUTH_EMULATOR_HOST = "127.0.0.1:9199";
 const PROJECT_ID = "demo-firebase-sub-integration";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyDHLfVs5P5p5PkWOLgFiQJXy9cNpTq7YUU", // fake key for emulator
+    apiKey: "demo-emulator-api-key-not-a-secret",
     projectId: PROJECT_ID,
     storageBucket: `${PROJECT_ID}.appspot.com`,
     appId: "1:123456789:web:abcdef1234567890",
