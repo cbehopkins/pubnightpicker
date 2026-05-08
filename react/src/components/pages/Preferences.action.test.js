@@ -78,6 +78,7 @@ describe("Preferences action push preferences writes", () => {
                 name: "Alice",
                 email: "alice@example.com",
                 avatar: "https://example.com/avatar.png",
+                default_arrival_time: "18:45",
                 push_prefs_visible: "1",
                 push_poll_opens: "on",
                 push_poll_completes: "on",
@@ -90,6 +91,7 @@ describe("Preferences action push preferences writes", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
+                defaultArrivalTime: "18:45",
                 pushPreferences: {
                     pollOpens: true,
                     pollCompletes: true,
@@ -114,6 +116,22 @@ describe("Preferences action push preferences writes", () => {
 
         expect(updateDocMock).toHaveBeenCalledTimes(1);
         const privateWritePayload = updateDocMock.mock.calls[0][1];
+        expect(privateWritePayload.defaultArrivalTime).toBe("19:30");
         expect("pushPreferences" in privateWritePayload).toBe(false);
+    });
+
+    it("normalizes invalid default_arrival_time to 19:30", async () => {
+        await action({
+            request: createRequest({
+                name: "Alice",
+                email: "alice@example.com",
+                avatar: "https://example.com/avatar.png",
+                default_arrival_time: "invalid",
+            }),
+            params: {},
+        });
+
+        expect(updateDocMock).toHaveBeenCalledTimes(1);
+        expect(updateDocMock.mock.calls[0][1].defaultArrivalTime).toBe("19:30");
     });
 });

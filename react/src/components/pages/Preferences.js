@@ -25,6 +25,7 @@ import {
   setStoredThemeMode,
   subscribeToSystemThemeChanges,
 } from "../../utils/themeMode";
+import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 async function ReauthenticateUser(auth, userProvidedPassword) {
   const credential = EmailAuthProvider.credential(
@@ -246,6 +247,7 @@ export async function action({ request, params }) {
     notificationEmailEnabled: Boolean(data.get("emailme")),
     votesVisible: Boolean(data.get("votes_visible")),
     openPollEmailEnabled: Boolean(data.get("open_poll_email")),
+    defaultArrivalTime: normalizeArrivalTime(data.get("default_arrival_time")),
     customPhotoUrl,
     photoUrl: defaultAvatar ? photoUrl : avatarUrl,
     pushPreferences: data.get("push_prefs_visible")
@@ -269,6 +271,7 @@ export async function action({ request, params }) {
         notificationEmail: cleaned.notificationEmail,
         notificationEmailEnabled: cleaned.notificationEmailEnabled,
         openPollEmailEnabled: cleaned.openPollEmailEnabled,
+        defaultArrivalTime: cleaned.defaultArrivalTime,
         customPhotoUrl: cleaned.customPhotoUrl,
         pushPreferences: cleaned.pushPreferences,
       };

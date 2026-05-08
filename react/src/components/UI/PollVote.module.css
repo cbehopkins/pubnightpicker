@@ -133,6 +133,10 @@
   margin: 0.1rem 0 0.2rem;
 }
 
+.etaInput {
+  padding: 0.25rem 0;
+}
+
 .attendanceIndicator {
   text-align: center;
   font-size: 1.1rem;

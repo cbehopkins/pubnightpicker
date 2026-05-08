@@ -11,6 +11,10 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
  * @property {() => Promise<void>} clearMainAttendance
  * @property {(status: AttendanceStatus) => Promise<void>} setRestaurantAttendanceStatus
  * @property {() => Promise<void>} clearRestaurantAttendance
+ * @property {(eta: string) => Promise<void>} setMainEta
+ * @property {() => Promise<void>} clearMainEta
+ * @property {(eta: string) => Promise<void>} setRestaurantEta
+ * @property {() => Promise<void>} clearRestaurantEta
  */
 
 /**
@@ -22,6 +26,8 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
  * @param {(pubId: string, userId: string) => Promise<void>} clearAttendance
  * @param {string} mainVenueId
  * @param {string | null | undefined} restaurantVenueId
+ * @param {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
+ * @param {(pubId: string, userId: string) => Promise<void>} clearEta
  * @returns {EventAttendanceHandlers}
  */
 export function useEventAttendance(
@@ -29,7 +35,9 @@ export function useEventAttendance(
   setAttendanceStatus,
   clearAttendance,
   mainVenueId,
-  restaurantVenueId
+  restaurantVenueId,
+  setEta,
+  clearEta
 ) {
   // Main venue handlers
   const setMainAttendanceStatus = useCallback(
@@ -90,5 +98,35 @@ export function useEventAttendance(
     clearMainAttendance,
     setRestaurantAttendanceStatus,
     clearRestaurantAttendance,
+    setMainEta: useCallback(
+      /** @type {(eta: string) => Promise<void>} */
+      async (eta) => {
+        if (!currUserId) return;
+        await runAttendanceAction(() => setEta(mainVenueId, currUserId, eta));
+      },
+      [currUserId, mainVenueId, setEta]
+    ),
+    clearMainEta: useCallback(
+      async () => {
+        if (!currUserId) return;
+        await runAttendanceAction(() => clearEta(mainVenueId, currUserId), "Unable to clear your ETA.");
+      },
+      [currUserId, mainVenueId, clearEta]
+    ),
+    setRestaurantEta: useCallback(
+      /** @type {(eta: string) => Promise<void>} */
+      async (eta) => {
+        if (!currUserId || !restaurantVenueId) return;
+        await runAttendanceAction(() => setEta(restaurantVenueId, currUserId, eta));
+      },
+      [currUserId, restaurantVenueId, setEta]
+    ),
+    clearRestaurantEta: useCallback(
+      async () => {
+        if (!currUserId || !restaurantVenueId) return;
+        await runAttendanceAction(() => clearEta(restaurantVenueId, currUserId), "Unable to clear your restaurant ETA.");
+      },
+      [currUserId, restaurantVenueId, clearEta]
+    ),
   };
 }

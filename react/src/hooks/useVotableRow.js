@@ -9,7 +9,7 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
 
 /** @typedef {"canCome" | "cannotCome"} AttendanceStatus */
 /** @typedef {Record<string, string[]>} VotesMap */
-/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[] } | undefined>} AttendanceMap */
+/** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 
 /**
  * @typedef {Object} VotableRowState
@@ -23,9 +23,12 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @property {boolean} allowAttendanceControls
  * @property {boolean} allowGlobalAttendanceControls
  * @property {boolean} hasAttendanceData
+ * @property {string | undefined} userEta
  * @property {() => Promise<void>} voteHandler
  * @property {(status: AttendanceStatus) => Promise<void>} setAttendanceStatusHandler
  * @property {() => Promise<void>} clearAttendanceHandler
+ * @property {(eta: string) => Promise<void>} setEtaHandler
+ * @property {() => Promise<void>} clearEtaHandler
  * @property {() => Promise<void>} deleteHandler
  */
 
@@ -40,10 +43,12 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @param {(pubId: string, userId: string) => Promise<void>} clearAttendance
  * @param {(pubId: string, userId: string) => Promise<void>} makeVote
  * @param {(pubId: string, userId: string) => Promise<void>} clearVote
+ * @param {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
+ * @param {(pubId: string, userId: string) => Promise<void>} clearEta
  * @param {string} pollId
  * @returns {VotableRowState}
  */
-export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanceStatus, clearAttendance, makeVote, clearVote, pollId) {
+export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanceStatus, clearAttendance, makeVote, clearVote, setEta, clearEta, pollId) {
   const safeUserId = currUserId || "";
 
   // Vote-related derived state
@@ -56,6 +61,7 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
   const cannotCome = attendanceForPub.cannotCome;
   const userCanCome = attendanceForPub.userCanCome;
   const userCannotCome = attendanceForPub.userCannotCome;
+  const userEta = attendanceForPub.userEta;
 
   // Control availability
   const canVote = Boolean(currUserId);
@@ -95,6 +101,18 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
     }
   }, [pollId, pubId]);
 
+  // ETA handlers
+  /** @type {(eta: string) => Promise<void>} */
+  const setEtaHandler = useCallback(async (eta) => {
+    if (!currUserId || pubId === "any") return;
+    await runAttendanceAction(() => setEta(pubId, currUserId, eta));
+  }, [currUserId, pubId, setEta]);
+
+  const clearEtaHandler = useCallback(async () => {
+    if (!currUserId || pubId === "any") return;
+    await runAttendanceAction(() => clearEta(pubId, currUserId));
+  }, [clearEta, currUserId, pubId]);
+
   return {
     // Vote state
     voteCount,
@@ -104,6 +122,7 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
     userCannotCome,
     canCome,
     cannotCome,
+    userEta,
     // Control availability
     canVote,
     allowAttendanceControls,
@@ -113,6 +132,8 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
     voteHandler,
     setAttendanceStatusHandler,
     clearAttendanceHandler,
+    setEtaHandler,
+    clearEtaHandler,
     deleteHandler,
   };
 }

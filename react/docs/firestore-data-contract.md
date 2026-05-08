@@ -79,9 +79,13 @@ Shape:
 Examples:
 - attendance/{pollId}.{venueId}.canCome: array of uid
 - attendance/{pollId}.{venueId}.cannotCome: array of uid
+- attendance/{pollId}.{venueId}.eta: map of uid → HH:MM string (optional)
 
 Important:
 - Restaurant attendance uses the same venue-id keyed model, not a separate schema.
+- The `eta` field is optional; it is absent unless at least one user has set an ETA.
+- An ETA is only meaningful when the user is in `canCome`. Setting `cannotCome` or clearing attendance automatically deletes the user's ETA key in the same write.
+- ETA values are stored as `"HH:MM"` time-of-day strings (24-hour format). No date component is stored — the event date is on the poll document.
 
 ### roles collection
 Document id: role name.
@@ -99,6 +103,7 @@ Common fields used:
 - notificationEmailEnabled
 - votesVisible
 - openPollEmailEnabled
+- defaultArrivalTime: string in HH:mm format (default 19:30 when absent)
 - photoUrl
 - customPhotoUrl
 - webPushEnabled: boolean, master web push switch
