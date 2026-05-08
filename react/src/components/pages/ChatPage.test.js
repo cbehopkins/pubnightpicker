@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ChatPage from "./ChatPage";
 
@@ -11,12 +11,20 @@ const {
     useNavigateMock,
     useParamsMock,
     chatBoxMock,
+    getDocMock,
+    docMock,
+    setEventChatMutedMock,
+    setGlobalChatMutedMock,
 } = vi.hoisted(() => ({
     useSelectorMock: vi.fn(),
     useRoleMock: vi.fn(),
     useNavigateMock: vi.fn(),
     useParamsMock: vi.fn(),
     chatBoxMock: vi.fn(() => <div data-testid="chat-box" />),
+    getDocMock: vi.fn(),
+    docMock: vi.fn(),
+    setEventChatMutedMock: vi.fn(),
+    setGlobalChatMutedMock: vi.fn(),
 }));
 
 vi.mock("react-redux", () => ({
@@ -41,6 +49,20 @@ vi.mock("react-router-dom", async () => {
     };
 });
 
+vi.mock("firebase/firestore", () => ({
+    doc: docMock,
+    getDoc: getDocMock,
+}));
+
+vi.mock("../../firebase", () => ({
+    db: {},
+}));
+
+vi.mock("../../push/webPush", () => ({
+    setEventChatMuted: setEventChatMutedMock,
+    setGlobalChatMuted: setGlobalChatMutedMock,
+}));
+
 describe("ChatPage", () => {
     beforeEach(() => {
         useSelectorMock.mockReset();
@@ -48,11 +70,19 @@ describe("ChatPage", () => {
         useNavigateMock.mockReset();
         useParamsMock.mockReset();
         chatBoxMock.mockClear();
+        getDocMock.mockReset();
+        docMock.mockReset();
+        setEventChatMutedMock.mockReset();
+        setGlobalChatMutedMock.mockReset();
 
-        useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: true } }));
+        useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: true, uid: "user-1" } }));
         useRoleMock.mockReturnValue(true);
         useNavigateMock.mockReturnValue(vi.fn());
         useParamsMock.mockReturnValue({});
+        getDocMock.mockResolvedValue({ data: () => ({ pushPreferences: {} }) });
+        docMock.mockReturnValue({});
+        setEventChatMutedMock.mockResolvedValue(undefined);
+        setGlobalChatMutedMock.mockResolvedValue(undefined);
     });
 
     it("renders global chat by default", () => {
@@ -65,7 +95,7 @@ describe("ChatPage", () => {
         );
     });
 
-    it("renders event-scoped chat when pollId is present", () => {
+    it("renders event-scoped chat when pollId is present", async () => {
         useParamsMock.mockReturnValue({ pollId: "poll-42" });
 
         render(<ChatPage />);
@@ -76,5 +106,42 @@ describe("ChatPage", () => {
             { scope: { scopeType: "event", scopeId: "poll-42" } },
             expect.anything(),
         );
+        await waitFor(() => {
+            expect(screen.getByText("Event chat notifications are enabled for this event.")).toBeTruthy();
+        });
+    });
+
+    it("toggles event chat mute for the current poll", async () => {
+        useParamsMock.mockReturnValue({ pollId: "poll-42" });
+
+        const rendered = render(<ChatPage />);
+
+        const button = within(rendered.container).getByRole("button", {
+            name: "Mute event chat notifications",
+        });
+        fireEvent.click(button);
+
+        await waitFor(() => {
+            expect(setEventChatMutedMock).toHaveBeenCalledWith("user-1", "poll-42", true);
+        });
+        expect(rendered.getByText("Event chat notifications are muted for this event.")).toBeTruthy();
+    });
+
+    it("toggles global chat mute on the main chat page", async () => {
+        const rendered = render(<ChatPage />);
+
+        await waitFor(() => {
+            expect(within(rendered.container).getByText("Global chat notifications are enabled.")).toBeTruthy();
+        });
+
+        const button = within(rendered.container).getByRole("button", {
+            name: "Mute global chat notifications",
+        });
+        fireEvent.click(button);
+
+        await waitFor(() => {
+            expect(setGlobalChatMutedMock).toHaveBeenCalledWith("user-1", true);
+        });
+        expect(within(rendered.container).getByText("Global chat notifications are muted.")).toBeTruthy();
     });
 });

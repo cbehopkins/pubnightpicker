@@ -690,6 +690,39 @@ def test_chat_handler_event_includes_prior_chat_participant_not_attending():
     assert "participant" in recipient_uids
 
 
+def test_chat_handler_event_excludes_user_muted_for_poll():
+    users = [
+        _user_doc("attendee", web_push_enabled=True, push_prefs={"eventChat": True}),
+        _user_doc(
+            "participant",
+            web_push_enabled=True,
+            push_prefs={"eventChat": True, "eventChatMutedPollIds": ["poll-42"]},
+        ),
+    ]
+    attendance = {"venue-A": {"canCome": ["attendee"]}}
+    ep_attendee = _endpoint_doc("attendee")
+    ep_participant = _endpoint_doc("participant")
+    handler, _ = _make_db_handler(
+        users,
+        attendance_data=attendance,
+        event_chat_participant_uids=["participant"],
+        endpoint_docs={"attendee": [ep_attendee], "participant": [ep_participant]},
+    )
+
+    msg = _message_doc("msg-5c", uid="author", scope_type="event", scope_id="poll-42")
+    recipient_uids = []
+
+    def fake_send(endpoints, *, payload, **kwargs):
+        recipient_uids.extend(ep.user_id for ep in endpoints)
+        return list(dict.fromkeys(recipient_uids))
+
+    with patch("firebase_sub.database.handlers.send_chat_push", side_effect=fake_send):
+        handler.chat_message_push_handler("msg-5c", msg)
+
+    assert "attendee" in recipient_uids
+    assert "participant" not in recipient_uids
+
+
 # ---------------------------------------------------------------------------
 # DbHandler.chat_message_push_handler — idempotency
 # ---------------------------------------------------------------------------

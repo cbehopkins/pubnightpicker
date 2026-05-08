@@ -229,6 +229,23 @@ class DbHandler:
                 participants.add(uid)
         return participants
 
+    def _muted_event_chat_uids(self, poll_id: str, candidate_uids: set[str]) -> set[str]:
+        """Return candidate uids that muted notifications for a specific event."""
+        if not poll_id or not candidate_uids:
+            return set()
+
+        muted: set[str] = set()
+        for uid in candidate_uids:
+            user_document = cast(
+                DocumentSnapshot, self.db.collection("users").document(uid).get()
+            )
+            user_payload = user_document.to_dict() or {}
+            push_prefs = user_payload.get("pushPreferences") or {}
+            muted_poll_ids = push_prefs.get("eventChatMutedPollIds") or []
+            if poll_id in muted_poll_ids:
+                muted.add(uid)
+        return muted
+
     def chat_message_push_handler(
         self,
         message_id: str,
@@ -261,53 +278,16 @@ class DbHandler:
         ]
         eligible_uids = self._users_with_push_preference(preference_field)
 
-        _log.info(
-            "Chat push debug: message=%s scope=%s/%s preference=%s initial_eligible=%s uids=%s",
-            message_id,
-            scope_type,
-            scope_id,
-            preference_field,
-            len(eligible_uids),
-            sorted(eligible_uids),
-        )
-
         if scope_type == "event":
             attendees = self._attendee_uids(scope_id)
             participants = self._event_chat_participant_uids(scope_id)
             eligible_event_uids = attendees | participants
-
-            # TODO(per-event-mute): once per-event mute is implemented, exclude
-            # muted users here before intersection with preference-enabled uids.
-            _log.info(
-                "Chat push debug: message=%s attendees_for_scope=%s attendee_uids=%s",
-                message_id,
-                len(attendees),
-                sorted(attendees),
-            )
-            _log.info(
-                "Chat push debug: message=%s participants_for_scope=%s participant_uids=%s",
-                message_id,
-                len(participants),
-                sorted(participants),
-            )
             eligible_uids &= eligible_event_uids
-            _log.info(
-                "Chat push debug: message=%s eligible_after_event_scope_filter=%s uids=%s",
-                message_id,
-                len(eligible_uids),
-                sorted(eligible_uids),
-            )
+            muted_uids = self._muted_event_chat_uids(scope_id, eligible_uids)
+            eligible_uids -= muted_uids
 
         # Exclude the message author.
         eligible_uids.discard(author_uid)
-
-        _log.info(
-            "Chat push debug: message=%s author=%s eligible_after_author_exclusion=%s uids=%s",
-            message_id,
-            author_uid,
-            len(eligible_uids),
-            sorted(eligible_uids),
-        )
 
         if not eligible_uids:
             _log.info("No eligible recipients for chat push on message %s", message_id)
@@ -320,12 +300,6 @@ class DbHandler:
         actions_data = actions_snap.to_dict() or {}
         already_delivered_eps: set[str] = set(
             actions_data.get("delivered_endpoints") or []
-        )
-        _log.info(
-            "Chat push debug: message=%s actions_exists=%s delivered_endpoint_hashes=%s",
-            message_id,
-            actions_snap.exists,
-            len(already_delivered_eps),
         )
 
         # Build payload.
@@ -360,15 +334,6 @@ class DbHandler:
                         endpoints.append(valid_ep)
                     else:
                         skipped_as_already_delivered += 1
-
-        _log.info(
-            "Chat push debug: message=%s scanned_endpoints=%s skipped_delivered=%s remaining_endpoints=%s remaining_uids=%s",
-            message_id,
-            scanned_endpoints,
-            skipped_as_already_delivered,
-            len(endpoints),
-            sorted({ep.user_id for ep in endpoints}),
-        )
 
         if not endpoints:
             _log.info("No remaining undelivered endpoints for message %s", message_id)
