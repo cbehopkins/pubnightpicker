@@ -53,6 +53,9 @@ export async function requestNotificationPing(documentId, eventKey, pingValue = 
 export function waitForNotificationAck(documentId, eventKey, expectedValue, timeoutMs = 60000) {
     return new Promise((resolve, reject) => {
         let settled = false;
+        let unsubscribeReady = false;
+        let unsubscribeRequested = false;
+        let unsubscribe = () => { };
 
         const finish = (callback, value) => {
             if (settled) {
@@ -60,8 +63,15 @@ export function waitForNotificationAck(documentId, eventKey, expectedValue, time
             }
             settled = true;
             clearTimeout(timeoutId);
-            unsubscribe();
-            callback(value);
+            try {
+                callback(value);
+            } finally {
+                if (unsubscribeReady) {
+                    unsubscribe();
+                } else {
+                    unsubscribeRequested = true;
+                }
+            }
         };
 
         const timeoutId = setTimeout(() => {
@@ -71,7 +81,7 @@ export function waitForNotificationAck(documentId, eventKey, expectedValue, time
             });
         }, timeoutMs);
 
-        const unsubscribe = onSnapshot(
+        unsubscribe = onSnapshot(
             doc(db, NOTIFICATION_ACK_COLLECTION, documentId),
             (snapshot) => {
                 const data = snapshot.data();
@@ -87,6 +97,10 @@ export function waitForNotificationAck(documentId, eventKey, expectedValue, time
             },
             (error) => finish(reject, error),
         );
+        unsubscribeReady = true;
+        if (unsubscribeRequested) {
+            unsubscribe();
+        }
     });
 }
 
