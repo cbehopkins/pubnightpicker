@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -19,7 +19,7 @@ def restore_datetimes(obj: Any) -> Any:
         try:
             # Handle 'Z' as UTC
             if obj.endswith("Z"):
-                return datetime.fromisoformat(obj[:-1]).replace(tzinfo=timezone.utc)
+                return datetime.fromisoformat(obj[:-1]).replace(tzinfo=UTC)
             return datetime.fromisoformat(obj)
         except Exception:
             return obj
@@ -31,6 +31,6 @@ def convert_datetimes(obj: Any) -> Any:
         return {k: convert_datetimes(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [convert_datetimes(i) for i in obj]
-    if isinstance(obj, (DatetimeWithNanoseconds, datetime)):
+    if isinstance(obj, DatetimeWithNanoseconds | datetime):
         return obj.isoformat()
     return obj

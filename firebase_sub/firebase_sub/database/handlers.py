@@ -61,7 +61,7 @@ def _with_legacy_alias_key(
 
     normalized = dict(action_dict)
     for action_type, values in list(normalized.items()):
-        if not isinstance(values, (list, tuple, set)):
+        if not isinstance(values, list | tuple | set):
             continue
         key_set = set(values)
         if legacy_key in key_set and canonical_key not in key_set:
