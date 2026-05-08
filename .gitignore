@@ -2,3 +2,4 @@
 **/backup.json
 node_modules/
 **/.medorg.xml
+__pycache__

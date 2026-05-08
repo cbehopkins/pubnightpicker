@@ -154,10 +154,7 @@ class TestSetDocIfMissingIntegration:
             firestore_client, "users", "test-absent", {"x": 1}, dry_run=False
         )
         doc = (
-            firestore_client.collection("users")
-            .document("test-absent")
-            .get()
-            .to_dict()
+            firestore_client.collection("users").document("test-absent").get().to_dict()
         )
         assert doc == {"x": 1}
 
@@ -184,18 +181,13 @@ class TestGrantRoleIntegration:
         )
         assert result.already_granted is False
         doc = (
-            firestore_client.collection("roles")
-            .document("test-role")
-            .get()
-            .to_dict()
+            firestore_client.collection("roles").document("test-role").get().to_dict()
             or {}
         )
         assert doc.get("test-uid") is True
 
     def test_detects_existing_grant(self, firestore_client):
-        firestore_client.collection("roles").document("test-role2").set(
-            {"uid2": True}
-        )
+        firestore_client.collection("roles").document("test-role2").set({"uid2": True})
         result = _grant_role(
             firestore_client, role="test-role2", uid="uid2", dry_run=False
         )

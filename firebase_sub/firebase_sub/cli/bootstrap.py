@@ -6,6 +6,7 @@ from typing import Any
 import click
 import firebase_admin
 import google.oauth2.credentials
+from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import SERVER_TIMESTAMP
 from google.cloud.firestore_v1.client import Client
@@ -27,11 +28,19 @@ ADMIN_DEFAULT_ROLES = [
     "canDeleteAnyMessage",
 ]
 
-# Deterministic UIDs used by the smoke seed dataset and integration tests.
+# Deterministic UIDs / credentials used by the smoke seed dataset and integration tests.
 SMOKE_ADMIN_UID = "smoke-admin"
 SMOKE_USER_A_UID = "smoke-user-a"  # chat message sender; no push endpoint
 SMOKE_USER_B_UID = "smoke-user-b"  # chat message recipient; has active push endpoint
 SMOKE_USER_B_ENDPOINT_ID = "smoke-endpoint-b"
+
+# Auth credentials for the smoke users (emulator only).
+SMOKE_ADMIN_EMAIL = "smoke-admin@test.local"
+SMOKE_ADMIN_PASSWORD = "test-password-admin"
+SMOKE_USER_A_EMAIL = "smoke-user-a@test.local"
+SMOKE_USER_A_PASSWORD = "test-password-a"
+SMOKE_USER_B_EMAIL = "smoke-user-b@test.local"
+SMOKE_USER_B_PASSWORD = "test-password-b"
 
 
 @dataclass(frozen=True)
@@ -102,6 +111,29 @@ def _grant_role(db, role: str, uid: str, dry_run: bool) -> RoleGrantResult:
 # Public seeding helpers – callable from integration tests without going
 # through the Click CLI.
 # ---------------------------------------------------------------------------
+
+
+def _create_auth_user_if_missing(
+    uid: str, email: str, password: str, display_name: str
+) -> bool:
+    """Create an Auth user in the emulator if they don't already exist.
+
+    Only runs when ``FIREBASE_AUTH_EMULATOR_HOST`` is set — safe to call from
+    ``seed_smoke_data`` without risk of touching real Auth in production.
+    Returns True when the user was created, False when it already existed.
+    """
+    if not os.getenv("FIREBASE_AUTH_EMULATOR_HOST"):
+        return False
+    try:
+        firebase_auth.create_user(
+            uid=uid,
+            email=email,
+            password=password,
+            display_name=display_name,
+        )
+        return True
+    except (firebase_auth.UidAlreadyExistsError, firebase_auth.EmailAlreadyExistsError):
+        return False
 
 
 def _set_doc_if_missing(
@@ -251,6 +283,29 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
                 }
             )
         wrote.append(ep_key)
+
+    # Auth users (emulator only) --------------------------------------------
+    # Creates the Firebase Auth record so test clients can sign in with
+    # email/password.  Only runs when FIREBASE_AUTH_EMULATOR_HOST is set so
+    # this is a no-op in unit tests and against real projects.
+    if not dry_run and os.getenv("FIREBASE_AUTH_EMULATOR_HOST"):
+        for uid, email, password, display_name in [
+            (SMOKE_ADMIN_UID, SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD, "Smoke Admin"),
+            (
+                SMOKE_USER_A_UID,
+                SMOKE_USER_A_EMAIL,
+                SMOKE_USER_A_PASSWORD,
+                "Smoke User A",
+            ),
+            (
+                SMOKE_USER_B_UID,
+                SMOKE_USER_B_EMAIL,
+                SMOKE_USER_B_PASSWORD,
+                "Smoke User B",
+            ),
+        ]:
+            created = _create_auth_user_if_missing(uid, email, password, display_name)
+            _record(f"auth/{uid}", created)
 
     return SeedResult(wrote_docs=wrote, skipped_docs=skipped)
 

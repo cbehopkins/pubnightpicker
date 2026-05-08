@@ -40,9 +40,9 @@ def _seed_chat_user(
     )
 
     # A valid active endpoint is required for chat_message_push_handler to include a user.
-    firestore_client.collection("users").document(uid).collection("push_endpoints").document(
-        f"ep-{uid}"
-    ).set(
+    firestore_client.collection("users").document(uid).collection(
+        "push_endpoints"
+    ).document(f"ep-{uid}").set(
         {
             "endpoint": f"https://push.example/{uid}",
             "p256dh": "test-p256dh-key",
@@ -87,7 +87,9 @@ def _seed_global_chat_matrix(firestore_client) -> None:
     )
 
 
-def _create_global_message(firestore_client, *, message_id: str, author_uid: str) -> None:
+def _create_global_message(
+    firestore_client, *, message_id: str, author_uid: str
+) -> None:
     firestore_client.collection("messages").document(message_id).set(
         {
             "uid": author_uid,

@@ -42,9 +42,9 @@ def _seed_chat_user(
         }
     )
 
-    firestore_client.collection("users").document(uid).collection("push_endpoints").document(
-        f"ep-{uid}"
-    ).set(
+    firestore_client.collection("users").document(uid).collection(
+        "push_endpoints"
+    ).document(f"ep-{uid}").set(
         {
             "endpoint": f"https://push.example/{uid}",
             "p256dh": "test-p256dh-key",

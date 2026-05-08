@@ -3,12 +3,13 @@ import socket
 from collections.abc import Generator
 
 import firebase_admin
-import google.oauth2.credentials
 import pytest
+from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.document import DocumentReference
-from firebase_admin import auth as firebase_auth
+
+from tests.integration._emulator_helpers import EmulatorCredentials
 
 TEST_PROJECT_ID = "demo-firebase-sub-integration"
 
@@ -19,17 +20,10 @@ def pytest_configure(config) -> None:
     config.addinivalue_line(
         "markers", "integration: marks tests that require Firebase emulator integration"
     )
-
-
-class _EmulatorCredentials(firebase_admin.credentials.Base):
-    """Stub credential for emulator-only (demo project) usage.
-
-    Avoids ADC look-up so tests can be skipped cleanly rather than
-    erroring when the emulator isn't running.
-    """
-
-    def get_credential(self) -> google.oauth2.credentials.Credentials:
-        return google.oauth2.credentials.Credentials(token="owner")
+    config.addinivalue_line(
+        "markers",
+        "e2e: marks full end-to-end tests that require emulators and Node runtime",
+    )
 
 
 def _delete_doc_tree(doc_ref: DocumentReference) -> None:
@@ -106,7 +100,7 @@ def firebase_test_app(firestore_emulator_host: str):
         app = firebase_admin.get_app()
     except ValueError:
         app = firebase_admin.initialize_app(
-            credential=_EmulatorCredentials(),
+            credential=EmulatorCredentials(),
             options={"projectId": TEST_PROJECT_ID},
         )
         created_default_app = True
@@ -140,7 +134,9 @@ def _clear_auth(app: firebase_admin.App) -> None:
 
 
 @pytest.fixture()
-def clean_auth(firebase_test_app, auth_emulator_host: str) -> Generator[None, None, None]:
+def clean_auth(
+    firebase_test_app, auth_emulator_host: str
+) -> Generator[None, None, None]:
     """Function-scoped fixture that wipes the Auth emulator before and after each test.
 
     Tests that create Auth users should request this fixture explicitly so they

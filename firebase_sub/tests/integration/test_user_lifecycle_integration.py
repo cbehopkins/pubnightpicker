@@ -95,7 +95,9 @@ class TestAuthUserCreation:
         with pytest.raises(firebase_auth.UserNotFoundError):
             firebase_auth.get_user("lifecycle-user-3", app=firebase_test_app)
 
-    def test_clean_auth_fixture_resets_between_tests(self, clean_auth, firebase_test_app):
+    def test_clean_auth_fixture_resets_between_tests(
+        self, clean_auth, firebase_test_app
+    ):
         """State from previous tests must not leak (``clean_auth`` resets each time)."""
         # If lifecycle-user-1 from a previous test survived, get_user would succeed.
         # We expect it not to exist here.
@@ -114,7 +116,9 @@ class TestBootstrappedUserFirestoreDocs:
 
     def test_create_admin_writes_private_user_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = firestore_client.collection("users").document("smoke-admin").get().to_dict()
+        doc = (
+            firestore_client.collection("users").document("smoke-admin").get().to_dict()
+        )
         assert doc is not None
         assert doc["uid"] == "smoke-admin"
         assert doc["webPushEnabled"] is False
@@ -124,30 +128,45 @@ class TestBootstrappedUserFirestoreDocs:
 
     def test_create_admin_writes_public_user_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = firestore_client.collection("user-public").document("smoke-admin").get().to_dict()
+        doc = (
+            firestore_client.collection("user-public")
+            .document("smoke-admin")
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         assert doc["uid"] == "smoke-admin"
         assert "name" in doc
 
     def test_create_admin_grants_admin_role(self, firestore_client):
         seed_smoke_data(firestore_client)
-        role_doc = firestore_client.collection("roles").document("admin").get().to_dict() or {}
+        role_doc = (
+            firestore_client.collection("roles").document("admin").get().to_dict() or {}
+        )
         assert role_doc.get("smoke-admin") is True
 
     def test_create_admin_grants_all_default_roles(self, firestore_client):
         seed_smoke_data(firestore_client)
         for role in ADMIN_DEFAULT_ROLES:
-            role_doc = firestore_client.collection("roles").document(role).get().to_dict() or {}
+            role_doc = (
+                firestore_client.collection("roles").document(role).get().to_dict()
+                or {}
+            )
             assert role_doc.get("smoke-admin") is True, f"Missing role: {role}"
 
     def test_plain_user_only_has_can_chat_role(self, firestore_client):
         """smoke-user-a (plain user) should only have canChat, not canCreatePoll."""
         seed_smoke_data(firestore_client)
         can_chat = (
-            firestore_client.collection("roles").document("canChat").get().to_dict() or {}
+            firestore_client.collection("roles").document("canChat").get().to_dict()
+            or {}
         )
         can_create = (
-            firestore_client.collection("roles").document("canCreatePoll").get().to_dict() or {}
+            firestore_client.collection("roles")
+            .document("canCreatePoll")
+            .get()
+            .to_dict()
+            or {}
         )
         assert can_chat.get("smoke-user-a") is True
         assert can_create.get("smoke-user-a") is not True
@@ -155,7 +174,12 @@ class TestBootstrappedUserFirestoreDocs:
     def test_push_enabled_user_has_correct_preferences(self, firestore_client):
         """smoke-user-b must have webPushEnabled=True and globalChat=True."""
         seed_smoke_data(firestore_client)
-        doc = firestore_client.collection("users").document("smoke-user-b").get().to_dict()
+        doc = (
+            firestore_client.collection("users")
+            .document("smoke-user-b")
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         assert doc["webPushEnabled"] is True
         assert doc["pushPreferences"]["globalChat"] is True
@@ -172,14 +196,24 @@ class TestPollCreation:
 
     def test_create_poll_writes_polls_doc(self, firestore_client):
         _create_poll(firestore_client, "poll-lifecycle-1", date="2026-07-01")
-        doc = firestore_client.collection("polls").document("poll-lifecycle-1").get().to_dict()
+        doc = (
+            firestore_client.collection("polls")
+            .document("poll-lifecycle-1")
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         assert doc["date"] == "2026-07-01"
         assert doc["completed"] is False
 
     def test_create_poll_writes_votes_doc(self, firestore_client):
         _create_poll(firestore_client, "poll-lifecycle-2")
-        doc = firestore_client.collection("votes").document("poll-lifecycle-2").get().to_dict()
+        doc = (
+            firestore_client.collection("votes")
+            .document("poll-lifecycle-2")
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         # The React NewPoll component initialises the any key as an empty array
         assert "any" in doc
@@ -187,7 +221,12 @@ class TestPollCreation:
 
     def test_create_poll_writes_attendance_doc(self, firestore_client):
         _create_poll(firestore_client, "poll-lifecycle-3")
-        doc = firestore_client.collection("attendance").document("poll-lifecycle-3").get().to_dict()
+        doc = (
+            firestore_client.collection("attendance")
+            .document("poll-lifecycle-3")
+            .get()
+            .to_dict()
+        )
         assert doc is not None
         # Attendance starts as an empty map
         assert doc == {}
@@ -195,7 +234,12 @@ class TestPollCreation:
     def test_create_poll_does_not_set_completed_or_selected(self, firestore_client):
         """A freshly created poll must not have selected or pubs fields."""
         _create_poll(firestore_client, "poll-lifecycle-4")
-        doc = firestore_client.collection("polls").document("poll-lifecycle-4").get().to_dict()
+        doc = (
+            firestore_client.collection("polls")
+            .document("poll-lifecycle-4")
+            .get()
+            .to_dict()
+        )
         assert "selected" not in doc
         assert "pubs" not in doc
 
@@ -219,7 +263,10 @@ class TestNewPollNotification:
         handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
 
         action_doc = (
-            firestore_client.collection("open_actions").document(poll_id).get().to_dict()
+            firestore_client.collection("open_actions")
+            .document(poll_id)
+            .get()
+            .to_dict()
         )
         assert action_doc is not None
         assert action_doc["email"] == [PushDedupeKeys.open_key(poll_id)]
@@ -249,7 +296,10 @@ class TestNewPollNotification:
         handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
 
         action_doc = (
-            firestore_client.collection("open_actions").document(poll_id).get().to_dict()
+            firestore_client.collection("open_actions")
+            .document(poll_id)
+            .get()
+            .to_dict()
         )
         # The doc should still be a single record, not duplicated
         assert action_doc is not None
