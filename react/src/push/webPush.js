@@ -9,7 +9,7 @@ import {
     updateDoc,
 } from "firebase/firestore";
 
-const WEB_PUSH_SW_PATH = "/push-sw.js";
+const WEB_PUSH_SW_PATH = "/sw.js";
 function parseBooleanEnv(value) {
     if (value === undefined || value === null) {
         return false;

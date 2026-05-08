@@ -3,6 +3,8 @@ import { Outlet } from 'react-router-dom';
 import MainNavigation from './MainNavigation';
 import PageContent from './PageContent';
 import ToastCenter from '../UI/ToastCenter';
+import PwaInstallBanner from '../UI/PwaInstallBanner';
+import PwaUpdateBanner from '../UI/PwaUpdateBanner';
 
 function RootLayout({ database_error }) {
   if (database_error) {
@@ -14,6 +16,8 @@ function RootLayout({ database_error }) {
   return (
     <>
       <MainNavigation />
+      <PwaUpdateBanner />
+      <PwaInstallBanner />
       <main>
         <Outlet />
       </main>
