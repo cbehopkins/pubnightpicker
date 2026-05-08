@@ -9,6 +9,7 @@
 #   ./run-tests.ps1 -E2E                              # Run E2E tests
 #   ./run-tests.ps1 -Tox                              # Run tox (full test suite + linting)
 #   ./run-tests.ps1 -Black                            # Run black linting only
+#   ./run-tests.ps1 -Typecheck                        # Run React TypeScript typecheck
 #   ./run-tests.ps1 -All                              # Run all test suites
 #   ./run-tests.ps1 -Integration -VerboseOutput      # Integration with verbose output
 #   ./run-tests.ps1 -Integration -k test_chat         # Forward pytest args (integration only)
@@ -21,6 +22,7 @@ param(
     [switch]$Node,
     [switch]$Tox,
     [switch]$Black,
+    [switch]$Typecheck,
     [switch]$All,
     [switch]$VerboseOutput,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -36,7 +38,7 @@ $E2EDir = Join-Path $WorkspaceRoot "e2e"
 $ReactDir = Join-Path $WorkspaceRoot "react"
 
 # Default to Integration if no suite specified
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Tox -and -not $Black -and -not $All) {
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $All) {
     $Integration = $true
 }
 
@@ -48,6 +50,7 @@ if ($All) {
     $Node = $true
     $Tox = $true
     $Black = $true
+    $Typecheck = $true
 }
 
 $FailedSuites = @()
@@ -189,6 +192,28 @@ if ($Node) {
             Write-Host "[FAILED] Node unit tests FAILED" -ForegroundColor Red
         } else {
             Write-Host "[OK] Node unit tests PASSED" -ForegroundColor Green
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+# ======================
+# React Typecheck
+# ======================
+if ($Typecheck) {
+    Write-Host "`n=== Running React TypeScript Typecheck ===" -ForegroundColor Cyan
+
+    Push-Location $ReactDir
+    try {
+        & npm run typecheck
+
+        if ($LASTEXITCODE -ne 0) {
+            $FailedSuites += "React Typecheck"
+            Write-Host "[FAILED] React typecheck FAILED" -ForegroundColor Red
+        } else {
+            Write-Host "[OK] React typecheck PASSED" -ForegroundColor Green
         }
     }
     finally {
