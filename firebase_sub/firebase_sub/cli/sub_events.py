@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 import queue
 from datetime import date, timedelta
 from functools import partial
@@ -43,7 +44,26 @@ from firebase_sub.send_push import (
 _log = logging.getLogger(__name__)
 
 CWD = Path(__file__).resolve().parent
-CRED_PATH = CWD.parent.parent / "cred.json"
+
+
+def _resolve_cred_path() -> Path:
+    env_path = os.getenv("FIREBASE_CRED_PATH")
+    if env_path:
+        return Path(env_path)
+
+    cwd_path = Path.cwd() / "cred.json"
+    if cwd_path.exists():
+        return cwd_path
+
+    source_tree_path = CWD.parent.parent / "cred.json"
+    if source_tree_path.exists():
+        return source_tree_path
+
+    # Prefer a predictable default for packaged runtime environments.
+    return cwd_path
+
+
+CRED_PATH = _resolve_cred_path()
 _FIREBASE_APP_INITIALIZED = False
 _DB_HANDLER: DbHandler | None = None
 _COMP_POLL_MAX_RETRIES = 10

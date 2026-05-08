@@ -63,10 +63,10 @@ cd ~/home/git/src/github.com/cbehopkins/pubnightpicker
 sudo docker build -t sub_events .
 
 For debug:
-`sudo docker run -it --rm --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" sub_events`
+`sudo docker run -it --rm --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" -e FIREBASE_CRED_PATH=/usr/src/app/cred.json -v "$PWD/cred.json:/usr/src/app/cred.json:ro" sub_events`
 
 Persist:
-`sudo docker run -d --restart unless-stopped  --name pubnight_sub  -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" sub_events`
+`sudo docker run -d --restart unless-stopped --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" -e FIREBASE_CRED_PATH=/usr/src/app/cred.json -v "$PWD/cred.json:/usr/src/app/cred.json:ro" sub_events`
 
 # Restarting the deployed service (compose repo)
 If you deploy with the separate compose repo, this is the low-downtime flow we used:
@@ -129,7 +129,7 @@ poetry run python -m firebase_sub.cli.sub_events --no-dummy-email --dummy-push -
 Docker:
 
 ```bash
-sudo docker run -it --rm --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" sub_events
+sudo docker run -it --rm --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" -e FIREBASE_CRED_PATH=/usr/src/app/cred.json -v "$PWD/cred.json:/usr/src/app/cred.json:ro" sub_events
 ```
 
 ## Manual diagnostics verification
