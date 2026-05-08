@@ -55,6 +55,15 @@ self.addEventListener("notificationclick", (event) => {
     );
 });
 
+// Allow the app to trigger an immediate SW activation after a new version
+// has downloaded. The PwaUpdateBanner component sends this message when the
+// user clicks "Refresh".
+self.addEventListener("message", (event) => {
+    if (event.data?.type === "SKIP_WAITING") {
+        self.skipWaiting();
+    }
+});
+
 self.addEventListener("pushsubscriptionchange", (event) => {
     const broadcast = async (message) => {
         const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
