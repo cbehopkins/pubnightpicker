@@ -17,7 +17,7 @@ export default function PwaUpdateBanner() {
 
     return (
         <div
-            className="alert alert-warning m-0 rounded-0 border-0 border-bottom py-2 px-3"
+            className="alert pwa-update-banner m-0 rounded-0 border-0 border-bottom py-2 px-3"
             role="alert"
         >
             <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 w-100">
@@ -28,7 +28,7 @@ export default function PwaUpdateBanner() {
                 <div className="d-flex align-items-center gap-2 ms-sm-auto">
                     <button
                         type="button"
-                        className="btn btn-sm btn-outline-dark"
+                        className="btn btn-sm pwa-update-banner__refresh"
                         onClick={applyUpdate}
                     >
                         Refresh
@@ -36,7 +36,7 @@ export default function PwaUpdateBanner() {
 
                     <button
                         type="button"
-                        className="btn-close"
+                        className="btn-close pwa-update-banner__dismiss"
                         aria-label="Dismiss"
                         onClick={dismiss}
                     />
