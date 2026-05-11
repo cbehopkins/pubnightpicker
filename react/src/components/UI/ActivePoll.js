@@ -13,6 +13,7 @@ import { AntiPubParams } from "../pages/PubForm";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
+import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import NotificationPingStatus from "./NotificationPingStatus";
@@ -272,7 +273,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                         <NotificationPingStatus
                             documentId={poll_id}
                             eventKey="create"
-                            timeoutMs={60000}
+                            timeoutMs={NOTIFICATION_PING_TIMEOUT_MS}
                         />
                     )}
                 </div>
