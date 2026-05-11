@@ -5,8 +5,13 @@ import PollVote from "./PollVote";
 import PubOptions from "./PubOptions";
 import PubFilter from "./PubFilter";
 import Button from "./Button";
+import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
-import useRole from "../../hooks/useRole"; import useOnlineStatus from '../../hooks/useOnlineStatus'; import { AntiPubParams } from "../pages/PubForm";
+import useRole from "../../hooks/useRole";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
+import { AntiPubParams } from "../pages/PubForm";
+import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
+import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
@@ -110,6 +115,16 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const canChat = useRole("canChat");
     const { isOnline } = useOnlineStatus();
     const [isChatOpen, setIsChatOpen] = useState(false);
+
+    // Load autopopulate venue suggestions
+    const {
+        mostVisited,
+        leastVisited,
+        random: randomVenues,
+        isLoading: isAutopopulateLoading,
+        error: autopopulateError,
+    } = useAutopopulateVenueSelector(poll_id, poll_data.pubs);
+    const isAutopopulateEnabled = mostVisited.length > 0 || leastVisited.length > 0 || randomVenues.length > 0;
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [pubFilters, setPubFilters] = useState({});
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
@@ -139,6 +154,15 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         },
         [selectedPub, poll_id, pub_parameters]
     );
+
+    const { handleAutopopulate } = useAutopopulateAction({
+        pollId: poll_id,
+        pollPubs: poll_data.pubs,
+        pubParameters: pub_parameters,
+        mostVisited,
+        leastVisited,
+        randomVenues,
+    });
 
     /** @type {(event: import("react").MouseEvent<HTMLButtonElement>) => Promise<void>} */
     const deletePollHandler = useCallback(
@@ -236,6 +260,12 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             <Button type="button" onClick={addNewPubToPoll}>
                                 Add Venue To Poll
                             </Button>
+                            <AutopopulateButton
+                                isLoading={isAutopopulateLoading}
+                                isEnabled={isAutopopulateEnabled}
+                                onAutopopulate={handleAutopopulate}
+                                error={autopopulateError}
+                            />
                         </>
                     )}
                     {canDeletePoll && (
