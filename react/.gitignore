@@ -12,6 +12,7 @@ db_dir*
 
 # production
 /build
+/dev-dist
 
 # generated PWA icons (regenerated on every build)
 /public/icon-any-*.png

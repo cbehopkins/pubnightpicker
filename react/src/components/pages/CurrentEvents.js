@@ -9,6 +9,7 @@ import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import useUserPrivateData from "../../hooks/useUserPrivateData";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useReschedulePoll } from "../../hooks/useReschedulePoll";
 import { useEventAttendance } from "../../hooks/useEventAttendance";
 import styles from "./CurrentEvents.module.css";
@@ -329,6 +330,7 @@ function CurrentEvent({
   const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
   const canReadProtectedEventData = Boolean(normalizedUserId);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const { isOnline } = useOnlineStatus();
   const [votes] = useVotes(poll_id, canReadProtectedEventData);
   const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
     poll_id,
@@ -510,6 +512,8 @@ function CurrentEvent({
               <Button
                 type="button"
                 variant="outline-primary"
+                disabled={!isOnline}
+                title={isOnline ? undefined : "Unavailable offline"}
                 onClick={() =>
                   on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
                 }
@@ -520,21 +524,27 @@ function CurrentEvent({
 
 
             {can_delete_event && (
-              <QuestionRender className={styles.actionBlock} question="Delete This Event">
-                <ConfirmModal
-                  title="Delete Current event"
-                  detail="The current event will be deleted"
-                  confirm_text="Do Nothing"
-                  cancel_text="Delete it"
-                  on_cancel={async () => {
-                    try {
-                      await deletePoll(poll_id);
-                    } catch (error) {
-                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
-                    }
-                  }}
-                />
-              </QuestionRender>
+              isOnline ? (
+                <QuestionRender className={styles.actionBlock} question="Delete This Event">
+                  <ConfirmModal
+                    title="Delete Current event"
+                    detail="The current event will be deleted"
+                    confirm_text="Do Nothing"
+                    cancel_text="Delete it"
+                    on_cancel={async () => {
+                      try {
+                        await deletePoll(poll_id);
+                      } catch (error) {
+                        notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
+                      }
+                    }}
+                  />
+                </QuestionRender>
+              ) : (
+                <Button type="button" variant="outline-danger" disabled title="Unavailable offline">
+                  Delete This Event
+                </Button>
+              )
             )}
           </div>
         </div>

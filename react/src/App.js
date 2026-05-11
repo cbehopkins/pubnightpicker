@@ -61,8 +61,18 @@ function App() {
   const [user, loading] = useAuthState(auth);
   useSelf();
   useWebPushLifecycle(user?.uid || null);
-  const [databaseError, setDatabaseError] = useState("")
+  const [databaseError, setDatabaseError] = useState(null)
   const databaseErrorHandler = useCallback((error) => {
+    if (!error) {
+      setDatabaseError(null)
+      return
+    }
+
+    if (typeof error === "string") {
+      setDatabaseError({ message: error })
+      return
+    }
+
     setDatabaseError(error)
   }, [setDatabaseError])
   const roles = useRoles(user, loading, databaseErrorHandler)

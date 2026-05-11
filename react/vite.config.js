@@ -7,23 +7,21 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      // injectManifest: we write our own SW (src/sw.js) and the plugin
-      // injects a versioned precache manifest into it at build time.
-      // This lets us combine Workbox caching with our existing push logic.
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
-      outDir: 'build',
       // We maintain public/manifest.json ourselves — don't let the plugin
       // generate or overwrite it.
       manifest: false,
-      // The SW is intentionally disabled in dev to prevent stale cached
-      // assets interfering with active development. To test offline/caching
-      // behaviour locally, temporarily set enabled: true, but remember to
-      // unregister the SW in DevTools > Application > Service Workers
-      // afterwards so the cache doesn't persist across dev sessions.
+      // In dev mode the SW is served as a virtual ES module so push
+      // registration succeeds. type: 'module' is required because src/sw.js
+      // uses ES imports (workbox-precaching etc.).
+      // outDir is intentionally omitted — the plugin defaults to Vite's own
+      // build.outDir. Hardcoding it caused the dev virtual SW to be served
+      // with the wrong MIME type (text/html 404).
       devOptions: {
-        enabled: false,
+        enabled: true,
+        type: 'module',
       },
       injectManifest: {
         // Precache only the app shell (JS bundles, CSS, HTML entry point, fonts).

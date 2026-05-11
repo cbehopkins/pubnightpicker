@@ -11,7 +11,7 @@ import useQueryDb from "./useQueryDb";
 /** @param {{ code?: string, message?: string }} error */
 function defaultErrorHandler(error) {
   // we expect error code to be FirestoreErrorCode
-  console.log("My Lovely error catcher", error?.code, error.message)
+  console.log("My Lovely error catcher", error?.code, error?.message)
 }
 
 /**

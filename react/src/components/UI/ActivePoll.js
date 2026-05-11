@@ -6,8 +6,7 @@ import PubOptions from "./PubOptions";
 import PubFilter from "./PubFilter";
 import Button from "./Button";
 import styles from "./ActivePoll.module.css";
-import useRole from "../../hooks/useRole";
-import { AntiPubParams } from "../pages/PubForm";
+import useRole from "../../hooks/useRole"; import useOnlineStatus from '../../hooks/useOnlineStatus'; import { AntiPubParams } from "../pages/PubForm";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
@@ -109,6 +108,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const canDeletePoll = useRole("canCreatePoll");
     const canAddPub = useRole("canAddPubToPoll");
     const canChat = useRole("canChat");
+    const { isOnline } = useOnlineStatus();
     const [isChatOpen, setIsChatOpen] = useState(false);
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [pubFilters, setPubFilters] = useState({});
@@ -224,7 +224,8 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             variant="danger"
                             className={styles["button--alt"]}
                             onClick={deletePollHandler}
-                            title="Delete this entire poll and all associated voting data"
+                            title={isOnline ? "Delete this entire poll and all associated voting data" : "Unavailable offline"}
+                            disabled={!isOnline}
                         >
                             Delete Poll
                         </Button>
