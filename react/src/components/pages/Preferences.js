@@ -22,7 +22,7 @@ import {
 import { useAuthState } from "react-firebase-hooks/auth";
 import styles from "./Preferences.module.css";
 import { notifyError, notifyInfo } from "../../utils/notify";
-import { Card, Form } from "react-bootstrap";
+import { Alert, Card, Form } from "react-bootstrap";
 import {
   applyThemeMode,
   getStoredThemeMode,
@@ -30,6 +30,7 @@ import {
   subscribeToSystemThemeChanges,
 } from "../../utils/themeMode";
 import { normalizeArrivalTime } from "../../utils/arrivalTime";
+import useDeleteMyAccount from "../../hooks/useDeleteMyAccount";
 
 function formatRoleName(roleName) {
   return roleName
@@ -256,6 +257,109 @@ function ChangeMyLoginEmail() {
   </>
 }
 
+function DeleteMyAccount() {
+  const {
+    confirmLabel,
+    showDeleteConfirm,
+    showTypedConfirm,
+    showReauth,
+    isDeleting,
+    isExporting,
+    errorString,
+    deleteProgress,
+    deleteSummaryLines,
+    requestDelete,
+    cancelDelete,
+    confirmDeleteStepOne,
+    cancelTypedConfirm,
+    typedConfirmHandler,
+    reauthenticateAndDelete,
+    cancelReauth,
+    exportMyData,
+    clearError,
+  } = useDeleteMyAccount();
+
+  return (
+    <Card>
+      <Card.Body>
+        <h3 className="h5 mb-2 text-danger">Delete My Account</h3>
+        <p className="mb-3 text-body-secondary">
+          This permanently removes your profile and preferences. Your chat messages are anonymized and message text is replaced with {"{user deleted}"}.
+        </p>
+        {isDeleting && deleteProgress && (
+          <Alert variant="warning" className="mb-3 py-2">
+            {deleteProgress}
+          </Alert>
+        )}
+        {!isDeleting && deleteSummaryLines.length > 0 && (
+          <Alert variant="info" className="mb-3 py-2">
+            <div className="fw-semibold mb-1">Last deletion summary</div>
+            <ul className="mb-0 small">
+              {deleteSummaryLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+        <div className="d-flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" onClick={exportMyData} disabled={isExporting || isDeleting}>
+            {isExporting ? "Preparing export..." : "Export My Data First"}
+          </Button>
+          <Button type="button" variant="danger" onClick={requestDelete} disabled={isDeleting || isExporting}>
+            {isDeleting ? "Deleting account..." : "Delete My Account"}
+          </Button>
+        </div>
+      </Card.Body>
+
+      {showDeleteConfirm && (
+        <ConfirmModal
+          title="Delete your account?"
+          detail="This action is permanent. You can export your data first if needed."
+          confirm_text="Continue"
+          cancel_text="Cancel"
+          on_confirm={confirmDeleteStepOne}
+          on_cancel={cancelDelete}
+        />
+      )}
+
+      {showTypedConfirm && (
+        <TextModal
+          title="Confirm account deletion"
+          detail={`Type ${confirmLabel} to confirm.`}
+          name="delete_account_confirm"
+          confirm_text="Delete Account"
+          cancel_text="Cancel"
+          on_confirm={typedConfirmHandler}
+          on_cancel={cancelTypedConfirm}
+        />
+      )}
+
+      {showReauth && (
+        <TextModal
+          title="Reauthenticate"
+          detail="Please re-enter your password to continue deletion"
+          input_type="password"
+          name="delete_account_password"
+          confirm_text="Verify and Delete"
+          cancel_text="Cancel"
+          on_confirm={reauthenticateAndDelete}
+          on_cancel={cancelReauth}
+        />
+      )}
+
+      {errorString && (
+        <ConfirmModal
+          title="Account deletion error"
+          detail={errorString}
+          confirm_text="Ok"
+          confirm_only={true}
+          on_confirm={clearError}
+        />
+      )}
+    </Card>
+  );
+}
+
 function Preferences(params) {
   const auth = getAuth();
   const navigate = useNavigate();
@@ -317,6 +421,7 @@ function Preferences(params) {
         </p>
       </Card.Body>
     </Card>
+    <DeleteMyAccount />
     <PreferencesForm method="post" />
     <MyRoles />
   </div>

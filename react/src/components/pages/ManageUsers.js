@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router-dom";
-import { Form, Table } from "react-bootstrap";
+import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useSelector } from "react-redux";
+import { Alert, Form, Table } from "react-bootstrap";
 import useUsers from "../../hooks/useUsers";
 import { useAllRoles } from "../../hooks/useRoles";
 import { useIsMobileView } from "../../hooks/useIsMobileView";
@@ -9,9 +10,13 @@ import { db } from "../../firebase";
 import { collection, doc, deleteField, onSnapshot, updateDoc, setDoc } from "firebase/firestore";
 import Modal from "../UI/Modal";
 import Button from "../UI/Button";
+import ConfirmModal from "../UI/ConfirmModal";
+import TextModal from "../UI/TextModal";
 import {
     CONSOLIDATED_PERMISSION_COLUMNS,
 } from "../../permissions";
+import { deleteUserAppData, deletionSummaryLines, summarizeDeletionResult } from "../../dbtools/userDeletion";
+import { notifyError, notifyInfo } from "../../utils/notify";
 
 const MANAGE_USERS_NARROW_BREAKPOINT = 1200;
 
@@ -346,7 +351,10 @@ function ManageUsersTable({
 
 function ManageUsers() {
     const [selectedUID, setSelectedUID] = useState(null);
+    const location = useLocation();
     const isMobileView = useIsMobileView(MANAGE_USERS_NARROW_BREAKPOINT);
+    const lastDeleteSummaryLines = location.state?.lastDeleteSummaryLines || [];
+    const lastDeleteUserLabel = location.state?.lastDeleteUserLabel || "";
     const {
         sortedUsers,
         isAdmin,
@@ -360,6 +368,17 @@ function ManageUsers() {
     return (
         <div className="container py-3 text-body">
             <h1 className="mb-3">Manage Users</h1>
+
+            {lastDeleteSummaryLines.length > 0 && (
+                <Alert variant="info" className="mb-3">
+                    <div className="fw-semibold mb-1">Deletion summary for {lastDeleteUserLabel || "selected user"}</div>
+                    <ul className="mb-0 small">
+                        {lastDeleteSummaryLines.map((line) => (
+                            <li key={line}>{line}</li>
+                        ))}
+                    </ul>
+                </Alert>
+            )}
 
             {sortedUsers.length === 0 ? (
                 <p className="text-muted">No users to display.</p>
@@ -389,7 +408,14 @@ function ManageUsers() {
 
 function ManageUserDetailPage() {
     const [selectedUID, setSelectedUID] = useState(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showDeleteTypedConfirm, setShowDeleteTypedConfirm] = useState(false);
+    const [isDeletingUser, setIsDeletingUser] = useState(false);
+    const [deleteError, setDeleteError] = useState("");
+    const [deleteProgress, setDeleteProgress] = useState("");
     const { userId } = useParams();
+    const navigate = useNavigate();
+    const currentUid = useSelector((state) => state.auth.uid);
     const {
         users,
         handleAdminClick,
@@ -402,6 +428,7 @@ function ManageUserDetailPage() {
 
     const user = users[userId];
     const hasLoadedUsers = Object.keys(users).length > 0;
+    const deletingSelf = Boolean(userId && currentUid && userId === currentUid);
 
     if (!user && !hasLoadedUsers) {
         return (
@@ -427,7 +454,27 @@ function ManageUserDetailPage() {
             <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
                 <NavLink to="/manage_users" className="btn btn-secondary">Back to Manage Users</NavLink>
                 <Button type="button" variant="info" onClick={() => setSelectedUID(userId)}>View UID</Button>
+                <Button
+                    type="button"
+                    variant="danger"
+                    disabled={deletingSelf || isDeletingUser}
+                    onClick={() => setShowDeleteConfirm(true)}
+                >
+                    {isDeletingUser ? "Deleting user..." : "Delete User"}
+                </Button>
             </div>
+
+            {deletingSelf && (
+                <p className="text-warning mb-3">
+                    You cannot delete your own account from Manage Users. Use My Preferences instead.
+                </p>
+            )}
+
+            {isDeletingUser && deleteProgress && (
+                <Alert variant="warning" className="mb-3 py-2">
+                    {deleteProgress}
+                </Alert>
+            )}
 
             <h1 className="mb-1">Manage User</h1>
             <h2 className="h4 mb-1">{user?.name || user?.email || userId}</h2>
@@ -447,6 +494,73 @@ function ManageUserDetailPage() {
                 <Modal>
                     <UIDModal uid={selectedUID} onClose={() => setSelectedUID(null)} />
                 </Modal>
+            )}
+
+            {showDeleteConfirm && (
+                <ConfirmModal
+                    title="Delete this user?"
+                    detail="This removes app data and role assignments for this user. Firebase Auth login deletion is not part of this phase."
+                    confirm_text="Continue"
+                    cancel_text="Cancel"
+                    on_confirm={() => {
+                        setShowDeleteConfirm(false);
+                        setShowDeleteTypedConfirm(true);
+                    }}
+                    on_cancel={() => setShowDeleteConfirm(false)}
+                />
+            )}
+
+            {showDeleteTypedConfirm && (
+                <TextModal
+                    title="Type to confirm deletion"
+                    detail={`Type ${user?.email || userId} to confirm.`}
+                    name="admin_delete_user_confirm"
+                    confirm_text="Delete User"
+                    cancel_text="Cancel"
+                    on_confirm={async (event, ref) => {
+                        event.preventDefault();
+                        const expectedValue = String(user?.email || userId || "").trim().toLowerCase();
+                        const typedValue = String(ref.current.value || "").trim().toLowerCase();
+                        if (!expectedValue || typedValue !== expectedValue) {
+                            setDeleteError(`Type ${user?.email || userId} exactly to continue.`);
+                            return;
+                        }
+
+                        setShowDeleteTypedConfirm(false);
+                        setIsDeletingUser(true);
+                        setDeleteProgress("Removing user app data...");
+                        try {
+                            const deletionResult = await deleteUserAppData(userId, { removeRoles: true });
+                            const summary = summarizeDeletionResult(deletionResult);
+                            const summaryLines = deletionSummaryLines(summary);
+                            setDeleteProgress("Deletion complete");
+                            notifyInfo("User app data deleted. Firebase Auth login is unchanged in this phase.");
+                            navigate("/manage_users", {
+                                state: {
+                                    lastDeleteSummaryLines: summaryLines,
+                                    lastDeleteUserLabel: user?.email || userId,
+                                },
+                            });
+                        } catch (error) {
+                            console.error(error);
+                            notifyError(error?.message || "Unable to delete this user.");
+                        } finally {
+                            setIsDeletingUser(false);
+                            setDeleteProgress("");
+                        }
+                    }}
+                    on_cancel={() => setShowDeleteTypedConfirm(false)}
+                />
+            )}
+
+            {deleteError && (
+                <ConfirmModal
+                    title="Delete user error"
+                    detail={deleteError}
+                    confirm_text="Ok"
+                    confirm_only={true}
+                    on_confirm={() => setDeleteError("")}
+                />
             )}
         </div>
     );

@@ -171,12 +171,15 @@ service cloud.firestore {
       allow update: if request.auth != null
                     && (request.auth.uid == userId || isAdmin())
                     && isValidPublicUserProfileUpdate(userId);
+      allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
     
     // Messages collection - known users can read/create, admins have full access, users can delete their own
     match /messages/{messageId} {
       allow read: if canChat();
       allow create: if canChat() && isValidNewMessage();
+      allow update: if canDeleteAnyMessage() ||
+                      (request.auth != null && resource.data.uid == request.auth.uid);
       allow delete: if canDeleteAnyMessage() || 
                       (request.auth != null && resource.data.uid == request.auth.uid);
     }
