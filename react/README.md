@@ -89,6 +89,30 @@ VITE_USE_FIREBASE_EMULATORS="false"
 Deployment is now handled by the github runners.
 PRs get a temp URL generated that allows you to test it
 
+## Admin Stats Pages
+
+Admin users can access statistics from the Past Events page.
+
+Two routes are currently available:
+
+1. Winning Venue Stats (`/stats/winning_venues`)
+   - Shows the most and least often selected winning venues from completed polls.
+2. Attendance Venue Stats (`/stats/attendance`)
+   - Shows the highest and lowest attendance confirmation totals by venue.
+   - Global attendance marked against `any` is counted toward each venue in that poll.
+
+Both pages use the same page-level controls:
+
+- `N` = number of venues to show in each list (`limit` query param)
+- `M` = time window in years (`years` query param)
+
+Defaults are:
+
+- `N = 5`
+- `M = 1`
+
+The settings are stored in the URL query string so a view can be bookmarked or shared.
+
 ## PWA Icon Generation
 
 PWA app icons are generated automatically as part of the normal build flow.

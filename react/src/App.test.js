@@ -106,6 +106,12 @@ vi.mock("./components/pages/CurrentEvents", () => ({
   default: () => null,
   PastEvents: () => null,
 }));
+vi.mock("./components/pages/WinningVenueStats", () => ({
+  default: () => null,
+}));
+vi.mock("./components/pages/AttendanceVenueStats", () => ({
+  default: () => null,
+}));
 vi.mock("./components/pages/RootLayout", () => ({ default: () => null }));
 vi.mock("./components/pages/EditPub", () => ({
   default: () => null,
@@ -160,6 +166,18 @@ describe("App routes", () => {
     const eventChatRoute = rootRoute.children.find((child) => child.path === "chat/event/:pollId");
 
     expect(eventChatRoute).toBeTruthy();
+  });
+
+  it("registers the winning venue stats route", () => {
+    render(<App />);
+
+    const routeConfig = createBrowserRouterMock.mock.calls[0][0];
+    const rootRoute = routeConfig[0];
+    const statsRoute = rootRoute.children.find((child) => child.path === "stats");
+
+    expect(statsRoute).toBeTruthy();
+    expect(statsRoute.children.find((child) => child.path === "winning_venues")).toBeTruthy();
+    expect(statsRoute.children.find((child) => child.path === "attendance")).toBeTruthy();
   });
 
   it("starts web push lifecycle with the current user uid", () => {

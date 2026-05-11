@@ -43,6 +43,8 @@ const PastEvents = lazy(() =>
     default: module.PastEvents,
   })),
 );
+const WinningVenueStats = lazy(() => import("./components/pages/WinningVenueStats"));
+const AttendanceVenueStats = lazy(() => import("./components/pages/AttendanceVenueStats"));
 
 function LazyRoute({ children }) {
   return <Suspense fallback={<div className="p-3">Loading...</div>}>{children}</Suspense>;
@@ -180,6 +182,23 @@ function App() {
         {
           path: "past_events",
           element: <LazyRoute><PastEvents /></LazyRoute>,
+        },
+        {
+          path: "stats",
+          children: [
+            {
+              index: true,
+              element: <Navigate to="/stats/winning_venues" replace />,
+            },
+            {
+              path: "winning_venues",
+              element: <LazyRoute><WinningVenueStats /></LazyRoute>,
+            },
+            {
+              path: "attendance",
+              element: <LazyRoute><AttendanceVenueStats /></LazyRoute>,
+            },
+          ],
         },
         {
           path: "preferences",

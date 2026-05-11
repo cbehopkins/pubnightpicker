@@ -14,6 +14,7 @@ const {
   useVotesMock,
   useAttendanceMock,
   useRoleMock,
+  useAdminMock,
   useSelectorMock,
   setAttendanceStatusMock,
   clearAttendanceMock,
@@ -28,6 +29,7 @@ const {
     useVotesMock: vi.fn(),
     useAttendanceMock: vi.fn(),
     useRoleMock: vi.fn(),
+    useAdminMock: vi.fn(),
     useSelectorMock: vi.fn(),
     setAttendanceStatusMock: vi.fn(async () => undefined),
     clearAttendanceMock: vi.fn(async () => undefined),
@@ -70,6 +72,12 @@ vi.mock("../../hooks/useAttendance", () => {
 vi.mock("../../hooks/useRole", () => {
   return {
     default: useRoleMock,
+  };
+});
+
+vi.mock("../../hooks/useAdmin", () => {
+  return {
+    default: useAdminMock,
   };
 });
 
@@ -141,6 +149,7 @@ describe("CurrentEvents", () => {
     useVotesMock.mockReset();
     useAttendanceMock.mockReset();
     useRoleMock.mockReset();
+    useAdminMock.mockReset();
     useSelectorMock.mockReset();
     reschedulePollMock.mockReset();
     deletePollMock.mockReset();
@@ -153,6 +162,7 @@ describe("CurrentEvents", () => {
     useVotesMock.mockReturnValue([{}]);
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
+    useAdminMock.mockReturnValue(false);
     usePastCompletePollsMock.mockReturnValue({
       pollData: createPastPollData({
         selected: "venue-main",
@@ -221,6 +231,36 @@ describe("CurrentEvents", () => {
 
     expect(screen.getByText(/Restaurant:\s*Bistro 12/)).toBeTruthy();
     expect(screen.queryByText(/18:30/)).toBeNull();
+  });
+
+  it("shows stats links for admins on the past events page", () => {
+    useAdminMock.mockReturnValue(true);
+    usePastCompletePollsMock.mockReturnValue({
+      pollData: createPastPollData({
+        selected: "venue-main",
+        date: "2026-03-20",
+      }),
+      hasNextPage: false,
+      hasPreviousPage: false,
+      goToNextPage: vi.fn(),
+      goToPreviousPage: vi.fn(),
+      pageIndex: 0,
+      isLoading: false,
+    });
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/past_events"]}>
+        <Routes>
+          <Route path="/past_events" element={<PastEvents />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("link", { name: /view winning venue stats/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /view attendance stats/i })).toBeTruthy();
   });
 
   it("routes attendance actions independently for main venue and restaurant", async () => {
