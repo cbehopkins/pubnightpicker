@@ -322,11 +322,8 @@ class DbHandler:
         # Collect active endpoints for eligible recipients, skipping any whose
         # delivery has already been recorded.
         endpoints = []
-        scanned_endpoints = 0
-        skipped_as_already_delivered = 0
         for uid in eligible_uids:
             for endpoint_doc in self.query_active_push_endpoints_for_user(uid):
-                scanned_endpoints += 1
                 raw_ep = _push_endpoint_from_snapshot(endpoint_doc)
                 if raw_ep is None:
                     continue
@@ -334,9 +331,6 @@ class DbHandler:
                 if valid_ep is not None:
                     if _endpoint_hash(valid_ep) not in already_delivered_eps:
                         endpoints.append(valid_ep)
-                    else:
-                        skipped_as_already_delivered += 1
-
         if not endpoints:
             _log.info("No remaining undelivered endpoints for message %s", message_id)
             return
