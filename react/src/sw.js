@@ -6,9 +6,9 @@
 // with a versioned list of every static asset the Vite build emits.
 // =============================================================================
 
-import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from 'workbox-precaching';
-import { registerRoute, NavigationRoute } from 'workbox-routing';
-import { CacheFirst } from 'workbox-strategies';
+import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
+import { registerRoute, NavigationRoute, setCatchHandler } from 'workbox-routing';
+import { CacheFirst, NetworkFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 
 // ---------------------------------------------------------------------------
@@ -28,12 +28,30 @@ cleanupOutdatedCaches();
 // Routing
 // ---------------------------------------------------------------------------
 
-// Single-page app navigation fallback — every navigation request (typing a URL,
-// clicking a link) is answered with the cached index.html. React Router then
-// handles the correct page client-side. This is what makes the app load
-// instantly and work offline after the first visit.
-const spaHandler = createHandlerBoundToURL('/index.html');
-registerRoute(new NavigationRoute(spaHandler));
+// Navigation requests use NetworkFirst: try the network first (3 second timeout)
+// so users always see fresh HTML when online, then fall back to the cached
+// index.html when offline. React Router handles the actual routing client-side.
+// If the network fails and the page hasn't been cached, setCatchHandler below
+// serves offline.html instead of a browser error screen.
+registerRoute(
+    new NavigationRoute(
+        new NetworkFirst({
+            networkTimeoutSeconds: 3,
+            cacheName: 'pnp-pages',
+        })
+    )
+);
+
+// Offline fallback: serve offline.html for any navigation that fails (i.e. the
+// page is uncached and the network is unreachable). offline.html is in the
+// precache list so it is always available.
+setCatchHandler(async ({ request }) => {
+    if (request.destination === 'document') {
+        const offlinePage = await caches.match('/offline.html');
+        return offlinePage || Response.error();
+    }
+    return Response.error();
+});
 
 // Images rarely change, so serve them cache-first with a 30-day expiry.
 // Workbox evicts the oldest entries once the cache exceeds 30 items.

@@ -9,7 +9,7 @@ import {
     updateDoc,
 } from "firebase/firestore";
 
-const WEB_PUSH_SW_PATH = "/sw.js";
+const WEB_PUSH_SW_PATH = import.meta.env.DEV ? "/dev-sw.js?dev-sw" : "/sw.js";
 function parseBooleanEnv(value) {
     if (value === undefined || value === null) {
         return false;
@@ -68,7 +68,11 @@ function endpointRef(uid, endpointId) {
 }
 
 async function ensureRegistration() {
-    return navigator.serviceWorker.register(WEB_PUSH_SW_PATH);
+    /** @type {RegistrationOptions | undefined} */
+    const registrationOptions = import.meta.env.DEV
+        ? { type: /** @type {const} */ ("module") }
+        : undefined;
+    return navigator.serviceWorker.register(WEB_PUSH_SW_PATH, registrationOptions);
 }
 
 async function getCurrentSubscription() {

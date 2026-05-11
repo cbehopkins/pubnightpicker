@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const SW_PATH = '/sw.js';
+const SW_PATH = import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js';
 
 /**
  * Watches the registered service worker for a waiting update.
@@ -21,6 +21,10 @@ export default function usePwaUpdate() {
     const [dismissed, setDismissed] = useState(false);
 
     useEffect(() => {
+        if (import.meta.env.DEV) {
+            return undefined;
+        }
+
         if (!('serviceWorker' in navigator)) {
             return undefined;
         }

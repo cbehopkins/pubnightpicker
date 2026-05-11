@@ -13,7 +13,9 @@ import {
 } from "firebase/auth";
 import {
   connectFirestoreEmulator,
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   getDoc,
   setDoc,
@@ -29,7 +31,18 @@ import { notifyError, notifyInfo } from "./utils/notify";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+// persistentLocalCache enables IndexedDB-backed offline caching. Firestore
+// will serve previously-read documents while offline and queue writes (votes,
+// attendance etc.) for replay when connectivity returns. Falls back to
+// memory-only cache in environments that block IndexedDB (e.g. private
+// browsing on some browsers).
+// persistentMultipleTabManager allows multiple browser tabs to share the same
+// IndexedDB cache without fighting for exclusive access.
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});
 const isLocalDevHost = ["localhost", "127.0.0.1", "[::1]"].includes(
   window.location.hostname,
 );

@@ -8,6 +8,7 @@ import Button from "../UI/Button";
 import { useSelector } from "react-redux";
 import { notifyError } from "../../utils/notify";
 import useUsers from "../../hooks/useUsers";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 
 /** @typedef {import("../../store").RootState} RootState */
 
@@ -22,6 +23,7 @@ const SendMessage = ({ scroll, scope }) => {
   const name = useSelector(/** @param {RootState} state */(state) => state.auth.name);
   const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
   // const photoURL = useSelector((state) => state.auth.photoUrl);
+  const { isOnline } = useOnlineStatus();
 
   const sendMessage = async (event) => {
     event.preventDefault();
@@ -60,7 +62,13 @@ const SendMessage = ({ scroll, scope }) => {
           onChange={(e) => setMessage(e.target.value)}
           aria-label="Chat message"
         />
-        <Button type="submit" variant="primary" className="px-3">
+        <Button
+          type="submit"
+          variant="primary"
+          className="px-3"
+          disabled={!isOnline}
+          title={isOnline ? undefined : "You're offline — messages can't be sent right now"}
+        >
           Send
         </Button>
       </div>
