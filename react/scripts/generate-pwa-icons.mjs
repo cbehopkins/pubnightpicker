@@ -9,7 +9,8 @@ const publicDir = path.resolve(__dirname, '..', 'public');
 const sourcePath = path.join(publicDir, 'app_logo.png');
 
 const iconSizes = [192, 512];
-const iconBackground = '#000000';
+const anyIconBackground = '#000000';
+const maskableIconBackground = '#1f1d1b';
 
 async function createCleanLogoBuffer() {
     const source = sharp(sourcePath).ensureAlpha();
@@ -38,7 +39,7 @@ async function createCleanLogoBuffer() {
         .toBuffer();
 }
 
-async function writeLauncherIcons(cleanLogoBuffer) {
+async function writeAnyIcons(cleanLogoBuffer) {
     for (const size of iconSizes) {
         const safeLogoSize = Math.round(size * 0.66);
 
@@ -47,7 +48,7 @@ async function writeLauncherIcons(cleanLogoBuffer) {
                 width: size,
                 height: size,
                 channels: 4,
-                background: iconBackground,
+                background: anyIconBackground,
             },
         })
             .composite([
@@ -60,14 +61,41 @@ async function writeLauncherIcons(cleanLogoBuffer) {
                 },
             ])
             .png()
-            .toFile(path.join(publicDir, `icon-app-${size}-v2.png`));
+            .toFile(path.join(publicDir, `icon-any-${size}.png`));
+    }
+}
+
+async function writeMaskableIcons(cleanLogoBuffer) {
+    for (const size of iconSizes) {
+        const safeLogoSize = Math.round(size * 0.8);
+
+        await sharp({
+            create: {
+                width: size,
+                height: size,
+                channels: 4,
+                background: maskableIconBackground,
+            },
+        })
+            .composite([
+                {
+                    input: await sharp(cleanLogoBuffer)
+                        .resize({ width: safeLogoSize, height: safeLogoSize, fit: 'inside' })
+                        .png()
+                        .toBuffer(),
+                    gravity: 'center',
+                },
+            ])
+            .png()
+            .toFile(path.join(publicDir, `icon-maskable-${size}.png`));
     }
 }
 
 async function main() {
     const cleanLogoBuffer = await createCleanLogoBuffer();
-    await writeLauncherIcons(cleanLogoBuffer);
-    process.stdout.write('Generated icon-app-192-v2 and icon-app-512-v2 in public/.\n');
+    await writeAnyIcons(cleanLogoBuffer);
+    await writeMaskableIcons(cleanLogoBuffer);
+    process.stdout.write('Generated icon-any-* and icon-maskable-* in public/.\n');
 }
 
 main().catch((error) => {
