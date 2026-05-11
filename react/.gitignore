@@ -13,6 +13,13 @@ db_dir*
 # production
 /build
 
+# generated PWA icons (regenerated on every build)
+/public/icon-any-*.png
+/public/icon-maskable-*.png
+/public/icon-512.png
+/public/icon-app-*.png
+/public/logo*.png
+
 # misc
 .DS_Store
 .env.local
