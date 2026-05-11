@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CompletePollModal from "./CompletePollModal";
+import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
 
 const { useNotificationPingMock } = vi.hoisted(() => {
     return {
@@ -67,7 +68,7 @@ describe("CompletePollModal", () => {
         await waitFor(() => {
             expect(runPing).toHaveBeenCalledTimes(1);
         });
-        expect(useNotificationPingMock).toHaveBeenCalledWith("poll-123", "complete", 60000);
+        expect(useNotificationPingMock).toHaveBeenCalledWith("poll-123", "complete", NOTIFICATION_PING_TIMEOUT_MS);
     });
 
     it("confirms without browser warning when handshake status is ok", async () => {
@@ -182,12 +183,24 @@ describe("CompletePollModal", () => {
         expect(onConfirm).not.toHaveBeenCalled();
     });
 
-    it("renders the notification status badge in modal footer", () => {
+    it.each(["idle", "checking", "ok"])("hides the notification status badge in modal footer for %s", (status) => {
         const runPing = vi.fn(async () => ({ acknowledged: true, pingValue: 1 }));
-        useNotificationPingMock.mockReturnValue({ status: "checking", runPing });
+        useNotificationPingMock.mockReturnValue({ status, runPing });
 
         render(<CompletePollModal {...createProps()} />);
 
-        expect(screen.getByTestId("footer-status").textContent).toContain("Notification Tool: Checking...");
+        expect(screen.getByTestId("footer-status").textContent).toBe("");
+    });
+
+    it.each([
+        ["timeout", "Notification Tool: Timeout"],
+        ["error", "Notification Tool: Error"],
+    ])("renders the notification status badge in modal footer for %s", (status, label) => {
+        const runPing = vi.fn(async () => ({ acknowledged: false, timedOut: status === "timeout", pingValue: 1 }));
+        useNotificationPingMock.mockReturnValue({ status, runPing });
+
+        render(<CompletePollModal {...createProps()} />);
+
+        expect(screen.getByTestId("footer-status").textContent).toContain(label);
     });
 });

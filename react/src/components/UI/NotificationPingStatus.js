@@ -30,25 +30,21 @@ function NotificationPingStatus({ documentId, eventKey, timeoutMs = 60000 }) {
 
     const effectiveStatus = hasAcknowledgedAutoPing ? "ok" : status;
 
+    if (effectiveStatus !== "timeout" && effectiveStatus !== "error") {
+        return null;
+    }
+
     const badgeClassName =
-        effectiveStatus === "ok"
-            ? "bg-success"
-            : effectiveStatus === "checking"
-                ? "bg-warning text-dark"
-                : effectiveStatus === "timeout" || effectiveStatus === "error"
-                    ? "bg-danger"
-                    : "bg-secondary";
+        effectiveStatus === "timeout" || effectiveStatus === "error"
+            ? "bg-danger"
+            : "bg-secondary";
 
     const statusLabel =
-        effectiveStatus === "ok"
-            ? "Notification Tool: OK"
-            : effectiveStatus === "checking"
-                ? "Notification Tool: Checking…"
-                : effectiveStatus === "timeout"
-                    ? "Notification Tool: Timeout"
-                    : effectiveStatus === "error"
-                        ? "Notification Tool: Error"
-                        : "Notification Tool: Not Checked";
+        effectiveStatus === "timeout"
+            ? "Notification Tool: Timeout"
+            : effectiveStatus === "error"
+                ? "Notification Tool: Error"
+                : "Notification Tool: Not Checked";
 
     return <span className={`badge ${badgeClassName}`}>{statusLabel}</span>;
 }

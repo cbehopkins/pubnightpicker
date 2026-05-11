@@ -1,0 +1,1 @@
+export const NOTIFICATION_PING_TIMEOUT_MS = 10000;

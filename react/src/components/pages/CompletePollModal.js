@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from "react";
 import VenueAssignmentModal from "./VenueAssignmentModal";
+import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
 import { useNotificationPing } from "../../hooks/useNotificationPing";
 
 /** @typedef {{ id: string, name: string }} VenueOption */
@@ -34,7 +35,7 @@ function CompletePollModal({
   onConfirm,
   onCancel,
 }) {
-  const { status, runPing } = useNotificationPing(pollId, "complete", 60000);
+  const { status, runPing } = useNotificationPing(pollId, "complete", NOTIFICATION_PING_TIMEOUT_MS);
 
   useEffect(() => {
     runPing().catch(() => {
@@ -61,6 +62,8 @@ function CompletePollModal({
           : status === "error"
             ? "Notification Tool: Error"
             : "Notification Tool: Not Checked";
+
+  const shouldShowFooterStatus = status === "timeout" || status === "error";
 
   const handleConfirm = useCallback(async () => {
     if (status !== "ok") {
@@ -93,7 +96,11 @@ function CompletePollModal({
     <VenueAssignmentModal
       title="Complete Poll"
       subtitle="Confirm the venue for this event and add any final food plan details."
-      footerStatusNode={<span className={`badge ${badgeClassName}`}>{statusLabel}</span>}
+      footerStatusNode={
+        shouldShowFooterStatus
+          ? <span className={`badge ${badgeClassName}`}>{statusLabel}</span>
+          : null
+      }
       mainVenueLabel="Selected venue"
       mainVenueName={pubName}
       onMainVenueChange={() => { }}
