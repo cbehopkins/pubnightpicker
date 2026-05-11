@@ -64,6 +64,7 @@ function MainNavigation() {
                 {loggedIn ? "Manage Venues" : "View Venues"}
               </Nav.Link>
               {admin && <Nav.Link as={NavLink} to="/manage_users" end className={navLinkClassName}>Manage Users</Nav.Link>}
+              {admin && <Nav.Link as={NavLink} to="/diagnostics" end className={navLinkClassName}>Diagnostics</Nav.Link>}
               {!loggedIn && <Nav.Link as={NavLink} to="/login" end className={navLinkClassName}>Login</Nav.Link>}
               {loggedIn && <Nav.Link as={NavLink} to="/active_polls" end className={navLinkClassName}>Active Polls</Nav.Link>}
               <Nav.Link as={NavLink} to="/current_events" end className={navLinkClassName}>Current Events</Nav.Link>

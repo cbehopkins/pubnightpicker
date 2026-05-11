@@ -1,16 +1,8 @@
 import { NavLink } from "react-router-dom";
 import { useSelector } from "react-redux";
-import useAdmin from "../../hooks/useAdmin";
-import {
-  NOTIFICATION_DIAGNOSTICS_DOC,
-  NOTIFICATION_PUSH_TEST_DOC,
-} from "../../dbtools/notificationPings";
-import NotificationPingPanel from "../UI/NotificationPingPanel";
 
 function Homepage() {
   const loggedIn = useSelector((state) => state.auth.loggedIn);
-  const uid = useSelector((state) => state.auth.uid);
-  const canRunDiagnostics = useAdmin();
 
   return (
     <div className="container py-4 py-md-5">
@@ -95,38 +87,6 @@ function Homepage() {
           Need help using the app? Visit the <NavLink to="/help">Help and FAQ page</NavLink>.
         </p>
       </section>
-
-      {canRunDiagnostics && (
-        <>
-          <NotificationPingPanel
-            title="Admin Diagnostics"
-            description="Run a manual ping to confirm the notification tool is responding."
-            buttonLabel="Ping Notification Tool"
-            checkingLabel="Checking..."
-            documentId={NOTIFICATION_DIAGNOSTICS_DOC}
-            eventKey="manual"
-            timeoutMs={60000}
-            statusPrefix="Notification Tool"
-            showStatusBadge
-            showClearButton
-          />
-          {uid && (
-            <NotificationPingPanel
-              title="Push Diagnostics"
-              description="Send a test push notification to your own account."
-              buttonLabel="Send Push To Me"
-              checkingLabel="Sending..."
-              documentId={NOTIFICATION_PUSH_TEST_DOC}
-              eventKey={uid}
-              timeoutMs={60000}
-              statusPrefix="Push Diagnostics"
-              showStatusBadge={false}
-              showClearButton={false}
-              preSendDelaySeconds={5}
-            />
-          )}
-        </>
-      )}
 
       <p className="small text-body-secondary mb-0">
         Maintained by Chris H. <a href="https://github.com/cbehopkins/pubnightpicker" target="_blank" rel="noopener noreferrer">We also accept PRs on GitHub</a>
