@@ -25,6 +25,11 @@ function Login() {
     logInWithEmailAndPassword(email, password);
   };
 
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    handleEmailLogin();
+  };
+
   return (
     <Container fluid className="min-vh-100 d-flex align-items-center justify-content-center py-4">
       <Row className="w-100 justify-content-center g-3" style={{ maxWidth: "900px" }}>
@@ -55,7 +60,7 @@ function Login() {
           <Card className="h-100">
             <Card.Body className="text-body">
               <Card.Title as="h2" className="mb-3">Login with Email</Card.Title>
-              <Form>
+              <Form onSubmit={handleSubmit}>
                 <Form.Group className="mb-3" controlId="loginEmail">
                   <Form.Label>Email Address</Form.Label>
                   <Form.Control
@@ -78,7 +83,7 @@ function Login() {
                   />
                 </Form.Group>
 
-                <Button type="button" className="w-100 mb-3" onClick={handleEmailLogin}>
+                <Button type="submit" className="w-100 mb-3">
                   Login
                 </Button>
               </Form>

@@ -8,16 +8,20 @@ import {
   updateDoc,
   doc as firestoreDoc,
 } from "firebase/firestore";
-import { db } from "../../firebase";
+import {
+  db,
+  reauthenticatePasswordUser,
+  requestLoginEmailChange,
+} from "../../firebase";
 import TextModal from "../UI/TextModal";
 import ConfirmModal from "../UI/ConfirmModal";
 import Button from "../UI/Button";
 import {
-  EmailAuthProvider, getAuth, updatePassword, reauthenticateWithCredential,
+  getAuth, updatePassword,
 } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
 import styles from "./Preferences.module.css";
-import { notifyError } from "../../utils/notify";
+import { notifyError, notifyInfo } from "../../utils/notify";
 import { Card, Form } from "react-bootstrap";
 import {
   applyThemeMode,
@@ -26,17 +30,6 @@ import {
   subscribeToSystemThemeChanges,
 } from "../../utils/themeMode";
 import { normalizeArrivalTime } from "../../utils/arrivalTime";
-
-async function ReauthenticateUser(auth, userProvidedPassword) {
-  const credential = EmailAuthProvider.credential(
-    auth.currentUser.email,
-    userProvidedPassword
-  )
-  return reauthenticateWithCredential(
-    auth.currentUser,
-    credential
-  )
-}
 
 function formatRoleName(roleName) {
   return roleName
@@ -103,10 +96,10 @@ function ChangeMyPassword() {
     try {
       await updatePassword(user, passwordValue)
     } catch (error) {
-      if (error.message.includes("auth/requires-recent-login")) {
+      if (error?.code === "auth/requires-recent-login") {
         setDoReauthenticate(passwordValue)
       } else {
-        setErrorString(error.message)
+        setErrorString(error?.message || "Could not change password")
       }
     }
     setShowPasswordChange(false)
@@ -119,10 +112,20 @@ function ChangeMyPassword() {
       setShowPasswordChange(false)
       return
     }
-    // passwordValue is the old password
-    await ReauthenticateUser(auth, passwordValue)
-    // doReauthenticate contains the new password set in the previous dialog box
-    await updatePassword(user, doReauthenticate)
+    const reauthResult = await reauthenticatePasswordUser(passwordValue)
+    if (!reauthResult.ok) {
+      setErrorString(reauthResult.message)
+      return
+    }
+
+    try {
+      // doReauthenticate contains the new password set in the previous dialog box
+      await updatePassword(user, doReauthenticate)
+    } catch (error) {
+      setErrorString(error?.message || "Could not change password")
+      return
+    }
+
     setDoReauthenticate("")
   }
   return <>
@@ -155,6 +158,100 @@ function ChangeMyPassword() {
       cancel_text="Abort!"
       on_confirm={reauthenticateHandler}
       on_cancel={() => { setDoReauthenticate("") }}
+    />}
+  </>
+}
+
+function ChangeMyLoginEmail() {
+  const [showEmailChange, setShowEmailChange] = useState(false);
+  const [showReauthenticate, setShowReauthenticate] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [errorString, setErrorString] = useState("")
+
+  const emailChangeHandler = async (event, ref) => {
+    event.preventDefault()
+
+    const requestedEmail = String(ref.current.value || "").trim()
+    if (!requestedEmail) {
+      setErrorString("Cannot have blank email")
+      setShowEmailChange(false)
+      return
+    }
+
+    const changeResult = await requestLoginEmailChange(requestedEmail)
+    if (changeResult.ok) {
+      setPendingEmail("")
+      setShowEmailChange(false)
+      setShowReauthenticate(false)
+      notifyInfo("Verification email sent. Confirm it to finish updating your login email.")
+      return
+    }
+
+    if (changeResult.requiresRecentLogin) {
+      setPendingEmail(changeResult.email || requestedEmail)
+      setShowEmailChange(false)
+      setShowReauthenticate(true)
+      return
+    }
+
+    setErrorString(changeResult.message || "Could not start login email change")
+    setShowEmailChange(false)
+  }
+
+  const reauthenticateHandler = async (event, ref) => {
+    event.preventDefault()
+    const passwordValue = String(ref.current.value || "")
+
+    const reauthResult = await reauthenticatePasswordUser(passwordValue)
+    if (!reauthResult.ok) {
+      setErrorString(reauthResult.message)
+      return
+    }
+
+    const changeResult = await requestLoginEmailChange(pendingEmail)
+    if (changeResult.ok) {
+      setPendingEmail("")
+      setShowReauthenticate(false)
+      notifyInfo("Verification email sent. Confirm it to finish updating your login email.")
+      return
+    }
+
+    setErrorString(changeResult.message || "Could not start login email change")
+  }
+
+  return <>
+    {errorString && <ConfirmModal
+      title="Error in preferences change"
+      detail={errorString}
+      confirm_text="Ok"
+      on_confirm={() => setErrorString("")}
+      confirm_only={true}
+    />}
+    <Button type="button" variant="secondary" onClick={() => setShowEmailChange(true)}>
+      Change Login Email
+    </Button>
+    {showEmailChange && <TextModal
+      title="Change Login Email"
+      detail="New login email"
+      input_type="email"
+      name="login_email"
+      confirm_text="Send Verification"
+      cancel_text="Abort!"
+      on_confirm={emailChangeHandler}
+      on_cancel={() => setShowEmailChange(false)}
+    />}
+    {showReauthenticate && <TextModal
+      title="Reauthenticate"
+      detail="Reauthentication needed. Please re-enter your current password"
+      input_type="password"
+      name="password"
+      confirm_text="submit"
+      cancel_text="Abort!"
+      on_confirm={reauthenticateHandler}
+      on_cancel={() => {
+        setPendingEmail("")
+        setShowReauthenticate(false)
+      }}
     />}
   </>
 }
@@ -208,8 +305,11 @@ function Preferences(params) {
         </Form.Group>
       </Card.Body>
     </Card>
-    {/* Only allow change of password here, if it is a local password*/}
-    {isPassword && <ChangeMyPassword />}
+    {/* Only allow local password-auth users to modify password/login email */}
+    {isPassword && <div className="d-flex flex-wrap gap-2">
+      <ChangeMyPassword />
+      <ChangeMyLoginEmail />
+    </div>}
     <Card>
       <Card.Body>
         <p className="mb-0">

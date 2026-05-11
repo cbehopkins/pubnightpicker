@@ -3,13 +3,16 @@ import {
   connectAuthEmulator,
   GoogleAuthProvider,
   // FacebookAuthProvider,
+  EmailAuthProvider,
   getAuth,
   signInWithPopup,
   signInWithEmailAndPassword,
   fetchSignInMethodsForEmail,
   createUserWithEmailAndPassword,
+  reauthenticateWithCredential,
   sendPasswordResetEmail,
   signOut,
+  verifyBeforeUpdateEmail,
 } from "firebase/auth";
 import {
   connectFirestoreEmulator,
@@ -58,6 +61,31 @@ const googleProvider = new GoogleAuthProvider();
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function mapAuthErrorMessage(err, fallbackMessage = "Unable to complete the request") {
+  const code = err?.code;
+
+  if (code === "auth/invalid-email") {
+    return "Invalid email address";
+  }
+  if (code === "auth/email-already-in-use") {
+    return "Another account already uses that email address";
+  }
+  if (code === "auth/requires-recent-login") {
+    return "Please re-enter your password to continue";
+  }
+  if (code === "auth/wrong-password") {
+    return "Incorrect password";
+  }
+  if (code === "auth/user-mismatch" || code === "auth/invalid-credential") {
+    return "Your login session could not be validated. Please sign in again.";
+  }
+  if (typeof err?.message === "string" && err.message.trim().length > 0) {
+    return err.message;
+  }
+
+  return fallbackMessage;
 }
 
 /**
@@ -255,6 +283,92 @@ const sendPasswordReset = async (email) => {
     notifyError(err.message);
   }
 };
+
+const reauthenticatePasswordUser = async (password) => {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) {
+    return {
+      ok: false,
+      code: "auth/no-current-user",
+      message: "No active user session found",
+    };
+  }
+
+  const currentPassword = String(password || "");
+  if (!currentPassword) {
+    return {
+      ok: false,
+      code: "validation/blank-password",
+      message: "Cannot have blank password",
+    };
+  }
+
+  const currentEmail = normalizeEmail(currentUser.email);
+  if (!currentEmail) {
+    return {
+      ok: false,
+      code: "auth/missing-email",
+      message: "Your account does not have a password login email",
+    };
+  }
+
+  try {
+    const credential = EmailAuthProvider.credential(currentEmail, currentPassword);
+    await reauthenticateWithCredential(currentUser, credential);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      code: err?.code || "auth/reauth-failed",
+      message: mapAuthErrorMessage(err, "Could not verify your password"),
+    };
+  }
+};
+
+const requestLoginEmailChange = async (nextEmail) => {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) {
+    return {
+      ok: false,
+      code: "auth/no-current-user",
+      message: "No active user session found",
+    };
+  }
+
+  const normalizedNextEmail = normalizeEmail(nextEmail);
+  if (!normalizedNextEmail) {
+    return {
+      ok: false,
+      code: "validation/blank-email",
+      message: "Cannot have blank email",
+    };
+  }
+
+  try {
+    await verifyBeforeUpdateEmail(currentUser, normalizedNextEmail);
+    return {
+      ok: true,
+      email: normalizedNextEmail,
+    };
+  } catch (err) {
+    if (err?.code === "auth/requires-recent-login") {
+      return {
+        ok: false,
+        code: err.code,
+        requiresRecentLogin: true,
+        email: normalizedNextEmail,
+        message: mapAuthErrorMessage(err),
+      };
+    }
+
+    return {
+      ok: false,
+      code: err?.code || "auth/email-change-failed",
+      message: mapAuthErrorMessage(err, "Could not start email change verification"),
+    };
+  }
+};
+
 const logout = () => {
   signOut(auth);
   redirect("/")
@@ -267,6 +381,8 @@ export {
   logInWithEmailAndPassword,
   registerWithEmailAndPassword,
   sendPasswordReset,
+  reauthenticatePasswordUser,
+  requestLoginEmailChange,
   logout,
   addUserPublicProfile,
 };
