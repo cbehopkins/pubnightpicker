@@ -89,7 +89,7 @@ export default function useSelf() {
             authAdded({
                 name: data?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
                 uid: resolvedUid,
-                email: data?.email || auth.currentUser?.email || "",
+                email: auth.currentUser?.email || data?.email || "",
                 photoUrl,
             })
         );

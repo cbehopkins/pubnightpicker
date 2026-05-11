@@ -38,6 +38,10 @@ We process the following categories of personal data.
 - notification email address, where provided
 - notification preferences
 
+For password-login accounts, the login email can be changed from account preferences.
+Email changes require verification via Firebase Authentication before the new
+login email takes effect.
+
 ### Participation data
 
 - votes for venues

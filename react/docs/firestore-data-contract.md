@@ -99,6 +99,7 @@ Document id: uid.
 
 Common fields used:
 - name
+- email: canonical login email mirrored from Firebase Auth (updated after verified auth email changes)
 - notificationEmail
 - notificationEmailEnabled
 - votesVisible
