@@ -2,12 +2,13 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
-import { useSearchParams } from "react-router-dom";
+import { NavLink, useSearchParams } from "react-router-dom";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
+import useAdmin from "../../hooks/useAdmin";
 import useUserPrivateData from "../../hooks/useUserPrivateData";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useReschedulePoll } from "../../hooks/useReschedulePoll";
@@ -197,6 +198,7 @@ export function PastEvents() {
   const pub_parameters = usePubs();
   const sortedPollsByDate = [...pollData.sortedByDate(true)];
   const canChat = useRole("canChat");
+  const canViewStats = useAdmin();
 
   const writePaginationParams = useCallback(
     (nextPageSize, nextCursorTrail) => {
@@ -258,6 +260,16 @@ export function PastEvents() {
               <option>10</option>
               <option>20</option>
             </select>
+            {canViewStats && (
+              <div className="mt-2 d-grid gap-2">
+                <NavLink className="btn btn-outline-secondary" to="/stats/winning_venues">
+                  View winning venue stats
+                </NavLink>
+                <NavLink className="btn btn-outline-secondary" to="/stats/attendance">
+                  View attendance stats
+                </NavLink>
+              </div>
+            )}
           </div>
         </div>
 
