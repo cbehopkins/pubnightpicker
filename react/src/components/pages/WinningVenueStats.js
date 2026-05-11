@@ -1,11 +1,10 @@
 // @ts-check
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { NavLink, useSearchParams } from "react-router-dom";
-import { Form } from "react-bootstrap";
 import ProtectedRoute from "../ProtectedRoute";
-import Modal from "../UI/Modal";
 import Button from "../UI/Button";
+import StatsWindowModal from "../UI/StatsWindowModal";
 import usePubs from "../../hooks/usePubs";
 import useWinningVenueStats from "../../hooks/useWinningVenueStats";
 import { buildWinningVenueRows, splitRankedStatRows } from "../../utils/statsRanking";
@@ -20,83 +19,14 @@ function getWindowLabel(yearCount) {
     return yearCount === 1 ? "last year" : `last ${yearCount} years`;
 }
 
-/**
- * @param {{
- *   yearCount: number,
- *   venueLimit: number,
- *   onClose: () => void,
- *   onSave: (nextVenueLimit: number, nextYearCount: number) => void,
- * }} props
- */
-function StatsWindowModal({ yearCount, venueLimit, onClose, onSave }) {
-    const [draftVenueLimit, setDraftVenueLimit] = useState(String(venueLimit));
-    const [draftYearCount, setDraftYearCount] = useState(String(yearCount));
-
-    useEffect(() => {
-        setDraftVenueLimit(String(venueLimit));
-        setDraftYearCount(String(yearCount));
-    }, [venueLimit, yearCount]);
-
-    return (
-        <Modal onBackdropClick={onClose}>
-            <div className="bg-body text-body rounded shadow-sm border p-3 p-md-4">
-                <div className="mb-3">
-                    <h2 className="h5 mb-2">Configure winning venue stats</h2>
-                    <p className="text-body-secondary mb-0">Choose how many venues to show and how far back to look.</p>
-                </div>
-
-                <div className="row g-3 mb-3">
-                    <div className="col-sm-6">
-                        <Form.Label htmlFor="statsVenueLimit">Venues to show</Form.Label>
-                        <Form.Control
-                            id="statsVenueLimit"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={draftVenueLimit}
-                            onChange={(event) => setDraftVenueLimit(event.target.value)}
-                        />
-                    </div>
-                    <div className="col-sm-6">
-                        <Form.Label htmlFor="statsYearCount">Time window (years)</Form.Label>
-                        <Form.Control
-                            id="statsYearCount"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={draftYearCount}
-                            onChange={(event) => setDraftYearCount(event.target.value)}
-                        />
-                    </div>
-                </div>
-
-                <div className="d-flex flex-wrap justify-content-end gap-2">
-                    <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button
-                        type="button"
-                        onClick={() => {
-                            onSave(
-                                parsePositiveInteger(draftVenueLimit, venueLimit),
-                                parsePositiveInteger(draftYearCount, yearCount)
-                            );
-                        }}
-                    >
-                        Apply
-                    </Button>
-                </div>
-            </div>
-        </Modal>
-    );
-}
-
-function WinningVenueStatsPage() {
+export function WinningVenueStatsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const venueLimit = parsePositiveInteger(searchParams.get("limit"), 5);
     const yearCount = parsePositiveInteger(searchParams.get("years"), 1);
     const [isWindowModalOpen, setIsWindowModalOpen] = useState(false);
 
     const pubParameters = usePubs();
-    const { polls, isLoading, startDate, endDate } = useWinningVenueStats(yearCount);
+    const { polls, isLoading, errorMessage, startDate, endDate } = useWinningVenueStats(yearCount);
 
     const rankedRows = useMemo(
         () => buildWinningVenueRows({ polls, venues: pubParameters }),
@@ -144,7 +74,9 @@ function WinningVenueStatsPage() {
                 </div>
             </section>
 
-            {isLoading ? (
+            {errorMessage ? (
+                <div className="alert alert-danger mb-0">{errorMessage}</div>
+            ) : isLoading ? (
                 <div className="alert alert-secondary mb-0">Loading winning venue stats...</div>
             ) : (
                 <div className="row g-4">
@@ -169,6 +101,8 @@ function WinningVenueStatsPage() {
 
             {isWindowModalOpen && (
                 <StatsWindowModal
+                    title="Configure winning venue stats"
+                    description="Choose how many venues to show and how far back to look."
                     venueLimit={venueLimit}
                     yearCount={yearCount}
                     onClose={() => setIsWindowModalOpen(false)}

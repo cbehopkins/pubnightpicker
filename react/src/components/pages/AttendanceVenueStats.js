@@ -1,11 +1,10 @@
 // @ts-check
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { NavLink, useSearchParams } from "react-router-dom";
-import { Form } from "react-bootstrap";
 import ProtectedRoute from "../ProtectedRoute";
-import Modal from "../UI/Modal";
 import Button from "../UI/Button";
+import StatsWindowModal from "../UI/StatsWindowModal";
 import usePubs from "../../hooks/usePubs";
 import useAttendanceVenueStats from "../../hooks/useAttendanceVenueStats";
 import { buildVenueCountRows, splitRankedStatRows } from "../../utils/statsRanking";
@@ -20,76 +19,7 @@ function getWindowLabel(yearCount) {
     return yearCount === 1 ? "last year" : `last ${yearCount} years`;
 }
 
-/**
- * @param {{
- *   yearCount: number,
- *   venueLimit: number,
- *   onClose: () => void,
- *   onSave: (nextVenueLimit: number, nextYearCount: number) => void,
- * }} props
- */
-function StatsWindowModal({ yearCount, venueLimit, onClose, onSave }) {
-    const [draftVenueLimit, setDraftVenueLimit] = useState(String(venueLimit));
-    const [draftYearCount, setDraftYearCount] = useState(String(yearCount));
-
-    useEffect(() => {
-        setDraftVenueLimit(String(venueLimit));
-        setDraftYearCount(String(yearCount));
-    }, [venueLimit, yearCount]);
-
-    return (
-        <Modal onBackdropClick={onClose}>
-            <div className="bg-body text-body rounded shadow-sm border p-3 p-md-4">
-                <div className="mb-3">
-                    <h2 className="h5 mb-2">Configure attendance stats</h2>
-                    <p className="text-body-secondary mb-0">Choose how many venues to show and how far back to look.</p>
-                </div>
-
-                <div className="row g-3 mb-3">
-                    <div className="col-sm-6">
-                        <Form.Label htmlFor="attendanceStatsVenueLimit">Venues to show</Form.Label>
-                        <Form.Control
-                            id="attendanceStatsVenueLimit"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={draftVenueLimit}
-                            onChange={(event) => setDraftVenueLimit(event.target.value)}
-                        />
-                    </div>
-                    <div className="col-sm-6">
-                        <Form.Label htmlFor="attendanceStatsYearCount">Time window (years)</Form.Label>
-                        <Form.Control
-                            id="attendanceStatsYearCount"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={draftYearCount}
-                            onChange={(event) => setDraftYearCount(event.target.value)}
-                        />
-                    </div>
-                </div>
-
-                <div className="d-flex flex-wrap justify-content-end gap-2">
-                    <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button
-                        type="button"
-                        onClick={() => {
-                            onSave(
-                                parsePositiveInteger(draftVenueLimit, venueLimit),
-                                parsePositiveInteger(draftYearCount, yearCount)
-                            );
-                        }}
-                    >
-                        Apply
-                    </Button>
-                </div>
-            </div>
-        </Modal>
-    );
-}
-
-function AttendanceVenueStatsPage() {
+export function AttendanceVenueStatsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const venueLimit = parsePositiveInteger(searchParams.get("limit"), 5);
     const yearCount = parsePositiveInteger(searchParams.get("years"), 1);
@@ -100,6 +30,7 @@ function AttendanceVenueStatsPage() {
         countsByVenueId,
         lastDateByVenueId,
         isLoading,
+        errorMessage,
         startDate,
         endDate,
     } = useAttendanceVenueStats(yearCount);
@@ -143,15 +74,23 @@ function AttendanceVenueStatsPage() {
                         <NavLink className="btn btn-outline-primary" to="/stats/winning_venues">
                             Winning Venue Stats
                         </NavLink>
+                        <NavLink className="btn btn-outline-primary" to="/past_events">
+                            Back to Past Events
+                        </NavLink>
                     </div>
                 </div>
 
                 <div className="mt-3 small text-body-secondary">
                     Showing {venueLimit} venues per list from {startDate} through {endDate}.
                 </div>
+                <div className="mt-2 small text-body-secondary">
+                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that poll.
+                </div>
             </section>
 
-            {isLoading ? (
+            {errorMessage ? (
+                <div className="alert alert-danger mb-0">{errorMessage}</div>
+            ) : isLoading ? (
                 <div className="alert alert-secondary mb-0">Loading attendance stats...</div>
             ) : (
                 <div className="row g-4">
@@ -176,6 +115,10 @@ function AttendanceVenueStatsPage() {
 
             {isWindowModalOpen && (
                 <StatsWindowModal
+                    title="Configure attendance stats"
+                    description="Choose how many venues to show and how far back to look."
+                    venueInputId="attendanceStatsVenueLimit"
+                    yearsInputId="attendanceStatsYearCount"
                     venueLimit={venueLimit}
                     yearCount={yearCount}
                     onClose={() => setIsWindowModalOpen(false)}

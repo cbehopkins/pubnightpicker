@@ -14,7 +14,7 @@ function getDateYearsAgo(yearCount) {
 
 /**
  * @param {number} yearCount
- * @returns {{ polls: Record<string, { selected?: string, date?: string }>, isLoading: boolean, startDate: string, endDate: string }}
+ * @returns {{ polls: Record<string, { selected?: string, date?: string }>, isLoading: boolean, errorMessage: string | null, startDate: string, endDate: string }}
  */
 export default function useWinningVenueStats(yearCount) {
     const endDate = getTodaysDate();
@@ -32,10 +32,12 @@ export default function useWinningVenueStats(yearCount) {
 
     const [polls, setPolls] = useState({});
     const [isLoading, setIsLoading] = useState(true);
+    const [errorMessage, setErrorMessage] = useState(null);
 
     useEffect(() => {
         setIsLoading(true);
         setPolls({});
+        setErrorMessage(null);
 
         const unsubscribe = onSnapshot(
             statsQuery,
@@ -46,11 +48,13 @@ export default function useWinningVenueStats(yearCount) {
                     nextPolls[docSnapshot.id] = docSnapshot.data();
                 });
                 setPolls(nextPolls);
+                setErrorMessage(null);
                 setIsLoading(false);
             },
             (error) => {
                 console.error("Error loading winning venue stats", error);
                 setPolls({});
+                setErrorMessage("Unable to load winning venue stats right now.");
                 setIsLoading(false);
             }
         );
@@ -61,6 +65,7 @@ export default function useWinningVenueStats(yearCount) {
     return {
         polls,
         isLoading,
+        errorMessage,
         startDate,
         endDate,
     };

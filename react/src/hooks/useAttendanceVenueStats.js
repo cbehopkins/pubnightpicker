@@ -18,7 +18,7 @@ function getDateYearsAgo(yearCount) {
  * @param {Record<string, unknown>} attendanceMap
  * @returns {string[]}
  */
-function getVenueIdsForPoll(poll, attendanceMap) {
+export function getVenueIdsForPoll(poll, attendanceMap) {
     const venueIdSet = new Set();
 
     for (const key of Object.keys(poll?.pubs || {})) {
@@ -48,7 +48,7 @@ function getVenueIdsForPoll(poll, attendanceMap) {
  * @param {Record<string, Record<string, unknown>>} attendanceByPoll
  * @returns {{ countsByVenueId: Record<string, number>, lastDateByVenueId: Record<string, string | null> }}
  */
-function aggregateVenueAttendance(polls, attendanceByPoll) {
+export function aggregateVenueAttendance(polls, attendanceByPoll) {
     /** @type {Record<string, number>} */
     const countsByVenueId = {};
     /** @type {Record<string, string | null>} */
@@ -58,6 +58,8 @@ function aggregateVenueAttendance(polls, attendanceByPoll) {
         const attendanceMap = attendanceByPoll[pollId] || {};
         const venueIds = getVenueIdsForPoll(poll, attendanceMap);
         for (const venueId of venueIds) {
+            // We intentionally resolve effective attendance per venue so the global "any"
+            // attendance state contributes to each venue in the shortlist for that poll.
             const effectiveAttendance = getEffectiveAttendanceState(attendanceMap, venueId, null);
             const canComeCount = effectiveAttendance.canCome.length;
             if (!countsByVenueId[venueId]) {
@@ -80,6 +82,7 @@ function aggregateVenueAttendance(polls, attendanceByPoll) {
  *  countsByVenueId: Record<string, number>,
  *  lastDateByVenueId: Record<string, string | null>,
  *  isLoading: boolean,
+ *  errorMessage: string | null,
  *  startDate: string,
  *  endDate: string,
  * }}
@@ -101,11 +104,13 @@ export default function useAttendanceVenueStats(yearCount) {
     const [countsByVenueId, setCountsByVenueId] = useState({});
     const [lastDateByVenueId, setLastDateByVenueId] = useState({});
     const [isLoading, setIsLoading] = useState(true);
+    const [errorMessage, setErrorMessage] = useState(null);
 
     useEffect(() => {
         setIsLoading(true);
         setCountsByVenueId({});
         setLastDateByVenueId({});
+        setErrorMessage(null);
 
         const unsubscribe = onSnapshot(
             statsQuery,
@@ -120,6 +125,7 @@ export default function useAttendanceVenueStats(yearCount) {
                 if (pollIds.length === 0) {
                     setCountsByVenueId({});
                     setLastDateByVenueId({});
+                    setErrorMessage(null);
                     setIsLoading(false);
                     return;
                 }
@@ -139,12 +145,14 @@ export default function useAttendanceVenueStats(yearCount) {
 
                 setCountsByVenueId(counts);
                 setLastDateByVenueId(lastDates);
+                setErrorMessage(null);
                 setIsLoading(false);
             },
             (error) => {
                 console.error("Error loading attendance venue stats", error);
                 setCountsByVenueId({});
                 setLastDateByVenueId({});
+                setErrorMessage("Unable to load attendance stats right now.");
                 setIsLoading(false);
             }
         );
@@ -156,6 +164,7 @@ export default function useAttendanceVenueStats(yearCount) {
         countsByVenueId,
         lastDateByVenueId,
         isLoading,
+        errorMessage,
         startDate,
         endDate,
     };
