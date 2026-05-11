@@ -37,6 +37,7 @@ const ManageUserDetail = lazy(() =>
 );
 const PrivacyPage = lazy(() => import("./components/pages/PrivacyPage"));
 const ChatPage = lazy(() => import("./components/pages/ChatPage"));
+const DiagnosticsPage = lazy(() => import("./components/pages/DiagnosticsPage"));
 const CurrentEvents = lazy(() => import("./components/pages/CurrentEvents"));
 const PastEvents = lazy(() =>
   import("./components/pages/CurrentEvents").then((module) => ({
@@ -162,6 +163,10 @@ function App() {
               element: <LazyRoute><ManageUserDetail /></LazyRoute>,
             },
           ],
+        },
+        {
+          path: "diagnostics",
+          element: <LazyRoute><DiagnosticsPage /></LazyRoute>,
         },
         {
           path: "chat",
