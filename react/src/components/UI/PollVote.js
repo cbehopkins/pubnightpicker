@@ -123,7 +123,7 @@ function RespondMenu({
       let left = triggerRect.left;
 
       if (spaceBelow >= panelRect.height + gutter) {
-        top = triggerRect.bottom + gutter;
+        // initial value of `top` already equals triggerRect.bottom + gutter
       } else if (spaceAbove >= panelRect.height + gutter) {
         top = triggerRect.top - panelRect.height - gutter;
       } else if (spaceRight >= panelRect.width + gutter) {
