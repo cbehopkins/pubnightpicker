@@ -5,6 +5,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ManageUsers, { ManageUserDetail } from "./ManageUsers";
 
+vi.mock("react-redux", () => {
+    return {
+        useSelector: (selector) => selector({
+            auth: {
+                uid: "admin-user",
+                email: "admin@example.com",
+            },
+        }),
+    };
+});
+
 const {
     useUsersMock,
     useAllRolesMock,

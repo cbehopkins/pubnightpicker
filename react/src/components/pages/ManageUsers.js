@@ -16,6 +16,7 @@ import {
     CONSOLIDATED_PERMISSION_COLUMNS,
 } from "../../permissions";
 import { deleteUserAppData, deletionSummaryLines, summarizeDeletionResult } from "../../dbtools/userDeletion";
+import { enqueueAdminAuthDeleteRequest } from "../../dbtools/adminDeleteRequests";
 import { notifyError, notifyInfo } from "../../utils/notify";
 
 const MANAGE_USERS_NARROW_BREAKPOINT = 1200;
@@ -416,6 +417,7 @@ function ManageUserDetailPage() {
     const { userId } = useParams();
     const navigate = useNavigate();
     const currentUid = useSelector((state) => state.auth.uid);
+    const currentEmail = useSelector((state) => state.auth.email);
     const {
         users,
         handleAdminClick,
@@ -499,7 +501,7 @@ function ManageUserDetailPage() {
             {showDeleteConfirm && (
                 <ConfirmModal
                     title="Delete this user?"
-                    detail="This removes app data and role assignments for this user. Firebase Auth login deletion is not part of this phase."
+                    detail="This removes app data and role assignments for this user, then queues a backend auth-delete request."
                     confirm_text="Continue"
                     cancel_text="Cancel"
                     on_confirm={() => {
@@ -533,8 +535,15 @@ function ManageUserDetailPage() {
                             const deletionResult = await deleteUserAppData(userId, { removeRoles: true });
                             const summary = summarizeDeletionResult(deletionResult);
                             const summaryLines = deletionSummaryLines(summary);
-                            setDeleteProgress("Deletion complete");
-                            notifyInfo("User app data deleted. Firebase Auth login is unchanged in this phase.");
+                            setDeleteProgress("Queueing auth deletion request...");
+                            await enqueueAdminAuthDeleteRequest({
+                                targetUid: userId,
+                                targetEmail: user?.email || null,
+                                requestedByUid: currentUid,
+                                requestedByEmail: currentEmail || null,
+                            });
+                            setDeleteProgress("Deletion request queued");
+                            notifyInfo("User app data deleted and auth deletion request queued for backend processing.");
                             navigate("/manage_users", {
                                 state: {
                                     lastDeleteSummaryLines: summaryLines,

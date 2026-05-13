@@ -444,6 +444,11 @@ class DbHandler:
         """Return a query for notification request health-check documents."""
         return cast(Query, self.db.collection("notification_req"))
 
+    @property
+    def query_admin_delete_requests(self) -> Query:
+        """Return a query for admin delete requests."""
+        return cast(Query, self.db.collection("admin_delete_requests"))
+
     @staticmethod
     def wrapped_callback(
         doc_snapshot: Sequence[DocumentSnapshot],

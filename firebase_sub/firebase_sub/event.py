@@ -19,6 +19,7 @@ class EventType(enum.StrEnum):
     PUSH_TEST = "push_test"
     PUSH = "push"
     CHAT_MESSAGE = "chat_message"
+    ADMIN_DELETE_REQUEST = "admin_delete_request"
 
 
 @dataclass

@@ -16,9 +16,13 @@ def test_output_file_basic():
         with open(outpath, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, list)
+        assert data[0]["schema_version"] == 2
+        assert data[0]["path"] == "col1/id1"
         assert data[0]["collection"] == "col1"
         assert data[0]["id"] == "id1"
         assert data[0]["data"] == {"foo": "bar"}
+        assert data[1]["schema_version"] == 2
+        assert data[1]["path"] == "col2/id2"
         assert data[1]["collection"] == "col2"
         assert data[1]["id"] == "id2"
         assert data[1]["data"] == {"num": 42, "lst": [1, 2, 3]}
@@ -33,4 +37,18 @@ def test_output_file_datetime():
         with open(outpath, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, list)
+        assert data[0]["schema_version"] == 2
+        assert data[0]["path"] == "col/id"
         assert data[0]["data"]["when"] == dt.isoformat()
+
+
+def test_output_file_path_validation():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outpath = Path(tmpdir) / "test_invalid_path.json"
+        with OutputFile(outpath) as out:
+            try:
+                out.write_document(path="users", data={"x": 1})
+            except ValueError as exc:
+                assert "even segments" in str(exc)
+            else:
+                raise AssertionError("Expected ValueError for invalid document path")

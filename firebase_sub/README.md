@@ -27,22 +27,161 @@ Use these commands to initialize a new local/emulator project without manual Fir
 Create or update a first admin user and grant default admin permissions:
 
 ```bash
-poetry run python -m firebase_sub.cli.bootstrap create-admin --uid <auth-uid> --name "Admin User" --email admin@example.com
+poetry run python firebase_sub/cli/bootstrap.py create-admin --uid <auth-uid> --name "Admin User" --email admin@example.com
 ```
 
 Preview changes without writing:
 
 ```bash
-poetry run python -m firebase_sub.cli.bootstrap create-admin --uid <auth-uid> --dry-run
+poetry run python firebase_sub/cli/bootstrap.py create-admin --uid <auth-uid> --dry-run
 ```
 
 Grant one or more role docs explicitly:
 
 ```bash
-poetry run python -m firebase_sub.cli.bootstrap grant-role --uid <auth-uid> --role canChat --role canCreatePoll
+poetry run python firebase_sub/cli/bootstrap.py grant-role --uid <auth-uid> --role canChat --role canCreatePoll
 ```
 
 When `FIRESTORE_EMULATOR_HOST` is set, this command targets the emulator and uses `GOOGLE_CLOUD_PROJECT` for the project id.
+
+# Backup and Restore Runbook
+
+Use backup before any destructive maintenance work.
+
+Create a backup and manifest:
+
+```bash
+poetry run python firebase_sub/cli/backup.py --outfile backup.json
+```
+
+This produces:
+1. `backup.json` with path-aware records (schema v2)
+2. `backup.json.manifest.json` with checksum, counts, and timing metadata
+
+Restore planning only (no writes):
+
+```bash
+poetry run python firebase_sub/cli/restore.py --infile backup.json --manifest backup.json.manifest.json --dry-run
+```
+
+Restore only user-scoped documents:
+
+```bash
+poetry run python firebase_sub/cli/restore.py --infile backup.json --manifest backup.json.manifest.json --uid <uid>
+```
+
+Restore only specific collections:
+
+```bash
+poetry run python firebase_sub/cli/restore.py --infile backup.json --manifest backup.json.manifest.json --allow-collection users --allow-collection user-public
+```
+
+Exclude collections from restore:
+
+```bash
+poetry run python firebase_sub/cli/restore.py --infile backup.json --manifest backup.json.manifest.json --deny-collection roles --deny-collection chat_push_actions
+```
+
+Safety behavior for non-dry-run restores:
+1. Broad unscoped restore is refused unless `--confirm-non-dry-run` is set.
+2. Scoped restores (`--uid` or `--allow-collection`) do not require the confirmation flag.
+3. Overlapping allow/deny collection filters are rejected.
+
+Example of explicit broad restore confirmation:
+
+```bash
+poetry run python firebase_sub/cli/restore.py --infile backup.json --manifest backup.json.manifest.json --confirm-non-dry-run
+```
+
+Recommended pre-delete checklist:
+1. Run backup and verify manifest checksum.
+2. Execute a dry-run restore and inspect planned writes.
+3. Validate a user-scoped restore path in emulator before production usage.
+
+# Admin Delete User Runbook (Dual-Gate)
+
+Admin Auth deletion is intentionally guarded by two independent controls:
+1. Environment gate: `ENABLE_ADMIN_DELETE_REQUESTS=true`
+2. Runtime gate: `--enable-real-auth-delete`
+
+Both must be enabled before real Auth deletion can happen.
+
+## Start in dry-run mode
+
+Dry-run validates preconditions and writes audit records, but does not delete Auth users:
+
+```bash
+ENABLE_ADMIN_DELETE_REQUESTS=true poetry run python firebase_sub/cli/sub_events.py --no-enable-real-auth-delete --loglevel info
+```
+
+## Enable real Auth deletion
+
+Enable both gates only after dry-run outcomes look healthy:
+
+```bash
+ENABLE_ADMIN_DELETE_REQUESTS=true poetry run python firebase_sub/cli/sub_events.py --enable-real-auth-delete --loglevel info
+```
+
+## Emergency rollback / pause
+
+Set kill-switch document `system_config/admin_delete`:
+
+```json
+{
+	"paused": true,
+	"reason": "on-call pause",
+	"pausedAt": "<server timestamp>"
+}
+```
+
+When `paused=true`, pending requests are skipped immediately with no destructive action.
+
+## Observability counters
+
+The worker emits Firestore counters in `admin_delete_request_metrics`:
+1. `global` document (all-time aggregates)
+2. `daily-YYYY-MM-DD` documents (daily aggregates)
+
+Key outcomes to alert on:
+1. `outcomes.auth_delete_failed`
+2. `outcomes.auth_delete_blocked`
+
+Audit history remains immutable in `admin_delete_request_audit` and should be used for incident forensics.
+
+Read current counters from CLI:
+
+```bash
+poetry run python firebase_sub/cli/admin_delete_metrics.py
+```
+
+Run a one-command on-call preflight (dual gate + kill-switch + fail/block counters):
+
+```bash
+ENABLE_ADMIN_DELETE_REQUESTS=true poetry run python firebase_sub/cli/admin_delete_metrics.py --preflight --enable-real-auth-delete
+```
+
+Preflight exit codes:
+1. `0`: ready (effective real delete is on, kill-switch not paused)
+2. `2`: not ready (effective real delete is off)
+3. `3`: blocked (kill-switch paused)
+
+Read a specific UTC day:
+
+```bash
+poetry run python firebase_sub/cli/admin_delete_metrics.py --day 2026-05-12
+```
+
+Create a per-user recovery snapshot before admin deletion:
+
+```bash
+poetry run python firebase_sub/cli/snapshot_user.py --uid <uid> --outfile user-<uid>-snapshot.json
+```
+
+If the Auth account has already been removed and you still need Firestore recovery data:
+
+```bash
+poetry run python firebase_sub/cli/snapshot_user.py --uid <uid> --outfile user-<uid>-snapshot.json --allow-missing-auth
+```
 
 # Deisgn Overview
 
@@ -113,17 +252,17 @@ and prune
 Local CLI:
 
 ```bash
-poetry run python -m firebase_sub.cli.sub_events --loglevel info
+poetry run python firebase_sub/cli/sub_events.py --loglevel info
 ```
 
 Push can be toggled independently from email dummy mode:
 
 ```bash
 # Real push, dummy email
-poetry run python -m firebase_sub.cli.sub_events --dummy-email --no-dummy-push --loglevel info
+poetry run python firebase_sub/cli/sub_events.py --dummy-email --no-dummy-push --loglevel info
 
 # Dummy push, real email
-poetry run python -m firebase_sub.cli.sub_events --no-dummy-email --dummy-push --loglevel info
+poetry run python firebase_sub/cli/sub_events.py --no-dummy-email --dummy-push --loglevel info
 ```
 
 Docker:
