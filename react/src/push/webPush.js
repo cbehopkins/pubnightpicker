@@ -16,7 +16,7 @@ function parseBooleanEnv(value) {
     }
     const normalized = String(value)
         .trim()
-        .replace(/^['\"]|['\"]$/g, "")
+        .replace(/^['"]|['"]$/g, "")
         .toLowerCase();
     return normalized === "true";
 }

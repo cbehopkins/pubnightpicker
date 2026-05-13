@@ -2,6 +2,7 @@
   "name": "pubnightpicker",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "dependencies": {
     "@reduxjs/toolkit": "^2.0.1",
     "@testing-library/jest-dom": "^5.17.0",
@@ -29,13 +30,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "typecheck": "tsc --noEmit -p jsconfig.json"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+    "typecheck": "tsc --noEmit -p jsconfig.json",
+    "lint": "eslint src"
   },
   "browserslist": {
     "production": [
@@ -50,8 +46,12 @@
     ]
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@firebase/rules-unit-testing": "^4.0.1",
     "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.6.0",
     "jsdom": "^29.0.1",
     "sharp": "^0.34.5",
     "typescript": "^5.9.3",
