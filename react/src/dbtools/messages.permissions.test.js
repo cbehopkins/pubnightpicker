@@ -6,7 +6,7 @@ import {
     initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
-import { addDoc, collection, deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 
 const PROJECT_ID = "pubnightpicker-messages-rules";
 const baseTimestamp = new Date("2026-05-07T12:00:00.000Z");
@@ -155,6 +155,23 @@ describe("messages firestore rules — deletes", () => {
     it("denies unauthenticated deletes", async () => {
         const db = testEnv.unauthenticatedContext().firestore();
         await assertFails(deleteDoc(doc(db, "messages", "existing-msg")));
+    });
+});
+
+describe("messages firestore rules — updates", () => {
+    it("allows a user to update their own message", async () => {
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertSucceeds(updateDoc(doc(db, "messages", "existing-msg"), { text: "edited" }));
+    });
+
+    it("denies a user updating another user's message", async () => {
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertFails(updateDoc(doc(db, "messages", "other-msg"), { text: "edited" }));
+    });
+
+    it("allows canDeleteAnyMessage to update any message", async () => {
+        const db = testEnv.authenticatedContext("moderator").firestore();
+        await assertSucceeds(updateDoc(doc(db, "messages", "other-msg"), { text: "moderated" }));
     });
 });
 

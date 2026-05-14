@@ -194,9 +194,26 @@ def main(argv: list[str] | None = None) -> int:
     firebase_parts = _find_firebase_parts()
 
     forwarded_args = list(args.pytest_args)
-    extra = " ".join(forwarded_args) if forwarded_args else ""
+    if forwarded_args and forwarded_args[0] == "--":
+        forwarded_args = forwarded_args[1:]
+
+    # Poetry 2.x requires `run --` so pytest flags are not parsed as Poetry flags.
+    quoted_forwarded = " ".join(f'"{arg}"' if " " in arg else arg for arg in forwarded_args)
     test_command = " ".join(
-        filter(None, ["poetry", "run", "pytest", "-m", "integration", "-v", "--tb=short", extra])
+        filter(
+            None,
+            [
+                "poetry",
+                "run",
+                "--",
+                "pytest",
+                "-m",
+                "integration",
+                "-v",
+                "--tb=short",
+                quoted_forwarded,
+            ],
+        )
     )
 
     cmd = _build_cmd(firebase_parts, test_command)

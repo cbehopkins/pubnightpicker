@@ -1,13 +1,15 @@
 import logging
 import os
-import threading
+import hashlib
+import json
+from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import click
 import firebase_admin
 from firebase_admin import credentials
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.common.logging import configure_logging, log_level_to_int
 from firebase_sub.common.output_file import OutputFile
@@ -60,6 +62,21 @@ def _get_db_handler() -> DbHandler:
     return _DB_HANDLER
 
 
+def _iter_document_snapshots(collection_ref):
+    for doc in collection_ref.stream():
+        yield doc
+        for subcollection in doc.reference.collections():
+            yield from _iter_document_snapshots(subcollection)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @click.command()
 @click.option(
     "--loglevel",
@@ -76,51 +93,60 @@ def _get_db_handler() -> DbHandler:
     help="Output file path for JSON data",
 )
 @click.option(
-    "--timeout",
-    type=int,
-    default=5,
-    show_default=True,
-    help="Timeout in seconds to wait for new items before exiting.",
+    "--manifest-out",
+    type=click.Path(path_type=Path, writable=True),
+    help="Optional manifest output path. Defaults to '<outfile>.manifest.json'",
 )
-def main(loglevel: int, logfile: Path | None, outfile: Path, timeout: int) -> None:
+def main(loglevel: int, logfile: Path | None, outfile: Path, manifest_out: Path | None) -> None:
     configure_logging(loglevel, logfile)
     db_handler = _get_db_handler()
 
-    stop_event = threading.Event()
-    timer = None
-
-    def on_timeout():
-        _log.info(f"No new items for {timeout} seconds. Exiting.")
-        stop_event.set()
-
-    def reset_timer():
-        nonlocal timer
-        if timer:
-            timer.cancel()
-        timer = threading.Timer(timeout, on_timeout)
-        timer.start()
+    started_at = datetime.now(UTC)
+    per_collection_counts: Counter[str] = Counter()
+    total_documents = 0
 
     with OutputFile(outfile) as out:
 
-        def backup_item(collection_name: str, document: DocumentSnapshot) -> None:
-            dct: dict[str, Any] | None = document.to_dict()
-            if dct is None:
-                _log.warning(
-                    "Skipping missing Firestore snapshot for %s/%s",
-                    collection_name,
-                    document.id,
+        for collection_ref in db_handler.db.collections():
+            for document in _iter_document_snapshots(collection_ref):
+                dct: dict[str, Any] | None = document.to_dict()
+                if dct is None:
+                    _log.warning(
+                        "Skipping missing Firestore snapshot for %s",
+                        document.reference.path,
+                    )
+                    continue
+                out.write_document(
+                    path=document.reference.path,
+                    data=dct,
+                    collection=document.reference.parent.id,
+                    doc_id=document.id,
+                    create_time=document.create_time,
+                    update_time=document.update_time,
                 )
-                return
-            out.write_dict(collection_name, document.id, dct)
-            reset_timer()
+                total_documents += 1
+                root_collection = document.reference.path.split("/", 1)[0]
+                per_collection_counts[root_collection] += 1
 
-        reset_timer()
-        db_handler.all_events_except_users(backup_item)
-        # Wait for timeout after last item
-        stop_event.wait()
-        if timer:
-            timer.cancel()
-        _log.info(f"Backup completed, data written to {outfile}")
+    completed_at = datetime.now(UTC)
+    data_sha256 = _sha256_file(outfile)
+    manifest_path = manifest_out or outfile.with_name(f"{outfile.name}.manifest.json")
+    manifest = {
+        "schema_version": 2,
+        "data_file": str(outfile.name),
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "project_id": getattr(db_handler.db, "project", None),
+        "total_documents": total_documents,
+        "per_collection_counts": dict(per_collection_counts),
+        "sha256": data_sha256,
+    }
+    with open(manifest_path, "w", encoding="utf-8") as mf:
+        json.dump(manifest, mf, indent=2, sort_keys=True)
+        mf.write("\n")
+
+    _log.info("Backup completed, data written to %s", outfile)
+    _log.info("Backup manifest written to %s", manifest_path)
 
 
 if __name__ == "__main__":

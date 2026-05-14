@@ -52,6 +52,52 @@ service cloud.firestore {
       return isAdmin() || canCreatePoll() || canCompletePoll();
     }
 
+    function isValidAdminDeleteRequestCreate() {
+      return request.resource.data.keys().hasOnly([
+          "schemaVersion",
+          "targetUid",
+          "targetEmail",
+          "requestedByUid",
+          "requestedByEmail",
+          "reason",
+          "scrubbedAppData",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ])
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.targetUid is string
+        && request.resource.data.targetUid.size() > 0
+        && (!("targetEmail" in request.resource.data) || request.resource.data.targetEmail is string || request.resource.data.targetEmail == null)
+        && request.resource.data.requestedByUid is string
+        && request.resource.data.requestedByUid == request.auth.uid
+        && (!("requestedByEmail" in request.resource.data) || request.resource.data.requestedByEmail is string || request.resource.data.requestedByEmail == null)
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.scrubbedAppData is bool
+        && request.resource.data.scrubbedAppData == true
+        && request.resource.data.status == "pending"
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+    }
+
+      function isValidAdminDeleteKillSwitchWrite() {
+        return request.resource.data.keys().hasOnly([
+          "paused",
+          "reason",
+          "pausedAt",
+          "updatedByUid",
+          "updatedAt"
+        ])
+        && request.resource.data.paused is bool
+        && (!("reason" in request.resource.data) || request.resource.data.reason is string || request.resource.data.reason == null)
+        && (!("pausedAt" in request.resource.data) || request.resource.data.pausedAt is timestamp || request.resource.data.pausedAt == null)
+        && (!("updatedByUid" in request.resource.data)
+          || (request.resource.data.updatedByUid is string && request.resource.data.updatedByUid == request.auth.uid))
+        && (!("updatedAt" in request.resource.data) || request.resource.data.updatedAt is timestamp);
+      }
+
     function isValidPublicUserProfileCreate(userId) {
       return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
         && request.resource.data.uid == userId
@@ -135,6 +181,34 @@ service cloud.firestore {
       allow read: if canUseNotificationPing();
       allow write: if false;
     }
+
+    // Admin delete requests - admins can enqueue/read, backend only should process state changes.
+    match /admin_delete_requests/{requestId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidAdminDeleteRequestCreate();
+      allow update, delete: if false;
+    }
+
+    // Admin delete audit trail - immutable backend records, admin read-only.
+    match /admin_delete_request_audit/{auditId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Admin delete metrics - backend-generated counters, admin read-only.
+    match /admin_delete_request_metrics/{metricId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Admin delete kill-switch controls - admin-managed configuration.
+    match /system_config/{docId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+                            && docId == "admin_delete"
+                            && isValidAdminDeleteKillSwitchWrite();
+      allow delete: if false;
+    }
     
     // Pubs collection - read for all, write for admins only
     match /pubs/{pubId} {
@@ -171,12 +245,15 @@ service cloud.firestore {
       allow update: if request.auth != null
                     && (request.auth.uid == userId || isAdmin())
                     && isValidPublicUserProfileUpdate(userId);
+      allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
     
     // Messages collection - known users can read/create, admins have full access, users can delete their own
     match /messages/{messageId} {
       allow read: if canChat();
       allow create: if canChat() && isValidNewMessage();
+      allow update: if canDeleteAnyMessage() ||
+                      (request.auth != null && resource.data.uid == request.auth.uid);
       allow delete: if canDeleteAnyMessage() || 
                       (request.auth != null && resource.data.uid == request.auth.uid);
     }

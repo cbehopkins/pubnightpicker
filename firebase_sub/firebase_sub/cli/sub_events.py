@@ -26,6 +26,7 @@ from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
 from firebase_sub.database.canary import CanaryWatcher
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
+from firebase_sub.database.admin_delete_requests import AdminDeleteRequestHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
@@ -68,6 +69,13 @@ _FIREBASE_APP_INITIALIZED = False
 _DB_HANDLER: DbHandler | None = None
 _COMP_POLL_MAX_RETRIES = 10
 _COMP_POLL_RETRY_DELAY_SECONDS = 1.0
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _ensure_firebase_app() -> None:
@@ -156,6 +164,7 @@ def sub_events(
     all_history: bool,
     poll_lookback_days: int,
     canary_interval_seconds: int = 300,
+    enable_real_auth_delete: bool = False,
 ) -> None:
     configure_logging(loglevel, logfile)
     if restart_interval:
@@ -171,6 +180,12 @@ def sub_events(
         db_handler.db,
         db_handler.query_active_push_endpoints_for_user,
         dummy_push=dummy_push,
+    )
+    admin_delete_handler = AdminDeleteRequestHandler(
+        db_handler.db,
+        enabled=_env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False),
+        dry_run=not enable_real_auth_delete,
+        enable_real_auth_delete=enable_real_auth_delete,
     )
     housekeeping_runner = HousekeepingRunner(
         tasks=build_housekeeping_tasks(db_handler.db),
@@ -238,6 +253,24 @@ def sub_events(
             )
 
     _log.info("Notification request/ack mirror listener started")
+
+    def admin_delete_request_callback(document: DocumentSnapshot) -> None:
+        q.put(
+            Event(
+                type=EventType.ADMIN_DELETE_REQUEST,
+                doc=document,
+                callback=lambda doc, pubs_list: admin_delete_handler.handle_request_document(doc),
+            )
+        )
+
+    if admin_delete_handler.enabled:
+        _log.info("Admin delete request listener enabled (dry_run=%s)", admin_delete_handler.dry_run)
+    else:
+        _log.info("Admin delete request listener disabled (set ENABLE_ADMIN_DELETE_REQUESTS=true to enable)")
+    if enable_real_auth_delete and not admin_delete_handler.enabled:
+        _log.warning(
+            "--enable-real-auth-delete was set but ENABLE_ADMIN_DELETE_REQUESTS is false; admin delete processing remains disabled"
+        )
 
     poll_min_date = None
     if all_history:
@@ -313,6 +346,16 @@ def sub_events(
     if web_push_enabled():
         _log.info("Chat message push listener started")
 
+    admin_delete_manager = (
+        PollManager(
+            db_handler.query_admin_delete_requests,
+            add=admin_delete_request_callback,
+            modify=admin_delete_request_callback,
+        )
+        if admin_delete_handler.enabled
+        else contextlib.nullcontext()
+    )
+
     with (
         PollManager(
             db_handler.query_polls_by_status(
@@ -334,6 +377,7 @@ def sub_events(
             add=notification_request_callback,
             modify=notification_request_callback,
         ),
+        admin_delete_manager,
         messages_manager,
         housekeeping_trigger,
         canary,
@@ -435,6 +479,12 @@ def doc_props(event: Event) -> tuple[str | None, bool]:
     show_default=True,
     help="How often (seconds) to write a canary nonce to verify Firestore listener health",
 )
+@click.option(
+    "--enable-real-auth-delete/--no-enable-real-auth-delete",
+    default=False,
+    show_default=True,
+    help="Allow real Firebase Auth deletion for validated requests (requires ENABLE_ADMIN_DELETE_REQUESTS=true)",
+)
 def cli(
     dummy_email: bool,
     dummy_push: bool,
@@ -446,6 +496,7 @@ def cli(
     all_history: bool,
     poll_lookback_days: int,
     canary_interval_seconds: int,
+    enable_real_auth_delete: bool,
 ) -> None:
     sub_events(
         dummy_email,
@@ -458,6 +509,7 @@ def cli(
         all_history,
         poll_lookback_days,
         canary_interval_seconds,
+        enable_real_auth_delete,
     )
 
 

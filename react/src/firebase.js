@@ -13,6 +13,7 @@ import {
   sendPasswordResetEmail,
   signOut,
   verifyBeforeUpdateEmail,
+  deleteUser,
 } from "firebase/auth";
 import {
   connectFirestoreEmulator,
@@ -369,6 +370,29 @@ const requestLoginEmailChange = async (nextEmail) => {
   }
 };
 
+const deleteCurrentAuthUser = async () => {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) {
+    return {
+      ok: false,
+      code: "auth/no-current-user",
+      message: "No active user session found",
+    };
+  }
+
+  try {
+    await deleteUser(currentUser);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      code: err?.code || "auth/delete-failed",
+      requiresRecentLogin: err?.code === "auth/requires-recent-login",
+      message: mapAuthErrorMessage(err, "Unable to delete this account right now"),
+    };
+  }
+};
+
 const logout = () => {
   signOut(auth);
   redirect("/")
@@ -383,6 +407,7 @@ export {
   sendPasswordReset,
   reauthenticatePasswordUser,
   requestLoginEmailChange,
+  deleteCurrentAuthUser,
   logout,
   addUserPublicProfile,
 };
