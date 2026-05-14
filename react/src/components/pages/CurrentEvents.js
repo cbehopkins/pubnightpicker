@@ -359,28 +359,28 @@ function CurrentEvent({
     show_voters,
   });
 
-  if (!eventViewModel) {
-    return <div></div>;
-  }
-  const { mainVenue, restaurantVenue } = eventViewModel;
-  const mainVenueImage = normalizeImageUrl(mainVenue.image);
+  const mainVenueImage = normalizeImageUrl(eventViewModel?.mainVenue?.image);
   const [hasMainImageLoadError, setHasMainImageLoadError] = useState(false);
 
   useEffect(() => {
     setHasMainImageLoadError(false);
   }, [mainVenueImage]);
 
-  const shouldShowMainImage = mainVenueImage && !hasMainImageLoadError;
-
   const attendanceHandlers = useEventAttendance(
     normalizedUserId,
     setAttendanceStatus,
     clearAttendance,
-    mainVenue.id,
-    restaurantVenue?.id,
+    eventViewModel?.mainVenue?.id ?? "",
+    eventViewModel?.restaurantVenue?.id,
     setEta,
     clearEta
   );
+
+  if (!eventViewModel) {
+    return <div></div>;
+  }
+  const { mainVenue, restaurantVenue } = eventViewModel;
+  const shouldShowMainImage = mainVenueImage && !hasMainImageLoadError;
 
   return (
     <>

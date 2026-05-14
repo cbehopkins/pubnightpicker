@@ -87,29 +87,28 @@ vi.mock("../UI/Button", () => {
 });
 
 vi.mock("../UI/TextModal", () => {
-    return {
-        default: ({ title, detail, name, confirm_text, cancel_text, on_confirm, on_cancel }) => {
-            const [value, setValue] = React.useState("");
-            return (
-                <div data-testid={`text-modal-${name}`}>
-                    <h2>{title}</h2>
-                    <label htmlFor={`input-${name}`}>{detail}</label>
-                    <input
-                        id={`input-${name}`}
-                        value={value}
-                        onChange={(event) => setValue(event.target.value)}
-                    />
-                    <button
-                        type="button"
-                        onClick={(event) => on_confirm(event, { current: { value } })}
-                    >
-                        {confirm_text}
-                    </button>
-                    <button type="button" onClick={on_cancel}>{cancel_text}</button>
-                </div>
-            );
-        },
+    const TextModal = ({ title, detail, name, confirm_text, cancel_text, on_confirm, on_cancel }) => {
+        const [value, setValue] = React.useState("");
+        return (
+            <div data-testid={`text-modal-${name}`}>
+                <h2>{title}</h2>
+                <label htmlFor={`input-${name}`}>{detail}</label>
+                <input
+                    id={`input-${name}`}
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                />
+                <button
+                    type="button"
+                    onClick={(event) => on_confirm(event, { current: { value } })}
+                >
+                    {confirm_text}
+                </button>
+                <button type="button" onClick={on_cancel}>{cancel_text}</button>
+            </div>
+        );
     };
+    return { default: TextModal };
 });
 
 vi.mock("../UI/ConfirmModal", () => {

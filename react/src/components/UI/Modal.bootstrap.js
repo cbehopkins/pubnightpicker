@@ -62,7 +62,8 @@ const ModalOverlay = (props) => {
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: 'min(40rem, calc(100vw - 1rem))',
+                width: 'auto',
+                minWidth: 'min(32rem, calc(100vw - 1rem))',
                 maxWidth: 'calc(100vw - 1rem)',
                 maxHeight: '90vh',
                 backgroundColor: 'var(--bs-body-bg)',
@@ -72,7 +73,6 @@ const ModalOverlay = (props) => {
                 boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)',
                 zIndex: 1050, // Bootstrap modal z-index
                 overflow: 'auto',
-                overflowX: 'hidden',
                 padding: 'clamp(0.5rem, 2vw, 1.5rem)',
                 animation: 'slideDown 0.3s ease-out forwards',
             }}

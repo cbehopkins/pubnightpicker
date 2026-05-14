@@ -20,7 +20,7 @@
   background: var(--bs-tertiary-bg, #ffffff);
   border-radius: 0.5rem;
   padding: 1rem;
-  min-width: min(44rem, calc(100vw - 2rem));
+  min-width: min(28rem, calc(100vw - 4rem));
 }
 
 .show_votes h3,
