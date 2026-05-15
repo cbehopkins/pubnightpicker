@@ -55,9 +55,16 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
 
       const restaurantToPersist = getRestaurantIdForCompletion(completingPoll);
       const restaurantTimeToPersist = restaurantToPersist ? restaurantTime : undefined;
+      const pollDate = pollData.polls?.[poll_id]?.date;
 
       try {
-        await complete_a_poll(key, poll_id, restaurantToPersist, restaurantTimeToPersist);
+        await complete_a_poll(
+          key,
+          poll_id,
+          pollDate,
+          restaurantToPersist,
+          restaurantTimeToPersist
+        );
         setCompletingPoll(null);
       } catch (error) {
         notifyError(getUserFacingErrorMessage(error, "Unable to complete this poll."));

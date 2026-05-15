@@ -162,5 +162,31 @@ describe("autopoplateFiltering utilities", () => {
 
             expect(result).toEqual(["v1"]);
         });
+
+        it("backfills to three unique venues when overlap occurs", () => {
+            const result = chooseAutopopulateVenueIds(
+                [{ id: "v1" }],
+                [{ id: "v1" }],
+                [{ id: "v1" }, { id: "v2" }, { id: "v3" }],
+                {}
+            );
+
+            expect(result).toHaveLength(3);
+            expect(new Set(result).size).toBe(3);
+            expect(result).toEqual(expect.arrayContaining(["v1", "v2", "v3"]));
+        });
+
+        it("returns all remaining unique venues when fewer than three exist", () => {
+            const result = chooseAutopopulateVenueIds(
+                [{ id: "v1" }],
+                [{ id: "v1" }],
+                [{ id: "v2" }],
+                {}
+            );
+
+            expect(result).toHaveLength(2);
+            expect(new Set(result).size).toBe(2);
+            expect(result).toEqual(expect.arrayContaining(["v1", "v2"]));
+        });
     });
 });

@@ -150,7 +150,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         async (event) => {
             event.preventDefault();
             try {
-                await add_new_pub_to_poll(selectedPub, poll_id, pub_parameters);
+                await add_new_pub_to_poll(selectedPub, poll_id, pub_parameters, poll_data.date);
                 if (pub_parameters[selectedPub]?.banned) {
                     const selectedPubName = pub_parameters[selectedPub]?.name || "Selected venue";
                     setManualAddWarning(`${selectedPubName} is marked as banned. Please only keep it in the poll if you really need to.`);
@@ -162,11 +162,12 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                 notifyError(getUserFacingErrorMessage(error, "Unable to add the pub to this poll."));
             }
         },
-        [selectedPub, poll_id, pub_parameters]
+        [selectedPub, poll_id, pub_parameters, poll_data.date]
     );
 
     const { handleAutopopulate } = useAutopopulateAction({
         pollId: poll_id,
+        pollDate: poll_data.date,
         pollPubs: poll_data.pubs,
         pubParameters: pub_parameters,
         mostVisited,

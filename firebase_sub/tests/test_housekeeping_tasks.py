@@ -6,10 +6,12 @@ from firebase_sub.database.housekeeping_tasks import (
     EVENTS_COLLECTION,
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,
+    POLL_ACTION_AUDIT_COLLECTION,
     POLLS_COLLECTION,
     PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
     maintain_event_recurrence_polls,
+    delete_stale_poll_action_audit_entries,
     delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
@@ -176,15 +178,14 @@ def test_delete_stale_push_diagnostic_entries_deletes_only_stale_fields():
         "fresh-user": fresh_value,
     }
 
-    def collection_side_effect(name: str):
-        collection = MagicMock()
-        if name == NOTIFICATION_REQ_COLLECTION:
-            collection.document.return_value = req_doc
-        elif name == NOTIFICATION_ACK_COLLECTION:
-            collection.document.return_value = ack_doc
-        return collection
+    def document_side_effect(path: str):
+        if path == f"{NOTIFICATION_REQ_COLLECTION}/{PUSH_TEST_DOC_ID}":
+            return req_doc
+        if path == f"{NOTIFICATION_ACK_COLLECTION}/{PUSH_TEST_DOC_ID}":
+            return ack_doc
+        return MagicMock()
 
-    db.collection.side_effect = collection_side_effect
+    db.document.side_effect = document_side_effect
 
     delete_stale_push_diagnostic_entries(db, now=now)
 
@@ -206,15 +207,14 @@ def test_delete_stale_push_diagnostic_entries_no_stale_fields_no_write():
     ack_doc = MagicMock()
     ack_doc.get.return_value.to_dict.return_value = {"fresh-user": fresh_value}
 
-    def collection_side_effect(name: str):
-        collection = MagicMock()
-        if name == NOTIFICATION_REQ_COLLECTION:
-            collection.document.return_value = req_doc
-        elif name == NOTIFICATION_ACK_COLLECTION:
-            collection.document.return_value = ack_doc
-        return collection
+    def document_side_effect(path: str):
+        if path == f"{NOTIFICATION_REQ_COLLECTION}/{PUSH_TEST_DOC_ID}":
+            return req_doc
+        if path == f"{NOTIFICATION_ACK_COLLECTION}/{PUSH_TEST_DOC_ID}":
+            return ack_doc
+        return MagicMock()
 
-    db.collection.side_effect = collection_side_effect
+    db.document.side_effect = document_side_effect
 
     delete_stale_push_diagnostic_entries(db, now=now)
 
@@ -227,6 +227,50 @@ def test_delete_stale_push_diagnostic_entries_rejects_negative_retention():
 
     try:
         delete_stale_push_diagnostic_entries(db, retention_days=-1)
+        raise AssertionError("Expected ValueError")
+    except ValueError as exc:
+        assert "retention_days" in str(exc)
+
+
+def test_delete_stale_poll_action_audit_entries_deletes_stale_docs():
+    db = MagicMock()
+    audit_collection = MagicMock()
+    stale_query = MagicMock()
+    stale_doc_1 = MagicMock()
+    stale_doc_2 = MagicMock()
+
+    db.collection.return_value = audit_collection
+    audit_collection.where.return_value = stale_query
+    stale_query.stream.return_value = [stale_doc_1, stale_doc_2]
+
+    now = datetime(2026, 5, 15, 12, 0, tzinfo=UTC)
+    delete_stale_poll_action_audit_entries(db, now=now, retention_days=90)
+
+    db.collection.assert_called_once_with(POLL_ACTION_AUDIT_COLLECTION)
+    stale_doc_1.reference.delete.assert_called_once_with()
+    stale_doc_2.reference.delete.assert_called_once_with()
+
+
+def test_delete_stale_poll_action_audit_entries_no_matches_no_delete():
+    db = MagicMock()
+    audit_collection = MagicMock()
+    stale_query = MagicMock()
+
+    db.collection.return_value = audit_collection
+    audit_collection.where.return_value = stale_query
+    stale_query.stream.return_value = []
+
+    now = datetime(2026, 5, 15, 12, 0, tzinfo=UTC)
+    delete_stale_poll_action_audit_entries(db, now=now, retention_days=90)
+
+    db.collection.assert_called_once_with(POLL_ACTION_AUDIT_COLLECTION)
+
+
+def test_delete_stale_poll_action_audit_entries_rejects_negative_retention():
+    db = MagicMock()
+
+    try:
+        delete_stale_poll_action_audit_entries(db, retention_days=-1)
         raise AssertionError("Expected ValueError")
     except ValueError as exc:
         assert "retention_days" in str(exc)
@@ -282,12 +326,12 @@ def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
         return MagicMock()
 
     db.collection.side_effect = collection_side_effect
-    polls_collection.document.return_value = poll_ref
+    db.document.return_value = poll_ref
 
     maintain_event_recurrence_polls(db, today=date(2026, 5, 26))
 
-    polls_collection.document.assert_called_once_with(
-        "event-cambridge-beer-festival-2026-05-27"
+    db.document.assert_called_once_with(
+        "polls/event-cambridge-beer-festival-2026-05-27"
     )
     poll_ref.set.assert_any_call(
         {

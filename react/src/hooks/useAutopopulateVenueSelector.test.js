@@ -138,6 +138,50 @@ describe("useAutopopulateVenueSelector", () => {
         });
     });
 
+    it("keeps expanding ranking sample until top/bottom expose three unique venues", async () => {
+        vi.mocked(useWinningVenueStats).mockReturnValue({
+            polls: {
+                "poll-1": { selected: "v1", date: "2026-05-01" },
+            },
+            isLoading: false,
+            errorMessage: null,
+            startDate: "2026-04-13",
+            endDate: "2026-05-11",
+        });
+
+        const rows = Array.from({ length: 10 }, (_, index) => ({
+            id: `v${index + 1}`,
+            label: `Venue ${index + 1}`,
+            count: 20 - index,
+            lastWonDate: "2026-03-10",
+        }));
+
+        vi.mocked(buildWinningVenueRows).mockReturnValue(rows);
+        vi.mocked(splitRankedStatRows).mockImplementation((allRows, limit) => {
+            if (limit === 5) {
+                return {
+                    most: [allRows[0]],
+                    least: [allRows[0]],
+                };
+            }
+
+            return {
+                most: [allRows[0], allRows[1]],
+                least: [allRows[1], allRows[2]],
+            };
+        });
+
+        const { result } = renderHook(() => useAutopopulateVenueSelector("poll-1", EMPTY_CURRENT_PUBS));
+
+        await waitFor(() => {
+            expect(result.current.mostVisited.map((row) => row.id)).toEqual(["v1", "v2"]);
+            expect(result.current.leastVisited.map((row) => row.id)).toEqual(["v2", "v3"]);
+        });
+
+        const windowCalls = vi.mocked(splitRankedStatRows).mock.calls.map(([, limit]) => limit);
+        expect(windowCalls).toEqual([5, 10]);
+    });
+
     it("excludes recently visited venues from random pool", async () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
             polls: {

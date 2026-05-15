@@ -64,6 +64,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @property {boolean} allowDelete
  * @property {boolean} allowCompletePoll
  * @property {string} pollId
+ * @property {string | undefined} pollDate
  * @property {() => void} completeHandler
  */
 
@@ -316,6 +317,7 @@ function VotablePub({
   allowDelete,
   allowCompletePoll,
   pollId,
+  pollDate,
   completeHandler,
 }) {
   const rowData = useVotableRow(
@@ -329,7 +331,9 @@ function VotablePub({
     clearVote,
     setEta,
     clearEta,
-    pollId
+    pollId,
+    pollDate,
+    pubName
   );
 
   // Override allowGlobalAttendanceControls to include pollPubIds length check
@@ -483,6 +487,7 @@ function PollVote(props) {
                 allowDelete={!isGlobal && allowDelete}
                 allowCompletePoll={!isGlobal && allowCompletePoll}
                 pollId={props.poll_id}
+                pollDate={props.poll_data?.date}
                 completeHandler={() => {
                   props.on_complete(key, pubName, props.poll_id);
                 }}

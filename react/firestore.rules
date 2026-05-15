@@ -139,6 +139,58 @@ service cloud.firestore {
         && (!("platform" in request.resource.data) || request.resource.data.platform is string || request.resource.data.platform == null)
         && (!("appVersion" in request.resource.data) || request.resource.data.appVersion is string || request.resource.data.appVersion == null);
     }
+
+    function isValidPollActionAuditCreate() {
+      return request.resource.data.keys().hasOnly([
+          "pollId",
+          "actionType",
+          "actorUid",
+          "at",
+          "pollDate",
+          "selectedVenueId",
+          "venueName",
+          "restaurantId",
+          "restaurantTime"
+        ])
+        && request.resource.data.keys().hasAll([
+          "pollId",
+          "actionType",
+          "actorUid",
+          "at",
+          "pollDate"
+        ])
+        && request.resource.data.pollId is string
+        && request.resource.data.pollId.size() > 0
+        && request.resource.data.actionType in ["create", "complete", "addVenue", "deleteVenue"]
+        && request.resource.data.actorUid is string
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.at is timestamp
+        && request.resource.data.pollDate is string
+        && request.resource.data.pollDate.size() > 0
+        && (
+          request.resource.data.actionType == "create"
+          || (
+            "selectedVenueId" in request.resource.data
+            && request.resource.data.selectedVenueId is string
+            && request.resource.data.selectedVenueId.size() > 0
+          )
+        )
+        && (
+          !("venueName" in request.resource.data)
+          || request.resource.data.venueName is string
+          || request.resource.data.venueName == null
+        )
+        && (
+          request.resource.data.actionType != "complete"
+          || (
+            "selectedVenueId" in request.resource.data
+            && request.resource.data.selectedVenueId is string
+            && request.resource.data.selectedVenueId.size() > 0
+          )
+        )
+        && (!("restaurantId" in request.resource.data) || request.resource.data.restaurantId is string || request.resource.data.restaurantId == null)
+        && (!("restaurantTime" in request.resource.data) || request.resource.data.restaurantTime is string || request.resource.data.restaurantTime == null);
+    }
     
     // Polls collection - read for all, update for canAddPubToPoll/canCompletePoll, create/delete for canCreatePoll
     match /polls/{poll} {
@@ -180,6 +232,13 @@ service cloud.firestore {
     match /notification_ack/{docId} {
       allow read: if canUseNotificationPing();
       allow write: if false;
+    }
+
+    // Poll action audit trail - immutable records written by acting user, admin read-only.
+    match /poll_action_audit/{auditId} {
+      allow read: if isAdmin();
+      allow create: if request.auth != null && isValidPollActionAuditCreate();
+      allow update, delete: if false;
     }
 
     // Admin delete requests - admins can enqueue/read, backend only should process state changes.
