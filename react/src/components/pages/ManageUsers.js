@@ -31,16 +31,6 @@ async function clearAdmin(uid) {
     await updateDoc(adminRef, { [uid]: deleteField() });
 }
 
-async function setKnown(uid) {
-    const knownRef = doc(db, "roles", "known");
-    await updateDoc(knownRef, { [uid]: true });
-}
-
-async function clearKnown(uid) {
-    const knownRef = doc(db, "roles", "known");
-    await updateDoc(knownRef, { [uid]: deleteField() });
-}
-
 function userHasRole(roles, roleName, uid) {
     if (!roles || !uid) {
         return false;
@@ -135,7 +125,6 @@ function useManageUsersState() {
     const roles = useAllRoles();
 
     const isAdmin = useCallback((uid) => userHasRole(roles, "admin", uid), [roles]);
-    const isKnown = useCallback((uid) => userHasRole(roles, "known", uid), [roles]);
     const hasRole = useCallback((uid, roleName) => userHasRole(roles, roleName, uid), [roles]);
 
     const handleAdminClick = useCallback(async (uid, value) => {
@@ -150,19 +139,6 @@ function useManageUsersState() {
             await setAdmin(uid);
         }
     }, [isAdmin]);
-
-    const handleKnownClick = useCallback(async (uid, value) => {
-        const currentlyKnown = isKnown(uid);
-        if (currentlyKnown === value) {
-            return;
-        }
-        if (currentlyKnown && !value) {
-            await clearKnown(uid);
-        }
-        if (!currentlyKnown && value) {
-            await setKnown(uid);
-        }
-    }, [isKnown]);
 
     const handleRoleClick = useCallback(async (uid, roleName, value) => {
         const currentlyHasRole = hasRole(uid, roleName);
@@ -180,10 +156,8 @@ function useManageUsersState() {
         users: mergedUsers,
         sortedUsers,
         isAdmin,
-        isKnown,
         hasRole,
         handleAdminClick,
-        handleKnownClick,
         handleRoleClick,
     };
 }
@@ -191,14 +165,11 @@ function useManageUsersState() {
 function UserPermissionsChecklist({
     uid,
     isAdmin,
-    isKnown,
     hasRole,
     handleAdminClick,
-    handleKnownClick,
     handleRoleClick,
 }) {
     const userIsAdmin = isAdmin(uid);
-    const userIsKnown = isKnown(uid);
 
     return (
         <div className="d-flex flex-column gap-2">
@@ -210,16 +181,6 @@ function UserPermissionsChecklist({
                 checked={userIsAdmin}
                 onChange={(event) => {
                     handleAdminClick(uid, event.target.checked);
-                }}
-            />
-            <Form.Check
-                type="checkbox"
-                id={`known-${uid}`}
-                name="known"
-                label="Known User"
-                checked={userIsKnown}
-                onChange={(event) => {
-                    handleKnownClick(uid, event.target.checked);
                 }}
             />
             {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
@@ -264,10 +225,8 @@ import PreferencesForm from "./PreferencesForm";
 function ManageUsersTable({
     sortedUsers,
     isAdmin,
-    isKnown,
     hasRole,
     handleAdminClick,
-    handleKnownClick,
     handleRoleClick,
     onViewUid,
 }) {
@@ -282,7 +241,6 @@ function ManageUsersTable({
                             <th>Name</th>
                             <th>Email</th>
                             <th>Admin</th>
-                            <th>Known User</th>
                             {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
                                 <th key={column.key}>{column.label}</th>
                             ))}
@@ -321,16 +279,6 @@ function ManageUsersTable({
                                             checked={isAdmin(key)}
                                             onChange={(event) => {
                                                 handleAdminClick(key, event.target.checked);
-                                            }}
-                                        />
-                                    </td>
-                                    <td>
-                                        <Form.Check
-                                            type="checkbox"
-                                            name="known"
-                                            checked={isKnown(key)}
-                                            onChange={(event) => {
-                                                handleKnownClick(key, event.target.checked);
                                             }}
                                         />
                                     </td>
@@ -388,10 +336,8 @@ function ManageUsers() {
     const {
         sortedUsers,
         isAdmin,
-        isKnown,
         hasRole,
         handleAdminClick,
-        handleKnownClick,
         handleRoleClick,
     } = useManageUsersState();
 
@@ -418,10 +364,8 @@ function ManageUsers() {
                 <ManageUsersTable
                     sortedUsers={sortedUsers}
                     isAdmin={isAdmin}
-                    isKnown={isKnown}
                     hasRole={hasRole}
                     handleAdminClick={handleAdminClick}
-                    handleKnownClick={handleKnownClick}
                     handleRoleClick={handleRoleClick}
                     onViewUid={setSelectedUID}
                 />
@@ -451,10 +395,8 @@ function ManageUserDetailPage() {
     const {
         users,
         handleAdminClick,
-        handleKnownClick,
         handleRoleClick,
         isAdmin,
-        isKnown,
         hasRole,
     } = useManageUsersState();
 
@@ -522,10 +464,8 @@ function ManageUserDetailPage() {
             <UserPermissionsChecklist
                 uid={userId}
                 isAdmin={isAdmin}
-                isKnown={isKnown}
                 hasRole={hasRole}
                 handleAdminClick={handleAdminClick}
-                handleKnownClick={handleKnownClick}
                 handleRoleClick={handleRoleClick}
             />
 

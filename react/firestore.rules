@@ -140,7 +140,7 @@ service cloud.firestore {
         && (!("appVersion" in request.resource.data) || request.resource.data.appVersion is string || request.resource.data.appVersion == null);
     }
     
-    // Polls collection - read for all, update for known users, create/delete for admins
+    // Polls collection - read for all, update for canAddPubToPoll/canCompletePoll, create/delete for canCreatePoll
     match /polls/{poll} {
       allow read: if true;
       allow update: if canAddPubToPoll() || canCompletePoll();
@@ -248,7 +248,7 @@ service cloud.firestore {
       allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
     
-    // Messages collection - known users can read/create, admins have full access, users can delete their own
+    // Messages collection - canChat users can read/create, canDeleteAnyMessage for full access, users can delete their own
     match /messages/{messageId} {
       allow read: if canChat();
       allow create: if canChat() && isValidNewMessage();

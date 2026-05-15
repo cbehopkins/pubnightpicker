@@ -24,12 +24,6 @@ export const CONSOLIDATED_PERMISSION_COLUMNS = [
     { key: PERMISSIONS.canDeleteAnyMessage, label: "Can Delete Any Message" },
 ]
 
-export const KNOWN_DEFAULT_PERMISSIONS = [
-    PERMISSIONS.canChat,
-    PERMISSIONS.canAddPubToPoll,
-    PERMISSIONS.canShowVoters,
-]
-
 export const ADMIN_DEFAULT_PERMISSIONS = [
     PERMISSIONS.canChat,
     PERMISSIONS.canAddPubToPoll,

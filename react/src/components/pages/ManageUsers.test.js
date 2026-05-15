@@ -93,7 +93,6 @@ describe("ManageUsers responsive layout", () => {
 
         useAllRolesMock.mockReturnValue({
             admin: { "uid-a": true },
-            known: { "uid-b": true },
         });
     });
 
@@ -142,7 +141,6 @@ describe("ManageUsers responsive layout", () => {
         expect(screen.getByRole("heading", { name: "Manage User" })).toBeTruthy();
         expect(screen.getByRole("link", { name: "Back to Manage Users" }).getAttribute("href")).toBe("/manage_users");
         expect(screen.getByRole("checkbox", { name: "Admin" })).toBeTruthy();
-        expect(screen.getByRole("checkbox", { name: "Known User" })).toBeTruthy();
         expect(screen.getByRole("checkbox", { name: "Can Chat" })).toBeTruthy();
     });
 });
