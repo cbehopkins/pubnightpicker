@@ -79,6 +79,7 @@ const PubParams = {
   dog_friend: "Dog Friendly",
   beer_gerden: "Beer Garden",
   out_of_town: "Out Of Town (Cambridge)",
+  banned: "Banned",
 };
 
 // Bad things about a pub, things you want to search for the absence of

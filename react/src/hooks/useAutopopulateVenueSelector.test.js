@@ -219,4 +219,48 @@ describe("useAutopopulateVenueSelector", () => {
             expect(leastIds).not.toContain("v3");
         });
     });
+
+    it("excludes venues marked banned from autopopulate categories", async () => {
+        vi.mocked(usePubs).mockReturnValue({
+            v1: { name: "Venue 1", venueType: "pub", banned: false },
+            v2: { name: "Venue 2", venueType: "pub", banned: false },
+            v3: { name: "Venue 3", venueType: "pub", banned: false },
+            v4: { name: "Venue 4", venueType: "pub", banned: true },
+        });
+
+        vi.mocked(useWinningVenueStats).mockReturnValue({
+            polls: {
+                "poll-1": { selected: "v1", date: "2026-04-01" },
+                "poll-2": { selected: "v2", date: "2026-03-01" },
+            },
+            isLoading: false,
+            errorMessage: null,
+            startDate: "2026-04-13",
+            endDate: "2026-05-11",
+        });
+
+        vi.mocked(buildWinningVenueRows).mockReturnValue([
+            { id: "v1", label: "Venue 1", count: 12, lastWonDate: "2026-03-01", venueType: "pub" },
+            { id: "v2", label: "Venue 2", count: 9, lastWonDate: "2026-03-15", venueType: "pub" },
+            { id: "v3", label: "Venue 3", count: 4, lastWonDate: null, venueType: "pub" },
+            { id: "v4", label: "Venue 4", count: 1, lastWonDate: null, venueType: "pub" },
+        ]);
+
+        vi.mocked(splitRankedStatRows).mockImplementation((rows, limit) => ({
+            most: rows.slice(0, limit),
+            least: [...rows].reverse().slice(0, limit),
+        }));
+
+        const { result } = renderHook(() => useAutopopulateVenueSelector("poll-1", EMPTY_CURRENT_PUBS));
+
+        await waitFor(() => {
+            const randomIds = result.current.random.map((row) => row.id);
+            const mostIds = result.current.mostVisited.map((row) => row.id);
+            const leastIds = result.current.leastVisited.map((row) => row.id);
+
+            expect(randomIds).not.toContain("v4");
+            expect(mostIds).not.toContain("v4");
+            expect(leastIds).not.toContain("v4");
+        });
+    });
 });

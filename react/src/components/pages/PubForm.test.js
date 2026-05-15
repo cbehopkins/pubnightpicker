@@ -31,6 +31,7 @@ describe("PubForm", () => {
                 pub_object={{
                     name: "Cambridge Beer Festival",
                     venueType: "event",
+                    banned: true,
                     recurrence: {
                         frequency: "yearly",
                         start_date: "2026-05-01",
@@ -47,6 +48,7 @@ describe("PubForm", () => {
 
         // Verify recurrence type is set
         expect(screen.getByLabelText(/recurrence type/i).value).toBe("yearly");
+        expect(screen.getByLabelText(/banned/i).checked).toBe(true);
 
         // Verify yearly mode is set to "weekday" based on existing weekday data
         const weekdayRadio = screen.getByLabelText(/specific weekday/i);
