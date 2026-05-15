@@ -160,6 +160,20 @@ describe("NewPub action", () => {
         expect(response.headers.get("Location")).toBe("/venues");
     });
 
+    it("persists notes when editing a pub", async () => {
+        await action({
+            request: createRequest("PATCH", {
+                name: "Updated Pub",
+                notes: "This should be saved but is currently dropped",
+            }),
+            params: { pubId: "pub-123" },
+        });
+
+        expect(modifyPubMock).toHaveBeenCalledTimes(1);
+        const payload = modifyPubMock.mock.calls[0][1];
+        expect(payload).toHaveProperty("notes", "This should be saved but is currently dropped");
+    });
+
     it("shows a user-facing error and aborts redirect on failure", async () => {
         addNewPubMock.mockRejectedValueOnce(new Error("backend exploded"));
 
