@@ -5,9 +5,10 @@ import useWinningVenueStats from "./useWinningVenueStats";
 import usePubs from "./usePubs";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 import { getDateWeeksAgo } from "../utils/autopoplateFiltering";
+import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
 
 /**
- * @typedef {{ id: string, label: string, count: number, lastWonDate: string | null }} RankedStatRow
+ * @typedef {{ id: string, label: string, count: number, lastWonDate: string | null, venueType?: string }} RankedStatRow
  *
  * @typedef {{
  *   mostVisited: RankedStatRow[],
@@ -56,11 +57,15 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
         try {
             // Build initial ranked rows from all polls
             const allRankedRows = buildWinningVenueRows({ polls, venues: allVenues });
+            const pubOnlyRankedRows = allRankedRows.filter((row) => {
+                const venueType = allVenues[row.id]?.venueType || row.venueType || DEFAULT_VENUE_TYPE;
+                return venueType === DEFAULT_VENUE_TYPE;
+            });
 
             // Build a map of lastWonDate by venueId for filtering
             /** @type {Record<string, string | null>} */
             const lastDateByVenueId = {};
-            for (const row of allRankedRows) {
+            for (const row of pubOnlyRankedRows) {
                 lastDateByVenueId[row.id] = row.lastWonDate;
             }
 
@@ -74,14 +79,14 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
                 return !isRecentlyVisited && !currentPubIdSet.has(row.id);
             };
 
-            const finalRandom = allRankedRows.filter(isVenueViable);
+            const finalRandom = pubOnlyRankedRows.filter(isVenueViable);
 
             let finalMostVisited = [];
             let finalLeastVisited = [];
             let windowLimit = 5;
 
-            while (windowLimit <= allRankedRows.length) {
-                const { most, least } = splitRankedStatRows(allRankedRows, windowLimit);
+            while (windowLimit <= pubOnlyRankedRows.length) {
+                const { most, least } = splitRankedStatRows(pubOnlyRankedRows, windowLimit);
                 const viableMost = most.filter(isVenueViable);
                 const viableLeast = least.filter(isVenueViable);
 

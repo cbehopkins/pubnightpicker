@@ -8,8 +8,7 @@ import { deletePub } from "../../dbtools/pubs";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { compareVenueNames } from "../../utils/venueSort";
-
-const venueTypeOptions = ["all", "pub", "restaurant", "event"];
+import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 
 const ManagePubs = (params) => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
@@ -19,7 +18,7 @@ const ManagePubs = (params) => {
       if (venueTypeFilter === "all") {
         return true;
       }
-      return (value.venueType || "pub") === venueTypeFilter;
+      return (value.venueType || DEFAULT_VENUE_TYPE) === venueTypeFilter;
     })
     .sort(([keyA, valueA], [keyB, valueB]) => {
       const byName = compareVenueNames(valueA?.name, valueB?.name);
@@ -52,11 +51,8 @@ const ManagePubs = (params) => {
             setVenueTypeFilter(event.target.value);
           }}
         >
-          {venueTypeOptions.map((venueType) => {
-            const label = venueType === "all"
-              ? "All Types"
-              : venueType.charAt(0).toUpperCase() + venueType.slice(1);
-            return <option key={venueType} value={venueType}>{label}</option>;
+          {VENUE_TYPE_OPTIONS.map((venueType) => {
+            return <option key={venueType} value={venueType}>{getVenueTypeLabel(venueType)}</option>;
           })}
         </select>
       </div>

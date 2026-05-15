@@ -14,12 +14,12 @@ import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelect
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
 import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
+import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import NotificationPingStatus from "./NotificationPingStatus";
 import EventChatModal from "../pages/EventChatModal";
 
-const venueTypeOptions = ["all", "pub", "restaurant", "event"];
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
 
 /** @typedef {{ name?: string, venueType?: string, [key: string]: unknown }} PubParametersEntry */
@@ -60,7 +60,7 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, 
         }
 
         if (venueTypeFilter !== "all") {
-            const venueType = pub_parameters[pubId]?.venueType || "pub";
+            const venueType = pub_parameters[pubId]?.venueType || DEFAULT_VENUE_TYPE;
             if (venueType !== venueTypeFilter) {
                 return false;
             }
@@ -228,14 +228,10 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                                 setVenueTypeFilter(/** @type {VenueType} */(event.target.value));
                             }}
                         >
-                            {venueTypeOptions.map((venueType) => {
-                                const label =
-                                    venueType === "all"
-                                        ? "All Types"
-                                        : venueType.charAt(0).toUpperCase() + venueType.slice(1);
+                            {VENUE_TYPE_OPTIONS.map((venueType) => {
                                 return (
                                     <option key={venueType} value={venueType}>
-                                        {label}
+                                        {getVenueTypeLabel(venueType)}
                                     </option>
                                 );
                             })}
