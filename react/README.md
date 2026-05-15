@@ -113,6 +113,12 @@ Defaults are:
 
 The settings are stored in the URL query string so a view can be bookmarked or shared.
 
+## Autopopulate Specification
+
+The authoritative autopopulate behavior contract is documented in:
+
+- `docs/autopopulate-contract.md`
+
 ## PWA Icon Generation
 
 PWA app icons are generated automatically as part of the normal build flow.

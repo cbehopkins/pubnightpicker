@@ -7,6 +7,7 @@ const {
     docMock,
     arrayUnionMock,
     deleteFieldMock,
+    logPollActionAuditMock,
 } = vi.hoisted(() => {
     return {
         assertCurrentUserPermissionMock: vi.fn(),
@@ -15,6 +16,16 @@ const {
         docMock: vi.fn(() => ({ id: "doc-ref" })),
         arrayUnionMock: vi.fn((value) => `arrayUnion:${value}`),
         deleteFieldMock: vi.fn(() => "deleteField"),
+        logPollActionAuditMock: vi.fn(async () => undefined),
+    };
+});
+
+vi.mock("./pollActionAudit", () => {
+    return {
+        POLL_ACTION_ADD_VENUE: "addVenue",
+        POLL_ACTION_COMPLETE: "complete",
+        POLL_ACTION_DELETE_VENUE: "deleteVenue",
+        logPollActionAudit: logPollActionAuditMock,
     };
 });
 
@@ -61,6 +72,7 @@ describe("poll dbtools permission guards", () => {
         docMock.mockClear();
         arrayUnionMock.mockClear();
         deleteFieldMock.mockClear();
+        logPollActionAuditMock.mockClear();
     });
 
     it("guards deletePoll with canCreatePoll", async () => {
@@ -74,7 +86,7 @@ describe("poll dbtools permission guards", () => {
 
     it("guards reschedule and complete with canCompletePoll", async () => {
         await reschedule_a_poll("poll-1", "pub-1", "pub-2", undefined, undefined);
-        await complete_a_poll("pub-2", "poll-1", undefined, undefined);
+        await complete_a_poll("pub-2", "poll-1", "2026-05-17", undefined, undefined);
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canCompletePoll",
@@ -115,7 +127,13 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("writes restaurant when poll completion includes one", async () => {
-        await complete_a_poll("pub-2", "poll-1", "pub-restaurant-1", "18:30");
+        await complete_a_poll(
+            "pub-2",
+            "poll-1",
+            "2026-05-17",
+            "pub-restaurant-1",
+            "18:30"
+        );
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -126,10 +144,17 @@ describe("poll dbtools permission guards", () => {
                 restaurant_time: "18:30",
             },
         );
+        expect(logPollActionAuditMock).toHaveBeenCalledWith("complete", {
+            pollId: "poll-1",
+            pollDate: "2026-05-17",
+            selectedVenueId: "pub-2",
+            restaurantId: "pub-restaurant-1",
+            restaurantTime: "18:30",
+        });
     });
 
     it("does not write restaurant_time when no restaurant is stored", async () => {
-        await complete_a_poll("pub-2", "poll-1", undefined, "18:30");
+        await complete_a_poll("pub-2", "poll-1", "2026-05-17", undefined, "18:30");
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -145,8 +170,8 @@ describe("poll dbtools permission guards", () => {
             "pub-2": { name: "The Anchor" },
         };
 
-        await add_new_pub_to_poll("pub-2", "poll-1", pubParams);
-        await deletePubFromPoll("poll-1", "pub-2");
+        await add_new_pub_to_poll("pub-2", "poll-1", pubParams, "2026-05-17");
+        await deletePubFromPoll("poll-1", "pub-2", "2026-05-17", "The Anchor");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canAddPubToPoll",
@@ -156,6 +181,18 @@ describe("poll dbtools permission guards", () => {
             "canAddPubToPoll",
             "deleting a pub from a poll",
         );
+        expect(logPollActionAuditMock).toHaveBeenCalledWith("addVenue", {
+            pollId: "poll-1",
+            pollDate: "2026-05-17",
+            selectedVenueId: "pub-2",
+            venueName: "The Anchor",
+        });
+        expect(logPollActionAuditMock).toHaveBeenCalledWith("deleteVenue", {
+            pollId: "poll-1",
+            pollDate: "2026-05-17",
+            selectedVenueId: "pub-2",
+            venueName: "The Anchor",
+        });
     });
 
     it("does not assert permission when add_new_pub_to_poll is a no-op", async () => {

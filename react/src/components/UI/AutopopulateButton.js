@@ -22,7 +22,7 @@ export default function AutopopulateButton({ isLoading, isEnabled, onAutopopulat
                     ? "No viable venues available (all visited in last 4 weeks or already on poll)"
                     : isLoading
                         ? "Loading venue suggestions..."
-                        : "Auto-populate with 3 random venues (most visited, least visited, and random)"
+                        : "Auto-populate 3 unique venues when possible; otherwise add all remaining viable venues"
             }
         >
             {isLoading ? (

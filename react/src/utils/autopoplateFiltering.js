@@ -46,34 +46,48 @@ export function selectRandomFromArray(array) {
 
 /**
  * Pick up to three unique venue IDs: one from mostVisited, one from leastVisited,
- * and one from random pool, excluding any IDs already selected.
+ * and one from random pool, then continue filling from the combined pools until
+ * targetCount is reached or no more unique venues are available.
  *
  * @param {{ id: string }[]} mostVisited
  * @param {{ id: string }[]} leastVisited
  * @param {{ id: string }[]} randomVenues
  * @param {Record<string, unknown> | undefined} existingPubs
+ * @param {number} [targetCount=3]
  * @returns {string[]}
  */
-export function chooseAutopopulateVenueIds(mostVisited, leastVisited, randomVenues, existingPubs) {
+export function chooseAutopopulateVenueIds(mostVisited, leastVisited, randomVenues, existingPubs, targetCount = 3) {
     const selectedIds = [];
     const pickedIds = new Set(Object.keys(existingPubs || {}));
+    const safeTargetCount = Number.isFinite(targetCount) && targetCount > 0 ? Math.floor(targetCount) : 3;
 
     /**
      * @param {{ id: string }[]} rows
+     * @returns {boolean}
      */
     const pickFromGroup = (rows) => {
         const candidates = (rows || []).filter((row) => !pickedIds.has(row.id));
         const selected = selectRandomFromArray(candidates);
         if (!selected) {
-            return;
+            return false;
         }
         pickedIds.add(selected.id);
         selectedIds.push(selected.id);
+        return true;
     };
 
     pickFromGroup(mostVisited);
     pickFromGroup(leastVisited);
     pickFromGroup(randomVenues);
+
+    // Backfill additional unique venues when overlap reduced the initial 3 picks.
+    const fallbackRows = [...(randomVenues || []), ...(mostVisited || []), ...(leastVisited || [])];
+    while (selectedIds.length < safeTargetCount) {
+        const didPick = pickFromGroup(fallbackRows);
+        if (!didPick) {
+            break;
+        }
+    }
 
     return selectedIds;
 }

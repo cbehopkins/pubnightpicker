@@ -22,8 +22,8 @@ import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
 /**
  * Query winning-venue stats to find viable venues for autopopulate. Returns three categories:
  * mostVisited, leastVisited, and random (all not visited in the past 4 weeks, excluding venues
- * already on the poll). If either most/least category is empty after filtering, the ranking window
- * expands progressively to include more candidates until viable venues are found.
+ * already on the poll). The ranking sample window for most/least expands progressively until those
+ * two categories expose at least three unique venues, or the full ranked list is exhausted.
  *
  * @param {string} pollId - Poll ID (for logging)
  * @param {Record<string, unknown> | undefined} currentPubIds - Venues already on the poll (to exclude)
@@ -85,20 +85,21 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
             let finalMostVisited = [];
             let finalLeastVisited = [];
             let windowLimit = 5;
+            const targetUniqueVenueCount = 3;
 
             while (windowLimit <= pubOnlyRankedRows.length) {
                 const { most, least } = splitRankedStatRows(pubOnlyRankedRows, windowLimit);
                 const viableMost = most.filter(isVenueViable);
                 const viableLeast = least.filter(isVenueViable);
+                const uniqueTopBottomIds = new Set([
+                    ...viableMost.map((row) => row.id),
+                    ...viableLeast.map((row) => row.id),
+                ]);
 
-                if (viableMost.length > 0 && finalMostVisited.length === 0) {
-                    finalMostVisited = viableMost;
-                }
-                if (viableLeast.length > 0 && finalLeastVisited.length === 0) {
-                    finalLeastVisited = viableLeast;
-                }
+                finalMostVisited = viableMost;
+                finalLeastVisited = viableLeast;
 
-                if (finalMostVisited.length > 0 && finalLeastVisited.length > 0) {
+                if (uniqueTopBottomIds.size >= targetUniqueVenueCount) {
                     break;
                 }
 

@@ -9,6 +9,7 @@ import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
 /**
  * @param {{
  *  pollId: string,
+ *  pollDate?: string,
  *  pollPubs: Record<string, unknown> | undefined,
  *  pubParameters: Record<string, { name?: string, venueType?: string } | undefined>,
  *  mostVisited: { id: string }[],
@@ -18,6 +19,7 @@ import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
  */
 export default function useAutopopulateAction({
     pollId,
+    pollDate,
     pollPubs,
     pubParameters,
     mostVisited,
@@ -41,7 +43,7 @@ export default function useAutopopulateAction({
             let successCount = 0;
             for (const venueId of venuesToAdd) {
                 try {
-                    await add_new_pub_to_poll(venueId, pollId, pubParameters);
+                    await add_new_pub_to_poll(venueId, pollId, pubParameters, pollDate);
                     successCount++;
                 } catch (err) {
                     console.error(`Failed to add venue ${venueId}:`, err);
@@ -58,7 +60,7 @@ export default function useAutopopulateAction({
         } catch (error) {
             notifyError(getUserFacingErrorMessage(error, "Unable to autopopulate venues."));
         }
-    }, [leastVisited, mostVisited, pollId, pollPubs, pubParameters, randomVenues]);
+    }, [leastVisited, mostVisited, pollDate, pollId, pollPubs, pubParameters, randomVenues]);
 
     return { handleAutopopulate };
 }

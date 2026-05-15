@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { doc, collection, addDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import Button from "../UI/Button";
+import { logPollActionAudit, POLL_ACTION_CREATE } from "../../dbtools/pollActionAudit";
 
 /** @typedef {{ polls: Set<string> }} NewPollProps */
 
@@ -34,6 +35,14 @@ function NewPoll(params) {
       // Such that only those who create polls can write vs update
       await setDoc(doc(db, "votes", docRef.id), { any: [] });
       await setDoc(doc(db, "attendance", docRef.id), {});
+      try {
+        await logPollActionAudit(POLL_ACTION_CREATE, {
+          pollId: docRef.id,
+          pollDate: enteredDate,
+        });
+      } catch (auditErr) {
+        console.warn("Poll created but audit logging failed", auditErr);
+      }
     } catch (err) {
       console.error("Error adding document: ", err);
     }

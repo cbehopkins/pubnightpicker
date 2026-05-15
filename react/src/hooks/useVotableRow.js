@@ -46,9 +46,11 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @param {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
  * @param {(pubId: string, userId: string) => Promise<void>} clearEta
  * @param {string} pollId
+ * @param {string | undefined} pollDate
+ * @param {string | undefined} pubName
  * @returns {VotableRowState}
  */
-export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanceStatus, clearAttendance, makeVote, clearVote, setEta, clearEta, pollId) {
+export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanceStatus, clearAttendance, makeVote, clearVote, setEta, clearEta, pollId, pollDate, pubName) {
   const safeUserId = currUserId || "";
 
   // Vote-related derived state
@@ -95,11 +97,11 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
   // Delete pub from poll handler
   const deleteHandler = useCallback(async () => {
     try {
-      await deletePubFromPoll(pollId, pubId);
+      await deletePubFromPoll(pollId, pubId, pollDate, pubName);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to remove this pub from the poll."));
     }
-  }, [pollId, pubId]);
+  }, [pollDate, pollId, pubId, pubName]);
 
   // ETA handlers
   /** @type {(eta: string) => Promise<void>} */

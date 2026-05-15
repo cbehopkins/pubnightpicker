@@ -23,9 +23,13 @@ NOTIFICATION_ACK_COLLECTION = "notification_ack"
 DIAGNOSTICS_DOC_ID = "diagnostics"
 PUSH_TEST_DOC_ID = "push_test"
 POLLS_COLLECTION = "polls"
+POLL_ACTION_AUDIT_COLLECTION = "poll_action_audit"
 PUSH_ENDPOINTS_COLLECTION = "push_endpoints"
 PUSH_ENDPOINT_RETENTION_DAYS = int(os.getenv("PUSH_ENDPOINT_RETENTION_DAYS", "60"))
 PUSH_DIAGNOSTIC_RETENTION_DAYS = 1
+POLL_ACTION_AUDIT_RETENTION_DAYS = int(
+    os.getenv("POLL_ACTION_AUDIT_RETENTION_DAYS", "90")
+)
 EVENT_POLL_CREATION_LEAD_DAYS = int(os.getenv("EVENT_POLL_CREATION_LEAD_DAYS", "7"))
 EVENTS_COLLECTION = "pubs"
 POLL_VENUE_TYPE = VenueType.EVENT.value
@@ -113,6 +117,27 @@ def delete_stale_push_diagnostic_entries(
         }
         if stale_keys:
             push_doc.set(stale_keys, merge=True)
+
+
+def delete_stale_poll_action_audit_entries(
+    db: Client,
+    *,
+    now: datetime | None = None,
+    retention_days: int = POLL_ACTION_AUDIT_RETENTION_DAYS,
+) -> None:
+    """Delete poll action audit records older than retention."""
+    if retention_days < 0:
+        raise ValueError("retention_days must be >= 0")
+
+    cutoff_time = (now or datetime.now(UTC)) - timedelta(days=retention_days)
+    stale_records = (
+        db.collection(POLL_ACTION_AUDIT_COLLECTION)
+        .where(filter=FieldFilter("at", "<", cutoff_time))
+        .stream()
+    )
+
+    for audit_doc in stale_records:
+        audit_doc.reference.delete()
 
 
 def maintain_event_recurrence_polls(
@@ -259,6 +284,10 @@ def build_housekeeping_tasks(db: Client) -> list[HousekeepingTask]:
         HousekeepingTask(
             name="delete_stale_push_diagnostic_entries",
             callback=lambda: delete_stale_push_diagnostic_entries(db),
+        ),
+        HousekeepingTask(
+            name="delete_stale_poll_action_audit_entries",
+            callback=lambda: delete_stale_poll_action_audit_entries(db),
         ),
         HousekeepingTask(
             name="maintain_event_recurrence_polls",
