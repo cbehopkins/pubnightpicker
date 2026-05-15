@@ -259,6 +259,8 @@ function ManageUsersList({ sortedUsers }) {
     );
 }
 
+import PreferencesForm from "./PreferencesForm";
+
 function ManageUsersTable({
     sortedUsers,
     isAdmin,
@@ -269,84 +271,111 @@ function ManageUsersTable({
     handleRoleClick,
     onViewUid,
 }) {
+    const [editingUid, setEditingUid] = useState(null);
     return (
-        <div className="table-responsive">
-            <Table striped bordered hover size="sm" className="align-middle bg-body">
-                <thead>
-                    <tr>
-                        <th></th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Admin</th>
-                        <th>Known User</th>
-                        {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
-                            <th key={column.key}>{column.label}</th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {sortedUsers.map(([key, value]) => {
-                        const userPermissions = CONSOLIDATED_PERMISSION_COLUMNS.reduce((acc, column) => {
-                            acc[column.key] = hasRole(key, column.key);
-                            return acc;
-                        }, {});
+        <>
+            <div className="table-responsive">
+                <Table striped bordered hover size="sm" className="align-middle bg-body">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Admin</th>
+                            <th>Known User</th>
+                            {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
+                                <th key={column.key}>{column.label}</th>
+                            ))}
+                            <th>Edit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sortedUsers.map(([key, value]) => {
+                            const userPermissions = CONSOLIDATED_PERMISSION_COLUMNS.reduce((acc, column) => {
+                                acc[column.key] = hasRole(key, column.key);
+                                return acc;
+                            }, {});
 
-                        return (
-                            <tr key={key}>
-                                <td>
-                                    <Button
-                                        type="button"
-                                        variant="info"
-                                        size="sm"
-                                        onClick={() => onViewUid(key)}
-                                    >
-                                        View UID
-                                    </Button>
-                                </td>
-                                <td>
-                                    <NavLink to={`/manage_users/${key}`} className="link-primary">
-                                        {value?.name || value?.email || key}
-                                    </NavLink>
-                                </td>
-                                <td>{value?.email || "No email"}</td>
-                                <td>
-                                    <Form.Check
-                                        type="checkbox"
-                                        name="admin"
-                                        checked={isAdmin(key)}
-                                        onChange={(event) => {
-                                            handleAdminClick(key, event.target.checked);
-                                        }}
-                                    />
-                                </td>
-                                <td>
-                                    <Form.Check
-                                        type="checkbox"
-                                        name="known"
-                                        checked={isKnown(key)}
-                                        onChange={(event) => {
-                                            handleKnownClick(key, event.target.checked);
-                                        }}
-                                    />
-                                </td>
-                                {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
-                                    <td key={column.key}>
+                            return (
+                                <tr key={key}>
+                                    <td>
+                                        <Button
+                                            type="button"
+                                            variant="info"
+                                            size="sm"
+                                            onClick={() => onViewUid(key)}
+                                        >
+                                            View UID
+                                        </Button>
+                                    </td>
+                                    <td>
+                                        <NavLink to={`/manage_users/${key}`} className="link-primary">
+                                            {value?.name || value?.email || key}
+                                        </NavLink>
+                                    </td>
+                                    <td>{value?.email || "No email"}</td>
+                                    <td>
                                         <Form.Check
                                             type="checkbox"
-                                            name={column.key}
-                                            checked={userPermissions[column.key]}
+                                            name="admin"
+                                            checked={isAdmin(key)}
                                             onChange={(event) => {
-                                                handleRoleClick(key, column.key, event.target.checked);
+                                                handleAdminClick(key, event.target.checked);
                                             }}
                                         />
                                     </td>
-                                ))}
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </Table>
-        </div>
+                                    <td>
+                                        <Form.Check
+                                            type="checkbox"
+                                            name="known"
+                                            checked={isKnown(key)}
+                                            onChange={(event) => {
+                                                handleKnownClick(key, event.target.checked);
+                                            }}
+                                        />
+                                    </td>
+                                    {CONSOLIDATED_PERMISSION_COLUMNS.map((column) => (
+                                        <td key={column.key}>
+                                            <Form.Check
+                                                type="checkbox"
+                                                name={column.key}
+                                                checked={userPermissions[column.key]}
+                                                onChange={(event) => {
+                                                    handleRoleClick(key, column.key, event.target.checked);
+                                                }}
+                                            />
+                                        </td>
+                                    ))}
+                                    <td>
+                                        <Button
+                                            type="button"
+                                            variant="primary"
+                                            size="sm"
+                                            onClick={() => setEditingUid(key)}
+                                        >
+                                            Edit Preferences
+                                        </Button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </Table>
+            </div>
+            {editingUid && (
+                <Modal onBackdropClick={() => setEditingUid(null)}>
+                    <div className="p-2">
+                        <h3 className="h5 mb-3">Edit Preferences for {editingUid}</h3>
+                        <PreferencesForm
+                            method="post"
+                            uid={editingUid}
+                            isAdminEditing={true}
+                            onCancel={() => setEditingUid(null)}
+                        />
+                    </div>
+                </Modal>
+            )}
+        </>
     );
 }
 
@@ -414,6 +443,7 @@ function ManageUserDetailPage() {
     const [isDeletingUser, setIsDeletingUser] = useState(false);
     const [deleteError, setDeleteError] = useState("");
     const [deleteProgress, setDeleteProgress] = useState("");
+    const [editingPrefs, setEditingPrefs] = useState(false);
     const { userId } = useParams();
     const navigate = useNavigate();
     const currentUid = useSelector((state) => state.auth.uid);
@@ -458,6 +488,13 @@ function ManageUserDetailPage() {
                 <Button type="button" variant="info" onClick={() => setSelectedUID(userId)}>View UID</Button>
                 <Button
                     type="button"
+                    variant="primary"
+                    onClick={() => setEditingPrefs(true)}
+                >
+                    Edit Preferences
+                </Button>
+                <Button
+                    type="button"
                     variant="danger"
                     disabled={deletingSelf || isDeletingUser}
                     onClick={() => setShowDeleteConfirm(true)}
@@ -495,6 +532,20 @@ function ManageUserDetailPage() {
             {selectedUID && (
                 <Modal>
                     <UIDModal uid={selectedUID} onClose={() => setSelectedUID(null)} />
+                </Modal>
+            )}
+
+            {editingPrefs && (
+                <Modal onBackdropClick={() => setEditingPrefs(false)}>
+                    <div className="p-2">
+                        <h3 className="h5 mb-3">Edit Preferences for {user?.name || user?.email || userId}</h3>
+                        <PreferencesForm
+                            method="post"
+                            uid={userId}
+                            isAdminEditing={true}
+                            onCancel={() => setEditingPrefs(false)}
+                        />
+                    </div>
                 </Modal>
             )}
 
