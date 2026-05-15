@@ -1,8 +1,8 @@
 // @ts-check
 
-/** @typedef {{ name?: string }} VenueLike */
+/** @typedef {{ name?: string, venueType?: string }} VenueLike */
 
-/** @typedef {{ id: string, label: string, count: number, lastWonDate: string | null }} RankedStatRow */
+/** @typedef {{ id: string, label: string, count: number, lastWonDate: string | null, venueType: string }} RankedStatRow */
 
 /**
  * @param {RankedStatRow} left
@@ -54,6 +54,7 @@ export function buildWinningVenueRows({ polls = {}, venues = {} }) {
             label: venue?.name || venueId,
             count: 0,
             lastWonDate: null,
+            venueType: venue?.venueType || "pub",
         };
     }
 
@@ -69,6 +70,7 @@ export function buildWinningVenueRows({ polls = {}, venues = {} }) {
                 label: venueId,
                 count: 0,
                 lastWonDate: null,
+                venueType: "pub",
             };
         }
 
@@ -117,6 +119,7 @@ export function buildVenueCountRows({ countsByVenueId = {}, lastDateByVenueId = 
             label: venue?.name || venueId,
             count: countsByVenueId[venueId] || 0,
             lastWonDate: lastDateByVenueId[venueId] || null,
+            venueType: venue?.venueType || "pub",
         };
     }
 
@@ -127,6 +130,7 @@ export function buildVenueCountRows({ countsByVenueId = {}, lastDateByVenueId = 
                 label: venueId,
                 count,
                 lastWonDate: lastDateByVenueId[venueId] || null,
+                venueType: "pub",
             };
         }
     }

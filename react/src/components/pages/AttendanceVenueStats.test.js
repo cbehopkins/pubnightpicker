@@ -64,16 +64,19 @@ describe("AttendanceVenueStatsPage", () => {
     useRoleMock.mockReturnValue(true);
 
     usePubsMock.mockReturnValue({
-      "venue-1": { name: "The Maypole" },
-      "venue-2": { name: "The Anchor" },
+      "venue-1": { name: "The Maypole", venueType: "pub" },
+      "venue-2": { name: "The Anchor", venueType: "pub" },
+      "venue-3": { name: "Bistro 12", venueType: "restaurant" },
     });
 
     useAttendanceVenueStatsMock.mockReturnValue({
       countsByVenueId: {
         "venue-1": 4,
+        "venue-3": 7,
       },
       lastDateByVenueId: {
         "venue-1": "2026-04-01",
+        "venue-3": "2026-04-10",
       },
       isLoading: false,
       errorMessage: null,
@@ -94,6 +97,30 @@ describe("AttendanceVenueStatsPage", () => {
 
     expect(screen.getByText(/last 2 years/i)).toBeTruthy();
     expect(screen.getByText(/Showing 8 venues per list/i)).toBeTruthy();
+  });
+
+  it("defaults to pub venues and can switch to all types", () => {
+    renderAttendancePage();
+
+    const venueTypeFilter = screen.getByLabelText(/filter by venue type/i);
+    expect(venueTypeFilter).toBeTruthy();
+    expect(venueTypeFilter.value).toBe("pub");
+    expect(screen.queryAllByText("The Maypole").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Bistro 12")).toBeNull();
+
+    fireEvent.change(venueTypeFilter, { target: { value: "all" } });
+
+    expect(screen.queryAllByText("Bistro 12").length).toBeGreaterThan(0);
+  });
+
+  it("shows only restaurant venues when restaurant filter is selected", () => {
+    renderAttendancePage();
+
+    const venueTypeFilter = screen.getByLabelText(/filter by venue type/i);
+    fireEvent.change(venueTypeFilter, { target: { value: "restaurant" } });
+
+    expect(screen.queryAllByText("Bistro 12").length).toBeGreaterThan(0);
+    expect(screen.queryByText("The Maypole")).toBeNull();
   });
 
   it("applies settings from the modal and updates page text", () => {

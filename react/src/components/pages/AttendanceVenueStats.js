@@ -9,6 +9,7 @@ import usePubs from "../../hooks/usePubs";
 import useAttendanceVenueStats from "../../hooks/useAttendanceVenueStats";
 import { buildVenueCountRows, splitRankedStatRows } from "../../utils/statsRanking";
 import StatRankingList from "../UI/StatRankingList";
+import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 
 function parsePositiveInteger(value, fallback) {
     const parsedValue = Number.parseInt(value || "", 10);
@@ -24,6 +25,7 @@ export function AttendanceVenueStatsPage() {
     const venueLimit = parsePositiveInteger(searchParams.get("limit"), 5);
     const yearCount = parsePositiveInteger(searchParams.get("years"), 1);
     const [isWindowModalOpen, setIsWindowModalOpen] = useState(false);
+    const [venueTypeFilter, setVenueTypeFilter] = useState(DEFAULT_VENUE_TYPE);
 
     const pubParameters = usePubs();
     const {
@@ -43,9 +45,17 @@ export function AttendanceVenueStatsPage() {
         }),
         [countsByVenueId, lastDateByVenueId, pubParameters]
     );
+    const filteredRankedRows = useMemo(() => {
+        if (venueTypeFilter === "all") {
+            return rankedRows;
+        }
+
+        return rankedRows.filter((row) => (row.venueType || DEFAULT_VENUE_TYPE) === venueTypeFilter);
+    }, [rankedRows, venueTypeFilter]);
+
     const { most, least } = useMemo(
-        () => splitRankedStatRows(rankedRows, venueLimit),
-        [rankedRows, venueLimit]
+        () => splitRankedStatRows(filteredRankedRows, venueLimit),
+        [filteredRankedRows, venueLimit]
     );
 
     const updateSearchParams = (nextVenueLimit, nextYearCount) => {
@@ -85,6 +95,24 @@ export function AttendanceVenueStatsPage() {
                 </div>
                 <div className="mt-2 small text-body-secondary">
                     Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that poll.
+                </div>
+
+                <div className="mt-3 d-flex flex-wrap align-items-center gap-2">
+                    <label htmlFor="attendance-venue-type-filter" className="fw-semibold mb-0">
+                        Filter by venue type:
+                    </label>
+                    <select
+                        id="attendance-venue-type-filter"
+                        className="form-select w-auto"
+                        value={venueTypeFilter}
+                        onChange={(event) => setVenueTypeFilter(event.target.value)}
+                    >
+                        {VENUE_TYPE_OPTIONS.map((venueType) => (
+                            <option key={venueType} value={venueType}>
+                                {getVenueTypeLabel(venueType)}
+                            </option>
+                        ))}
+                    </select>
                 </div>
             </section>
 
