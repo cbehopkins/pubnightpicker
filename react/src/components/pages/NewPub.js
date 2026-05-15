@@ -76,6 +76,7 @@ export async function action({ request, params }) {
     web_site: data.get("web_site"),
     map: data.get("map"),
     address: data.get("address"),
+    notes: data.get("notes"),
     pubImage: data.get("pubImage")
   };
   const recurrence = buildRecurrenceFromFormData(data);
