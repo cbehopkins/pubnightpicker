@@ -23,10 +23,10 @@ import usePubs from "./usePubs";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 
 const MOCK_PUBS = {
-    v1: { name: "Venue 1" },
-    v2: { name: "Venue 2" },
-    v3: { name: "Venue 3" },
-    v4: { name: "Venue 4" },
+    v1: { name: "Venue 1", venueType: "pub" },
+    v2: { name: "Venue 2", venueType: "pub" },
+    v3: { name: "Venue 3", venueType: "pub" },
+    v4: { name: "Venue 4", venueType: "pub" },
 };
 
 const EMPTY_CURRENT_PUBS = {};
@@ -167,6 +167,56 @@ describe("useAutopopulateVenueSelector", () => {
             expect(ids).not.toContain("v1");
             expect(ids).not.toContain("v2");
             expect(ids).toContain("v3");
+        });
+    });
+
+    it("returns pub-only candidates when venue data includes mixed types", async () => {
+        vi.mocked(usePubs).mockReturnValue({
+            v1: { name: "Venue 1", venueType: "pub" },
+            v2: { name: "Venue 2", venueType: "restaurant" },
+            v3: { name: "Venue 3", venueType: "event" },
+            v4: { name: "Venue 4", venueType: "pub" },
+        });
+
+        vi.mocked(useWinningVenueStats).mockReturnValue({
+            polls: {
+                "poll-1": { selected: "v1", date: "2026-04-01" },
+                "poll-2": { selected: "v2", date: "2026-03-01" },
+                "poll-3": { selected: "v3", date: "2026-03-05" },
+            },
+            isLoading: false,
+            errorMessage: null,
+            startDate: "2026-04-13",
+            endDate: "2026-05-11",
+        });
+
+        vi.mocked(buildWinningVenueRows).mockReturnValue([
+            { id: "v2", label: "Venue 2", count: 9, lastWonDate: "2026-03-01", venueType: "restaurant" },
+            { id: "v3", label: "Venue 3", count: 8, lastWonDate: "2026-03-05", venueType: "event" },
+            { id: "v1", label: "Venue 1", count: 7, lastWonDate: "2026-04-01", venueType: "pub" },
+            { id: "v4", label: "Venue 4", count: 1, lastWonDate: null, venueType: "pub" },
+        ]);
+
+        vi.mocked(splitRankedStatRows).mockImplementation((rows, limit) => ({
+            most: rows.slice(0, limit),
+            least: [...rows].reverse().slice(0, limit),
+        }));
+
+        const { result } = renderHook(() => useAutopopulateVenueSelector("poll-1", EMPTY_CURRENT_PUBS));
+
+        await waitFor(() => {
+            const randomIds = result.current.random.map((row) => row.id);
+            const mostIds = result.current.mostVisited.map((row) => row.id);
+            const leastIds = result.current.leastVisited.map((row) => row.id);
+
+            expect(randomIds).toContain("v1");
+            expect(randomIds).toContain("v4");
+            expect(randomIds).not.toContain("v2");
+            expect(randomIds).not.toContain("v3");
+            expect(mostIds).not.toContain("v2");
+            expect(mostIds).not.toContain("v3");
+            expect(leastIds).not.toContain("v2");
+            expect(leastIds).not.toContain("v3");
         });
     });
 });
