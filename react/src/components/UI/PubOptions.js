@@ -2,7 +2,7 @@
 
 import { compareVenueNames } from "../../utils/venueSort";
 
-/** @typedef {{ name?: string }} PubOptionEntry */
+/** @typedef {{ name?: string, banned?: boolean }} PubOptionEntry */
 /** @typedef {Record<string, PubOptionEntry | undefined>} PubOptionsMap */
 
 /**
@@ -29,7 +29,9 @@ function PubOptions({ pub_parameters, optionText, selectPubHandler }) {
     <select defaultValue="" onChange={selectPubHandler}>
       <option value="">{optionTextI}</option>
       {sortedPubsByName.map(([id, pub]) => (
-        <option key={id} value={id}>{pub.name || id}</option>
+        <option key={id} value={id} style={pub.banned ? { color: "#8a4b00" } : undefined}>
+          {pub.name || id}
+        </option>
       ))}
     </select>
   );

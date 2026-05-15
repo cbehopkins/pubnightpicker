@@ -76,7 +76,8 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
             const isVenueViable = (row) => {
                 const lastDate = lastDateByVenueId[row.id];
                 const isRecentlyVisited = Boolean(lastDate && lastDate >= baselineCutoffDate);
-                return !isRecentlyVisited && !currentPubIdSet.has(row.id);
+                const isBanned = Boolean(allVenues[row.id]?.banned);
+                return !isRecentlyVisited && !currentPubIdSet.has(row.id) && !isBanned;
             };
 
             const finalRandom = pubOnlyRankedRows.filter(isVenueViable);

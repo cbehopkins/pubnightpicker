@@ -39,6 +39,7 @@ Fields commonly used:
 - dog_friend: boolean optional
 - beer_gerden: boolean optional
 - out_of_town: boolean optional
+- banned: boolean optional
 
 Compatibility rule:
 - If venueType is missing, app treats it as pub (see src/hooks/usePubs.js).

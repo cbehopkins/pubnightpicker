@@ -102,7 +102,7 @@ def delete_stale_push_diagnostic_entries(
     cutoff_ms = int(cutoff_time.timestamp() * 1000)
 
     for collection_name in (NOTIFICATION_REQ_COLLECTION, NOTIFICATION_ACK_COLLECTION):
-        push_doc = db.collection(collection_name).document(PUSH_TEST_DOC_ID)
+        push_doc = db.document(f"{collection_name}/{PUSH_TEST_DOC_ID}")
         snapshot = push_doc.get()
         payload = snapshot.to_dict() or {}
         stale_keys = {
@@ -157,7 +157,7 @@ def maintain_event_recurrence_polls(
                 continue
 
             poll_id = event_poll_id(venue_doc.id, occurrence_date)
-            poll_ref = db.collection("polls").document(poll_id)
+            poll_ref = db.document(f"{POLLS_COLLECTION}/{poll_id}")
             poll_snapshot = poll_ref.get()
             poll_data = poll_snapshot.to_dict() or {}
             event_name = cast(str, venue_data.get("name") or venue_doc.id)

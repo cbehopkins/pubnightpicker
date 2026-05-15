@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActivePoll from "./ActivePoll";
+import { add_new_pub_to_poll } from "../../dbtools/polls";
 
 const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActionMock } = vi.hoisted(() => ({
     useRoleMock: vi.fn(),
@@ -43,7 +44,16 @@ vi.mock("./PollVote", () => ({
 }));
 
 vi.mock("./PubOptions", () => ({
-    default: () => <div data-testid="pub-options" />,
+    default: ({ pub_parameters, selectPubHandler }) => (
+        <select data-testid="pub-options-select" defaultValue="" onChange={selectPubHandler}>
+            <option value="">Select a venue to add here</option>
+            {Object.keys(pub_parameters).map((id) => (
+                <option key={id} value={id}>
+                    {pub_parameters[id]?.name || id}
+                </option>
+            ))}
+        </select>
+    ),
 }));
 
 vi.mock("./PubFilter", () => ({
@@ -63,10 +73,11 @@ function renderComponent(overrides = {}) {
         <ActivePoll
             poll_id="poll-1"
             pub_parameters={{
-                v1: { name: "Venue 1", venueType: "pub" },
+                v1: { name: "Venue 1", venueType: "pub", banned: true },
                 v2: { name: "Venue 2", venueType: "pub" },
                 v3: { name: "Venue 3", venueType: "pub" },
                 v4: { name: "Venue 4", venueType: "pub" },
+                ...(overrides.pubParameters || {}),
             }}
             poll_data={{ date: "2026-05-11", pubs: { ...overrides.currentPubs } }}
             on_complete={vi.fn()}
@@ -143,5 +154,18 @@ describe("ActivePoll autopopulate", () => {
         renderComponent();
 
         expect(screen.getByRole("button", { name: /autopopulate/i }).hasAttribute("disabled")).toBe(true);
+    });
+
+    it("adds banned venue manually and shows warning", async () => {
+        renderComponent();
+
+        fireEvent.change(screen.getByTestId("pub-options-select"), { target: { value: "v1" } });
+        fireEvent.click(screen.getByRole("button", { name: /add venue to poll/i }));
+
+        await waitFor(() => {
+            expect(add_new_pub_to_poll).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object));
+        });
+
+        expect(screen.getByRole("alert").textContent).toMatch(/marked as banned/i);
     });
 });

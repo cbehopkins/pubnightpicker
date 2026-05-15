@@ -134,13 +134,15 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const [venueTypeFilter, setVenueTypeFilter] = useState("all");
 
     const [selectedPub, setSelectedPub] = useState("");
+    const [manualAddWarning, setManualAddWarning] = useState("");
     /** @type {(event: import("react").ChangeEvent<HTMLSelectElement>) => void} */
     const selectPubHandler = useCallback(
         (event) => {
             event.preventDefault();
             setSelectedPub(event.target.value);
+            setManualAddWarning("");
         },
-        [setSelectedPub]
+        [setSelectedPub, setManualAddWarning]
     );
 
     /** @type {(event: import("react").MouseEvent<HTMLButtonElement>) => Promise<void>} */
@@ -149,6 +151,13 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
             event.preventDefault();
             try {
                 await add_new_pub_to_poll(selectedPub, poll_id, pub_parameters);
+                if (pub_parameters[selectedPub]?.banned) {
+                    const selectedPubName = pub_parameters[selectedPub]?.name || "Selected venue";
+                    setManualAddWarning(`${selectedPubName} is marked as banned. Please only keep it in the poll if you really need to.`);
+                    return;
+                }
+
+                setManualAddWarning("");
             } catch (error) {
                 notifyError(getUserFacingErrorMessage(error, "Unable to add the pub to this poll."));
             }
@@ -257,6 +266,11 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             <Button type="button" onClick={addNewPubToPoll}>
                                 Add Venue To Poll
                             </Button>
+                            {manualAddWarning && (
+                                <div className="alert alert-warning mt-2 py-2" role="alert">
+                                    {manualAddWarning}
+                                </div>
+                            )}
                             <AutopopulateButton
                                 isLoading={isAutopopulateLoading}
                                 isEnabled={isAutopopulateEnabled}
