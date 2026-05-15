@@ -97,7 +97,9 @@ def _sha256_file(path: Path) -> str:
     type=click.Path(path_type=Path, writable=True),
     help="Optional manifest output path. Defaults to '<outfile>.manifest.json'",
 )
-def main(loglevel: int, logfile: Path | None, outfile: Path, manifest_out: Path | None) -> None:
+def main(
+    loglevel: int, logfile: Path | None, outfile: Path, manifest_out: Path | None
+) -> None:
     configure_logging(loglevel, logfile)
     db_handler = _get_db_handler()
 

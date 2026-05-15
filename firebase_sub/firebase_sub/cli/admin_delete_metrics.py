@@ -79,7 +79,9 @@ def _get_db():
     return _DB
 
 
-def _format_outcomes(outcomes: dict[str, Any] | None, *, include_zeroes: bool) -> list[str]:
+def _format_outcomes(
+    outcomes: dict[str, Any] | None, *, include_zeroes: bool
+) -> list[str]:
     if not outcomes:
         return []
     rendered: list[str] = []
@@ -91,7 +93,9 @@ def _format_outcomes(outcomes: dict[str, Any] | None, *, include_zeroes: bool) -
     return rendered
 
 
-def _print_metric_doc(label: str, payload: dict[str, Any] | None, *, include_zeroes: bool) -> None:
+def _print_metric_doc(
+    label: str, payload: dict[str, Any] | None, *, include_zeroes: bool
+) -> None:
     click.echo(label)
     if not payload:
         click.echo("  (missing)")
@@ -137,14 +141,22 @@ def _print_preflight(
     env_gate_enabled = _env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False)
     effective_real_delete = env_gate_enabled and enable_real_auth_delete
 
-    kill_switch = db.collection("system_config").document("admin_delete").get().to_dict() or {}
+    kill_switch = (
+        db.collection("system_config").document("admin_delete").get().to_dict() or {}
+    )
     paused = bool(kill_switch.get("paused", False))
     pause_reason = kill_switch.get("reason", "")
 
     click.echo("Admin delete preflight")
-    click.echo(f"  env gate ENABLE_ADMIN_DELETE_REQUESTS: {'on' if env_gate_enabled else 'off'}")
-    click.echo(f"  cli gate --enable-real-auth-delete: {'on' if enable_real_auth_delete else 'off'}")
-    click.echo(f"  effective real auth delete: {'on' if effective_real_delete else 'off'}")
+    click.echo(
+        f"  env gate ENABLE_ADMIN_DELETE_REQUESTS: {'on' if env_gate_enabled else 'off'}"
+    )
+    click.echo(
+        f"  cli gate --enable-real-auth-delete: {'on' if enable_real_auth_delete else 'off'}"
+    )
+    click.echo(
+        f"  effective real auth delete: {'on' if effective_real_delete else 'off'}"
+    )
     click.echo(f"  kill-switch paused: {'yes' if paused else 'no'}")
     if pause_reason:
         click.echo(f"  kill-switch reason: {pause_reason}")
@@ -164,7 +176,9 @@ def _preflight_exit_code(*, db, enable_real_auth_delete: bool) -> int:
     env_gate_enabled = _env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False)
     effective_real_delete = env_gate_enabled and enable_real_auth_delete
 
-    kill_switch = db.collection("system_config").document("admin_delete").get().to_dict() or {}
+    kill_switch = (
+        db.collection("system_config").document("admin_delete").get().to_dict() or {}
+    )
     paused = bool(kill_switch.get("paused", False))
 
     if not effective_real_delete:
@@ -175,7 +189,9 @@ def _preflight_exit_code(*, db, enable_real_auth_delete: bool) -> int:
 
 
 @click.command()
-@click.option("--day", type=str, default=None, help="Day in YYYY-MM-DD (defaults to today UTC)")
+@click.option(
+    "--day", type=str, default=None, help="Day in YYYY-MM-DD (defaults to today UTC)"
+)
 @click.option(
     "--include-zeroes/--no-include-zeroes",
     default=False,
@@ -194,7 +210,9 @@ def _preflight_exit_code(*, db, enable_real_auth_delete: bool) -> int:
     show_default=True,
     help="Evaluate preflight as if sub_events were started with this CLI gate",
 )
-@click.option("--loglevel", default="INFO", type=log_level_to_int, help="Set the log level")
+@click.option(
+    "--loglevel", default="INFO", type=log_level_to_int, help="Set the log level"
+)
 def cli(
     day: str | None,
     include_zeroes: bool,

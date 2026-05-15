@@ -32,6 +32,7 @@ vi.mock("../../hooks/useAttendanceVenueStats", () => {
 vi.mock("../../hooks/useRole", () => {
   return {
     default: useRoleMock,
+    useRoleStatus: () => ({ hasPermission: useRoleMock(), loading: false }),
   };
 });
 

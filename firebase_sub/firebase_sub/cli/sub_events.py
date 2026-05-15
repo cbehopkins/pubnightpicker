@@ -259,14 +259,21 @@ def sub_events(
             Event(
                 type=EventType.ADMIN_DELETE_REQUEST,
                 doc=document,
-                callback=lambda doc, pubs_list: admin_delete_handler.handle_request_document(doc),
+                callback=lambda doc, pubs_list: admin_delete_handler.handle_request_document(
+                    doc
+                ),
             )
         )
 
     if admin_delete_handler.enabled:
-        _log.info("Admin delete request listener enabled (dry_run=%s)", admin_delete_handler.dry_run)
+        _log.info(
+            "Admin delete request listener enabled (dry_run=%s)",
+            admin_delete_handler.dry_run,
+        )
     else:
-        _log.info("Admin delete request listener disabled (set ENABLE_ADMIN_DELETE_REQUESTS=true to enable)")
+        _log.info(
+            "Admin delete request listener disabled (set ENABLE_ADMIN_DELETE_REQUESTS=true to enable)"
+        )
     if enable_real_auth_delete and not admin_delete_handler.enabled:
         _log.warning(
             "--enable-real-auth-delete was set but ENABLE_ADMIN_DELETE_REQUESTS is false; admin delete processing remains disabled"

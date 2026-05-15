@@ -20,14 +20,20 @@ def _clear_firestore(client) -> None:
 
 
 @pytest.mark.integration
-def test_backup_restore_roundtrip_with_user_data(firestore_client, tmp_path, monkeypatch):
-    firestore_client.document("users/u1").set({"name": "User One", "webPushEnabled": True})
+def test_backup_restore_roundtrip_with_user_data(
+    firestore_client, tmp_path, monkeypatch
+):
+    firestore_client.document("users/u1").set(
+        {"name": "User One", "webPushEnabled": True}
+    )
     firestore_client.document("user-public/u1").set({"name": "User One"})
     firestore_client.document("users/u1/push_endpoints/e1").set(
         {"active": True, "endpoint": "https://example.invalid/e1"}
     )
     firestore_client.document("roles/canChat").set({"u1": True})
-    firestore_client.document("polls/p1").set({"date": "2026-06-01", "completed": False})
+    firestore_client.document("polls/p1").set(
+        {"date": "2026-06-01", "completed": False}
+    )
 
     outfile = tmp_path / "backup.json"
     manifest = tmp_path / "backup.manifest.json"

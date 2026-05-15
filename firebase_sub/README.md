@@ -1,3 +1,14 @@
+# Automated Recurring Event Polls
+
+The `maintain_event_recurrence_polls` housekeeping task (run by the backend worker) automatically creates and completes polls for venues with recurrence rules.
+
+- When a venue of type "event" has a recurrence set, the job:
+	- Calculates the next occurrence date.
+	- Creates a poll for that date when within the lead window.
+	- Marks polls as completed after the event date.
+	- Advances the next occurrence date or clears it if no further recurrences.
+- This job runs as part of the regular housekeeping task list. No manual intervention is needed for recurring event poll creation.
+
 We use Poetry for local development dependencies:
 poetry install
 

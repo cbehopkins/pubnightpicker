@@ -249,7 +249,9 @@ def main(
             raise ValueError(f"Failed to load JSON from {infile}: {e}") from e
 
         if not isinstance(records, list):
-            raise ValueError(f"Backup payload must be a list of records: {type(records)}")
+            raise ValueError(
+                f"Backup payload must be a list of records: {type(records)}"
+            )
 
         for record in records:
             try:

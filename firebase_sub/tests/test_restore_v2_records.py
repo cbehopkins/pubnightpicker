@@ -90,7 +90,9 @@ def test_root_collection_extracts_first_segment():
 
 
 def test_collection_allowed_respects_allow_and_deny():
-    assert _collection_allowed("users/u1", allow_collections=set(), deny_collections=set())
+    assert _collection_allowed(
+        "users/u1", allow_collections=set(), deny_collections=set()
+    )
     assert not _collection_allowed(
         "users/u1",
         allow_collections=set(),

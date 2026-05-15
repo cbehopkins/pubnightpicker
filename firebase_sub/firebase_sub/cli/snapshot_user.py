@@ -59,7 +59,9 @@ def _get_db():
     return _DB
 
 
-def _document_record(path: str, data: dict[str, Any], **metadata: Any) -> dict[str, Any]:
+def _document_record(
+    path: str, data: dict[str, Any], **metadata: Any
+) -> dict[str, Any]:
     parts = [part for part in path.split("/") if part]
     if len(parts) < 2 or len(parts) % 2 != 0:
         raise ValueError(f"Document path must have even segments: {path}")

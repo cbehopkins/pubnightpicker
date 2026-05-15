@@ -5,6 +5,61 @@ import { addNewPub, modifyPub } from "../../dbtools/pubs";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 
+function buildRecurrenceFromFormData(data) {
+  const frequency = data.get("recurrence_frequency") || "none";
+  if (frequency === "none") {
+    return undefined;
+  }
+
+  const recurrence = {
+    frequency,
+  };
+
+  if (frequency === "once") {
+    const date = data.get("recurrence_date");
+    if (date) recurrence.date = date;
+    return recurrence;
+  }
+
+  // For weekly, monthly, yearly: add interval if present
+  const interval = data.get("recurrence_interval");
+  if (interval) recurrence.interval = Number(interval);
+
+  if (frequency === "weekly") {
+    const weekday = data.get("recurrence_weekday");
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    return recurrence;
+  }
+
+  if (frequency === "monthly") {
+    // Include whichever fields were submitted (either fixed day or weekday pattern)
+    const monthDay = data.get("recurrence_month_day");
+    const weekday = data.get("recurrence_weekday");
+    const nth = data.get("recurrence_nth");
+
+    if (monthDay !== null) recurrence.month_day = Number(monthDay);
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    if (nth !== null) recurrence.nth = Number(nth);
+    return recurrence;
+  }
+
+  if (frequency === "yearly") {
+    // Include whichever fields were submitted (either fixed date or weekday pattern)
+    const month = data.get("recurrence_month");
+    const monthDay = data.get("recurrence_month_day");
+    const weekday = data.get("recurrence_weekday");
+    const nth = data.get("recurrence_nth");
+
+    if (month !== null) recurrence.month = Number(month);
+    if (monthDay !== null) recurrence.month_day = Number(monthDay);
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    if (nth !== null) recurrence.nth = Number(nth);
+    return recurrence;
+  }
+
+  return undefined;
+}
+
 function NewPubPage() {
   return <PubForm method="post" />;
 }
@@ -23,6 +78,7 @@ export async function action({ request, params }) {
     address: data.get("address"),
     pubImage: data.get("pubImage")
   };
+  const recurrence = buildRecurrenceFromFormData(data);
   console.log("Pub action data", data, "pubParms", pubParams);
   for (const key of Object.keys(PubParams)) {
     if (key === "food" && pubParams.venueType === "restaurant") {
@@ -31,6 +87,9 @@ export async function action({ request, params }) {
     }
 
     pubParams[key] = Boolean(data.get(key));
+  }
+  if (pubParams.venueType === "event" && recurrence) {
+    pubParams.recurrence = recurrence;
   }
   console.log("Submitted parameters", pubParams)
   try {
