@@ -22,7 +22,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 /** @typedef {Record<string, string[]>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollPubEntry */
-/** @typedef {{ pubs?: Record<string, PollPubEntry> }} PollData */
+/** @typedef {{ pubs?: Record<string, PollPubEntry>, date?: string }} PollData */
 
 /**
  * @typedef {Object} RespondMenuProps
