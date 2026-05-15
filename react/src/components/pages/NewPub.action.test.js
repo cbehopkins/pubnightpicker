@@ -87,6 +87,61 @@ describe("NewPub action", () => {
         );
     });
 
+    it("persists recurrence fields for event venues - weekday mode", async () => {
+        await action({
+            request: createRequest("POST", {
+                name: "Beer Festival",
+                venueType: "event",
+                recurrence_frequency: "yearly",
+                recurrence_interval: "1",
+                recurrence_month: "5",
+                recurrence_weekday: "3",
+                recurrence_nth: "-1",
+            }),
+            params: {},
+        });
+
+        expect(addNewPubMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                venueType: "event",
+                recurrence: expect.objectContaining({
+                    frequency: "yearly",
+                    month: 5,
+                    weekday: 3,
+                    nth: -1,
+                    interval: 1,
+                }),
+            })
+        );
+    });
+
+    it("persists recurrence fields for event venues - fixed date mode", async () => {
+        await action({
+            request: createRequest("POST", {
+                name: "New Year Party",
+                venueType: "event",
+                recurrence_frequency: "yearly",
+                recurrence_month: "1",
+                recurrence_month_day: "1",
+                recurrence_interval: "1",
+                // Note: weekday and nth are NOT sent when form is in "fixed" mode
+            }),
+            params: {},
+        });
+
+        expect(addNewPubMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                venueType: "event",
+                recurrence: expect.objectContaining({
+                    frequency: "yearly",
+                    month: 1,
+                    month_day: 1,
+                    interval: 1,
+                }),
+            })
+        );
+    });
+
     it("modifies a pub and redirects on PATCH", async () => {
         const response = await action({
             request: createRequest("PATCH", {

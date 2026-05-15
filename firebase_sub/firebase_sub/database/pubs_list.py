@@ -58,9 +58,32 @@ class PubsList:
         raise NotImplementedError("Periodic watch restarts are disabled for PubsList.")
 
     def _add(self, document: DocumentSnapshot) -> None:
+        from firebase_sub.database.event_recurrence import (
+            next_occurrence,
+            parse_iso_date,
+        )
+        from datetime import date
+
         data = document.to_dict()
         if data is None:
             return
+        # Calculate and persist next_occurrence_date if recurrence is present
+        recurrence = data.get("recurrence")
+        if recurrence:
+            reference_date = date.today()
+            next_date = next_occurrence(recurrence, reference_date)
+            if next_date is not None:
+                next_occurrence_str = next_date.isoformat()
+                if data.get("next_occurrence_date") != next_occurrence_str:
+                    # Only update Firestore if value is different
+                    document.reference.set(
+                        {"next_occurrence_date": next_occurrence_str}, merge=True
+                    )
+                data["next_occurrence_date"] = next_occurrence_str
+            else:
+                if data.get("next_occurrence_date") is not None:
+                    document.reference.set({"next_occurrence_date": None}, merge=True)
+                data.pop("next_occurrence_date", None)
         self._dict[document.id] = cast(VenueDocument, data)
 
     def _remove(self, document: DocumentSnapshot) -> None:

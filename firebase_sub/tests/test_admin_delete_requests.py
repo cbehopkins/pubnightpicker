@@ -18,7 +18,7 @@ def _collection_side_effect(
     request_doc_status: str | None = None,
 ):
     """Factory for db.collection side effects.
-    
+
     Handles:
     - users collection
     - user-public collection
@@ -29,16 +29,20 @@ def _collection_side_effect(
     users_doc.exists = users_exists
     user_public_doc = MagicMock()
     user_public_doc.exists = user_public_exists
-    
+
     # Kill-switch doc
     kill_switch_doc = MagicMock()
     kill_switch_doc.exists = kill_switch_paused
-    kill_switch_doc.to_dict.return_value = {"paused": True, "reason": "testing"} if kill_switch_paused else {}
-    
+    kill_switch_doc.to_dict.return_value = (
+        {"paused": True, "reason": "testing"} if kill_switch_paused else {}
+    )
+
     # Request doc (for reading current status)
     request_doc = MagicMock()
     request_doc.exists = request_doc_status is not None
-    request_doc.to_dict.return_value = {"status": request_doc_status} if request_doc_status else {}
+    request_doc.to_dict.return_value = (
+        {"status": request_doc_status} if request_doc_status else {}
+    )
 
     def inner(name: str):
         coll = MagicMock()
@@ -140,7 +144,7 @@ def test_valid_state_transition_pending_to_dry_run_validated() -> None:
     """Test that pending -> dry_run_validated is a valid transition."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
+
     assert handler._is_valid_transition("pending", "dry_run_validated") is True
 
 
@@ -148,7 +152,7 @@ def test_valid_state_transition_pending_to_failed_precondition() -> None:
     """Test that pending -> failed_precondition is a valid transition."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
+
     assert handler._is_valid_transition("pending", "failed_precondition") is True
 
 
@@ -156,7 +160,7 @@ def test_valid_state_transition_pending_to_failed_terminal() -> None:
     """Test that pending -> failed_terminal is a valid transition."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
+
     assert handler._is_valid_transition("pending", "failed_terminal") is True
 
 
@@ -164,7 +168,7 @@ def test_invalid_state_transition_pending_to_pending() -> None:
     """Test that pending -> pending is invalid."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
+
     assert handler._is_valid_transition("pending", "pending") is False
 
 
@@ -172,17 +176,20 @@ def test_invalid_state_transition_failed_precondition_to_dry_run_validated() -> 
     """Test that failed_precondition -> dry_run_validated is invalid."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
-    assert handler._is_valid_transition("failed_precondition", "dry_run_validated") is False
+
+    assert (
+        handler._is_valid_transition("failed_precondition", "dry_run_validated")
+        is False
+    )
 
 
 def test_audit_writes_with_composite_key() -> None:
     """Test that audit records use composite keys for immutability."""
     db = MagicMock()
     handler = AdminDeleteRequestHandler(db, enabled=True)
-    
+
     handler._write_audit("req-1", {"outcome": "dry_run_validated", "targetUid": "u1"})
-    
+
     # Verify audit + metric collections were touched.
     call_names = [call[0][0] for call in db.collection.call_args_list]
     assert "admin_delete_request_audit" in call_names

@@ -39,7 +39,9 @@ class AdminDeleteRequestHandler:
         self._auth_deleter = auth_deleter or firebase_auth.delete_user
 
     def _user_doc_exists(self, collection_name: str, uid: str) -> bool:
-        snap = cast(DocumentSnapshot, self.db.collection(collection_name).document(uid).get())
+        snap = cast(
+            DocumentSnapshot, self.db.collection(collection_name).document(uid).get()
+        )
         return bool(snap.exists)
 
     def _request_ref(self, request_id: str):
@@ -47,7 +49,7 @@ class AdminDeleteRequestHandler:
 
     def _check_kill_switch(self) -> bool:
         """Check if admin delete processing is paused.
-        
+
         Returns:
             True if processing is paused; False otherwise.
         """
@@ -68,7 +70,7 @@ class AdminDeleteRequestHandler:
 
     def _write_audit(self, request_id: str, payload: dict[str, Any]) -> None:
         """Write immutable audit record with composite key.
-        
+
         Uses composite key (requestId_status_timestamp_microseconds) to ensure
         each status transition creates a new immutable audit record.
         """
@@ -76,7 +78,7 @@ class AdminDeleteRequestHandler:
         now = datetime.now(UTC)
         # Use microseconds precision for uniqueness within same second
         timestamp_micros = int(now.timestamp() * 1_000_000)
-        
+
         audit_record_id = f"{request_id}_{status}_{timestamp_micros}"
         audit_payload = {
             "requestId": request_id,
@@ -84,12 +86,14 @@ class AdminDeleteRequestHandler:
             "at": now.isoformat(),
             **payload,
         }
-        self.db.collection("admin_delete_request_audit").document(
-            audit_record_id
-        ).set(audit_payload)
+        self.db.collection("admin_delete_request_audit").document(audit_record_id).set(
+            audit_payload
+        )
         self._emit_outcome_metric(request_id=request_id, outcome=str(status), at=now)
 
-    def _emit_outcome_metric(self, *, request_id: str, outcome: str, at: datetime) -> None:
+    def _emit_outcome_metric(
+        self, *, request_id: str, outcome: str, at: datetime
+    ) -> None:
         """Emit best-effort counters for alerting dashboards.
 
         Metrics are stored in Firestore to avoid introducing external telemetry
@@ -115,7 +119,7 @@ class AdminDeleteRequestHandler:
 
     def _is_valid_transition(self, current_status: str, new_status: str) -> bool:
         """Check if a status transition is valid.
-        
+
         Returns:
             True if transition is allowed; False otherwise.
         """
@@ -124,7 +128,7 @@ class AdminDeleteRequestHandler:
 
     def _mark_request(self, request_id: str, new_status: str, **extra: Any) -> None:
         """Update request status with transition validation.
-        
+
         Only allows valid state transitions. Current status is read before update.
         """
         # Fetch current status
@@ -132,10 +136,10 @@ class AdminDeleteRequestHandler:
         if not current_doc.exists:
             _log.error("Request document %s not found for status update", request_id)
             return
-        
+
         current_data = current_doc.to_dict() or {}
         current_status = current_data.get("status", "unknown")
-        
+
         # Validate transition
         if not self._is_valid_transition(current_status, new_status):
             _log.error(
@@ -145,7 +149,7 @@ class AdminDeleteRequestHandler:
                 new_status,
             )
             return
-        
+
         update = {
             "status": new_status,
             "updatedAt": SERVER_TIMESTAMP,
@@ -158,12 +162,16 @@ class AdminDeleteRequestHandler:
             raise ValueError("Admin delete request event missing document")
 
         if not self.enabled:
-            _log.info("Admin delete request processing disabled; ignoring %s", document.id)
+            _log.info(
+                "Admin delete request processing disabled; ignoring %s", document.id
+            )
             return
 
         # Check kill-switch before processing
         if self._check_kill_switch():
-            _log.info("Admin delete processing paused; skipping request %s", document.id)
+            _log.info(
+                "Admin delete processing paused; skipping request %s", document.id
+            )
             return
 
         data = cast(dict[str, Any] | None, document.to_dict()) or {}

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import useRole from "../hooks/useRole";
+import { useRoleStatus } from "../hooks/useRole";
 
 /**
  * Higher-Order Component that protects a page component with permission checking
@@ -17,19 +17,21 @@ import useRole from "../hooks/useRole";
 export function ProtectedRoute(Component, requiredPermission, redirectTo = "/") {
   return function ProtectedComponent(props) {
     const navigate = useNavigate();
-    const hasPermission = useRole(requiredPermission);
+    const { hasPermission, loading } = useRoleStatus(requiredPermission);
 
     useEffect(() => {
-      if (!hasPermission) {
+      if (!loading && !hasPermission) {
         navigate(redirectTo);
       }
-    }, [hasPermission, navigate]);
+    }, [hasPermission, loading, navigate]);
 
-    // If no permission, don't render component; let redirect handle it
+    // Wait for roles to load before rendering or redirecting
+    if (loading) {
+      return <div className="p-3">Loading permissions...</div>;
+    }
     if (!hasPermission) {
       return null;
     }
-
     return <Component {...props} />;
   };
 }

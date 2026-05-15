@@ -21,12 +21,16 @@ pytest = "^9.0"
 black = "^26.0"
 isort = "^6.0"
 tox = "^4.24"
+flake8 = "^7.0"
+mypy = "^1.0"
 
 [tool.black]
 force-exclude = '''
 /(\.tox|\.git|\.venv|\.eggs|build|dist|docs)/
 '''
-
+[tool.mypy]
+ignore_missing_imports = true
+python_version = "3.12"
 
 [build-system]
 requires = ["poetry-core"]

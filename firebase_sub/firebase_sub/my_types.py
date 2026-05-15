@@ -1,7 +1,7 @@
 import datetime
 from collections.abc import Callable, Sequence
 from enum import StrEnum, auto
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.watch import DocumentChange
@@ -40,12 +40,27 @@ class PollDocument(TypedDict):
     restaurant_time: NotRequired[str]
 
 
+class EventRecurrenceRule(TypedDict, total=False):
+    frequency: Literal["once", "weekly", "monthly", "yearly"]
+    start_date: str
+    date: str
+    interval: int
+    weekdays: list[int]
+    weekday: int
+    nth: int
+    month: int
+    month_day: int
+
+
 class VenueDocument(TypedDict):
     name: str
     venueType: NotRequired[str]
     web_site: NotRequired[str]
     address: NotRequired[str]
     map: NotRequired[str]
+    recurrence: NotRequired[EventRecurrenceRule]
+    next_occurrence_date: NotRequired[str]
+    recurrence_last_materialized_date: NotRequired[str]
 
 
 Callback = Callable[[], None] | None

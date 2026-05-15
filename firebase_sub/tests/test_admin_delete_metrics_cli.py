@@ -36,7 +36,9 @@ class _FakeDb:
             raise AssertionError(f"unexpected collection: {name}")
         if name == "admin_delete_request_metrics":
             return _FakeCollection(self._docs)
-        return _FakeCollection({"admin_delete": self._docs.get("system_config_admin_delete")})
+        return _FakeCollection(
+            {"admin_delete": self._docs.get("system_config_admin_delete")}
+        )
 
 
 def test_cli_prints_global_and_daily_metrics(monkeypatch):
@@ -128,7 +130,9 @@ def test_cli_preflight_prints_gate_killswitch_and_counters(monkeypatch):
     assert "effective real auth delete: on" in result.output
     assert "kill-switch paused: no" in result.output
     assert "global auth_delete_failed/auth_delete_blocked: 2/3" in result.output
-    assert "daily-2026-05-12 auth_delete_failed/auth_delete_blocked: 1/0" in result.output
+    assert (
+        "daily-2026-05-12 auth_delete_failed/auth_delete_blocked: 1/0" in result.output
+    )
 
 
 def test_cli_preflight_exits_nonzero_when_effective_real_delete_off(monkeypatch):

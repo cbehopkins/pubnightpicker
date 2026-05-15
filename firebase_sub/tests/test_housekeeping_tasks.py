@@ -3,11 +3,13 @@ from unittest.mock import MagicMock
 
 from firebase_sub.database.housekeeping_tasks import (
     DIAGNOSTICS_DOC_ID,
+    EVENTS_COLLECTION,
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,
     POLLS_COLLECTION,
     PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
+    maintain_event_recurrence_polls,
     delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
@@ -228,3 +230,85 @@ def test_delete_stale_push_diagnostic_entries_rejects_negative_retention():
         raise AssertionError("Expected ValueError")
     except ValueError as exc:
         assert "retention_days" in str(exc)
+
+
+def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
+    db = MagicMock()
+    events_collection = MagicMock()
+    polls_collection = MagicMock()
+    votes_collection = MagicMock()
+    attendance_collection = MagicMock()
+
+    venue_doc = MagicMock()
+    venue_doc.id = "cambridge-beer-festival"
+    venue_doc.to_dict.return_value = {
+        "name": "Cambridge Beer Festival",
+        "venueType": "event",
+        "recurrence": {
+            "frequency": "yearly",
+            "month": 5,
+            "weekday": 2,
+            "nth": -1,
+            "start_date": "2026-05-01",
+        },
+    }
+    venue_doc.reference = MagicMock()
+
+    events_collection.stream.return_value = [venue_doc]
+
+    poll_doc = MagicMock()
+    poll_doc.exists = False
+    poll_doc.to_dict.return_value = None
+
+    created_poll_doc = MagicMock()
+    created_poll_doc.exists = True
+    created_poll_doc.to_dict.return_value = {
+        "date": "2026-05-27",
+        "completed": False,
+    }
+
+    poll_ref = MagicMock()
+    poll_ref.get.side_effect = [poll_doc, created_poll_doc]
+
+    def collection_side_effect(name: str):
+        if name == EVENTS_COLLECTION:
+            return events_collection
+        if name == "polls":
+            return polls_collection
+        if name == "votes":
+            return votes_collection
+        if name == "attendance":
+            return attendance_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+    polls_collection.document.return_value = poll_ref
+
+    maintain_event_recurrence_polls(db, today=date(2026, 5, 26))
+
+    polls_collection.document.assert_called_once_with(
+        "event-cambridge-beer-festival-2026-05-27"
+    )
+    poll_ref.set.assert_any_call(
+        {
+            "date": "2026-05-27",
+            "completed": False,
+            "pubs": {
+                "cambridge-beer-festival": {
+                    "name": "Cambridge Beer Festival",
+                    "venueType": "event",
+                }
+            },
+            "eventVenueId": "cambridge-beer-festival",
+            "eventOccurrenceDate": "2026-05-27",
+        }
+    )
+    poll_ref.set.assert_any_call(
+        {"completed": True, "selected": "cambridge-beer-festival"}, merge=True
+    )
+    votes_collection.document.assert_called_once_with(
+        "event-cambridge-beer-festival-2026-05-27"
+    )
+    attendance_collection.document.assert_called_once_with(
+        "event-cambridge-beer-festival-2026-05-27"
+    )
