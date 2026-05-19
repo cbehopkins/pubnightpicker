@@ -1,5 +1,3 @@
-from contextlib import AbstractContextManager
-
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.event import EventEnvelope, EventType
@@ -20,13 +18,6 @@ class NotificationRequestListenerPlugin(EventPlugin):
 
     def name(self) -> str:
         return "notification_request_listener"
-
-    def build_manager(self) -> AbstractContextManager[object]:
-        """Events are now produced externally by event producers."""
-        # No-op manager since Firestore watches are managed by event producers
-        from contextlib import nullcontext
-
-        return nullcontext()
 
     def filter(self, envelope: EventEnvelope) -> bool:
         if envelope.doc is None:

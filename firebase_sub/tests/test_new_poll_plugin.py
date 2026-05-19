@@ -102,20 +102,6 @@ def test_new_poll_listener_initialization():
     assert plugin.is_enabled() is True
 
 
-def test_new_poll_listener_build_manager_returns_nullcontext():
-    """Test that build_manager returns a no-op context for event producers."""
-    db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
-    plugin = NewPollListenerPlugin(
-        db_handler=db_handler,
-        action_manager=action_manager,
-    )
-
-    manager = plugin.build_manager()
-    with manager:
-        pass  # Should not raise
-
-
 def test_new_poll_listener_filter_accepts_new_poll_events():
     """Test that filter accepts NEW_POLL event type."""
     db_handler: NewPollDbHandler = _FakeDbHandler()

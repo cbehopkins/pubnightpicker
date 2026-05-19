@@ -3,7 +3,11 @@ from contextlib import AbstractContextManager, ExitStack
 from collections.abc import Sequence
 
 from firebase_sub.plugins.housekeeping import HousekeepingPluginRunner
-from firebase_sub.plugins.protocols import HousekeepingPlugin, ListenerPlugin
+from firebase_sub.plugins.protocols import (
+    HousekeepingPlugin,
+    ListenerPlugin,
+    ManagedListenerPlugin,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -46,7 +50,7 @@ def register_listener_plugins(
     plugins: Sequence[ListenerPlugin],
     exit_stack: ExitStack,
 ) -> None:
-    """Register listener plugins and attach their context-managed resources."""
+    """Register listener plugins and attach managed resources when supported."""
     for plugin in plugins:
         if not plugin.is_enabled():
             _log.info("Skipping disabled listener plugin: %s", plugin.name())
@@ -54,4 +58,5 @@ def register_listener_plugins(
         _log.info("Registering listener plugin: %s", plugin.name())
         plugin.on_registered()
         exit_stack.callback(plugin.on_unregistered)
-        exit_stack.enter_context(plugin.build_manager())
+        if isinstance(plugin, ManagedListenerPlugin):
+            exit_stack.enter_context(plugin.build_manager())

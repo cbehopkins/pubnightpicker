@@ -50,6 +50,7 @@ __all__ = [
     "PluginKind",
     "Plugin",
     "ListenerPlugin",
+    "ManagedListenerPlugin",
     "EventPlugin",
     "HousekeepingPlugin",
     "PollStatusQueryDbHandler",
@@ -138,27 +139,34 @@ class Plugin(ABC):
 
 
 class ListenerPlugin(Plugin):
-    """Protocol for plugins that handle database listener callbacks.
+    """Base protocol for runtime listener-like plugins.
 
-    Listener plugins are responsible for reacting to database changes. They may
-    register themselves with the event queue and process documents as they are
-    created or modified.
+    Listener plugins participate in runtime registration lifecycle
+    (is_enabled/on_registered/on_unregistered). Event consumers and watch
+    manager plugins both derive from this base.
 
     Design Notes:
-    - Listeners should be idempotent: processing the same document multiple times
-      should not cause duplicate side effects.
-    - Listeners may cache database state for performance, but must follow the
-      database-derived stateful plugin principle (see module docstring).
+    - Listener side effects should be idempotent where practical.
+    - Plugins may cache database state for performance, but must follow the
+        database-derived stateful plugin principle.
     - Listeners must raise only exceptions derived from BasePluginException.
-    - Listeners should not maintain state critical to system correctness;
-      all critical state must live in the database.
+    - Plugins should not maintain state critical to system correctness;
+        all critical state must live in the database.
     """
 
     @property
     def kind(self) -> PluginKind:
         return PluginKind.LISTENER
 
-    @abstractmethod
+
+@runtime_checkable
+class ManagedListenerPlugin(Protocol):
+    """Listener plugin that owns a context-managed watch/resource lifecycle.
+
+    Implement this protocol when the plugin must attach external resources
+    (for example Firestore watches) that need enter/exit semantics.
+    """
+
     def build_manager(self) -> AbstractContextManager[object]:
         """Build the context manager that attaches listener resources.
 

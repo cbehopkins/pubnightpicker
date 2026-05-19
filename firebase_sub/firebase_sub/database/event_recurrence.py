@@ -186,7 +186,7 @@ def _materialized_next_occurrence_from_current_date(
         return None
 
     if current_date is not None and _matches_recurrence(recurrence, current_date):
-        if today >= event_week_completion_start(current_date):
+        if current_date < today and today >= event_week_completion_start(current_date):
             return next_occurrence(recurrence, current_date + timedelta(days=1))
         if current_date >= today:
             return current_date

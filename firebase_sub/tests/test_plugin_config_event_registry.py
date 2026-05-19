@@ -1,4 +1,3 @@
-from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import cast
 
@@ -32,9 +31,6 @@ class _FakePollDbHandler:
 class _UnknownEventPlugin(EventPlugin):
     def name(self) -> str:
         return "unknown"
-
-    def build_manager(self):
-        return nullcontext()
 
     def filter(self, envelope):
         del envelope

@@ -1,4 +1,3 @@
-from contextlib import AbstractContextManager
 from typing import Protocol
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -28,13 +27,6 @@ class AdminDeleteRequestListenerPlugin(EventPlugin):
 
     def is_enabled(self) -> bool:
         return self._handler.enabled
-
-    def build_manager(self) -> AbstractContextManager[object]:
-        """Events are now produced externally by event producers."""
-        # No-op manager since Firestore watches are managed by event producers
-        from contextlib import nullcontext
-
-        return nullcontext()
 
     def filter(self, envelope: EventEnvelope) -> bool:
         return (

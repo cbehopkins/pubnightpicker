@@ -1,4 +1,3 @@
-from contextlib import AbstractContextManager, nullcontext
 from collections.abc import Mapping
 from typing import Any
 
@@ -39,11 +38,6 @@ class NewPollListenerPlugin(EventPlugin):
 
     def on_unregistered(self) -> None:
         return
-
-    def build_manager(self) -> AbstractContextManager[object]:
-        """Events are now produced externally by event producers."""
-        # No-op manager since Firestore watches are managed by event producers
-        return nullcontext()
 
     def filter(self, envelope: EventEnvelope) -> bool:
         """Check if the poll action needs to run.

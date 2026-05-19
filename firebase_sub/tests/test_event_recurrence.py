@@ -90,6 +90,34 @@ def test_materialized_next_occurrence_advances_when_week_is_complete():
     ) == date(2027, 5, 19)
 
 
+def test_materialized_next_occurrence_keeps_same_week_future_date():
+    recurrence: EventRecurrenceRule = {
+        "frequency": "yearly",
+        "month": 5,
+        "month_day": 20,
+        "start_date": "2026-05-01",
+    }
+    assert materialized_next_occurrence_date(
+        recurrence,
+        "2026-05-20",
+        today=date(2026, 5, 19),
+    ) == date(2026, 5, 20)
+
+
+def test_materialized_next_occurrence_keeps_today_date():
+    recurrence: EventRecurrenceRule = {
+        "frequency": "yearly",
+        "month": 5,
+        "month_day": 20,
+        "start_date": "2026-05-01",
+    }
+    assert materialized_next_occurrence_date(
+        recurrence,
+        "2026-05-20",
+        today=date(2026, 5, 20),
+    ) == date(2026, 5, 20)
+
+
 def test_materialized_next_occurrence_keeps_valid_future_value():
     recurrence: EventRecurrenceRule = {
         "frequency": "yearly",

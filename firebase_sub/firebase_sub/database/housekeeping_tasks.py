@@ -2,7 +2,7 @@ import logging
 import os
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -26,8 +26,6 @@ DIAGNOSTICS_DOC_ID = "diagnostics"
 PUSH_TEST_DOC_ID = "push_test"
 POLLS_COLLECTION = "polls"
 POLL_ACTION_AUDIT_COLLECTION = "poll_action_audit"
-POLL_ACTION_COMPLETE = "complete"
-POLL_ACTION_SYSTEM_ACTOR_UID = "system:event_recurrence"
 PUSH_ENDPOINTS_COLLECTION = "push_endpoints"
 PUSH_ENDPOINT_RETENTION_DAYS = int(os.getenv("PUSH_ENDPOINT_RETENTION_DAYS", "60"))
 PUSH_DIAGNOSTIC_RETENTION_DAYS = 1
@@ -144,34 +142,6 @@ def delete_stale_poll_action_audit_entries(
         audit_doc.reference.delete()
 
 
-def _write_poll_action_audit(
-    db: Client,
-    *,
-    poll_id: str,
-    action_type: str,
-    actor_uid: str,
-    poll_date: str,
-    selected_venue_id: str | None = None,
-    venue_name: str | None = None,
-) -> None:
-    now = datetime.now(UTC)
-    timestamp_micros = int(now.timestamp() * 1_000_000)
-    audit_doc_id = f"{poll_id}_{action_type}_{timestamp_micros}"
-    payload: dict[str, object] = {
-        "pollId": poll_id,
-        "actionType": action_type,
-        "actorUid": actor_uid,
-        "at": now,
-        "pollDate": poll_date,
-    }
-    if selected_venue_id:
-        payload["selectedVenueId"] = selected_venue_id
-    if venue_name:
-        payload["venueName"] = venue_name
-
-    db.collection(POLL_ACTION_AUDIT_COLLECTION).document(audit_doc_id).set(payload)
-
-
 def _resolve_event_occurrence_date(
     venue_doc: DocumentSnapshot,
     venue_data: Mapping[str, object],
@@ -206,11 +176,10 @@ def _create_event_poll_if_due(
     occurrence_date: date,
     today: date,
     creation_lead_days: int,
-) -> tuple[str, Any, DocumentSnapshot, dict[str, object]]:
+) -> None:
     poll_id = event_poll_id(venue_doc.id, occurrence_date)
     poll_ref = db.document(f"{POLLS_COLLECTION}/{poll_id}")
     poll_snapshot = poll_ref.get()
-    poll_data = cast(dict[str, object], poll_snapshot.to_dict() or {})
     event_name = cast(str, venue_data.get("name") or venue_doc.id)
 
     if (
@@ -239,54 +208,18 @@ def _create_event_poll_if_due(
             venue_doc.id,
             occurrence_date.isoformat(),
         )
-        poll_snapshot = poll_ref.get()
-        poll_data = cast(dict[str, object], poll_snapshot.to_dict() or {})
-
-    return poll_id, poll_ref, poll_snapshot, poll_data
 
 
-def _complete_event_poll_and_advance_occurrence(
-    db: Client,
+def _advance_event_occurrence_if_due(
     *,
     venue_doc: DocumentSnapshot,
     venue_data: Mapping[str, object],
     recurrence: EventRecurrenceRule | None,
     occurrence_date: date,
-    poll_id: str,
-    poll_ref: Any,
-    poll_snapshot: DocumentSnapshot,
-    poll_data: Mapping[str, object],
     today: date,
 ) -> None:
     if today < event_week_completion_start(occurrence_date):
         return
-
-    if poll_snapshot.exists and not bool(poll_data.get("completed")):
-        poll_ref.set(
-            {"completed": True, "selected": venue_doc.id},
-            merge=True,
-        )
-        event_name = cast(str | None, venue_data.get("name"))
-        try:
-            _write_poll_action_audit(
-                db,
-                poll_id=poll_id,
-                action_type=POLL_ACTION_COMPLETE,
-                actor_uid=POLL_ACTION_SYSTEM_ACTOR_UID,
-                poll_date=occurrence_date.isoformat(),
-                selected_venue_id=venue_doc.id,
-                venue_name=event_name,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to write poll action audit entry for recurring event poll %s",
-                poll_id,
-            )
-        logger.info(
-            "Completed event recurrence poll %s for venue %s",
-            poll_id,
-            venue_doc.id,
-        )
 
     current_iso_str, next_iso = materialized_next_occurrence_iso_state(
         recurrence,
@@ -328,7 +261,7 @@ def maintain_event_recurrence_polls(
     today: date | None = None,
     creation_lead_days: int = EVENT_POLL_CREATION_LEAD_DAYS,
 ) -> None:
-    """Materialize and complete event polls based on venue recurrence settings."""
+    """Materialize recurring event polls and update next occurrence metadata."""
     current_day = today or date.today()
     event_stream = db.collection(EVENTS_COLLECTION).stream()
 
@@ -357,7 +290,7 @@ def maintain_event_recurrence_polls(
                     )
                 continue
 
-            poll_id, poll_ref, poll_snapshot, poll_data = _create_event_poll_if_due(
+            _create_event_poll_if_due(
                 db,
                 venue_doc=venue_doc,
                 venue_data=venue_data,
@@ -366,16 +299,11 @@ def maintain_event_recurrence_polls(
                 creation_lead_days=creation_lead_days,
             )
 
-            _complete_event_poll_and_advance_occurrence(
-                db,
+            _advance_event_occurrence_if_due(
                 venue_doc=venue_doc,
                 venue_data=venue_data,
                 recurrence=recurrence,
                 occurrence_date=occurrence_date,
-                poll_id=poll_id,
-                poll_ref=poll_ref,
-                poll_snapshot=poll_snapshot,
-                poll_data=poll_data,
                 today=current_day,
             )
         except Exception:

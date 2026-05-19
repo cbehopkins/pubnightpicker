@@ -1,4 +1,3 @@
-from contextlib import AbstractContextManager, nullcontext
 from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -54,11 +53,6 @@ class CompletePollListenerPlugin(EventPlugin):
 
     def on_unregistered(self) -> None:
         return
-
-    def build_manager(self) -> AbstractContextManager[object]:
-        """Events are now produced externally by event producers."""
-        # No-op manager since Firestore watches are managed by event producers
-        return nullcontext()
 
     def set_pubs_list(self, pubs_list: PubsList) -> None:
         """Bind runtime pubs cache required by complete-poll handlers."""

@@ -9,6 +9,7 @@ from firebase_sub.plugins.protocols import (
     BasePluginException,
     HousekeepingPlugin,
     ListenerPlugin,
+    ManagedListenerPlugin,
     PlannedPluginException,
     UnexpectedPluginException,
 )
@@ -18,5 +19,6 @@ __all__ = [
     "PlannedPluginException",
     "UnexpectedPluginException",
     "ListenerPlugin",
+    "ManagedListenerPlugin",
     "HousekeepingPlugin",
 ]

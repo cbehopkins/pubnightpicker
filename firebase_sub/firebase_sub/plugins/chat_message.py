@@ -1,5 +1,3 @@
-from contextlib import AbstractContextManager
-
 from firebase_sub.database.handlers import DbHandler
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.protocols import EventPlugin
@@ -22,13 +20,6 @@ class ChatMessageListenerPlugin(EventPlugin):
 
     def is_enabled(self) -> bool:
         return True
-
-    def build_manager(self) -> AbstractContextManager[object]:
-        """Events are now produced externally by event producers."""
-        # No-op manager since Firestore watches are managed by event producers
-        from contextlib import nullcontext
-
-        return nullcontext()
 
     def filter(self, envelope: EventEnvelope) -> bool:
         return envelope.type == EventType.CHAT_MESSAGE and envelope.doc is not None

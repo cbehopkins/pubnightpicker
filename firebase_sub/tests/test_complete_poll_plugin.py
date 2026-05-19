@@ -162,22 +162,6 @@ def test_complete_poll_listener_initialization():
     assert plugin.is_enabled() is True
 
 
-def test_complete_poll_listener_build_manager_returns_nullcontext():
-    """Test that build_manager returns a no-op context for event producers."""
-    db_handler: CompletePollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
-    plugin = CompletePollListenerPlugin(
-        db_handler=db_handler,
-        action_manager=action_manager,
-        max_retries=3,
-        retry_delay_seconds=0.0,
-    )
-
-    manager = plugin.build_manager()
-    with manager:
-        pass  # Should not raise
-
-
 def test_complete_poll_filter_returns_true_when_action_pending():
     """Test that filter checks for pending actions using action_manager."""
     db_handler = _DbHandlerWithState(
