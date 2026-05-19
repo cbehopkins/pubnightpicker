@@ -3,12 +3,20 @@
 import logging
 import queue as _queue
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from typing import Protocol
 
 from firebase_sub.event import Event, EventEnvelope
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.event_registry import EventRegistry
 
 _log = logging.getLogger(__name__)
+
+
+class ScheduledRunnerProtocol(Protocol):
+    def run_due(self, *, now: datetime) -> None: ...
+
+    def seconds_until_next(self, *, now: datetime) -> float | None: ...
 
 
 class QueueRunner:
@@ -28,18 +36,30 @@ class QueueRunner:
         healthcheck_interval_seconds: float,
         healthchecks: Sequence[Callable[[], str | None]],
         registry: EventRegistry,
+        scheduled_runner: ScheduledRunnerProtocol | None = None,
     ) -> None:
         self._queue = event_queue
         self._healthcheck_interval_seconds = healthcheck_interval_seconds
         self._healthchecks = list(healthchecks)
         self._registry = registry
+        self._scheduled_runner = scheduled_runner
 
     def run_forever(self) -> None:
         """Process events until a healthcheck fails or an unhandled error occurs."""
         while True:
+            timeout_seconds = self._healthcheck_interval_seconds
+            if self._scheduled_runner is not None:
+                now = datetime.now(UTC)
+                self._scheduled_runner.run_due(now=now)
+                next_due_seconds = self._scheduled_runner.seconds_until_next(now=now)
+                if next_due_seconds is not None:
+                    timeout_seconds = min(timeout_seconds, next_due_seconds)
+
             try:
-                event = self._queue.get(timeout=self._healthcheck_interval_seconds)
+                event = self._queue.get(timeout=timeout_seconds)
             except _queue.Empty:
+                if self._scheduled_runner is not None:
+                    self._scheduled_runner.run_due(now=datetime.now(UTC))
                 for check in self._healthchecks:
                     if msg := check():
                         raise SystemExit(msg)
@@ -47,6 +67,8 @@ class QueueRunner:
 
             envelope = EventEnvelope(type=event.type, doc=event.doc)
             self._registry.dispatch(envelope)
+            if self._scheduled_runner is not None:
+                self._scheduled_runner.run_due(now=datetime.now(UTC))
             _log_event(event)
 
 

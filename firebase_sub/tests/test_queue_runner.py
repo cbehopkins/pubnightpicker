@@ -16,18 +16,36 @@ class _FakeRegistry:
         return 1
 
 
+class _FakeScheduledRunner:
+    def __init__(self, *, next_due_seconds: float | None = None) -> None:
+        self.next_due_seconds = next_due_seconds
+        self.run_due_calls = 0
+        self.seconds_until_next_calls = 0
+
+    def run_due(self, *, now) -> None:
+        del now
+        self.run_due_calls += 1
+
+    def seconds_until_next(self, *, now) -> float | None:
+        del now
+        self.seconds_until_next_calls += 1
+        return self.next_due_seconds
+
+
 def _make_runner(
     *,
     event_queue: JobQueue,
     registry: _FakeRegistry | None = None,
     healthchecks=None,
     healthcheck_interval_seconds: float = 0.05,
+    scheduled_runner: _FakeScheduledRunner | None = None,
 ) -> QueueRunner:
     return QueueRunner(
         event_queue=event_queue,
         healthcheck_interval_seconds=healthcheck_interval_seconds,
         healthchecks=healthchecks or [],
         registry=registry or _FakeRegistry(),
+        scheduled_runner=scheduled_runner,
     )
 
 
@@ -146,3 +164,42 @@ def test_first_failing_healthcheck_exits_immediately():
     assert (
         not second_called
     ), "Second healthcheck should not be called after first fails"
+
+
+def test_scheduled_runner_invoked_during_idle_cycle():
+    q: JobQueue[Event] = JobQueue()
+    scheduled = _FakeScheduledRunner(next_due_seconds=0.01)
+    runner = _make_runner(
+        event_queue=q,
+        healthchecks=[lambda: "stop"],
+        healthcheck_interval_seconds=1.0,
+        scheduled_runner=scheduled,
+    )
+
+    try:
+        runner.run_forever()
+    except SystemExit:
+        pass
+
+    assert scheduled.seconds_until_next_calls >= 1
+    assert scheduled.run_due_calls >= 2
+
+
+def test_scheduled_runner_invoked_after_event_dispatch():
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+    scheduled = _FakeScheduledRunner(next_due_seconds=None)
+    runner = _make_runner(
+        event_queue=q,
+        healthchecks=[lambda: "stop"],
+        healthcheck_interval_seconds=0.01,
+        scheduled_runner=scheduled,
+    )
+
+    try:
+        runner.run_forever()
+    except SystemExit:
+        pass
+
+    # One call before blocking plus one call after event dispatch.
+    assert scheduled.run_due_calls >= 2

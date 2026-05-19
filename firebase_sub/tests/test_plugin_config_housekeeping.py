@@ -1,6 +1,9 @@
 from unittest.mock import MagicMock
 
-from firebase_sub.plugins.plugin_config import build_housekeeping_plugins
+from firebase_sub.plugins.plugin_config import (
+    build_housekeeping_plugins,
+    build_scheduled_housekeeping_plugins,
+)
 
 
 def test_build_housekeeping_plugins_uses_explicit_static_registration() -> None:
@@ -15,3 +18,9 @@ def test_build_housekeeping_plugins_uses_explicit_static_registration() -> None:
         "delete_stale_poll_action_audit_entries",
         "maintain_event_recurrence_polls",
     ]
+
+
+def test_build_scheduled_housekeeping_plugins_defaults_to_empty() -> None:
+    plugins = build_scheduled_housekeeping_plugins(db=MagicMock())
+
+    assert plugins == []

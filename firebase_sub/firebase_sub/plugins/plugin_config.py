@@ -146,6 +146,19 @@ def build_housekeeping_plugins(*, db: Client) -> Sequence[HousekeepingPlugin]:
     ]
 
 
+def build_scheduled_housekeeping_plugins(
+    *,
+    db: Client,
+) -> Sequence[HousekeepingPlugin]:
+    """Build explicit in-code scheduled housekeeping registrations.
+
+    This list is intentionally empty until tasks are migrated from tick-based
+    housekeeping to scheduler-driven execution.
+    """
+    del db
+    return []
+
+
 def build_event_producer(
     *,
     db_handler: DbHandler,

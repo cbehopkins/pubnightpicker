@@ -16,12 +16,14 @@ from firebase_sub.event import Event
 from firebase_sub.plugins.plugin_config import (
     build_event_producer,
     build_housekeeping_plugins,
+    build_scheduled_housekeeping_plugins,
     build_listener_plugins,
     build_event_registry,
 )
 from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.protocols import EventPlugin, ListenerPlugin
 from firebase_sub.plugins.runtime import PluginRuntime
+from firebase_sub.plugins.scheduled_housekeeping import ScheduledHousekeepingRunner
 from firebase_sub.runtime.action_policies import (
     poll_complete_actions,
     poll_open_actions,
@@ -104,6 +106,12 @@ def sub_events(
         notification_push_test=notification_push_test,
     )
     housekeeping_plugins = build_housekeeping_plugins(db=db_handler.db)
+    scheduled_housekeeping_plugins = build_scheduled_housekeeping_plugins(
+        db=db_handler.db
+    )
+    scheduled_runner = ScheduledHousekeepingRunner(
+        list(scheduled_housekeeping_plugins)
+    )
 
     event_plugins: list[EventPlugin] = [
         plugin for plugin in listener_plugins if _is_event_plugin(plugin)
@@ -151,6 +159,7 @@ def sub_events(
             healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
             healthchecks=healthchecks,
             registry=event_registry,
+            scheduled_runner=scheduled_runner,
         )
         _log.info("sub_events runtime started")
         runner.run_forever()

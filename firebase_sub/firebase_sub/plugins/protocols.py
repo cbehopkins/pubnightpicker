@@ -29,6 +29,7 @@ Examples:
 
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -53,6 +54,7 @@ __all__ = [
     "ManagedListenerPlugin",
     "EventPlugin",
     "HousekeepingPlugin",
+    "ScheduledHousekeepingPlugin",
     "PollStatusQueryDbHandler",
     "NewPollDbHandler",
     "CompletePollDbHandler",
@@ -273,6 +275,28 @@ class HousekeepingPlugin(Plugin):
         terminate, but the exception type indicates whether this was an
         expected or unexpected error.
         """
+        ...
+
+
+@runtime_checkable
+class ScheduledHousekeepingPlugin(Protocol):
+    """Optional scheduling capability for housekeeping plugins.
+
+    Plugins that implement this protocol **must also implement HousekeepingPlugin**
+    (i.e., provide a ``run()`` method). The scheduler will query ``run_at()`` to
+    determine when to invoke ``run()``.
+
+    Returning ``None`` from ``run_at()`` means the plugin is currently
+    unscheduled/disabled.
+
+    Contract:
+    - Returned datetimes must be timezone-aware UTC datetimes.
+    - The scheduler will query ``run_at`` during registration and after each run.
+    - Due-in-past times are executed immediately once, then rescheduled.
+    """
+
+    def run_at(self, now: datetime) -> datetime | None:
+        """Return the next UTC timestamp when this plugin should run."""
         ...
 
 

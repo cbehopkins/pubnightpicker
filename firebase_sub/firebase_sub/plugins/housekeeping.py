@@ -6,6 +6,7 @@ and provides a runner that enforces the plugin exception contract.
 
 import logging
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 
 from firebase_sub.database.housekeeping import HousekeepingTask
 from firebase_sub.plugins.protocols import (
@@ -52,6 +53,44 @@ class HousekeepingCallablePlugin(HousekeepingPlugin):
 
     def name(self) -> str:
         return self._name
+
+
+class DailyUtcScheduledCallablePlugin(HousekeepingCallablePlugin):
+    """Housekeeping callback scheduled at a fixed daily UTC time."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        callback: Callable[[], None],
+        hour: int,
+        minute: int = 0,
+        enabled: bool = True,
+    ) -> None:
+        if not 0 <= hour <= 23:
+            raise ValueError("hour must be in range [0, 23]")
+        if not 0 <= minute <= 59:
+            raise ValueError("minute must be in range [0, 59]")
+        super().__init__(name=name, callback=callback, enabled=enabled)
+        self._hour = hour
+        self._minute = minute
+
+    def run_at(self, now: datetime) -> datetime | None:
+        if not self.is_enabled():
+            return None
+        if now.tzinfo is None:
+            raise ValueError("now must be timezone-aware")
+
+        current_time = now.astimezone(UTC)
+        today_target = current_time.replace(
+            hour=self._hour,
+            minute=self._minute,
+            second=0,
+            microsecond=0,
+        )
+        if current_time < today_target:
+            return today_target
+        return today_target + timedelta(days=1)
 
 
 class HousekeepingPluginRunner:
