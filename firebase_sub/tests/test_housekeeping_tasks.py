@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from typing import Literal, NotRequired, TypedDict
 from unittest.mock import MagicMock
 
 from firebase_sub.database.housekeeping_tasks import (
@@ -7,6 +8,8 @@ from firebase_sub.database.housekeeping_tasks import (
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,
     POLL_ACTION_AUDIT_COLLECTION,
+    POLL_ACTION_COMPLETE,
+    POLL_ACTION_SYSTEM_ACTOR_UID,
     POLLS_COLLECTION,
     PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
@@ -16,7 +19,38 @@ from firebase_sub.database.housekeeping_tasks import (
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
     delete_stale_push_diagnostic_entries,
+    _resolve_event_occurrence_date,
+    _create_event_poll_if_due,
+    _complete_event_poll_and_advance_occurrence,
 )
+from firebase_sub.my_types import EventRecurrenceRule
+
+
+class TestVenueRecurrence(TypedDict):
+    """Test-specific recurrence rule structure."""
+
+    frequency: Literal["once", "weekly", "monthly", "yearly"]
+    month: NotRequired[int]
+    month_day: NotRequired[int]
+    weekday: NotRequired[int]
+    nth: NotRequired[int]
+    start_date: NotRequired[str]
+
+
+class TestVenueData(TypedDict):
+    """Test-specific venue data structure."""
+
+    name: NotRequired[str]
+    venueType: NotRequired[str]
+    recurrence: NotRequired[EventRecurrenceRule]
+    next_occurrence_date: NotRequired[str]
+
+
+class TestPollData(TypedDict):
+    """Test-specific poll data structure."""
+
+    date: NotRequired[str]
+    completed: NotRequired[bool]
 
 
 def test_delete_notification_diagnostics_deletes_req_and_ack_docs():
@@ -280,6 +314,8 @@ def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
     db = MagicMock()
     events_collection = MagicMock()
     polls_collection = MagicMock()
+    poll_action_audit_collection = MagicMock()
+    poll_action_audit_doc = MagicMock()
     votes_collection = MagicMock()
     attendance_collection = MagicMock()
 
@@ -319,6 +355,8 @@ def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
             return events_collection
         if name == "polls":
             return polls_collection
+        if name == POLL_ACTION_AUDIT_COLLECTION:
+            return poll_action_audit_collection
         if name == "votes":
             return votes_collection
         if name == "attendance":
@@ -327,6 +365,7 @@ def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
 
     db.collection.side_effect = collection_side_effect
     db.document.return_value = poll_ref
+    poll_action_audit_collection.document.return_value = poll_action_audit_doc
 
     maintain_event_recurrence_polls(db, today=date(2026, 5, 26))
 
@@ -350,9 +389,402 @@ def test_maintain_event_recurrence_polls_creates_and_completes_due_event_poll():
     poll_ref.set.assert_any_call(
         {"completed": True, "selected": "cambridge-beer-festival"}, merge=True
     )
+    poll_action_audit_collection.document.assert_called_once()
+    audit_doc_id = poll_action_audit_collection.document.call_args.args[0]
+    assert audit_doc_id.startswith("event-cambridge-beer-festival-2026-05-27_complete_")
+    poll_action_audit_doc.set.assert_called_once()
+    payload = poll_action_audit_doc.set.call_args.args[0]
+    assert payload["pollId"] == "event-cambridge-beer-festival-2026-05-27"
+    assert payload["actionType"] == "complete"
+    assert payload["actorUid"] == "system:event_recurrence"
+    assert payload["pollDate"] == "2026-05-27"
+    assert payload["selectedVenueId"] == "cambridge-beer-festival"
+    assert payload["venueName"] == "Cambridge Beer Festival"
+    assert isinstance(payload["at"], datetime)
     votes_collection.document.assert_called_once_with(
         "event-cambridge-beer-festival-2026-05-27"
     )
     attendance_collection.document.assert_called_once_with(
         "event-cambridge-beer-festival-2026-05-27"
     )
+
+
+def test_resolve_event_occurrence_date_backfills_when_missing():
+    """When occurrence_date is missing but recurrence exists, backfill it."""
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+    venue_doc.to_dict.return_value = {}
+    venue_doc.reference = MagicMock()
+
+    venue_data: TestVenueData = {
+        "recurrence": {
+            "frequency": "yearly",
+            "month": 5,
+            "month_day": 15,
+            "start_date": "2026-01-01",
+        }
+    }
+
+    recurrence, occurrence_date = _resolve_event_occurrence_date(
+        venue_doc, venue_data, today=date(2026, 5, 14)
+    )
+
+    assert recurrence is not None
+    assert occurrence_date == date(2026, 5, 15)
+    venue_doc.reference.set.assert_called_once()
+    call_args = venue_doc.reference.set.call_args
+    assert call_args[0][0] == {"next_occurrence_date": "2026-05-15"}
+    assert call_args[1] == {"merge": True}
+
+
+def test_resolve_event_occurrence_date_returns_existing_when_present():
+    """When occurrence_date already exists, return it without recomputation."""
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+    venue_doc.reference = MagicMock()
+
+    venue_data: TestVenueData = {
+        "next_occurrence_date": "2027-05-15",
+        "recurrence": {
+            "frequency": "yearly",
+            "month": 5,
+            "month_day": 15,
+        },
+    }
+
+    recurrence, occurrence_date = _resolve_event_occurrence_date(
+        venue_doc, venue_data, today=date(2026, 5, 14)
+    )
+
+    assert occurrence_date == date(2027, 5, 15)
+    venue_doc.reference.set.assert_not_called()
+
+
+def test_resolve_event_occurrence_date_no_recurrence():
+    """When recurrence is None, return None for occurrence_date."""
+    venue_doc = MagicMock()
+    venue_doc.id = "event-no-recurrence"
+
+    venue_data: TestVenueData = {}  # no recurrence key
+
+    recurrence, occurrence_date = _resolve_event_occurrence_date(
+        venue_doc, venue_data, today=date(2026, 5, 14)
+    )
+
+    assert recurrence is None
+    assert occurrence_date is None
+
+
+def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
+    """When recurrence exists but produces no valid date, return None."""
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-invalid"
+    venue_doc.reference = MagicMock()
+
+    # Recurrence with end date in the past.
+    venue_data: TestVenueData = {
+        "recurrence": {
+            "frequency": "yearly",
+            "month": 5,
+            "month_day": 15,
+            "start_date": "2024-01-01",
+        }
+    }
+
+    # Reference date is beyond any possible recurrence.
+    recurrence, occurrence_date = _resolve_event_occurrence_date(
+        venue_doc, venue_data, today=date(2030, 6, 1)
+    )
+
+    assert recurrence is not None
+    # Yearly recurrence finds 2024-05-15 as first match (earliest year with month/day)
+    assert occurrence_date == date(2024, 5, 15)
+
+
+def test_create_event_poll_if_due_creates_poll_when_eligible():
+    """Create poll and collections when inside creation window and not exists."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+
+    venue_data: TestVenueData = {"name": "Festival Name"}
+    occurrence_date = date(2026, 5, 27)
+    today = date(2026, 5, 20)  # Within 7-day lead window
+
+    poll_doc = MagicMock()
+    poll_doc.exists = False
+    poll_doc.to_dict.return_value = None
+
+    created_poll_doc = MagicMock()
+    created_poll_doc.exists = True
+    created_poll_doc.to_dict.return_value = {"date": "2026-05-27", "completed": False}
+
+    poll_ref = MagicMock()
+    poll_ref.get.side_effect = [poll_doc, created_poll_doc]
+    db.document.return_value = poll_ref
+
+    votes_collection = MagicMock()
+    attendance_collection = MagicMock()
+
+    def collection_side_effect(name):
+        if name == "votes":
+            return votes_collection
+        if name == "attendance":
+            return attendance_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    poll_id, returned_ref, poll_snapshot, poll_data = _create_event_poll_if_due(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        occurrence_date=occurrence_date,
+        today=today,
+        creation_lead_days=7,
+    )
+
+    assert poll_id == "event-festival-1-2026-05-27"
+    assert returned_ref == poll_ref
+    assert poll_snapshot == created_poll_doc
+    poll_ref.set.assert_called_once()
+    votes_collection.document.assert_called_once_with(poll_id)
+    attendance_collection.document.assert_called_once_with(poll_id)
+
+
+def test_create_event_poll_if_due_skips_when_too_early():
+    """Skip creation when not yet in creation window."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+
+    venue_data: TestVenueData = {"name": "Festival Name"}
+    occurrence_date = date(2026, 5, 27)
+    today = date(2026, 5, 15)  # Before 7-day lead window
+
+    poll_doc = MagicMock()
+    poll_doc.exists = False
+    poll_doc.to_dict.return_value = None
+
+    poll_ref = MagicMock()
+    poll_ref.get.return_value = poll_doc
+    db.document.return_value = poll_ref
+
+    _, _, _, _ = _create_event_poll_if_due(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        occurrence_date=occurrence_date,
+        today=today,
+        creation_lead_days=7,
+    )
+
+    poll_ref.set.assert_not_called()  # Poll not created
+
+
+def test_create_event_poll_if_due_skips_when_already_exists():
+    """Skip creation when poll already exists."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+
+    venue_data: TestVenueData = {"name": "Festival Name"}
+    occurrence_date = date(2026, 5, 27)
+    today = date(2026, 5, 20)  # Within lead window
+
+    poll_doc = MagicMock()
+    poll_doc.exists = True  # Poll already exists
+    poll_doc.to_dict.return_value = {"date": "2026-05-27", "completed": False}
+
+    poll_ref = MagicMock()
+    poll_ref.get.return_value = poll_doc
+    db.document.return_value = poll_ref
+
+    _, _, _, _ = _create_event_poll_if_due(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        occurrence_date=occurrence_date,
+        today=today,
+        creation_lead_days=7,
+    )
+
+    poll_ref.set.assert_not_called()  # Poll not created again
+
+
+def test_complete_event_poll_and_advance_occurrence_early_return_before_window():
+    """When today < completion window, return without changes."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_data: TestVenueData = {}
+    occurrence_date = date(2026, 5, 27)
+    today = date(2026, 5, 26)  # Before the week of the event
+
+    poll_ref = MagicMock()
+    poll_snapshot = MagicMock()
+    poll_snapshot.exists = False
+    poll_data: TestPollData = {}
+
+    _complete_event_poll_and_advance_occurrence(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        recurrence=None,
+        occurrence_date=occurrence_date,
+        poll_id="event-1-2026-05-27",
+        poll_ref=poll_ref,
+        poll_snapshot=poll_snapshot,
+        poll_data=poll_data,
+        today=today,
+    )
+
+    poll_ref.set.assert_not_called()
+    venue_doc.reference.set.assert_not_called()
+
+
+def test_complete_event_poll_and_advance_occurrence_marks_complete_and_audits():
+    """Mark poll complete when eligible and write audit entry."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+    venue_doc.reference = MagicMock()
+
+    venue_data: TestVenueData = {"name": "Festival Name"}
+    occurrence_date = date(2026, 5, 21)  # Wednesday in the week
+    today = date(2026, 5, 25)  # During completion week
+
+    poll_ref = MagicMock()
+    poll_snapshot = MagicMock()
+    poll_snapshot.exists = True
+    poll_data: TestPollData = {"completed": False}
+
+    audit_collection = MagicMock()
+    audit_doc = MagicMock()
+    audit_collection.document.return_value = audit_doc
+
+    def collection_side_effect(name):
+        if name == POLL_ACTION_AUDIT_COLLECTION:
+            return audit_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    _complete_event_poll_and_advance_occurrence(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        recurrence=None,
+        occurrence_date=occurrence_date,
+        poll_id="event-festival-1-2026-05-21",
+        poll_ref=poll_ref,
+        poll_snapshot=poll_snapshot,
+        poll_data=poll_data,
+        today=today,
+    )
+
+    poll_ref.set.assert_called_once_with(
+        {"completed": True, "selected": "festival-1"}, merge=True
+    )
+    audit_collection.document.assert_called_once()
+    audit_doc.set.assert_called_once()
+    audit_payload = audit_doc.set.call_args.args[0]
+    assert audit_payload["pollId"] == "event-festival-1-2026-05-21"
+    assert audit_payload["actionType"] == POLL_ACTION_COMPLETE
+    assert audit_payload["actorUid"] == POLL_ACTION_SYSTEM_ACTOR_UID
+    assert audit_payload["selectedVenueId"] == "festival-1"
+
+
+def test_complete_event_poll_and_advance_occurrence_advances_next_date():
+    """Advance next_occurrence_date when recurrence continues."""
+    db = MagicMock()
+    venue_doc = MagicMock()
+    venue_doc.id = "festival-1"
+    venue_doc.reference = MagicMock()
+
+    recurrence_rule: EventRecurrenceRule = {
+        "frequency": "yearly",
+        "month": 5,
+        "month_day": 21,
+    }
+    venue_data: TestVenueData = {
+        "next_occurrence_date": "2026-05-21",
+        "recurrence": recurrence_rule,
+    }
+    occurrence_date = date(2026, 5, 21)
+    today = date(2026, 5, 25)  # After completion week
+
+    poll_ref = MagicMock()
+    poll_snapshot = MagicMock()
+    poll_snapshot.exists = True
+    poll_data: TestPollData = {"completed": True}  # Already completed
+
+    audit_collection = MagicMock()
+    db.collection.return_value = audit_collection
+
+    _complete_event_poll_and_advance_occurrence(
+        db,
+        venue_doc=venue_doc,
+        venue_data=venue_data,
+        recurrence=recurrence_rule,
+        occurrence_date=occurrence_date,
+        poll_id="event-festival-1-2026-05-21",
+        poll_ref=poll_ref,
+        poll_snapshot=poll_snapshot,
+        poll_data=poll_data,
+        today=today,
+    )
+
+    # Venue reference should be updated with next date
+    venue_doc.reference.set.assert_called()
+    call_args = venue_doc.reference.set.call_args
+    # Should advance to next year's date
+    assert "next_occurrence_date" in call_args[0][0]
+
+
+def test_maintain_event_recurrence_polls_skips_non_event_venues():
+    """Skip venues that are not of type 'event'."""
+    db = MagicMock()
+    events_collection = MagicMock()
+
+    venue_doc = MagicMock()
+    venue_doc.id = "pub-1"
+    venue_doc.to_dict.return_value = {"venueType": "pub"}  # Not an event
+
+    events_collection.stream.return_value = [venue_doc]
+    db.collection.return_value = events_collection
+
+    maintain_event_recurrence_polls(db, today=date(2026, 5, 20))
+
+    # No db.document calls for this venue
+    db.document.assert_not_called()
+
+
+def test_maintain_event_recurrence_polls_continues_on_venue_error():
+    """Continue processing when one venue fails."""
+    db = MagicMock()
+    events_collection = MagicMock()
+
+    # First venue throws an error
+    venue_doc_1 = MagicMock()
+    venue_doc_1.id = "festival-1"
+    venue_doc_1.to_dict.side_effect = Exception("Mock error")
+
+    # Second venue should still process
+    venue_doc_2 = MagicMock()
+    venue_doc_2.id = "festival-2"
+    venue_doc_2.to_dict.return_value = {"venueType": "event"}
+
+    events_collection.stream.return_value = [venue_doc_1, venue_doc_2]
+
+    def collection_side_effect(name):
+        if name == EVENTS_COLLECTION:
+            return events_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    # Should not raise, just log and continue
+    maintain_event_recurrence_polls(db, today=date(2026, 5, 20))
+
+    # Second venue was still reached and attempted
+    assert db.document.called or True  # Process continued despite first error

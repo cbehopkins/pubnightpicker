@@ -33,6 +33,7 @@ from firebase_sub.database.repositories import (
     FirestoreUserRepository,
 )
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
+from firebase_sub.database.pubs_list import PubsList
 
 _log = logging.getLogger(__name__)
 
@@ -103,7 +104,9 @@ class DbHandler:
             "openPollEmailEnabled"
         )
 
-    def query_active_push_endpoints(self, preference_field: str):
+    def query_active_push_endpoints(
+        self, preference_field: str
+    ) -> Generator[DocumentSnapshot, None, None]:
         """Query active web push endpoints across users with web push enabled.
 
         Filters by both the webPushEnabled master switch and the per-type
@@ -150,7 +153,9 @@ class DbHandler:
             if user_preference_cache[user_id]:
                 yield endpoint_doc
 
-    def query_active_push_endpoints_for_user(self, user_id: str):
+    def query_active_push_endpoints_for_user(
+        self, user_id: str
+    ) -> Generator[DocumentSnapshot, None, None]:
         """Query active web push endpoints for one user when web push is enabled."""
         if not user_id:
             return
@@ -346,6 +351,22 @@ class DbHandler:
             dummy_run=dummy_run,
         )
 
+    def handle_chat_message(
+        self,
+        message_doc: DocumentSnapshot | None,
+        pubs_list: PubsList,
+        *,
+        dummy_run: bool = False,
+    ) -> None:
+        del pubs_list
+        if message_doc is None:
+            return
+        self.chat_message_push_handler(
+            message_doc.id,
+            message_doc,
+            dummy_run=dummy_run,
+        )
+
     @property
     def query_messages(self) -> Query:
         """Return a query for the messages collection (used for chat push listener)."""
@@ -385,7 +406,7 @@ class DbHandler:
             action_document.set(new_action_dict, merge=True)
 
     def complete_poll_event_handler(
-        self, pubs_list, am: ActionMan, poll_id: PollId
+        self, pubs_list: "PubsList", am: ActionMan, poll_id: PollId
     ) -> None:
         poll_dict_raw = self.poll_repo.get_poll(poll_id)
         action_document = self.db.collection("comp_actions").document(poll_id)
@@ -435,7 +456,7 @@ class DbHandler:
         return self.query_polls_by_status(completed=False)
 
     @property
-    def query_all_polls(self) -> Query:
+    def query_all_polls(self) -> CollectionReference:
         """Return a query for all polls (no filters)."""
         return self.poll_repo.get_all_polls()
 
@@ -481,12 +502,12 @@ class DbHandler:
             collection.on_snapshot(bound_callback)
 
 
-def patch_watch_close(callback):
+def patch_watch_close(callback: Callable[[str | None], None]) -> None:
     orig_close = watch.Watch.close
 
-    def new_close(self, reason=None):
+    def new_close(self: watch.Watch, reason: str | None = None) -> None:
         callback(reason)
         # Call the original close
-        return orig_close(self, reason)
+        orig_close(self, reason)
 
-    watch.Watch.close = new_close
+    setattr(watch.Watch, "close", new_close)

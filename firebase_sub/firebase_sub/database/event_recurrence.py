@@ -172,6 +172,65 @@ def next_occurrence(
     raise ValueError(f"Unknown recurrence frequency: {frequency!r}")
 
 
+def _matches_recurrence(recurrence: EventRecurrenceRule, candidate: date) -> bool:
+    return next_occurrence(recurrence, candidate) == candidate
+
+
+def _materialized_next_occurrence_from_current_date(
+    recurrence: EventRecurrenceRule | None,
+    current_date: date | None,
+    *,
+    today: date,
+) -> date | None:
+    if recurrence is None:
+        return None
+
+    if current_date is not None and _matches_recurrence(recurrence, current_date):
+        if today >= event_week_completion_start(current_date):
+            return next_occurrence(recurrence, current_date + timedelta(days=1))
+        if current_date >= today:
+            return current_date
+
+    return next_occurrence(recurrence, today)
+
+
+def materialized_next_occurrence_date(
+    recurrence: EventRecurrenceRule | None,
+    current_value: object,
+    *,
+    today: date,
+) -> date | None:
+    """Resolve the canonical next occurrence date for storage.
+
+    This keeps valid future values stable while still allowing fast updates after
+    recurrence edits and deterministic roll-forward once a week is completed.
+    """
+    current_date = parse_iso_date(current_value)
+    return _materialized_next_occurrence_from_current_date(
+        recurrence,
+        current_date,
+        today=today,
+    )
+
+
+def materialized_next_occurrence_iso_state(
+    recurrence: EventRecurrenceRule | None,
+    current_value: object,
+    *,
+    today: date,
+) -> tuple[str | None, str | None]:
+    """Return normalized current/target ISO dates for next_occurrence_date."""
+    current_date = parse_iso_date(current_value)
+    next_date = _materialized_next_occurrence_from_current_date(
+        recurrence,
+        current_date,
+        today=today,
+    )
+    current_iso = current_date.isoformat() if current_date is not None else None
+    next_iso = next_date.isoformat() if next_date is not None else None
+    return current_iso, next_iso
+
+
 def creation_window_start(occurrence_date: date, lead_days: int = 7) -> date:
     if lead_days < 0:
         raise ValueError("lead_days must be >= 0")

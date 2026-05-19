@@ -129,7 +129,6 @@ def _await_chat_action(
 @pytest.fixture(scope="module")
 def notifier_worker() -> Generator[subprocess.Popen, None, None]:
     env = os.environ.copy()
-    env.setdefault("ENABLE_WEB_PUSH", "true")
     env.setdefault("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8180")
     env.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9199")
     env.setdefault("GOOGLE_CLOUD_PROJECT", "demo-firebase-sub-integration")

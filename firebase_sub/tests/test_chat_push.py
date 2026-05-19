@@ -207,6 +207,29 @@ def test_preference_defaults_poll_opens_is_on():
     assert PUSH_PREFERENCE_DEFAULTS["pollOpens"] is True
 
 
+def test_handle_chat_message_delegates_to_chat_message_push_handler():
+    handler = DbHandler.__new__(DbHandler)
+    handler.chat_message_push_handler = MagicMock()
+    message_doc = _message_doc("msg-handle")
+
+    handler.handle_chat_message(message_doc, MagicMock(), dummy_run=True)
+
+    handler.chat_message_push_handler.assert_called_once_with(
+        "msg-handle",
+        message_doc,
+        dummy_run=True,
+    )
+
+
+def test_handle_chat_message_ignores_none_document():
+    handler = DbHandler.__new__(DbHandler)
+    handler.chat_message_push_handler = MagicMock()
+
+    handler.handle_chat_message(None, MagicMock(), dummy_run=True)
+
+    handler.chat_message_push_handler.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # send_push: payload builders
 # ---------------------------------------------------------------------------

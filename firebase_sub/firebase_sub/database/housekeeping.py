@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from croniter import croniter
+from croniter import croniter  # type: ignore[import-untyped]
 
 _log = logging.getLogger(__name__)
 
@@ -76,7 +76,12 @@ class PeriodicTrigger:
         self._thread.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
@@ -112,7 +117,12 @@ class CroniterTrigger:
         self._thread.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=1.0)

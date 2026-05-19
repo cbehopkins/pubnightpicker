@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 
@@ -21,6 +21,29 @@ def test_request_create_with_one_key_mirrors_to_ack():
     mirror.mirror_request_document(_snapshot("diagnostics", {"manual": 123}))
 
     ack_document.set.assert_called_once_with({"manual": 123}, merge=True)
+
+
+def test_handle_delegates_to_mirror_request_document() -> None:
+    db = MagicMock()
+    mirror = NotificationAckMirrorHandler(db)
+    request_document = MagicMock()
+    pubs_list = MagicMock()
+
+    with patch.object(mirror, "mirror_request_document") as mock_mirror_request_document:
+        mirror.handle(request_document, pubs_list)
+
+    mock_mirror_request_document.assert_called_once_with(request_document)
+
+
+def test_handle_passes_through_none_document() -> None:
+    db = MagicMock()
+    mirror = NotificationAckMirrorHandler(db)
+    pubs_list = MagicMock()
+
+    with patch.object(mirror, "mirror_request_document") as mock_mirror_request_document:
+        mirror.handle(None, pubs_list)
+
+    mock_mirror_request_document.assert_called_once_with(None)
 
 
 def test_request_update_adds_second_key_ack_keeps_first_and_adds_second():

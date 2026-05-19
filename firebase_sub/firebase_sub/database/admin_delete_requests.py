@@ -6,6 +6,9 @@ from typing import Any, cast
 from firebase_admin import auth as firebase_auth
 from google.cloud.firestore_v1 import Increment, SERVER_TIMESTAMP
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.client import Client
+
+from firebase_sub.database.pubs_list import PubsList
 
 _log = logging.getLogger(__name__)
 
@@ -25,7 +28,7 @@ _VALID_TRANSITIONS = {
 class AdminDeleteRequestHandler:
     def __init__(
         self,
-        db,
+        db: Client,
         *,
         enabled: bool,
         dry_run: bool = True,
@@ -44,7 +47,7 @@ class AdminDeleteRequestHandler:
         )
         return bool(snap.exists)
 
-    def _request_ref(self, request_id: str):
+    def _request_ref(self, request_id: str) -> Any:
         return self.db.collection("admin_delete_requests").document(request_id)
 
     def _check_kill_switch(self) -> bool:
@@ -156,6 +159,14 @@ class AdminDeleteRequestHandler:
             **extra,
         }
         self._request_ref(request_id).set(update, merge=True)
+
+    def handle(
+        self,
+        document: DocumentSnapshot | None,
+        pubs_list: PubsList,
+    ) -> None:
+        del pubs_list
+        self.handle_request_document(document)
 
     def handle_request_document(self, document: DocumentSnapshot | None) -> None:
         if document is None:

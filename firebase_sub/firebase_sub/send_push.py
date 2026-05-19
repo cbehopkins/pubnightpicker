@@ -106,10 +106,6 @@ PushPayload = (
 )
 
 
-def web_push_enabled() -> bool:
-    return os.getenv("ENABLE_WEB_PUSH", "false").lower() == "true"
-
-
 def _base_url() -> str:
     return os.getenv("PUBNIGHTPICKER_WEB_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 

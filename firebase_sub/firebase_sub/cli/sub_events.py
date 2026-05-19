@@ -1,74 +1,34 @@
 import contextlib
 import logging
 import os
-import queue
-from datetime import date, timedelta
-from functools import partial
 from pathlib import Path
 from typing import cast
 
 import click
-import firebase_admin
-from firebase_admin import credentials
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.action_track import ActionCallbackProtocol, ActionMan, ActionType
 from firebase_sub.common.logging import configure_logging, log_level_to_int
-from firebase_sub.common.retry import retry
-from firebase_sub.database.handlers import DbHandler, RetryablePollDataNotReadyError
 from firebase_sub.database.housekeeping import (
     CroniterTrigger,
-    HousekeepingRunner,
-    IntervalSchedule,
     PeriodicTrigger,
 )
-from firebase_sub.database.housekeeping_tasks import build_housekeeping_tasks
 from firebase_sub.database.canary import CanaryWatcher
-from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
-from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
-from firebase_sub.database.admin_delete_requests import AdminDeleteRequestHandler
-from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
-from firebase_sub.push_contract import (
-    PUSH_PREFERENCE_FIELD,
-    PUSH_EVENT_POLL_OPENED,
-    PUSH_EVENT_POLL_COMPLETED,
+from firebase_sub.plugins.plugin_config import (
+    build_housekeeping_plugins,
+    build_listener_plugins,
 )
-from firebase_sub.send_email import send_ampub_email, send_poll_open_email
-from firebase_sub.send_push import (
-    send_poll_complete_push,
-    send_poll_open_push,
-    web_push_enabled,
+from firebase_sub.plugins.runtime import PluginRuntime
+from firebase_sub.runtime.action_policies import (
+    poll_complete_actions,
+    poll_open_actions,
 )
+from firebase_sub.runtime.sub_events_bootstrap import get_db_handler
+from firebase_sub.runtime.job_queue import JobQueue
+from firebase_sub.runtime.queue_runner import QueueRunner
+from firebase_sub.runtime.config import RuntimeConfig
 
 _log = logging.getLogger(__name__)
-
-CWD = Path(__file__).resolve().parent
-
-
-def _resolve_cred_path() -> Path:
-    env_path = os.getenv("FIREBASE_CRED_PATH")
-    if env_path:
-        return Path(env_path)
-
-    cwd_path = Path.cwd() / "cred.json"
-    if cwd_path.exists():
-        return cwd_path
-
-    source_tree_path = CWD.parent.parent / "cred.json"
-    if source_tree_path.exists():
-        return source_tree_path
-
-    # Prefer a predictable default for packaged runtime environments.
-    return cwd_path
-
-
-CRED_PATH = _resolve_cred_path()
-_FIREBASE_APP_INITIALIZED = False
-_DB_HANDLER: DbHandler | None = None
-_COMP_POLL_MAX_RETRIES = 10
-_COMP_POLL_RETRY_DELAY_SECONDS = 1.0
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -78,87 +38,11 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _ensure_firebase_app() -> None:
-    global _FIREBASE_APP_INITIALIZED
-    if _FIREBASE_APP_INITIALIZED:
-        return
-    try:
-        firebase_admin.get_app()
-    except ValueError:
-        cred = credentials.Certificate(CRED_PATH)
-        firebase_admin.initialize_app(cred)
-    _FIREBASE_APP_INITIALIZED = True
-
-
-def _get_db_handler() -> DbHandler:
-    global _DB_HANDLER
-    if _DB_HANDLER is None:
-        _ensure_firebase_app()
-        _DB_HANDLER = DbHandler()
-    return _DB_HANDLER
-
-
-def poll_open_actions(
-    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
-) -> ActionMan:
-    db_handler = db_handler or _get_db_handler()
-    send_poll_open_email_i = cast(
-        ActionCallbackProtocol,
-        partial(send_poll_open_email, emails_src=db_handler.query_open_emails),
-    )
-    open_am = ActionMan(dummy_email)
-    open_am.bind(ActionType.EMAIL, send_poll_open_email_i)
-    if web_push_enabled():
-        send_poll_open_push_i = cast(
-            ActionCallbackProtocol,
-            partial(
-                send_poll_open_push,
-                endpoints_src=partial(
-                    db_handler.query_active_push_endpoints,
-                    PUSH_PREFERENCE_FIELD[PUSH_EVENT_POLL_OPENED],
-                ),
-            ),
-        )
-        open_am.bind(ActionType.PUSH, send_poll_open_push_i, dummy_run=dummy_push)
-    return open_am
-
-
-def poll_complete_actions(
-    dummy_email: bool, dummy_push: bool, db_handler: DbHandler | None = None
-) -> ActionMan:
-    db_handler = db_handler or _get_db_handler()
-    send_mail_list_email = cast(
-        ActionCallbackProtocol,
-        partial(send_ampub_email),  # defaults to Google Groups mailing list
-    )
-    send_personal_email = cast(
-        ActionCallbackProtocol,
-        partial(send_ampub_email, emails_src=db_handler.query_personal_emails),
-    )
-    complete_am = ActionMan(dummy_email)
-    complete_am.bind(ActionType.EMAIL, send_mail_list_email)
-    complete_am.bind(ActionType.PEMAIL, send_personal_email)
-    if web_push_enabled():
-        send_push_i = cast(
-            ActionCallbackProtocol,
-            partial(
-                send_poll_complete_push,
-                endpoints_src=partial(
-                    db_handler.query_active_push_endpoints,
-                    PUSH_PREFERENCE_FIELD[PUSH_EVENT_POLL_COMPLETED],
-                ),
-            ),
-        )
-        complete_am.bind(ActionType.PUSH, send_push_i, dummy_run=dummy_push)
-    return complete_am
-
-
 def sub_events(
     dummy_email: bool,
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
-    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
@@ -167,151 +51,98 @@ def sub_events(
     enable_real_auth_delete: bool = False,
 ) -> None:
     configure_logging(loglevel, logfile)
-    if restart_interval:
-        _log.info(
-            "Ignoring restart interval of %s minutes; periodic Firestore watch restarts are disabled",
-            restart_interval,
-        )
-    db_handler = _get_db_handler()
-    q: queue.Queue[Event] = queue.Queue()
-    healthcheck_interval_seconds = 10.0
-    notification_mirror = NotificationAckMirrorHandler(db_handler.db)
-    notification_push_test = NotificationPushTestHandler(
-        db_handler.db,
-        db_handler.query_active_push_endpoints_for_user,
+
+    runtime_config = RuntimeConfig.from_legacy_options(
+        dummy_email=dummy_email,
         dummy_push=dummy_push,
-    )
-    admin_delete_handler = AdminDeleteRequestHandler(
-        db_handler.db,
-        enabled=_env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False),
-        dry_run=not enable_real_auth_delete,
+        housekeeping_interval_seconds=housekeeping_interval_seconds,
+        housekeeping_cron=housekeeping_cron,
+        all_history=all_history,
+        poll_lookback_days=poll_lookback_days,
         enable_real_auth_delete=enable_real_auth_delete,
+        admin_delete_enabled=_env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False),
     )
-    housekeeping_runner = HousekeepingRunner(
-        tasks=build_housekeeping_tasks(db_handler.db),
-        schedule=IntervalSchedule(interval_seconds=housekeeping_interval_seconds),
+    db_handler = get_db_handler()
+    q: JobQueue[Event] = JobQueue()
+
+    open_am = poll_open_actions(
+        runtime_config.dummy_email, runtime_config.dummy_push, db_handler
     )
 
-    open_am = poll_open_actions(dummy_email, dummy_push, db_handler)
-
-    def new_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
-        if document is None:
-            raise ValueError(
-                f"New Event has no document. This indicates a coding error."
-            )
-        db_handler.new_poll_event_handler(open_am, poll_id=document.id)
-
-    def open_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(Event(type=EventType.NEW_POLL, doc=document, callback=new_handler))
-
-    complete_am = poll_complete_actions(dummy_email, dummy_push, db_handler)
-
-    @retry(
-        retry_errors=(RetryablePollDataNotReadyError,),
-        max_retries=_COMP_POLL_MAX_RETRIES,
-        delay_seconds=_COMP_POLL_RETRY_DELAY_SECONDS,
-        operation_name="completed poll event after pubs not ready",
+    complete_am = poll_complete_actions(
+        runtime_config.dummy_email,
+        runtime_config.dummy_push,
+        db_handler,
     )
-    def comp_handler(document: DocumentSnapshot | None, pubs_list: PubsList) -> None:
-        if document is None:
-            raise ValueError(
-                "Completed Event has no document. This indicates a coding error."
-            )
-        db_handler.complete_poll_event_handler(
-            pubs_list, complete_am, poll_id=document.id
-        )
 
-    def comp_poll_event_callback(document: DocumentSnapshot) -> None:
-        q.put(
-            Event(
-                type=EventType.COMP_POLL,
-                doc=document,
-                callback=comp_handler,
-            )
-        )
-
-    def notification_request_callback(document: DocumentSnapshot) -> None:
-        if notification_push_test.is_push_test_request(document):
-            q.put(
-                Event(
-                    type=EventType.PUSH_TEST,
-                    doc=document,
-                    callback=lambda doc, pubs_list: notification_push_test.handle_request_document(
-                        doc
-                    ),
-                )
-            )
-        else:
-            q.put(
-                Event(
-                    type=EventType.PUSH,
-                    doc=document,
-                    callback=lambda doc, pubs_list: notification_mirror.mirror_request_document(
-                        doc
-                    ),
-                )
-            )
-
-    _log.info("Notification request/ack mirror listener started")
-
-    def admin_delete_request_callback(document: DocumentSnapshot) -> None:
-        q.put(
-            Event(
-                type=EventType.ADMIN_DELETE_REQUEST,
-                doc=document,
-                callback=lambda doc, pubs_list: admin_delete_handler.handle_request_document(
-                    doc
-                ),
-            )
-        )
-
-    if admin_delete_handler.enabled:
+    if runtime_config.admin_delete_enabled:
         _log.info(
             "Admin delete request listener enabled (dry_run=%s)",
-            admin_delete_handler.dry_run,
+            not runtime_config.enable_real_auth_delete,
         )
     else:
         _log.info(
             "Admin delete request listener disabled (set ENABLE_ADMIN_DELETE_REQUESTS=true to enable)"
         )
-    if enable_real_auth_delete and not admin_delete_handler.enabled:
+    if (
+        runtime_config.enable_real_auth_delete
+        and not runtime_config.admin_delete_enabled
+    ):
         _log.warning(
             "--enable-real-auth-delete was set but ENABLE_ADMIN_DELETE_REQUESTS is false; admin delete processing remains disabled"
         )
 
-    poll_min_date = None
-    if all_history:
+    poll_min_date = runtime_config.poll_history.min_date()
+    if poll_min_date is None:
         _log.info("Poll listeners using full history")
     else:
-        poll_min_date = (date.today() - timedelta(days=poll_lookback_days)).isoformat()
         _log.info(
             "Poll listeners using recent history (min_date=%s lookback_days=%s)",
             poll_min_date,
-            poll_lookback_days,
+            runtime_config.poll_history.lookback_days,
         )
+
+    listener_plugins = build_listener_plugins(
+        db_handler=db_handler,
+        event_queue=q,
+        open_action_manager=open_am,
+        complete_action_manager=complete_am,
+        runtime_config=runtime_config,
+        poll_min_date=poll_min_date,
+        comp_poll_max_retries=runtime_config.comp_poll_max_retries,
+        comp_poll_retry_delay_seconds=runtime_config.comp_poll_retry_delay_seconds,
+    )
+    housekeeping_plugins = build_housekeeping_plugins(db=db_handler.db)
+    plugin_runtime = PluginRuntime(
+        listener_plugins=listener_plugins,
+        housekeeping_plugins=housekeeping_plugins,
+    )
 
     def enqueue_housekeeping_tick() -> None:
         q.put(
             Event(
                 type=EventType.TICK,
                 doc=None,
-                callback=lambda doc=None, pubs_list=None: housekeeping_runner.maybe_run(),
+                callback=lambda doc=None, pubs_list=None: plugin_runtime.run_housekeeping(),
             )
         )
 
-    if housekeeping_cron:
-        _log.info("Housekeeping runner started (cron=%s)", housekeeping_cron)
+    if runtime_config.housekeeping.uses_cron:
+        _log.info(
+            "Housekeeping runner started (cron=%s)",
+            runtime_config.housekeeping.cron_expression,
+        )
         housekeeping_trigger = CroniterTrigger(
-            cron_expression=housekeeping_cron,
+            cron_expression=cast(str, runtime_config.housekeeping.cron_expression),
             callback=enqueue_housekeeping_tick,
         )
     else:
         _log.info(
             "Housekeeping runner started (interval=%ss)",
-            housekeeping_interval_seconds,
+            runtime_config.housekeeping.interval_seconds,
         )
         housekeeping_trigger = PeriodicTrigger(
-            interval_seconds=housekeeping_interval_seconds,
+            interval_seconds=runtime_config.housekeeping.interval_seconds,
             callback=enqueue_housekeeping_tick,
         )
 
@@ -324,115 +155,26 @@ def sub_events(
         callback=canary.send_canary,
     )
 
-    def chat_message_callback(document: DocumentSnapshot) -> None:
-        message_id = document.id
-        q.put(
-            Event(
-                type=EventType.CHAT_MESSAGE,
-                doc=document,
-                callback=lambda doc, pubs_list: (
-                    db_handler.chat_message_push_handler(
-                        message_id=message_id,
-                        message_doc=cast(DocumentSnapshot, doc),
-                        dummy_run=dummy_push,
-                    )
-                    if doc is not None
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(plugin_runtime)
+        stack.enter_context(housekeeping_trigger)
+        stack.enter_context(canary)
+        stack.enter_context(canary_trigger)
+        pubs_list = stack.enter_context(PubsList(db_handler.pub_collection))
+
+        QueueRunner(
+            event_queue=q,
+            pubs_list=pubs_list,
+            healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
+            healthchecks=[
+                lambda: None if db_handler.okay else "Exiting due to db is not okay",
+                lambda: (
+                    "Exiting due to stale Firestore listener (canary not observed)"
+                    if canary.is_stale()
                     else None
                 ),
-            )
-        )
-
-    messages_manager = (
-        PollManager(
-            db_handler.query_messages,
-            add=chat_message_callback,
-        )
-        if web_push_enabled()
-        else contextlib.nullcontext()
-    )
-    if web_push_enabled():
-        _log.info("Chat message push listener started")
-
-    admin_delete_manager = (
-        PollManager(
-            db_handler.query_admin_delete_requests,
-            add=admin_delete_request_callback,
-            modify=admin_delete_request_callback,
-        )
-        if admin_delete_handler.enabled
-        else contextlib.nullcontext()
-    )
-
-    with (
-        PollManager(
-            db_handler.query_polls_by_status(
-                completed=False,
-                min_date=poll_min_date,
-            ),
-            add=open_poll_event_callback,
-        ),
-        PollManager(
-            db_handler.query_polls_by_status(
-                completed=True,
-                min_date=poll_min_date,
-            ),
-            add=comp_poll_event_callback,
-            modify=comp_poll_event_callback,
-        ),
-        PollManager(
-            db_handler.query_notification_requests,
-            add=notification_request_callback,
-            modify=notification_request_callback,
-        ),
-        admin_delete_manager,
-        messages_manager,
-        housekeeping_trigger,
-        canary,
-        canary_trigger,
-        PubsList(db_handler.pub_collection) as pubs_list,
-    ):
-
-        while True:
-            try:
-                event = q.get(timeout=healthcheck_interval_seconds)
-            except queue.Empty:
-                if not db_handler.okay:
-                    raise SystemExit("Exiting due to db is not okay")
-                if canary.is_stale():
-                    raise SystemExit(
-                        "Exiting due to stale Firestore listener (canary not observed)"
-                    )
-                continue
-
-            event.handle_queue_item(
-                pubs_list,
-            )
-            event_date, completed = doc_props(event)
-            _log.info(
-                f"Completed Event: Type:{event.type}, Date:{event_date}, Completed:{completed}"
-            )
-
-
-def doc_props(event: Event) -> tuple[str | None, bool]:
-    if not event.doc:
-        return None, False
-    doc = event.doc.to_dict()
-    if doc is None:
-        _log.warning(
-            "Received event %s for doc %s with no payload",
-            event.type,
-            event.doc.id,
-        )
-        return None, False
-    event_date = doc.get("date")
-    completed = doc.get("completed", False)
-    _log.info(
-        "New Event: Type:%s, Date:%s, Completed:%s",
-        event.type,
-        event_date,
-        completed,
-    )
-    return event_date, completed
+            ],
+        ).run_forever()
 
 
 @click.command()
@@ -447,12 +189,6 @@ def doc_props(event: Event) -> tuple[str | None, bool]:
 )
 @click.option(
     "--logfile", type=click.Path(path_type=Path), default=None, help="Log file path"
-)
-@click.option(
-    "--restart-interval",
-    type=int,
-    default=60 * 24,
-    help="Deprecated and ignored; periodic watch restarts are disabled",
 )
 @click.option(
     "--housekeeping-interval-seconds",
@@ -497,7 +233,6 @@ def cli(
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
-    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
@@ -510,7 +245,6 @@ def cli(
         dummy_push,
         loglevel,
         logfile,
-        restart_interval,
         housekeeping_interval_seconds,
         housekeeping_cron,
         all_history,

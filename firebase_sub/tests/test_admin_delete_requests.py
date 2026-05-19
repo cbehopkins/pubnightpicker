@@ -1,4 +1,4 @@
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, MagicMock, patch
 
 from firebase_sub.database.admin_delete_requests import AdminDeleteRequestHandler
 
@@ -68,6 +68,29 @@ def test_disabled_handler_ignores_requests() -> None:
     )
 
     db.collection.assert_not_called()
+
+
+def test_handle_delegates_to_document_handler() -> None:
+    db = MagicMock()
+    handler = AdminDeleteRequestHandler(db, enabled=True, dry_run=True)
+    document = MagicMock()
+    pubs_list = MagicMock()
+
+    with patch.object(handler, "handle_request_document") as mock_handle_request_document:
+        handler.handle(document, pubs_list)
+
+    mock_handle_request_document.assert_called_once_with(document)
+
+
+def test_handle_passes_through_none_document() -> None:
+    db = MagicMock()
+    handler = AdminDeleteRequestHandler(db, enabled=True, dry_run=True)
+    pubs_list = MagicMock()
+
+    with patch.object(handler, "handle_request_document") as mock_handle_request_document:
+        handler.handle(None, pubs_list)
+
+    mock_handle_request_document.assert_called_once_with(None)
 
 
 def test_kill_switch_paused_skips_processing() -> None:
@@ -206,17 +229,18 @@ def test_non_dry_run_without_cli_gate_blocks_auth_delete() -> None:
         enable_real_auth_delete=False,
         auth_deleter=auth_deleter,
     )
-    handler._check_kill_switch = MagicMock(return_value=False)
-    handler._user_doc_exists = MagicMock(return_value=False)
-    handler._write_audit = MagicMock()
-    handler._mark_request = MagicMock()
-
-    handler.handle_request_document(
-        _snapshot("req-10", {"status": "pending", "targetUid": "u10"})
-    )
+    with (
+        patch.object(handler, "_check_kill_switch", return_value=False),
+        patch.object(handler, "_user_doc_exists", return_value=False),
+        patch.object(handler, "_write_audit") as mock_write_audit,
+        patch.object(handler, "_mark_request") as mock_mark_request,
+    ):
+        handler.handle_request_document(
+            _snapshot("req-10", {"status": "pending", "targetUid": "u10"})
+        )
 
     auth_deleter.assert_not_called()
-    handler._write_audit.assert_any_call(
+    mock_write_audit.assert_any_call(
         "req-10",
         {
             "outcome": "auth_delete_blocked",
@@ -224,7 +248,7 @@ def test_non_dry_run_without_cli_gate_blocks_auth_delete() -> None:
             "targetUid": "u10",
         },
     )
-    handler._mark_request.assert_any_call(
+    mock_mark_request.assert_any_call(
         "req-10",
         "auth_delete_blocked",
         lastError="real_auth_delete_not_enabled",
@@ -241,24 +265,25 @@ def test_non_dry_run_with_cli_gate_deletes_auth_user() -> None:
         enable_real_auth_delete=True,
         auth_deleter=auth_deleter,
     )
-    handler._check_kill_switch = MagicMock(return_value=False)
-    handler._user_doc_exists = MagicMock(return_value=False)
-    handler._write_audit = MagicMock()
-    handler._mark_request = MagicMock()
-
-    handler.handle_request_document(
-        _snapshot("req-11", {"status": "pending", "targetUid": "u11"})
-    )
+    with (
+        patch.object(handler, "_check_kill_switch", return_value=False),
+        patch.object(handler, "_user_doc_exists", return_value=False),
+        patch.object(handler, "_write_audit") as mock_write_audit,
+        patch.object(handler, "_mark_request") as mock_mark_request,
+    ):
+        handler.handle_request_document(
+            _snapshot("req-11", {"status": "pending", "targetUid": "u11"})
+        )
 
     auth_deleter.assert_called_once_with("u11")
-    handler._write_audit.assert_any_call(
+    mock_write_audit.assert_any_call(
         "req-11",
         {
             "outcome": "auth_deleted",
             "targetUid": "u11",
         },
     )
-    handler._mark_request.assert_any_call(
+    mock_mark_request.assert_any_call(
         "req-11",
         "auth_deleted",
         authDeletedAt=ANY,
@@ -278,16 +303,17 @@ def test_non_dry_run_auth_delete_failure_marks_failed() -> None:
         enable_real_auth_delete=True,
         auth_deleter=_raise_error,
     )
-    handler._check_kill_switch = MagicMock(return_value=False)
-    handler._user_doc_exists = MagicMock(return_value=False)
-    handler._write_audit = MagicMock()
-    handler._mark_request = MagicMock()
+    with (
+        patch.object(handler, "_check_kill_switch", return_value=False),
+        patch.object(handler, "_user_doc_exists", return_value=False),
+        patch.object(handler, "_write_audit") as mock_write_audit,
+        patch.object(handler, "_mark_request") as mock_mark_request,
+    ):
+        handler.handle_request_document(
+            _snapshot("req-12", {"status": "pending", "targetUid": "u12"})
+        )
 
-    handler.handle_request_document(
-        _snapshot("req-12", {"status": "pending", "targetUid": "u12"})
-    )
-
-    handler._write_audit.assert_any_call(
+    mock_write_audit.assert_any_call(
         "req-12",
         {
             "outcome": "auth_delete_failed",
@@ -296,7 +322,7 @@ def test_non_dry_run_auth_delete_failure_marks_failed() -> None:
             "error": "boom:u12",
         },
     )
-    handler._mark_request.assert_any_call(
+    mock_mark_request.assert_any_call(
         "req-12",
         "auth_delete_failed",
         lastError="RuntimeError: boom:u12",

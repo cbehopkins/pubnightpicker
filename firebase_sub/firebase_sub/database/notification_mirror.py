@@ -5,6 +5,8 @@ from typing import Any, cast
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
 
+from firebase_sub.database.pubs_list import PubsList
+
 _log = logging.getLogger(__name__)
 
 
@@ -30,6 +32,14 @@ class NotificationAckMirrorHandler:
             for key, value in request_payload.items()
             if key not in ack_payload or ack_payload[key] != value
         }
+
+    def handle(
+        self,
+        request_document: DocumentSnapshot | None,
+        pubs_list: PubsList,
+    ) -> None:
+        del pubs_list
+        self.mirror_request_document(request_document)
 
     def mirror_request_document(
         self, request_document: DocumentSnapshot | None
