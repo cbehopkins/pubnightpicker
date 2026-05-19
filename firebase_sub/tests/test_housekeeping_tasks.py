@@ -3,7 +3,6 @@ from typing import Literal, NotRequired, TypedDict
 from unittest.mock import MagicMock
 
 from firebase_sub.database.housekeeping_tasks import (
-    DIAGNOSTICS_DOC_ID,
     EVENTS_COLLECTION,
     NOTIFICATION_ACK_COLLECTION,
     NOTIFICATION_REQ_COLLECTION,

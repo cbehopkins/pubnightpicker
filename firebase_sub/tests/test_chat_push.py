@@ -1,7 +1,10 @@
 """Tests for chat push notification handling."""
 
+# pyright: basic
+
 from types import SimpleNamespace
-from unittest.mock import ANY, MagicMock, call, patch
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pywebpush import WebPushException
@@ -16,9 +19,9 @@ from firebase_sub.push_contract import (
 )
 from firebase_sub.send_push import (
     ValidPushEndpoint,
-    _build_chat_event_payload,
-    _build_chat_global_payload,
-    _endpoint_hash,
+    build_chat_event_payload,
+    build_chat_global_payload,
+    endpoint_hash,
     send_chat_push,
 )
 
@@ -28,12 +31,14 @@ from firebase_sub.send_push import (
 
 
 def _user_doc(
-    uid: str, web_push_enabled: bool = True, push_prefs: dict | None = None
+    uid: str,
+    web_push_enabled: bool = True,
+    push_prefs: dict[str, Any] | None = None,
 ) -> MagicMock:
     """Build a mock Firestore user document snapshot."""
     doc = MagicMock()
     doc.id = uid
-    data: dict = {"webPushEnabled": web_push_enabled}
+    data: dict[str, Any] = {"webPushEnabled": web_push_enabled}
     if push_prefs is not None:
         data["pushPreferences"] = push_prefs
     doc.to_dict.return_value = data
@@ -50,7 +55,7 @@ def _message_doc(
 ) -> MagicMock:
     doc = MagicMock()
     doc.id = message_id
-    data: dict = {
+    data: dict[str, Any] = {
         "uid": uid,
         "displayName": display_name,
         "text": text,
@@ -97,14 +102,14 @@ def _valid_endpoint(
 
 
 def _make_db_handler(
-    user_docs: list,
-    attendance_data: dict | None = None,
+    user_docs: list[MagicMock],
+    attendance_data: dict[str, Any] | None = None,
     event_chat_participant_uids: list[str] | None = None,
     chat_actions_exists: bool = False,
-    chat_actions_notified: list | None = None,
-    chat_actions_delivered_endpoints: list | None = None,
-    endpoint_docs: dict[str, list] | None = None,
-) -> DbHandler:
+    chat_actions_notified: list[str] | None = None,
+    chat_actions_delivered_endpoints: list[str] | None = None,
+    endpoint_docs: dict[str, list[MagicMock]] | None = None,
+) -> tuple[DbHandler, MagicMock]:
     """Build a DbHandler with a mocked Firestore client."""
     db = MagicMock()
 
@@ -134,7 +139,7 @@ def _make_db_handler(
 
     # Wire collection("chat_push_actions").document(id) → actions_ref
     # We use side_effect to route different collection names.
-    def collection_router(name):
+    def collection_router(name: str) -> MagicMock:
         col = MagicMock()
         if name == "chat_push_actions":
             col.document.return_value = actions_ref
@@ -146,10 +151,13 @@ def _make_db_handler(
             col.stream.return_value = user_docs
 
             # per-user endpoint sub-collection
-            def user_doc_router(uid):
+            def user_doc_router(uid: str) -> MagicMock:
                 user_doc_ref = MagicMock()
+                fallback_doc = MagicMock()
+                fallback_doc.to_dict.return_value = {}
                 user_doc_ref.get.return_value = next(
-                    (u for u in user_docs if u.id == uid), MagicMock(to_dict=lambda: {})
+                    (u for u in user_docs if u.id == uid),
+                    fallback_doc,
                 )
                 ep_col = MagicMock()
                 ep_col.stream.return_value = (endpoint_docs or {}).get(uid, [])
@@ -161,7 +169,7 @@ def _make_db_handler(
             first_query = MagicMock()
             second_query = MagicMock()
 
-            participant_docs = []
+            participant_docs: list[MagicMock] = []
             for uid in event_chat_participant_uids or []:
                 participant_doc = MagicMock()
                 participant_doc.to_dict.return_value = {
@@ -236,7 +244,7 @@ def test_handle_chat_message_ignores_none_document():
 
 
 def test_build_chat_global_payload_shape():
-    payload = _build_chat_global_payload("msg-1", "Alice", "Hello there")
+    payload = build_chat_global_payload("msg-1", "Alice", "Hello there")
 
     assert payload["eventType"] == PUSH_EVENT_CHAT_MESSAGE_GLOBAL
     assert payload["messageId"] == "msg-1"
@@ -248,7 +256,7 @@ def test_build_chat_global_payload_shape():
 
 
 def test_build_chat_event_payload_shape():
-    payload = _build_chat_event_payload("msg-2", "poll-99", "Bob", "See you there")
+    payload = build_chat_event_payload("msg-2", "poll-99", "Bob", "See you there")
 
     assert payload["eventType"] == PUSH_EVENT_CHAT_MESSAGE_EVENT
     assert payload["messageId"] == "msg-2"
@@ -261,7 +269,7 @@ def test_build_chat_event_payload_shape():
 
 def test_build_chat_global_payload_truncates_body():
     long_text = "x" * 200
-    payload = _build_chat_global_payload("msg-3", "Alice", long_text)
+    payload = build_chat_global_payload("msg-3", "Alice", long_text)
     assert len(payload["body"]) <= 100
 
 
@@ -272,7 +280,7 @@ def test_build_chat_global_payload_truncates_body():
 
 def test_send_chat_push_dummy_run_skips_webpush_call():
     endpoints = [_valid_endpoint("user-1"), _valid_endpoint("user-2")]
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     with patch("firebase_sub.send_push.webpush") as mock_wp:
         result = send_chat_push(
@@ -291,7 +299,7 @@ def test_send_chat_push_dummy_run_skips_webpush_call():
 
 def test_send_chat_push_delivers_to_all_endpoints_in_dummy_mode():
     endpoints = [_valid_endpoint("user-1"), _valid_endpoint("user-2")]
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     result = send_chat_push(
         endpoints=endpoints,
@@ -313,7 +321,7 @@ def test_send_chat_push_deduplicates_uid_when_user_has_multiple_endpoints():
         _valid_endpoint("user-1", "https://push.example/ep2"),
         _valid_endpoint("user-1", "https://push.example/ep3"),
     ]
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     result = send_chat_push(
         endpoints=endpoints,
@@ -334,10 +342,10 @@ def test_send_chat_push_deduplicates_uid_when_user_has_multiple_endpoints():
 
 
 def test_send_chat_push_creates_doc_on_first_delivery():
-    """When actions doc does not yet exist, the first successful delivery calls set(merge=True)."""
+    """When actions doc is missing, first successful delivery calls set(merge=True)."""
     ep = _valid_endpoint("user-1")
     actions_ref = MagicMock()
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     result = send_chat_push(
         endpoints=[ep],
@@ -363,7 +371,7 @@ def test_send_chat_push_uses_update_when_doc_already_exists():
     """When actions doc already exists, all deliveries use update()."""
     ep = _valid_endpoint("user-1")
     actions_ref = MagicMock()
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     send_chat_push(
         endpoints=[ep],
@@ -380,15 +388,15 @@ def test_send_chat_push_uses_update_when_doc_already_exists():
 
 
 def test_send_chat_push_writes_partial_delivery_before_retryable_failure():
-    """ep1 succeeds and is written; ep2 fails retryably; CallbackExceptionRetry raised."""
+    """ep1 succeeds and is written; ep2 fails retryably; retry is raised."""
     ep1 = _valid_endpoint("user-1", "https://push.example/ep1")
     ep2 = _valid_endpoint("user-2", "https://push.example/ep2")
     actions_ref = MagicMock()
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     call_count = 0
 
-    def fake_webpush(**kwargs):
+    def fake_webpush(**kwargs: Any) -> None:
         nonlocal call_count
         call_count += 1
         if call_count > 1:
@@ -424,13 +432,13 @@ def test_send_chat_push_deactivates_stale_endpoint_and_continues():
     stale = _valid_endpoint("user-1", "https://push.example/stale")
     good = _valid_endpoint("user-2", "https://push.example/good")
 
-    def fake_webpush(**kwargs):
+    def fake_webpush(**kwargs: Any) -> None:
         if "stale" in kwargs["subscription_info"]["endpoint"]:
             exc = WebPushException("gone")
             exc.response = SimpleNamespace(status_code=410, text="Gone")
             raise exc
 
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
     with patch("firebase_sub.send_push.webpush", side_effect=fake_webpush), patch(
         "firebase_sub.send_push._vapid_private_key", return_value="fake-key"
@@ -448,16 +456,16 @@ def test_send_chat_push_deactivates_stale_endpoint_and_continues():
             dummy_run=False,
         )
 
-    stale.document.reference.set.assert_called_once()
+    cast(MagicMock, stale.document.reference.set).assert_called_once()
     assert "user-2" in result
     assert "user-1" not in result
 
 
 def test_send_chat_push_raises_retry_on_retryable_failure():
     endpoint = _valid_endpoint("user-1")
-    payload = _build_chat_global_payload("msg-1", "Alice", "hi")
+    payload = build_chat_global_payload("msg-1", "Alice", "hi")
 
-    def fake_webpush(**kwargs):
+    def fake_webpush(**kwargs: Any) -> None:
         exc = WebPushException("server error")
         exc.response = SimpleNamespace(status_code=500, text="Server Error")
         raise exc
@@ -759,7 +767,7 @@ def test_chat_handler_skips_already_delivered_endpoint():
     ]
     ep_u1 = _endpoint_doc("u1")  # default URL: https://push.example/a
     ep_u2 = _endpoint_doc("u2")
-    u1_hash = _endpoint_hash(_valid_endpoint("u1"))
+    u1_hash = endpoint_hash(_valid_endpoint("u1"))
     handler, _ = _make_db_handler(
         users,
         chat_actions_exists=True,
@@ -781,7 +789,7 @@ def test_chat_handler_skips_already_delivered_endpoint():
 
 
 def test_chat_handler_passes_actions_doc_exists_true_on_retry():
-    """When the actions doc already exists, actions_doc_exists=True is passed to send_chat_push."""
+    """When actions doc exists, actions_doc_exists=True is passed to send_chat_push."""
     users = [
         _user_doc("u2", web_push_enabled=True, push_prefs={"globalChat": True}),
     ]
@@ -802,7 +810,7 @@ def test_chat_handler_passes_actions_doc_exists_true_on_retry():
 
 
 def test_chat_handler_passes_actions_doc_exists_false_on_first_send():
-    """When actions doc does not exist, actions_doc_exists=False and scope args are passed."""
+    """When actions doc is missing, scope args and False flag are passed."""
     users = [
         _user_doc("u1", web_push_enabled=True, push_prefs={"globalChat": True}),
     ]

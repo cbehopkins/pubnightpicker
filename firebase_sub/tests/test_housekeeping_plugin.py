@@ -1,7 +1,5 @@
 """Tests for HousekeepingTaskPlugin and HousekeepingPluginRunner."""
 
-import pytest
-
 from firebase_sub.database.housekeeping import HousekeepingTask
 from firebase_sub.plugins.housekeeping import (
     HousekeepingPluginRunner,

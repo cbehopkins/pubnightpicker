@@ -29,7 +29,9 @@ def test_handle_delegates_to_mirror_request_document() -> None:
     request_document = MagicMock()
     pubs_list = MagicMock()
 
-    with patch.object(mirror, "mirror_request_document") as mock_mirror_request_document:
+    with patch.object(
+        mirror, "mirror_request_document"
+    ) as mock_mirror_request_document:
         mirror.handle(request_document, pubs_list)
 
     mock_mirror_request_document.assert_called_once_with(request_document)
@@ -40,7 +42,9 @@ def test_handle_passes_through_none_document() -> None:
     mirror = NotificationAckMirrorHandler(db)
     pubs_list = MagicMock()
 
-    with patch.object(mirror, "mirror_request_document") as mock_mirror_request_document:
+    with patch.object(
+        mirror, "mirror_request_document"
+    ) as mock_mirror_request_document:
         mirror.handle(None, pubs_list)
 
     mock_mirror_request_document.assert_called_once_with(None)

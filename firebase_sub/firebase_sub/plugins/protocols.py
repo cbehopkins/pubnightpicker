@@ -32,13 +32,16 @@ from contextlib import AbstractContextManager
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.query import Query
 
+from firebase_sub.database.repositories import PollRepository
 from firebase_sub.my_types import PollId
 
 if TYPE_CHECKING:
     from firebase_sub.action_track import ActionMan
     from firebase_sub.database.pubs_list import PubsList
+    from firebase_sub.event import EventEnvelope
 
 __all__ = [
     "BasePluginException",
@@ -47,6 +50,7 @@ __all__ = [
     "PluginKind",
     "Plugin",
     "ListenerPlugin",
+    "EventPlugin",
     "HousekeepingPlugin",
     "PollStatusQueryDbHandler",
     "NewPollDbHandler",
@@ -165,6 +169,66 @@ class ListenerPlugin(Plugin):
         ...
 
 
+class EventPlugin(ListenerPlugin):
+    """Protocol for event plugins with gated execution (filter, handle, mark_done).
+
+    Event plugins participate in a clear three-phase lifecycle for each event:
+    1. filter: decide if the plugin should run for this event (consult dedupe state, conditions)
+    2. handle: perform the side effect (if filter returned True)
+    3. mark_done: persist success state (if handle succeeded)
+
+    This separates gate-checking, execution, and state persistence concerns,
+    making idempotency and retry logic explicit and testable.
+
+    Event plugins must raise only exceptions derived from BasePluginException.
+    """
+
+    @abstractmethod
+    def filter(self, envelope: "EventEnvelope") -> bool:
+        """Decide whether this plugin should handle the event.
+
+        Called on each event dequeue. Should check idempotency/dedupe state,
+        business conditions, or other gates.
+
+        Returns:
+            True if handle should be called for this event; False to skip.
+
+        Raises:
+            BasePluginException: if the filter logic encounters an error.
+        """
+        ...
+
+    @abstractmethod
+    def handle(self, envelope: "EventEnvelope") -> None:
+        """Execute the plugin's side effect for the event.
+
+        Called if filter(envelope) returned True. Should perform idempotent
+        work: the same call with the same event may be retried.
+
+        Raises:
+            BasePluginException: if the handler encounters an error.
+                - Subclasses may distinguish transient vs permanent errors
+                  for retry scheduling.
+        """
+        ...
+
+    @abstractmethod
+    def mark_done(self, envelope: "EventEnvelope") -> None:
+        """Persist success state after handle() completes successfully.
+
+        Called after handle() succeeds (no exception raised). Should update
+        idempotency/dedupe state so a future filter() call will return False
+        for this event.
+
+        Must be idempotent: calling multiple times with the same event should
+        be safe (e.g., subsequent calls should be no-ops).
+
+        Raises:
+            BasePluginException: if state persistence fails.
+        """
+        ...
+
+
 class HousekeepingPlugin(Plugin):
     """Protocol for plugins that perform periodic maintenance tasks.
 
@@ -215,6 +279,12 @@ class PollStatusQueryDbHandler(Protocol):
 class NewPollDbHandler(PollStatusQueryDbHandler, Protocol):
     """Protocol for the db-handler capabilities needed by NewPollListenerPlugin."""
 
+    @property
+    def db(self) -> Client: ...
+
+    @property
+    def poll_repo(self) -> PollRepository: ...
+
     def new_poll_event_handler(
         self,
         am: "ActionMan",
@@ -224,6 +294,12 @@ class NewPollDbHandler(PollStatusQueryDbHandler, Protocol):
 
 class CompletePollDbHandler(PollStatusQueryDbHandler, Protocol):
     """Protocol for db-handler capabilities needed by CompletePollListenerPlugin."""
+
+    @property
+    def db(self) -> Client: ...
+
+    @property
+    def poll_repo(self) -> PollRepository: ...
 
     def complete_poll_event_handler(
         self,

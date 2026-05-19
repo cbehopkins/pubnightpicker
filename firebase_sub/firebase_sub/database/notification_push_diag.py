@@ -86,6 +86,7 @@ class NotificationPushTestHandler:
                 continue
 
             try:
+
                 def endpoints_src() -> Iterable[DocumentSnapshot]:
                     return self.query_active_push_endpoints_for_user(uid)
 

@@ -18,7 +18,6 @@ from firebase_admin import auth as firebase_auth
 from firebase_sub.action_track import ActionMan
 from firebase_sub.cli.bootstrap import (
     ADMIN_DEFAULT_ROLES,
-    create_admin,
     seed_smoke_data,
 )
 from firebase_sub.database.handlers import DbHandler

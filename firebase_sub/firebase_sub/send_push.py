@@ -5,7 +5,7 @@ import hashlib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from firebase_sub.constants import ADMIN_EMAIL_ADDR
 from google.cloud.firestore_v1 import ArrayUnion
@@ -23,7 +23,7 @@ from firebase_sub.push_contract import (
     PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
     PUSH_EVENT_CHAT_MESSAGE_EVENT,
 )
-from firebase_sub.send_email import _resolve_payloads
+from firebase_sub.send_email import resolve_payloads
 
 _log = logging.getLogger("SendPush")
 _DEFAULT_BASE_URL = "https://ampubnight.org/"
@@ -106,6 +106,12 @@ PushPayload = (
 )
 
 
+class ChatPushActionsRef(Protocol):
+    def set(self, document_data: dict[str, object], merge: bool = False) -> Any: ...
+
+    def update(self, field_updates: dict[str, object]) -> Any: ...
+
+
 def _base_url() -> str:
     return os.getenv("PUBNIGHTPICKER_WEB_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
@@ -167,10 +173,29 @@ def _ttl_for_poll_date(poll_date: str, *, now: datetime | None = None) -> int:
 
 
 def _document_user_id(document: DocumentSnapshot) -> str | None:
-    parent_document = document.reference.parent.parent
-    if parent_document is None:
-        return None
-    return parent_document.id
+    reference = document.reference
+
+    path = getattr(reference, "path", None)
+    if isinstance(path, str):
+        path_parts = path.split("/")
+        if len(path_parts) >= 4 and path_parts[-2] == "push_endpoints":
+            user_id = path_parts[-3]
+            if user_id:
+                return user_id
+
+    parent_collection = getattr(reference, "parent", None)
+    parent_document = getattr(parent_collection, "parent", None)
+    parent_id = getattr(parent_document, "id", None)
+    if isinstance(parent_id, str) and parent_id:
+        return parent_id
+
+    return None
+
+
+def _document_set(
+    document_ref: object, payload: dict[str, object], *, merge: bool
+) -> None:
+    getattr(document_ref, "set")(payload, merge=merge)
 
 
 def _push_endpoint_from_snapshot(document: DocumentSnapshot) -> PushEndpoint | None:
@@ -190,7 +215,8 @@ def _push_endpoint_from_snapshot(document: DocumentSnapshot) -> PushEndpoint | N
 
 
 def _deactivate_endpoint(endpoint: PushEndpoint | ValidPushEndpoint) -> None:
-    endpoint.document.reference.set(
+    _document_set(
+        endpoint.document.reference,
         {
             "active": False,
             "disabledAt": SERVER_TIMESTAMP,
@@ -355,7 +381,7 @@ def _build_complete_payload(
     pub_dict: dict[str, VenueDocument],
     previously_actioned: bool,
 ) -> CompletePushPayload:
-    poll, selected_venue, restaurant_venue = _resolve_payloads(
+    poll, selected_venue, restaurant_venue = resolve_payloads(
         poll_dict=poll_dict,
         pub_dict=pub_dict,
     )
@@ -490,11 +516,45 @@ def _endpoint_hash(endpoint: ValidPushEndpoint) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+def build_chat_global_payload(
+    message_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return _build_chat_global_payload(
+        message_id=message_id,
+        sender_name=sender_name,
+        body_text=body_text,
+    )
+
+
+def build_chat_event_payload(
+    message_id: str,
+    poll_id: str,
+    sender_name: str,
+    body_text: str,
+) -> ChatPushPayload:
+    return _build_chat_event_payload(
+        message_id=message_id,
+        poll_id=poll_id,
+        sender_name=sender_name,
+        body_text=body_text,
+    )
+
+
+def endpoint_hash(endpoint: ValidPushEndpoint) -> str:
+    return _endpoint_hash(endpoint)
+
+
+def push_endpoint_from_snapshot(document: DocumentSnapshot) -> PushEndpoint | None:
+    return _push_endpoint_from_snapshot(document)
+
+
 def send_chat_push(
     endpoints: list[ValidPushEndpoint],
     *,
     payload: ChatPushPayload,
-    actions_ref,
+    actions_ref: ChatPushActionsRef,
     actions_doc_exists: bool,
     scope_type: str,
     scope_id: str,
@@ -528,7 +588,9 @@ def send_chat_push(
             if uid:
                 delivered_uids.append(uid)
             # Write idempotency record inline so retries can skip this endpoint.
-            write_data: dict = {"delivered_endpoints": ArrayUnion([ep_hash])}
+            write_data: dict[str, object] = {
+                "delivered_endpoints": ArrayUnion([ep_hash])
+            }
             if uid:
                 write_data["notified"] = ArrayUnion([uid])
             if not _doc_initialized:

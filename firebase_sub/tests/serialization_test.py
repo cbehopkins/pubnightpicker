@@ -1,7 +1,6 @@
 import json
 from datetime import UTC, datetime
 
-import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from firebase_sub.common.serialization import convert_datetimes, restore_datetimes

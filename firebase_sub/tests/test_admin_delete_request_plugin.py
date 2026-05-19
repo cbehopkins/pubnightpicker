@@ -3,42 +3,73 @@ from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
+from firebase_sub.event import EventEnvelope
 from firebase_sub.event import EventType
 from firebase_sub.plugins.admin_delete_request import AdminDeleteRequestListenerPlugin
-from firebase_sub.runtime.job_queue import JobQueue
 
 
 class _FakeAdminDeleteHandler:
     def __init__(self, *, enabled: bool) -> None:
         self.enabled = enabled
+        self.handled: list[str] = []
 
-    def handle(self, request_document, pubs_list) -> None:
-        del request_document, pubs_list
+    def handle_request_document(
+        self, request_document: DocumentSnapshot | None
+    ) -> None:
+        if request_document is None:
+            return
+        self.handled.append(request_document.id)
 
 
 def test_admin_delete_listener_enqueues_admin_delete_event() -> None:
-    event_queue: JobQueue = JobQueue()
+    """Test that the plugin filters and handles admin delete events."""
     handler = _FakeAdminDeleteHandler(enabled=True)
     plugin = AdminDeleteRequestListenerPlugin(
-        query_admin_delete_requests=lambda: cast(object, None),
-        event_queue=event_queue,
         handler=handler,
     )
     document = cast(DocumentSnapshot, SimpleNamespace(id="req-1"))
+    envelope = EventEnvelope(type=EventType.ADMIN_DELETE_REQUEST, doc=document)
 
-    plugin._admin_delete_request_callback(document)
+    # Test filter accepts admin delete events
+    assert plugin.filter(envelope) is True
 
-    event = event_queue.get(timeout=0.1)
-    assert event.type == EventType.ADMIN_DELETE_REQUEST
-    assert event.doc is document
-    assert event.callback == handler.handle
+    # Test handle processes the event
+    plugin.handle(envelope)
+
+    # Verify the handler was called
+    assert handler.handled == ["req-1"]
 
 
 def test_admin_delete_listener_is_disabled_when_handler_disabled() -> None:
     plugin = AdminDeleteRequestListenerPlugin(
-        query_admin_delete_requests=lambda: cast(object, None),
-        event_queue=JobQueue(),
         handler=_FakeAdminDeleteHandler(enabled=False),
     )
 
     assert plugin.is_enabled() is False
+
+
+def test_admin_delete_listener_lifecycle_filter_and_handle() -> None:
+    handler = _FakeAdminDeleteHandler(enabled=True)
+    plugin = AdminDeleteRequestListenerPlugin(
+        handler=handler,
+    )
+    document = cast(DocumentSnapshot, SimpleNamespace(id="req-2"))
+    envelope = EventEnvelope(type=EventType.ADMIN_DELETE_REQUEST, doc=document)
+
+    assert plugin.filter(envelope) is True
+    plugin.handle(envelope)
+    plugin.mark_done(envelope)
+
+    assert handler.handled == ["req-2"]
+
+
+def test_admin_delete_listener_filter_rejects_when_disabled() -> None:
+    plugin = AdminDeleteRequestListenerPlugin(
+        handler=_FakeAdminDeleteHandler(enabled=False),
+    )
+    document = cast(DocumentSnapshot, SimpleNamespace(id="req-3"))
+
+    assert (
+        plugin.filter(EventEnvelope(type=EventType.ADMIN_DELETE_REQUEST, doc=document))
+        is False
+    )

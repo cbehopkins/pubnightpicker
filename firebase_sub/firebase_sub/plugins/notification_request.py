@@ -1,30 +1,20 @@
 from contextlib import AbstractContextManager
-from collections.abc import Callable
-
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
-from firebase_sub.database.poll_manager import PollManager
-from firebase_sub.event import Event, EventType
-from firebase_sub.plugins.protocols import ListenerPlugin
-from firebase_sub.runtime.job_queue import JobQueue
+from firebase_sub.event import EventEnvelope, EventType
+from firebase_sub.plugins.protocols import EventPlugin
 
 
-class NotificationRequestListenerPlugin(ListenerPlugin):
+class NotificationRequestListenerPlugin(EventPlugin):
     """Listener plugin for notification request documents."""
 
     def __init__(
         self,
         *,
-        query_notification_requests: Query | Callable[[], Query],
-        event_queue: JobQueue[Event],
         notification_mirror: NotificationAckMirrorHandler,
         notification_push_test: NotificationPushTestHandler,
     ) -> None:
-        self._query_notification_requests = query_notification_requests
-        self._event_queue = event_queue
         self._notification_mirror = notification_mirror
         self._notification_push_test = notification_push_test
 
@@ -32,32 +22,31 @@ class NotificationRequestListenerPlugin(ListenerPlugin):
         return "notification_request_listener"
 
     def build_manager(self) -> AbstractContextManager[object]:
-        query = (
-            self._query_notification_requests()
-            if callable(self._query_notification_requests)
-            else self._query_notification_requests
-        )
-        return PollManager(
-            query=query,
-            add=self._notification_request_callback,
-            modify=self._notification_request_callback,
-        )
+        """Events are now produced externally by event producers."""
+        # No-op manager since Firestore watches are managed by event producers
+        from contextlib import nullcontext
 
-    def _notification_request_callback(self, document: DocumentSnapshot) -> None:
-        if self._notification_push_test.is_push_test_request(document):
-            self._event_queue.put(
-                Event(
-                    type=EventType.PUSH_TEST,
-                    doc=document,
-                    callback=self._notification_push_test.handle,
-                )
-            )
+        return nullcontext()
+
+    def filter(self, envelope: EventEnvelope) -> bool:
+        if envelope.doc is None:
+            return False
+        if envelope.type == EventType.PUSH_TEST:
+            return self._notification_push_test.is_push_test_request(envelope.doc)
+        if envelope.type == EventType.PUSH:
+            return not self._notification_push_test.is_push_test_request(envelope.doc)
+        return False
+
+    def handle(self, envelope: EventEnvelope) -> None:
+        if envelope.doc is None:
             return
+        if envelope.type == EventType.PUSH_TEST:
+            self._notification_push_test.handle_request_document(envelope.doc)
+            return
+        if envelope.type == EventType.PUSH:
+            self._notification_mirror.mirror_request_document(envelope.doc)
 
-        self._event_queue.put(
-            Event(
-                type=EventType.PUSH,
-                doc=document,
-                callback=self._notification_mirror.handle,
-            )
-        )
+    def mark_done(self, envelope: EventEnvelope) -> None:
+        # Notification handlers persist their own completion/ack state.
+        del envelope
+        return

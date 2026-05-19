@@ -1,9 +1,7 @@
-import contextlib
 import logging
-import os
 from pathlib import Path
-from typing import cast
-
+from collections.abc import Callable
+from typing import TypeGuard
 import click
 
 from firebase_sub.common.logging import configure_logging, log_level_to_int
@@ -12,12 +10,17 @@ from firebase_sub.database.housekeeping import (
     PeriodicTrigger,
 )
 from firebase_sub.database.canary import CanaryWatcher
+from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.pubs_list import PubsList
-from firebase_sub.event import Event, EventType
+from firebase_sub.event import Event
 from firebase_sub.plugins.plugin_config import (
+    build_event_producer,
     build_housekeeping_plugins,
     build_listener_plugins,
+    build_event_registry,
 )
+from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
+from firebase_sub.plugins.protocols import EventPlugin, ListenerPlugin
 from firebase_sub.plugins.runtime import PluginRuntime
 from firebase_sub.runtime.action_policies import (
     poll_complete_actions,
@@ -31,11 +34,12 @@ from firebase_sub.runtime.config import RuntimeConfig
 _log = logging.getLogger(__name__)
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+def _is_event_plugin(plugin: ListenerPlugin) -> TypeGuard[EventPlugin]:
+    return (
+        hasattr(plugin, "filter")
+        and hasattr(plugin, "handle")
+        and hasattr(plugin, "mark_done")
+    )
 
 
 def sub_events(
@@ -43,13 +47,14 @@ def sub_events(
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
+    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
-    canary_interval_seconds: int = 300,
-    enable_real_auth_delete: bool = False,
 ) -> None:
+    del restart_interval  # Retained as CLI compatibility flag.
+
     configure_logging(loglevel, logfile)
 
     runtime_config = RuntimeConfig.from_legacy_options(
@@ -59,122 +64,97 @@ def sub_events(
         housekeeping_cron=housekeeping_cron,
         all_history=all_history,
         poll_lookback_days=poll_lookback_days,
-        enable_real_auth_delete=enable_real_auth_delete,
-        admin_delete_enabled=_env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False),
+        enable_real_auth_delete=False,
+        admin_delete_enabled=True,
     )
+
     db_handler = get_db_handler()
-    q: JobQueue[Event] = JobQueue()
-
-    open_am = poll_open_actions(
-        runtime_config.dummy_email, runtime_config.dummy_push, db_handler
+    poll_min_date = runtime_config.poll_history.min_date()
+    event_queue: JobQueue[Event] = JobQueue()
+    notification_push_test = NotificationPushTestHandler(
+        db_handler.db,
+        db_handler.query_active_push_endpoints_for_user,
+        dummy_push=runtime_config.dummy_push,
+    )
+    event_producer = build_event_producer(
+        db_handler=db_handler,
+        event_queue=event_queue,
+        notification_push_test=notification_push_test,
+        poll_min_date=poll_min_date,
     )
 
-    complete_am = poll_complete_actions(
+    open_action_manager = poll_open_actions(
+        runtime_config.dummy_email,
+        runtime_config.dummy_push,
+        db_handler,
+    )
+    complete_action_manager = poll_complete_actions(
         runtime_config.dummy_email,
         runtime_config.dummy_push,
         db_handler,
     )
 
-    if runtime_config.admin_delete_enabled:
-        _log.info(
-            "Admin delete request listener enabled (dry_run=%s)",
-            not runtime_config.enable_real_auth_delete,
-        )
-    else:
-        _log.info(
-            "Admin delete request listener disabled (set ENABLE_ADMIN_DELETE_REQUESTS=true to enable)"
-        )
-    if (
-        runtime_config.enable_real_auth_delete
-        and not runtime_config.admin_delete_enabled
-    ):
-        _log.warning(
-            "--enable-real-auth-delete was set but ENABLE_ADMIN_DELETE_REQUESTS is false; admin delete processing remains disabled"
-        )
-
-    poll_min_date = runtime_config.poll_history.min_date()
-    if poll_min_date is None:
-        _log.info("Poll listeners using full history")
-    else:
-        _log.info(
-            "Poll listeners using recent history (min_date=%s lookback_days=%s)",
-            poll_min_date,
-            runtime_config.poll_history.lookback_days,
-        )
-
     listener_plugins = build_listener_plugins(
         db_handler=db_handler,
-        event_queue=q,
-        open_action_manager=open_am,
-        complete_action_manager=complete_am,
+        open_action_manager=open_action_manager,
+        complete_action_manager=complete_action_manager,
         runtime_config=runtime_config,
-        poll_min_date=poll_min_date,
         comp_poll_max_retries=runtime_config.comp_poll_max_retries,
         comp_poll_retry_delay_seconds=runtime_config.comp_poll_retry_delay_seconds,
+        notification_push_test=notification_push_test,
     )
     housekeeping_plugins = build_housekeeping_plugins(db=db_handler.db)
-    plugin_runtime = PluginRuntime(
-        listener_plugins=listener_plugins,
-        housekeeping_plugins=housekeeping_plugins,
-    )
 
-    def enqueue_housekeeping_tick() -> None:
-        q.put(
-            Event(
-                type=EventType.TICK,
-                doc=None,
-                callback=lambda doc=None, pubs_list=None: plugin_runtime.run_housekeeping(),
+    event_plugins: list[EventPlugin] = [
+        plugin for plugin in listener_plugins if _is_event_plugin(plugin)
+    ]
+    event_registry = build_event_registry(event_plugins=event_plugins)
+
+    with (
+        event_producer.build_chat_message_manager(),
+        event_producer.build_notification_request_manager(),
+        event_producer.build_admin_delete_request_manager(),
+        event_producer.build_new_poll_manager(),
+        event_producer.build_complete_poll_manager(),
+        PluginRuntime(
+            listener_plugins=listener_plugins,
+            housekeeping_plugins=housekeeping_plugins,
+        ) as runtime,
+        (
+            CroniterTrigger(
+                cron_expression=housekeeping_cron,
+                callback=runtime.run_housekeeping,
             )
-        )
+            if housekeeping_cron
+            else PeriodicTrigger(
+                interval_seconds=housekeeping_interval_seconds,
+                callback=runtime.run_housekeeping,
+            )
+        ),
+        CanaryWatcher(db_handler.db) as canary,
+        PubsList(db_handler.pub_collection) as pubs_list,
+    ):
+        for plugin in event_plugins:
+            if isinstance(plugin, CompletePollListenerPlugin):
+                plugin.set_pubs_list(pubs_list)
 
-    if runtime_config.housekeeping.uses_cron:
-        _log.info(
-            "Housekeeping runner started (cron=%s)",
-            runtime_config.housekeeping.cron_expression,
-        )
-        housekeeping_trigger = CroniterTrigger(
-            cron_expression=cast(str, runtime_config.housekeeping.cron_expression),
-            callback=enqueue_housekeeping_tick,
-        )
-    else:
-        _log.info(
-            "Housekeeping runner started (interval=%ss)",
-            runtime_config.housekeeping.interval_seconds,
-        )
-        housekeeping_trigger = PeriodicTrigger(
-            interval_seconds=runtime_config.housekeeping.interval_seconds,
-            callback=enqueue_housekeeping_tick,
-        )
-
-    canary = CanaryWatcher(
-        db_handler.db,
-        timeout_seconds=canary_interval_seconds * 2,
-    )
-    canary_trigger = PeriodicTrigger(
-        interval_seconds=canary_interval_seconds,
-        callback=canary.send_canary,
-    )
-
-    with contextlib.ExitStack() as stack:
-        stack.enter_context(plugin_runtime)
-        stack.enter_context(housekeeping_trigger)
-        stack.enter_context(canary)
-        stack.enter_context(canary_trigger)
-        pubs_list = stack.enter_context(PubsList(db_handler.pub_collection))
-
-        QueueRunner(
-            event_queue=q,
+        healthchecks: list[Callable[[], str | None]] = [
+            lambda: None if db_handler.okay else "Exiting due to db is not okay",
+            lambda: (
+                "Exiting due to stale Firestore listener canary"
+                if canary.is_stale()
+                else None
+            ),
+        ]
+        runner = QueueRunner(
+            event_queue=event_queue,
             pubs_list=pubs_list,
             healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
-            healthchecks=[
-                lambda: None if db_handler.okay else "Exiting due to db is not okay",
-                lambda: (
-                    "Exiting due to stale Firestore listener (canary not observed)"
-                    if canary.is_stale()
-                    else None
-                ),
-            ],
-        ).run_forever()
+            healthchecks=healthchecks,
+            registry=event_registry,
+        )
+        _log.info("sub_events runtime started")
+        runner.run_forever()
 
 
 @click.command()
@@ -189,6 +169,12 @@ def sub_events(
 )
 @click.option(
     "--logfile", type=click.Path(path_type=Path), default=None, help="Log file path"
+)
+@click.option(
+    "--restart-interval",
+    type=int,
+    default=60 * 24,
+    help="Restart interval in minutes (default: 1 day)",
 )
 @click.option(
     "--housekeeping-interval-seconds",
@@ -215,42 +201,27 @@ def sub_events(
     show_default=True,
     help="When using recent-history, include polls from this many days ago",
 )
-@click.option(
-    "--canary-interval-seconds",
-    type=click.IntRange(min=10),
-    default=300,
-    show_default=True,
-    help="How often (seconds) to write a canary nonce to verify Firestore listener health",
-)
-@click.option(
-    "--enable-real-auth-delete/--no-enable-real-auth-delete",
-    default=False,
-    show_default=True,
-    help="Allow real Firebase Auth deletion for validated requests (requires ENABLE_ADMIN_DELETE_REQUESTS=true)",
-)
 def cli(
     dummy_email: bool,
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
+    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
-    canary_interval_seconds: int,
-    enable_real_auth_delete: bool,
 ) -> None:
     sub_events(
         dummy_email,
         dummy_push,
         loglevel,
         logfile,
+        restart_interval,
         housekeeping_interval_seconds,
         housekeeping_cron,
         all_history,
         poll_lookback_days,
-        canary_interval_seconds,
-        enable_real_auth_delete,
     )
 
 

@@ -76,7 +76,9 @@ def test_handle_delegates_to_document_handler() -> None:
     document = MagicMock()
     pubs_list = MagicMock()
 
-    with patch.object(handler, "handle_request_document") as mock_handle_request_document:
+    with patch.object(
+        handler, "handle_request_document"
+    ) as mock_handle_request_document:
         handler.handle(document, pubs_list)
 
     mock_handle_request_document.assert_called_once_with(document)
@@ -87,7 +89,9 @@ def test_handle_passes_through_none_document() -> None:
     handler = AdminDeleteRequestHandler(db, enabled=True, dry_run=True)
     pubs_list = MagicMock()
 
-    with patch.object(handler, "handle_request_document") as mock_handle_request_document:
+    with patch.object(
+        handler, "handle_request_document"
+    ) as mock_handle_request_document:
         handler.handle(None, pubs_list)
 
     mock_handle_request_document.assert_called_once_with(None)

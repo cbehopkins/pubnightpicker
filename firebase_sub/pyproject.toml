@@ -43,7 +43,7 @@ warn_return_any = true
 warn_no_return = true
 
 [[tool.mypy.overrides]]
-module = ["tests.test_*"]
+module = ["tests.*"]
 check_untyped_defs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

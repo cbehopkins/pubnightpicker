@@ -1,6 +1,5 @@
 """Tests for QueueRunner: healthcheck logic and event dispatch."""
 
-import queue
 import threading
 from types import SimpleNamespace
 
@@ -61,7 +60,9 @@ def test_run_forever_continues_when_all_healthchecks_pass():
     calls: list[str] = []
     runner = _make_runner(
         event_queue=q,
-        healthchecks=[lambda: (calls.append("checked") or None)],  # type: ignore[return-value]
+        healthchecks=[
+            lambda: (calls.append("checked") or None),  # type: ignore[return-value]
+        ],
         healthcheck_interval_seconds=0.02,
     )
 

@@ -44,7 +44,9 @@ def firestore_emulator_host() -> str:
     host = os.getenv("FIRESTORE_EMULATOR_HOST")
     if not host:
         pytest.skip(
-            "FIRESTORE_EMULATOR_HOST is not set. Run integration tests via tox integration env or set emulator host explicitly."
+            "FIRESTORE_EMULATOR_HOST is not set. "
+            "Run integration tests via tox integration env "
+            "or set emulator host explicitly."
         )
 
     # Skip gracefully if the emulator process isn't actually listening yet.

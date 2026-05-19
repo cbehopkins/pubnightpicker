@@ -1,28 +1,26 @@
 from contextlib import AbstractContextManager
-from collections.abc import Callable
+from typing import Protocol
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.query import Query
 
-from firebase_sub.database.admin_delete_requests import AdminDeleteRequestHandler
-from firebase_sub.database.poll_manager import PollManager
-from firebase_sub.event import Event, EventType
-from firebase_sub.plugins.protocols import ListenerPlugin
-from firebase_sub.runtime.job_queue import JobQueue
+from firebase_sub.event import EventEnvelope, EventType
+from firebase_sub.plugins.protocols import EventPlugin
 
 
-class AdminDeleteRequestListenerPlugin(ListenerPlugin):
+class AdminDeleteRequestHandlerProtocol(Protocol):
+    enabled: bool
+
+    def handle_request_document(self, document: DocumentSnapshot | None) -> None: ...
+
+
+class AdminDeleteRequestListenerPlugin(EventPlugin):
     """Listener plugin for admin delete request documents."""
 
     def __init__(
         self,
         *,
-        query_admin_delete_requests: Query | Callable[[], Query],
-        event_queue: JobQueue[Event],
-        handler: AdminDeleteRequestHandler,
+        handler: AdminDeleteRequestHandlerProtocol,
     ) -> None:
-        self._query_admin_delete_requests = query_admin_delete_requests
-        self._event_queue = event_queue
         self._handler = handler
 
     def name(self) -> str:
@@ -32,22 +30,25 @@ class AdminDeleteRequestListenerPlugin(ListenerPlugin):
         return self._handler.enabled
 
     def build_manager(self) -> AbstractContextManager[object]:
-        query = (
-            self._query_admin_delete_requests()
-            if callable(self._query_admin_delete_requests)
-            else self._query_admin_delete_requests
-        )
-        return PollManager(
-            query=query,
-            add=self._admin_delete_request_callback,
-            modify=self._admin_delete_request_callback,
+        """Events are now produced externally by event producers."""
+        # No-op manager since Firestore watches are managed by event producers
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+    def filter(self, envelope: EventEnvelope) -> bool:
+        return (
+            envelope.type == EventType.ADMIN_DELETE_REQUEST
+            and envelope.doc is not None
+            and self._handler.enabled
         )
 
-    def _admin_delete_request_callback(self, document: DocumentSnapshot) -> None:
-        self._event_queue.put(
-            Event(
-                type=EventType.ADMIN_DELETE_REQUEST,
-                doc=document,
-                callback=self._handler.handle,
-            )
-        )
+    def handle(self, envelope: EventEnvelope) -> None:
+        if envelope.doc is None:
+            return
+        self._handler.handle_request_document(envelope.doc)
+
+    def mark_done(self, envelope: EventEnvelope) -> None:
+        # The admin delete handler persists status transitions internally.
+        del envelope
+        return
