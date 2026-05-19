@@ -4,7 +4,6 @@ from typing import cast
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.action_track import ActionMan
-from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.new_poll import NewPollListenerPlugin
 from firebase_sub.plugins.protocols import NewPollDbHandler
@@ -12,11 +11,16 @@ from firebase_sub.plugins.protocols import NewPollDbHandler
 
 class _FakeDbHandler:
     def __init__(self) -> None:
-        self.calls: list[tuple[object, str]] = []
         self.db = _FakeDb()
+        self.poll_repo = _FakePollRepo()
 
     def new_poll_event_handler(self, am: ActionMan, poll_id: str) -> None:
-        self.calls.append((am, poll_id))
+        del am, poll_id
+
+
+class _FakePollRepo:
+    def get_poll(self, poll_id: str) -> dict[str, str]:
+        return {"date": "2026-01-01", "id": poll_id}
 
 
 class _FakeDb:
@@ -62,13 +66,24 @@ class _FakeDocSnapshot:
 
 
 class _FakeActionManager(ActionMan):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, str]] = []
+
     def filter(self, action_dict: dict, action_key: str) -> bool:
         return True
 
     def action_event(
         self, action_dict: dict, action_key: str, poll_id: str, poll_date: str
     ) -> None:
-        pass
+        del action_dict
+        self.calls.append(
+            {
+                "action_key": action_key,
+                "poll_id": poll_id,
+                "poll_date": poll_date,
+            }
+        )
 
     def mark_done(self, action_dict: dict, action_key: str) -> dict:
         return {}
@@ -122,16 +137,23 @@ def test_new_poll_listener_filter_accepts_new_poll_events():
         pass
 
 
-def test_new_poll_listener_handler_calls_db_handler():
+def test_new_poll_listener_handle_calls_action_manager():
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_manager = _FakeActionManager()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
         action_manager=action_manager,
     )
+    plugin._snapshot_get = lambda document_ref: cast(object, document_ref.get())  # type: ignore[method-assign]
     document = cast(DocumentSnapshot, SimpleNamespace(id="poll-2"))
-    pubs_list = cast(PubsList, object())
+    envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
 
-    plugin._new_poll_handler(document, pubs_list)
+    plugin.handle(envelope)
 
-    assert cast(_FakeDbHandler, db_handler).calls == [(action_manager, "poll-2")]
+    assert action_manager.calls == [
+        {
+            "action_key": "poll-2",
+            "poll_id": "poll-2",
+            "poll_date": "2026-01-01",
+        }
+    ]

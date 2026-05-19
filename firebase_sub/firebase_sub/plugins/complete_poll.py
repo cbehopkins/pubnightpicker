@@ -44,28 +44,7 @@ class CompletePollListenerPlugin(EventPlugin):
         ) -> None:
             self._run_complete_poll_handler(document=document, pubs_list=pubs_list)
 
-        @retry(
-            retry_errors=(RetryablePollDataNotReadyError,),
-            max_retries=max_retries,
-            delay_seconds=retry_delay_seconds,
-            operation_name="legacy completed poll callback after pubs not ready",
-        )
-        def _legacy_retrying_handler(
-            document: DocumentSnapshot | None,
-            pubs_list: PubsList,
-        ) -> None:
-            if document is None:
-                raise ValueError(
-                    "Completed Event has no document. This indicates a coding error."
-                )
-            self._db_handler.complete_poll_event_handler(
-                pubs_list,
-                self._action_manager,
-                poll_id=document.id,
-            )
-
         self._retrying_handler = _retrying_handler
-        self._legacy_retrying_handler = _legacy_retrying_handler
 
     def name(self) -> str:
         return "complete_poll_listener"
@@ -201,10 +180,3 @@ class CompletePollListenerPlugin(EventPlugin):
             self._pending_updates[poll_id] = new_action_dict
         else:
             self._pending_updates.pop(poll_id, None)
-
-    def _complete_poll_handler(
-        self,
-        document: DocumentSnapshot | None,
-        pubs_list: PubsList,
-    ) -> None:
-        self._legacy_retrying_handler(document, pubs_list)

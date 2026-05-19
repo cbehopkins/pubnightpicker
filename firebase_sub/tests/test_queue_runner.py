@@ -1,29 +1,33 @@
 """Tests for QueueRunner: healthcheck logic and event dispatch."""
 
 import threading
-from types import SimpleNamespace
 
-from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event, EventType
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.queue_runner import QueueRunner
 
 
-def _fake_pubs_list() -> PubsList:
-    return SimpleNamespace()  # type: ignore[return-value]
+class _FakeRegistry:
+    def __init__(self) -> None:
+        self.dispatched: list[EventType] = []
+
+    def dispatch(self, envelope) -> int:
+        self.dispatched.append(envelope.type)
+        return 1
 
 
 def _make_runner(
     *,
     event_queue: JobQueue,
+    registry: _FakeRegistry | None = None,
     healthchecks=None,
     healthcheck_interval_seconds: float = 0.05,
 ) -> QueueRunner:
     return QueueRunner(
         event_queue=event_queue,
-        pubs_list=_fake_pubs_list(),
         healthcheck_interval_seconds=healthcheck_interval_seconds,
         healthchecks=healthchecks or [],
+        registry=registry or _FakeRegistry(),
     )
 
 
@@ -86,14 +90,10 @@ def test_run_forever_continues_when_all_healthchecks_pass():
     assert calls, "Expected at least one healthy healthcheck call"
 
 
-def test_run_forever_processes_event_and_calls_handle():
+def test_run_forever_processes_event_and_dispatches_envelope():
     q: JobQueue[Event] = JobQueue()
-    handled: list[str] = []
-
-    def _callback(doc, pubs_list):
-        handled.append("handled")
-
-    event = Event(type=EventType.TICK, doc=None, callback=_callback)
+    registry = _FakeRegistry()
+    event = Event(type=EventType.TICK, doc=None)
     q.put(event)
 
     # After the event is processed, subsequent healthcheck fails to stop the loop
@@ -108,6 +108,7 @@ def test_run_forever_processes_event_and_calls_handle():
 
     runner = _make_runner(
         event_queue=q,
+        registry=registry,
         healthchecks=[_failing_after_one],
         healthcheck_interval_seconds=0.02,
     )
@@ -117,7 +118,7 @@ def test_run_forever_processes_event_and_calls_handle():
     except SystemExit:
         pass
 
-    assert handled == ["handled"]
+    assert registry.dispatched == [EventType.TICK]
 
 
 # ---------------------------------------------------------------------------

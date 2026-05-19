@@ -17,17 +17,8 @@ from firebase_sub.database.notification_push_diag import NotificationPushTestHan
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.event import Event, EventType
 from firebase_sub.plugins.protocols import CompletePollDbHandler, NewPollDbHandler
-from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.database.handlers import DbHandler
-
-
-def _queue_dispatch_callback(
-    document: DocumentSnapshot | None,
-    pubs_list: PubsList,
-) -> None:
-    """No-op callback retained for Event backward compatibility in registry mode."""
-    del document, pubs_list
 
 
 class EventProducer:
@@ -77,7 +68,6 @@ class EventProducer:
         event = Event(
             type=EventType.CHAT_MESSAGE,
             doc=document,
-            callback=_queue_dispatch_callback,
         )
         self.event_queue.put(event)
 
@@ -94,7 +84,6 @@ class EventProducer:
         event = Event(
             type=event_type,
             doc=document,
-            callback=_queue_dispatch_callback,
         )
         self.event_queue.put(event)
 
@@ -103,7 +92,6 @@ class EventProducer:
         event = Event(
             type=EventType.ADMIN_DELETE_REQUEST,
             doc=document,
-            callback=_queue_dispatch_callback,
         )
         self.event_queue.put(event)
 
@@ -139,7 +127,6 @@ class EventProducer:
         event = Event(
             type=EventType.NEW_POLL,
             doc=document,
-            callback=_queue_dispatch_callback,
         )
         self.event_queue.put(event)
 
@@ -148,6 +135,5 @@ class EventProducer:
         event = Event(
             type=EventType.COMP_POLL,
             doc=document,
-            callback=_queue_dispatch_callback,
         )
         self.event_queue.put(event)

@@ -5,7 +5,6 @@ from typing import Any
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from typing import cast
 
-from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.action_track import ActionMan
 from firebase_sub.plugins.protocols import (
@@ -155,18 +154,3 @@ class NewPollListenerPlugin(EventPlugin):
         merge: bool,
     ) -> None:
         cast(Any, document_ref).set(payload, merge=merge)
-
-    def _new_poll_handler(
-        self,
-        document: DocumentSnapshot | None,
-        pubs_list: PubsList,
-    ) -> None:
-        """Legacy callback-based handler (kept for backward compatibility)."""
-        del pubs_list
-        if document is None:
-            raise ValueError(
-                "New Event has no document. This indicates a coding error."
-            )
-        self._db_handler.new_poll_event_handler(
-            self._action_manager, poll_id=document.id
-        )

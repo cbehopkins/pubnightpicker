@@ -148,7 +148,6 @@ def sub_events(
         ]
         runner = QueueRunner(
             event_queue=event_queue,
-            pubs_list=pubs_list,
             healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
             healthchecks=healthchecks,
             registry=event_registry,

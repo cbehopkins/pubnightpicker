@@ -1,11 +1,8 @@
 import enum
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
-
-from firebase_sub.database.pubs_list import PubsList
 
 _log = logging.getLogger(__name__)
 
@@ -41,10 +38,3 @@ class EventEnvelope:
 class Event:
     type: EventType
     doc: DocumentSnapshot | None
-    callback: Callable[[DocumentSnapshot | None, PubsList], None]
-
-    def handle_queue_item(
-        self,
-        pubs_list: PubsList,
-    ):
-        self.callback(self.doc, pubs_list)
