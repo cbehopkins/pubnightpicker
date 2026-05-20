@@ -16,6 +16,7 @@ Scenarios:
 import pytest
 
 from firebase_sub.database.handlers import DbHandler
+from firebase_sub.plugins.chat_push import process_chat_message_push
 
 
 def _seed_chat_user(
@@ -143,7 +144,7 @@ class TestEventChatNotifications:
 
         handler = DbHandler()
         message_doc = firestore_client.collection("messages").document(message_id).get()
-        handler.chat_message_push_handler(message_id, message_doc, dummy_run=True)
+        process_chat_message_push(handler, message_id, message_doc, dummy_run=True)
 
         action_doc = (
             firestore_client.collection("chat_push_actions")
@@ -172,7 +173,7 @@ class TestEventChatNotifications:
 
         handler = DbHandler()
         message_doc = firestore_client.collection("messages").document(message_id).get()
-        handler.chat_message_push_handler(message_id, message_doc, dummy_run=True)
+        process_chat_message_push(handler, message_id, message_doc, dummy_run=True)
 
         action_doc = (
             firestore_client.collection("chat_push_actions")

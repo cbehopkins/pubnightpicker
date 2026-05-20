@@ -37,11 +37,8 @@ from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.database.repositories import PollRepository
-from firebase_sub.my_types import PollId
 
 if TYPE_CHECKING:
-    from firebase_sub.action_track import ActionMan
-    from firebase_sub.database.pubs_list import PubsList
     from firebase_sub.event import EventEnvelope
 
 __all__ = [
@@ -317,12 +314,6 @@ class NewPollDbHandler(PollStatusQueryDbHandler, Protocol):
     @property
     def poll_repo(self) -> PollRepository: ...
 
-    def new_poll_event_handler(
-        self,
-        am: "ActionMan",
-        poll_id: PollId,
-    ) -> None: ...
-
 
 class CompletePollDbHandler(PollStatusQueryDbHandler, Protocol):
     """Protocol for db-handler capabilities needed by CompletePollListenerPlugin."""
@@ -332,13 +323,6 @@ class CompletePollDbHandler(PollStatusQueryDbHandler, Protocol):
 
     @property
     def poll_repo(self) -> PollRepository: ...
-
-    def complete_poll_event_handler(
-        self,
-        pubs_list: "PubsList",
-        am: "ActionMan",
-        poll_id: PollId,
-    ) -> None: ...
 
 
 @runtime_checkable

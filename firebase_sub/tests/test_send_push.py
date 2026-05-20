@@ -1,14 +1,14 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import ANY
-from datetime import UTC, datetime
 
 import pytest
 from pywebpush import WebPushException
 
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.send_push import (
-    _build_diagnostic_payload,
     _build_complete_payload,
+    _build_diagnostic_payload,
     _build_open_payload,
     _deliver_pushes,
     _topic_for_poll_id,

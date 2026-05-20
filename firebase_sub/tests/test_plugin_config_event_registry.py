@@ -19,14 +19,6 @@ class _FakePollDbHandler:
         del completed, min_date
         return cast(Query, SimpleNamespace(on_snapshot=lambda _cb: None))
 
-    def new_poll_event_handler(self, am: ActionMan, poll_id: str) -> None:
-        del am, poll_id
-
-    def complete_poll_event_handler(
-        self, pubs_list, am: ActionMan, poll_id: str
-    ) -> None:
-        del pubs_list, am, poll_id
-
 
 class _UnknownEventPlugin(EventPlugin):
     def name(self) -> str:

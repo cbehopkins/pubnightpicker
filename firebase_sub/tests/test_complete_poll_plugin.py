@@ -14,7 +14,6 @@ from firebase_sub.plugins.protocols import CompletePollDbHandler
 
 class _FakeDbHandler:
     def __init__(self) -> None:
-        self.calls: list[tuple[object, object, str]] = []
         self.db = _FakeDb()
         self.poll_repo = _FakePollRepo(None)
 
@@ -23,14 +22,6 @@ class _FakeDbHandler:
     ) -> Query:
         del completed, min_date
         return cast(Query, SimpleNamespace(on_snapshot=lambda _cb: None))
-
-    def complete_poll_event_handler(
-        self,
-        pubs_list: object,
-        am: ActionMan,
-        poll_id: str,
-    ) -> None:
-        self.calls.append((pubs_list, am, poll_id))
 
 
 class _FakeActionManager(ActionMan):

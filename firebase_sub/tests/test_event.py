@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from typing import cast
+
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.event import Event, EventEnvelope, EventType

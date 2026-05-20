@@ -1,8 +1,7 @@
 from datetime import UTC, date, datetime
-from typing import Literal, NotRequired, TypedDict
-from unittest.mock import MagicMock
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, NotRequired, TypedDict, cast
+from unittest.mock import MagicMock
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -12,19 +11,19 @@ from firebase_sub.database.housekeeping_tasks import (
     NOTIFICATION_REQ_COLLECTION,
     POLL_ACTION_AUDIT_COLLECTION,
     POLLS_COLLECTION,
-    PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
+    PUSH_TEST_DOC_ID,
+    _advance_event_occurrence_if_due,
+    _create_event_poll_if_due,
+    _resolve_event_occurrence_date,
     auto_complete_multi_option_polls_due_today,
     auto_complete_single_event_polls_due_tomorrow,
-    maintain_event_recurrence_polls,
-    delete_stale_poll_action_audit_entries,
     delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
+    delete_stale_poll_action_audit_entries,
     delete_stale_push_diagnostic_entries,
-    _resolve_event_occurrence_date,
-    _create_event_poll_if_due,
-    _advance_event_occurrence_if_due,
+    maintain_event_recurrence_polls,
 )
 from firebase_sub.my_types import EventRecurrenceRule
 

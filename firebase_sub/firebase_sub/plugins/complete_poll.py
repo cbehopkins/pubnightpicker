@@ -2,17 +2,14 @@ from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
+from firebase_sub.action_track import ActionMan
 from firebase_sub.common.retry import retry
 from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
-from firebase_sub.push_contract import PushDedupeKeys
-from firebase_sub.action_track import ActionMan
 from firebase_sub.my_types import ActionDict
-from firebase_sub.plugins.protocols import (
-    CompletePollDbHandler,
-    EventPlugin,
-)
+from firebase_sub.plugins.protocols import CompletePollDbHandler, EventPlugin
+from firebase_sub.push_contract import PushDedupeKeys
 
 
 class CompletePollListenerPlugin(EventPlugin):

@@ -4,21 +4,21 @@ import logging
 import os
 import textwrap
 import time
-from os import getenv
 from collections.abc import Callable, Iterable
+from os import getenv
 from typing import Any, Protocol
 
-from firebase_sub.constants import (
-    ADMIN_EMAIL_ADDR,
-    SELF_EMAIL,
-    SECONDS_IN_DAY,
-    SECONDS_IN_HOUR,
-)
 import mailtrap
 from pydantic import ValidationError
 
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.common.rate_limit import SkipCall, TokenBucket, rate_limited
+from firebase_sub.constants import (
+    ADMIN_EMAIL_ADDR,
+    SECONDS_IN_DAY,
+    SECONDS_IN_HOUR,
+    SELF_EMAIL,
+)
 from firebase_sub.models.notification_models import PollPayload, VenuePayload
 from firebase_sub.my_types import (
     EmailAddr,

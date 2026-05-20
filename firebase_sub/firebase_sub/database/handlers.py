@@ -5,36 +5,20 @@ from functools import partial
 from typing import Any, cast
 
 from firebase_admin import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1 import watch
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 from google.cloud.firestore_v1.watch import DocumentChange
 
-from firebase_sub.action_track import ActionMan
-from firebase_sub.push_contract import (
-    PUSH_PREFERENCE_DEFAULTS,
-    PUSH_PREFERENCE_FIELD,
-    PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
-    PUSH_EVENT_CHAT_MESSAGE_EVENT,
-    PushDedupeKeys,
-)
-from firebase_sub.send_push import (
-    ValidPushEndpoint,
-    build_chat_event_payload,
-    build_chat_global_payload,
-    endpoint_hash,
-    push_endpoint_from_snapshot,
-    send_chat_push,
-)
 from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
 )
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
-from firebase_sub.database.pubs_list import PubsList
+from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS, PushDedupeKeys
 
 _log = logging.getLogger(__name__)
 
@@ -81,12 +65,6 @@ def _snapshot_get(document_ref: object) -> DocumentSnapshot:
         # Accept snapshot-like test doubles that expose Firestore-compatible surface.
         return cast(DocumentSnapshot, raw_snapshot)
     raise TypeError("Expected synchronous DocumentSnapshot from Firestore get()")
-
-
-def _doc_set(
-    document_ref: object, payload: dict[str, object], *, merge: bool = False
-) -> None:
-    cast(Any, document_ref).set(payload, merge=merge)
 
 
 def _query_where(query: Query, *, field: str, op: str, value: object) -> Query:
@@ -321,211 +299,10 @@ class DbHandler:
                 muted.add(uid)
         return muted
 
-    def chat_message_push_handler(
-        self,
-        message_id: str,
-        message_doc: DocumentSnapshot,
-        *,
-        dummy_run: bool = False,
-    ) -> None:
-        """Handle a new chat message and send push notifications to eligible users."""
-        message_data = _snapshot_payload(message_doc)
-        scope_type_raw = message_data.get("scopeType")
-        if scope_type_raw != "event":
-            scope_type = "global"
-            scope_id = "main"
-        else:
-            scope_type = "event"
-            scope_id_raw = message_data.get("scopeId")
-            scope_id = (
-                scope_id_raw
-                if isinstance(scope_id_raw, str) and scope_id_raw
-                else "main"
-            )
-
-        author_uid_raw = message_data.get("uid")
-        author_uid = author_uid_raw if isinstance(author_uid_raw, str) else ""
-        display_name = message_data.get("displayName")
-        fallback_name = message_data.get("name")
-        sender_name = (
-            display_name
-            if isinstance(display_name, str) and display_name
-            else (
-                fallback_name
-                if isinstance(fallback_name, str) and fallback_name
-                else "Someone"
-            )
-        )
-        text_value = message_data.get("text")
-        alt_text_value = message_data.get("message")
-        raw_text = (
-            text_value
-            if isinstance(text_value, str)
-            else alt_text_value if isinstance(alt_text_value, str) else ""
-        )
-        body_text = raw_text[:100]
-
-        preference_field = PUSH_PREFERENCE_FIELD[
-            (
-                PUSH_EVENT_CHAT_MESSAGE_EVENT
-                if scope_type == "event"
-                else PUSH_EVENT_CHAT_MESSAGE_GLOBAL
-            )
-        ]
-        eligible_uids = self._users_with_push_preference(preference_field)
-
-        if scope_type == "event":
-            attendees = self._attendee_uids(scope_id)
-            participants = self._event_chat_participant_uids(scope_id)
-            eligible_event_uids = attendees | participants
-            eligible_uids &= eligible_event_uids
-            muted_uids = self._muted_event_chat_uids(scope_id, eligible_uids)
-            eligible_uids -= muted_uids
-
-        # Exclude the message author.
-        eligible_uids.discard(author_uid)
-
-        if not eligible_uids:
-            _log.info("No eligible recipients for chat push on message %s", message_id)
-            return
-
-        # Read per-endpoint delivery record for idempotency: endpoint hashes allow
-        # partial retries without re-delivering to already-succeeded endpoints.
-        actions_ref = self.db.collection("chat_push_actions").document(message_id)
-        actions_snap = _snapshot_get(actions_ref)
-        actions_data = _snapshot_payload(actions_snap)
-        already_delivered_eps = set(
-            _string_list(actions_data.get("delivered_endpoints"))
-        )
-
-        # Build payload.
-        if scope_type == "event":
-            payload = build_chat_event_payload(
-                message_id=message_id,
-                poll_id=scope_id,
-                sender_name=sender_name,
-                body_text=body_text,
-            )
-        else:
-            payload = build_chat_global_payload(
-                message_id=message_id,
-                sender_name=sender_name,
-                body_text=body_text,
-            )
-
-        # Collect active endpoints for eligible recipients, skipping any whose
-        # delivery has already been recorded.
-        endpoints: list[ValidPushEndpoint] = []
-        for uid in eligible_uids:
-            for endpoint_doc in self.query_active_push_endpoints_for_user(uid):
-                raw_ep = push_endpoint_from_snapshot(endpoint_doc)
-                if raw_ep is None:
-                    continue
-                valid_ep = raw_ep.validated()
-                if valid_ep is not None:
-                    if endpoint_hash(valid_ep) not in already_delivered_eps:
-                        endpoints.append(valid_ep)
-        if not endpoints:
-            _log.info("No remaining undelivered endpoints for message %s", message_id)
-            return
-
-        # Send — writes idempotency record inline per successful endpoint delivery.
-        send_chat_push(
-            endpoints=endpoints,
-            payload=payload,
-            actions_ref=actions_ref,
-            actions_doc_exists=actions_snap.exists,
-            scope_type=scope_type,
-            scope_id=scope_id,
-            dummy_run=dummy_run,
-        )
-
-    def handle_chat_message(
-        self,
-        message_doc: DocumentSnapshot | None,
-        pubs_list: PubsList,
-        *,
-        dummy_run: bool = False,
-    ) -> None:
-        del pubs_list
-        if message_doc is None:
-            return
-        self.chat_message_push_handler(
-            message_doc.id,
-            message_doc,
-            dummy_run=dummy_run,
-        )
-
     @property
     def query_messages(self) -> Query:
         """Return a query for the messages collection (used for chat push listener)."""
         return cast(Query, self.db.collection("messages"))
-
-    def new_poll_event_handler(self, am: ActionMan, poll_id: PollId) -> None:
-        action_document = self.db.collection("open_actions").document(poll_id)
-        action_snapshot = _snapshot_get(action_document)
-        poll_dict_raw = self.poll_repo.get_poll(poll_id)
-        try:
-            if not isinstance(poll_dict_raw, dict):
-                raise TypeError("poll payload is not a dict")
-            raw_date = poll_dict_raw["date"]
-            poll_date = raw_date
-        except (KeyError, TypeError) as exc:
-            _log.warning(
-                "Poll %s has missing/invalid date for open push TTL; using default TTL path (%s)",
-                poll_id,
-                exc,
-            )
-            poll_date = ""
-        canonical_open_key = PushDedupeKeys.open_key(poll_id)
-        action_dict = _with_legacy_alias_key(
-            action_snapshot.to_dict(),
-            legacy_key=poll_id,
-            canonical_key=canonical_open_key,
-        )
-        new_action_dict = am.action_event(
-            action_dict=action_dict,
-            action_key=canonical_open_key,
-            poll_id=poll_id,
-            poll_date=poll_date,
-        )
-        if new_action_dict:
-            _doc_set(
-                action_document, cast(dict[str, object], new_action_dict), merge=True
-            )
-
-    def complete_poll_event_handler(
-        self, pubs_list: "PubsList", am: ActionMan, poll_id: PollId
-    ) -> None:
-        poll_dict_raw = self.poll_repo.get_poll(poll_id)
-        action_document = self.db.collection("comp_actions").document(poll_id)
-        if poll_dict_raw is None:
-            return
-        poll_dict = poll_dict_raw
-        if "selected" not in poll_dict:
-            _log.error("Poll document %s has no selected field", poll_id)
-            return
-        pub_id = poll_dict["selected"]
-        if pub_id not in pubs_list:
-            raise RetryablePollDataNotReadyError(
-                "Poll "
-                f"{poll_id} selected pub {pub_id} that is not in pubs_list. "
-                "This usually indicates startup race while pubs list is warming."
-            )
-        action_snapshot = _snapshot_get(action_document)
-        canonical_complete_key = _compute_action_key(poll_id, poll_dict, pub_id)
-        action_dict = action_snapshot.to_dict()
-        new_action_dict = am.action_event(
-            action_dict=action_dict,
-            action_key=canonical_complete_key,
-            poll_id=poll_id,
-            poll_dict=poll_dict,
-            pub_dict=pubs_list,
-        )
-        if new_action_dict:
-            _doc_set(
-                action_document, cast(dict[str, object], new_action_dict), merge=True
-            )
 
     def query_polls_by_status(
         self, *, completed: bool, min_date: str | None = None

@@ -1,15 +1,11 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from typing import cast
 
-from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.action_track import ActionMan
-from firebase_sub.plugins.protocols import (
-    EventPlugin,
-    NewPollDbHandler,
-)
+from firebase_sub.event import EventEnvelope, EventType
+from firebase_sub.plugins.protocols import EventPlugin, NewPollDbHandler
 
 
 class NewPollListenerPlugin(EventPlugin):

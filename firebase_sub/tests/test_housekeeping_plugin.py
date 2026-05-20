@@ -8,11 +8,11 @@ from firebase_sub.plugins.housekeeping import (
     HousekeepingPluginRunner,
     HousekeepingTaskPlugin,
 )
-from firebase_sub.plugins.scheduled_housekeeping import ScheduledHousekeepingRunner
 from firebase_sub.plugins.protocols import (
     PlannedPluginException,
     UnexpectedPluginException,
 )
+from firebase_sub.plugins.scheduled_housekeeping import ScheduledHousekeepingRunner
 
 # ---------------------------------------------------------------------------
 # HousekeepingTaskPlugin

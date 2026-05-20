@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import patch
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -8,23 +9,7 @@ from firebase_sub.plugins.chat_message import ChatMessageListenerPlugin
 
 
 class _FakeDbHandler:
-    def __init__(self) -> None:
-        self.handled: list[str] = []
-
-    def chat_message_push_handler(
-        self,
-        message_id: str,
-        message_doc,
-        *,
-        dummy_run: bool = False,
-    ) -> None:
-        del message_doc, dummy_run
-        self.handled.append(message_id)
-
-    def handle_chat_message(
-        self, message_doc, pubs_list, *, dummy_run: bool = False
-    ) -> None:
-        del message_doc, pubs_list, dummy_run
+    pass
 
 
 def test_chat_message_listener_enqueues_chat_event() -> None:
@@ -42,11 +27,12 @@ def test_chat_message_listener_enqueues_chat_event() -> None:
     # Test filter accepts chat message events
     assert plugin.filter(envelope) is True
 
-    # Test handle processes the event
-    plugin.handle(envelope)
+    with patch(
+        "firebase_sub.plugins.chat_message.process_chat_message_push"
+    ) as mock_push:
+        plugin.handle(envelope)
 
-    # Verify the handler was called
-    assert "msg-1" in db_handler.handled
+    mock_push.assert_called_once_with(db_handler, "msg-1", document, dummy_run=True)
 
 
 def test_chat_message_listener_is_enabled() -> None:
@@ -68,10 +54,12 @@ def test_chat_message_filter_and_handle() -> None:
     envelope = EventEnvelope(type=EventType.CHAT_MESSAGE, doc=document)
 
     assert plugin.filter(envelope) is True
-    plugin.handle(envelope)
+    with patch(
+        "firebase_sub.plugins.chat_message.process_chat_message_push"
+    ) as mock_push:
+        plugin.handle(envelope)
+    mock_push.assert_called_once_with(db_handler, "msg-2", document, dummy_run=True)
     plugin.mark_done(envelope)
-
-    assert db_handler.handled == ["msg-2"]
 
 
 def test_chat_message_filter_rejects_other_event_types() -> None:

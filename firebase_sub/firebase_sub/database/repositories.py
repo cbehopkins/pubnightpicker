@@ -8,8 +8,8 @@ import logging
 from collections.abc import Generator
 from typing import Protocol
 
-from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query

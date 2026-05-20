@@ -6,8 +6,8 @@ from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
-from google.cloud.firestore_v1.transforms import DELETE_FIELD
 from google.cloud.firestore_v1.client import Client
+from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
 from firebase_sub.database.event_recurrence import (
     creation_window_start,

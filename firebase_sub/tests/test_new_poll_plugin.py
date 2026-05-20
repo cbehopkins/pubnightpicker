@@ -14,9 +14,6 @@ class _FakeDbHandler:
         self.db = _FakeDb()
         self.poll_repo = _FakePollRepo()
 
-    def new_poll_event_handler(self, am: ActionMan, poll_id: str) -> None:
-        del am, poll_id
-
 
 class _FakePollRepo:
     def get_poll(self, poll_id: str) -> dict[str, str]:

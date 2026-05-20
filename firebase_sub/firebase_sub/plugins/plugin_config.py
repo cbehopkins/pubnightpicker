@@ -2,10 +2,9 @@ from collections.abc import Sequence
 
 from google.cloud.firestore_v1.client import Client
 
+from firebase_sub.action_track import ActionMan
 from firebase_sub.database.admin_delete_requests import AdminDeleteRequestHandler
 from firebase_sub.database.handlers import DbHandler
-from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
-from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.housekeeping_tasks import (
     auto_complete_multi_option_polls_due_today,
     auto_complete_single_event_polls_due_tomorrow,
@@ -16,8 +15,10 @@ from firebase_sub.database.housekeeping_tasks import (
     delete_stale_push_diagnostic_entries,
     maintain_event_recurrence_polls,
 )
-from firebase_sub.plugins.admin_delete_request import AdminDeleteRequestListenerPlugin
+from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
+from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.event import Event, EventType
+from firebase_sub.plugins.admin_delete_request import AdminDeleteRequestListenerPlugin
 from firebase_sub.plugins.chat_message import ChatMessageListenerPlugin
 from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.housekeeping import (
@@ -26,16 +27,15 @@ from firebase_sub.plugins.housekeeping import (
 )
 from firebase_sub.plugins.new_poll import NewPollListenerPlugin
 from firebase_sub.plugins.notification_request import NotificationRequestListenerPlugin
-from firebase_sub.action_track import ActionMan
 from firebase_sub.plugins.protocols import (
+    EventPlugin,
     HousekeepingPlugin,
     ListenerPlugin,
-    EventPlugin,
 )
 from firebase_sub.runtime.config import RuntimeConfig
+from firebase_sub.runtime.event_producers import EventProducer
 from firebase_sub.runtime.event_registry import EventRegistry
 from firebase_sub.runtime.job_queue import JobQueue
-from firebase_sub.runtime.event_producers import EventProducer
 
 
 def build_listener_plugins(

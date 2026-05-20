@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from firebase_sub.event import Event, EventEnvelope
-from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.event_registry import EventRegistry
+from firebase_sub.runtime.job_queue import JobQueue
 
 _log = logging.getLogger(__name__)
 

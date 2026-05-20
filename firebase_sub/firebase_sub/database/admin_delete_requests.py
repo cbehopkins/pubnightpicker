@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from firebase_admin import auth as firebase_auth
-from google.cloud.firestore_v1 import Increment, SERVER_TIMESTAMP
+from google.cloud.firestore_v1 import SERVER_TIMESTAMP, Increment
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
 

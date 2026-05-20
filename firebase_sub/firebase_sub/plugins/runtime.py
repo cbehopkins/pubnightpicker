@@ -1,6 +1,6 @@
 import logging
-from contextlib import AbstractContextManager, ExitStack
 from collections.abc import Sequence
+from contextlib import AbstractContextManager, ExitStack
 
 from firebase_sub.plugins.housekeeping import HousekeepingPluginRunner
 from firebase_sub.plugins.protocols import (

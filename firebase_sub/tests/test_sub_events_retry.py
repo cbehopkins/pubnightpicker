@@ -4,9 +4,9 @@ from typing import cast
 import pytest
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
+from firebase_sub.common.retry import retry
 from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
-from firebase_sub.common.retry import retry
 
 
 def test_retry_calls_callback_once_when_no_error():

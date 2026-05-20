@@ -4,40 +4,15 @@ Progression:
   1. A user can be created in the Firebase Auth emulator.
   2. Bootstrap seeds the correct Firestore user documents and role grants.
   3. Creating a poll writes the required documents (polls / votes / attendance).
-  4. The Python notifier processes the new poll and writes an open_actions record.
 
 Steps 1–2 each depend on the Auth emulator (``clean_auth`` fixture).
-Steps 3–4 only require Firestore and run without the Auth emulator.
+Step 3 only requires Firestore and runs without the Auth emulator.
 """
-
-from typing import cast
 
 import pytest
 from firebase_admin import auth as firebase_auth
 
-from firebase_sub.action_track import ActionMan
-from firebase_sub.cli.bootstrap import (
-    ADMIN_DEFAULT_ROLES,
-    seed_smoke_data,
-)
-from firebase_sub.database.handlers import DbHandler
-from firebase_sub.push_contract import PushDedupeKeys
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-class _FakeActionMan:
-    """Minimal ActionMan stand-in that captures calls and returns a preset value."""
-
-    def __init__(self, return_value: dict):
-        self.return_value = return_value
-        self.calls: list[dict] = []
-
-    def action_event(self, **kwargs):
-        self.calls.append(kwargs)
-        return self.return_value
+from firebase_sub.cli.bootstrap import ADMIN_DEFAULT_ROLES, seed_smoke_data
 
 
 def _create_poll(firestore_client, poll_id: str, date: str = "2026-06-01") -> None:
@@ -240,65 +215,3 @@ class TestPollCreation:
         )
         assert "selected" not in doc
         assert "pubs" not in doc
-
-
-# ---------------------------------------------------------------------------
-# 4. Notifier: new poll → open_actions record written
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-class TestNewPollNotification:
-    """Verify that the Python notifier writes an open_actions record for a new poll."""
-
-    def test_new_poll_triggers_open_action(self, firestore_client):
-        """new_poll_event_handler must write open_actions/{pollId} after a poll is created."""
-        poll_id = "poll-notify-1"
-        _create_poll(firestore_client, poll_id, date="2026-08-01")
-
-        handler = DbHandler()
-        fake_am = _FakeActionMan({"email": [PushDedupeKeys.open_key(poll_id)]})
-        handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
-
-        action_doc = (
-            firestore_client.collection("open_actions")
-            .document(poll_id)
-            .get()
-            .to_dict()
-        )
-        assert action_doc is not None
-        assert action_doc["email"] == [PushDedupeKeys.open_key(poll_id)]
-
-    def test_new_poll_action_uses_correct_dedupe_key(self, firestore_client):
-        """The open_actions record must use the canonical open dedupe key."""
-        poll_id = "poll-notify-2"
-        _create_poll(firestore_client, poll_id)
-
-        handler = DbHandler()
-        fake_am = _FakeActionMan({"email": [PushDedupeKeys.open_key(poll_id)]})
-        handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
-
-        assert len(fake_am.calls) == 1
-        assert fake_am.calls[0]["action_key"] == PushDedupeKeys.open_key(poll_id)
-        assert fake_am.calls[0]["poll_id"] == poll_id
-
-    def test_new_poll_handler_is_idempotent(self, firestore_client):
-        """Running the handler twice for the same poll must not duplicate or corrupt the action doc."""
-        poll_id = "poll-notify-3"
-        _create_poll(firestore_client, poll_id)
-
-        handler = DbHandler()
-        fake_am = _FakeActionMan({"email": [PushDedupeKeys.open_key(poll_id)]})
-
-        handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
-        handler.new_poll_event_handler(cast(ActionMan, fake_am), poll_id=poll_id)
-
-        action_doc = (
-            firestore_client.collection("open_actions")
-            .document(poll_id)
-            .get()
-            .to_dict()
-        )
-        # The doc should still be a single record, not duplicated
-        assert action_doc is not None
-        assert isinstance(action_doc.get("email"), list)

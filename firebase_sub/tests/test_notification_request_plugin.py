@@ -3,8 +3,7 @@ from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.event import EventEnvelope
-from firebase_sub.event import EventType
+from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.notification_request import NotificationRequestListenerPlugin
 
 

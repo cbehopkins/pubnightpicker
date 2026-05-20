@@ -1,26 +1,24 @@
 import logging
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import TypeGuard
+
 import click
 
 from firebase_sub.common.logging import configure_logging, log_level_to_int
-from firebase_sub.database.housekeeping import (
-    CroniterTrigger,
-    PeriodicTrigger,
-)
 from firebase_sub.database.canary import CanaryWatcher
+from firebase_sub.database.housekeeping import CroniterTrigger, PeriodicTrigger
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import Event
+from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.plugin_config import (
     build_event_producer,
-    build_housekeeping_plugins,
-    build_scheduled_housekeeping_plugins,
-    build_listener_plugins,
     build_event_registry,
+    build_housekeeping_plugins,
+    build_listener_plugins,
+    build_scheduled_housekeeping_plugins,
 )
-from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.protocols import EventPlugin, ListenerPlugin
 from firebase_sub.plugins.runtime import PluginRuntime
 from firebase_sub.plugins.scheduled_housekeeping import ScheduledHousekeepingRunner
@@ -28,10 +26,10 @@ from firebase_sub.runtime.action_policies import (
     poll_complete_actions,
     poll_open_actions,
 )
-from firebase_sub.runtime.sub_events_bootstrap import get_db_handler
+from firebase_sub.runtime.config import RuntimeConfig
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.queue_runner import QueueRunner
-from firebase_sub.runtime.config import RuntimeConfig
+from firebase_sub.runtime.sub_events_bootstrap import get_db_handler
 
 _log = logging.getLogger(__name__)
 

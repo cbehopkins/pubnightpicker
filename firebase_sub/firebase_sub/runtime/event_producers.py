@@ -13,12 +13,12 @@ from contextlib import AbstractContextManager, nullcontext
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
+from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.event import Event, EventType
 from firebase_sub.plugins.protocols import CompletePollDbHandler, NewPollDbHandler
 from firebase_sub.runtime.job_queue import JobQueue
-from firebase_sub.database.handlers import DbHandler
 
 
 class EventProducer:

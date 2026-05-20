@@ -1,5 +1,5 @@
-from firebase_sub.database.handlers import DbHandler
 from firebase_sub.event import EventEnvelope, EventType
+from firebase_sub.plugins.chat_push import ChatPushDbHandler, process_chat_message_push
 from firebase_sub.plugins.protocols import EventPlugin
 
 
@@ -9,7 +9,7 @@ class ChatMessageListenerPlugin(EventPlugin):
     def __init__(
         self,
         *,
-        db_handler: DbHandler,
+        db_handler: ChatPushDbHandler,
         dummy_run: bool,
     ) -> None:
         self._db_handler = db_handler
@@ -27,7 +27,8 @@ class ChatMessageListenerPlugin(EventPlugin):
     def handle(self, envelope: EventEnvelope) -> None:
         if envelope.doc is None:
             return
-        self._db_handler.chat_message_push_handler(
+        process_chat_message_push(
+            self._db_handler,
             envelope.doc.id,
             envelope.doc,
             dummy_run=self._dummy_run,
