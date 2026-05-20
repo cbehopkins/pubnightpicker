@@ -25,6 +25,7 @@ NOTIFICATION_ACK_COLLECTION = "notification_ack"
 DIAGNOSTICS_DOC_ID = "diagnostics"
 PUSH_TEST_DOC_ID = "push_test"
 POLLS_COLLECTION = "polls"
+VOTES_COLLECTION = "votes"
 POLL_ACTION_AUDIT_COLLECTION = "poll_action_audit"
 PUSH_ENDPOINTS_COLLECTION = "push_endpoints"
 PUSH_ENDPOINT_RETENTION_DAYS = int(os.getenv("PUSH_ENDPOINT_RETENTION_DAYS", "60"))
@@ -140,6 +141,172 @@ def delete_stale_poll_action_audit_entries(
 
     for audit_doc in stale_records:
         audit_doc.reference.delete()
+
+
+def auto_complete_single_event_polls_due_tomorrow(
+    db: Client,
+    *,
+    today: date | None = None,
+) -> None:
+    """Auto-complete open polls with a single venue when due tomorrow.
+
+    The selected venue is deterministically the only venue key in ``pubs``.
+    """
+    current_day = today or date.today()
+    target_date = (current_day + timedelta(days=1)).isoformat()
+
+    poll_stream = (
+        db.collection(POLLS_COLLECTION)
+        .where(filter=FieldFilter("completed", "==", False))
+        .where(filter=FieldFilter("date", "==", target_date))
+        .stream()
+    )
+
+    for poll_doc in poll_stream:
+        poll_data = poll_doc.to_dict()
+        if not isinstance(poll_data, dict):
+            continue
+
+        pubs = poll_data.get("pubs")
+        if not isinstance(pubs, dict) or len(pubs) != 1:
+            continue
+
+        selected_venue_id = next(iter(pubs.keys()))
+        if not isinstance(selected_venue_id, str) or not selected_venue_id:
+            continue
+
+        poll_doc.reference.set(
+            {
+                "completed": True,
+                "selected": selected_venue_id,
+            },
+            merge=True,
+        )
+        logger.info(
+            "Auto-completed single-event poll %s with venue %s",
+            poll_doc.id,
+            selected_venue_id,
+        )
+
+
+def auto_complete_multi_option_polls_due_today(
+    db: Client,
+    *,
+    today: date | None = None,
+) -> None:
+    """Auto-complete open multi-option polls due today when winner is clear.
+
+    Rules:
+    - poll must contain at least two venues in ``pubs``
+    - a single top-voted venue must exist in ``votes/{poll_id}``
+    - top-voted venue must have ``food`` (or ``hasFood``) enabled
+    """
+    target_date = (today or date.today()).isoformat()
+
+    poll_stream = (
+        db.collection(POLLS_COLLECTION)
+        .where(filter=FieldFilter("completed", "==", False))
+        .where(filter=FieldFilter("date", "==", target_date))
+        .stream()
+    )
+
+    for poll_doc in poll_stream:
+        poll_data = poll_doc.to_dict()
+        if not isinstance(poll_data, dict):
+            continue
+
+        pubs = poll_data.get("pubs")
+        if not isinstance(pubs, dict) or len(pubs) < 2:
+            continue
+
+        winner_venue_id = _resolve_clear_winner(
+            db=db,
+            poll_id=poll_doc.id,
+            candidate_venue_ids=list(pubs.keys()),
+        )
+        if winner_venue_id is None:
+            continue
+
+        if not _venue_has_food(db=db, venue_id=winner_venue_id):
+            logger.info(
+                "Skipping auto-complete for poll %s because winner %s has no food",
+                poll_doc.id,
+                winner_venue_id,
+            )
+            continue
+
+        poll_doc.reference.set(
+            {
+                "completed": True,
+                "selected": winner_venue_id,
+            },
+            merge=True,
+        )
+        logger.info(
+            "Auto-completed multi-option poll %s with winner %s",
+            poll_doc.id,
+            winner_venue_id,
+        )
+
+
+def _resolve_clear_winner(
+    *,
+    db: Client,
+    poll_id: str,
+    candidate_venue_ids: list[str],
+) -> str | None:
+    vote_snapshot = db.collection(VOTES_COLLECTION).document(poll_id).get()
+    if not hasattr(vote_snapshot, "to_dict"):
+        logger.error(
+            "Votes document %s returned unsupported async snapshot",
+            poll_id,
+        )
+        return None
+
+    vote_doc = cast(DocumentSnapshot, vote_snapshot).to_dict() or {}
+    if not isinstance(vote_doc, dict):
+        return None
+
+    counts: dict[str, int] = {}
+    for venue_id in candidate_venue_ids:
+        voters = vote_doc.get(venue_id)
+        if isinstance(voters, list):
+            counts[venue_id] = len(voters)
+        else:
+            counts[venue_id] = 0
+
+    top_vote_count = max(counts.values(), default=0)
+    if top_vote_count <= 0:
+        return None
+
+    winners = [
+        venue_id for venue_id, count in counts.items() if count == top_vote_count
+    ]
+    if len(winners) != 1:
+        return None
+
+    return winners[0]
+
+
+def _venue_has_food(*, db: Client, venue_id: str) -> bool:
+    venue_snapshot = db.collection(EVENTS_COLLECTION).document(venue_id).get()
+    if not hasattr(venue_snapshot, "to_dict"):
+        logger.error(
+            "Venue document %s returned unsupported async snapshot",
+            venue_id,
+        )
+        return False
+
+    venue_data = cast(DocumentSnapshot, venue_snapshot).to_dict() or {}
+    if not isinstance(venue_data, dict):
+        return False
+
+    food_value = venue_data.get("food")
+    if isinstance(food_value, bool):
+        return food_value
+
+    has_food_value = venue_data.get("hasFood")
+    return isinstance(has_food_value, bool) and has_food_value
 
 
 def _resolve_event_occurrence_date(

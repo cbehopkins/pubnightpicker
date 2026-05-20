@@ -23,4 +23,8 @@ def test_build_housekeeping_plugins_uses_explicit_static_registration() -> None:
 def test_build_scheduled_housekeeping_plugins_defaults_to_empty() -> None:
     plugins = build_scheduled_housekeeping_plugins(db=MagicMock())
 
-    assert plugins == []
+    plugin_names = [plugin.name() for plugin in plugins]
+    assert plugin_names == [
+        "auto_complete_single_event_polls_due_tomorrow",
+        "auto_complete_multi_option_polls_due_today",
+    ]

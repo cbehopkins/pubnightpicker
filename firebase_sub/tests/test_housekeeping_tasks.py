@@ -1,6 +1,10 @@
 from datetime import UTC, date, datetime
 from typing import Literal, NotRequired, TypedDict
 from unittest.mock import MagicMock
+from types import SimpleNamespace
+from typing import cast
+
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.database.housekeeping_tasks import (
     EVENTS_COLLECTION,
@@ -10,6 +14,8 @@ from firebase_sub.database.housekeeping_tasks import (
     POLLS_COLLECTION,
     PUSH_TEST_DOC_ID,
     PUSH_ENDPOINTS_COLLECTION,
+    auto_complete_multi_option_polls_due_today,
+    auto_complete_single_event_polls_due_tomorrow,
     maintain_event_recurrence_polls,
     delete_stale_poll_action_audit_entries,
     delete_inactive_push_endpoints,
@@ -732,3 +738,224 @@ def test_maintain_event_recurrence_polls_continues_on_venue_error():
 
     # Second venue was still reached and attempted
     assert db.document.called or True  # Process continued despite first error
+
+
+def test_auto_complete_single_event_polls_due_tomorrow_completes_single_option():
+    db = MagicMock()
+    polls_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-1"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-20",
+        "pubs": {
+            "event-a": {"name": "Event A", "venueType": "event"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    db.collection.return_value = polls_collection
+
+    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_called_once_with(
+        {"completed": True, "selected": "event-a"},
+        merge=True,
+    )
+
+
+def test_auto_complete_single_event_polls_due_tomorrow_skips_multi_option():
+    db = MagicMock()
+    polls_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-2"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-20",
+        "pubs": {
+            "pub-a": {"name": "Pub A"},
+            "pub-b": {"name": "Pub B"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    db.collection.return_value = polls_collection
+
+    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_not_called()
+
+
+def test_auto_complete_multi_option_due_today_completes_clear_food_winner():
+    db = MagicMock()
+    polls_collection = MagicMock()
+    votes_collection = MagicMock()
+    pubs_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-3"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-19",
+        "pubs": {
+            "pub-a": {"name": "Pub A"},
+            "pub-b": {"name": "Pub B"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    votes_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            to_dict=lambda: {
+                "any": [],
+                "pub-a": ["u1", "u2"],
+                "pub-b": ["u3"],
+            }
+        ),
+    )
+    votes_collection.document.return_value.get.return_value = votes_doc
+
+    pub_a_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(to_dict=lambda: {"food": True}),
+    )
+    pubs_collection.document.return_value.get.return_value = pub_a_doc
+
+    def collection_side_effect(name: str):
+        if name == POLLS_COLLECTION:
+            return polls_collection
+        if name == "votes":
+            return votes_collection
+        if name == EVENTS_COLLECTION:
+            return pubs_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    auto_complete_multi_option_polls_due_today(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_called_once_with(
+        {"completed": True, "selected": "pub-a"},
+        merge=True,
+    )
+
+
+def test_auto_complete_multi_option_due_today_skips_tie():
+    db = MagicMock()
+    polls_collection = MagicMock()
+    votes_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-4"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-19",
+        "pubs": {
+            "pub-a": {"name": "Pub A"},
+            "pub-b": {"name": "Pub B"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    votes_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            to_dict=lambda: {
+                "pub-a": ["u1"],
+                "pub-b": ["u2"],
+            }
+        ),
+    )
+    votes_collection.document.return_value.get.return_value = votes_doc
+
+    def collection_side_effect(name: str):
+        if name == POLLS_COLLECTION:
+            return polls_collection
+        if name == "votes":
+            return votes_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    auto_complete_multi_option_polls_due_today(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_not_called()
+
+
+def test_auto_complete_multi_option_due_today_skips_winner_without_food():
+    db = MagicMock()
+    polls_collection = MagicMock()
+    votes_collection = MagicMock()
+    pubs_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-5"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-19",
+        "pubs": {
+            "pub-a": {"name": "Pub A"},
+            "pub-b": {"name": "Pub B"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    votes_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            to_dict=lambda: {
+                "pub-a": ["u1", "u2"],
+                "pub-b": ["u3"],
+            }
+        ),
+    )
+    votes_collection.document.return_value.get.return_value = votes_doc
+
+    pub_a_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(to_dict=lambda: {"food": False}),
+    )
+    pubs_collection.document.return_value.get.return_value = pub_a_doc
+
+    def collection_side_effect(name: str):
+        if name == POLLS_COLLECTION:
+            return polls_collection
+        if name == "votes":
+            return votes_collection
+        if name == EVENTS_COLLECTION:
+            return pubs_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    auto_complete_multi_option_polls_due_today(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_not_called()

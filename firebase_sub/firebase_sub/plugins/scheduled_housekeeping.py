@@ -1,7 +1,5 @@
 """Scheduled housekeeping runner for per-plugin next-run timestamps."""
 
-from __future__ import annotations
-
 import heapq
 import logging
 from dataclasses import dataclass, field
@@ -75,9 +73,7 @@ class ScheduledHousekeepingRunner:
 
             try:
                 plugin.run()
-                _log.info(
-                    "Scheduled housekeeping plugin completed: %s", plugin.name()
-                )
+                _log.info("Scheduled housekeeping plugin completed: %s", plugin.name())
             except PlannedPluginException:
                 _log.warning(
                     "Scheduled housekeeping plugin planned failure: %s",

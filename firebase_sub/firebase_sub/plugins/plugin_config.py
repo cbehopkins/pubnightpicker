@@ -7,6 +7,8 @@ from firebase_sub.database.handlers import DbHandler
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
 from firebase_sub.database.housekeeping_tasks import (
+    auto_complete_multi_option_polls_due_today,
+    auto_complete_single_event_polls_due_tomorrow,
     delete_inactive_push_endpoints,
     delete_notification_diagnostics,
     delete_notification_docs_for_past_polls,
@@ -18,7 +20,10 @@ from firebase_sub.plugins.admin_delete_request import AdminDeleteRequestListener
 from firebase_sub.event import Event, EventType
 from firebase_sub.plugins.chat_message import ChatMessageListenerPlugin
 from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
-from firebase_sub.plugins.housekeeping import HousekeepingCallablePlugin
+from firebase_sub.plugins.housekeeping import (
+    DailyUtcScheduledCallablePlugin,
+    HousekeepingCallablePlugin,
+)
 from firebase_sub.plugins.new_poll import NewPollListenerPlugin
 from firebase_sub.plugins.notification_request import NotificationRequestListenerPlugin
 from firebase_sub.action_track import ActionMan
@@ -150,13 +155,21 @@ def build_scheduled_housekeeping_plugins(
     *,
     db: Client,
 ) -> Sequence[HousekeepingPlugin]:
-    """Build explicit in-code scheduled housekeeping registrations.
-
-    This list is intentionally empty until tasks are migrated from tick-based
-    housekeeping to scheduler-driven execution.
-    """
-    del db
-    return []
+    """Build explicit in-code scheduled housekeeping registrations."""
+    return [
+        DailyUtcScheduledCallablePlugin(
+            name="auto_complete_single_event_polls_due_tomorrow",
+            callback=lambda: auto_complete_single_event_polls_due_tomorrow(db),
+            hour=0,
+            minute=1,
+        ),
+        DailyUtcScheduledCallablePlugin(
+            name="auto_complete_multi_option_polls_due_today",
+            callback=lambda: auto_complete_multi_option_polls_due_today(db),
+            hour=16,
+            minute=0,
+        ),
+    ]
 
 
 def build_event_producer(

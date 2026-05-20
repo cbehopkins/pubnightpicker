@@ -109,9 +109,7 @@ def sub_events(
     scheduled_housekeeping_plugins = build_scheduled_housekeeping_plugins(
         db=db_handler.db
     )
-    scheduled_runner = ScheduledHousekeepingRunner(
-        list(scheduled_housekeeping_plugins)
-    )
+    scheduled_runner = ScheduledHousekeepingRunner(list(scheduled_housekeeping_plugins))
 
     event_plugins: list[EventPlugin] = [
         plugin for plugin in listener_plugins if _is_event_plugin(plugin)
