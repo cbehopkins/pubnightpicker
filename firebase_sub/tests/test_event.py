@@ -1,43 +1,34 @@
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 
-import pytest
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.database.pubs_list import PubsList
-from firebase_sub.event import Event, EventType
+from firebase_sub.event import Event, EventEnvelope, EventType
 
 
-def test_handle_queue_item_calls_callback_with_doc_and_pubs_list():
-    calls = []
+def test_event_stores_type_and_document() -> None:
     doc = cast(DocumentSnapshot, SimpleNamespace(id="poll-1"))
-    pubs_list = cast(PubsList, object())
+    event = Event(type=EventType.NEW_POLL, doc=doc)
 
-    def callback(document, supplied_pubs_list):
-        calls.append((document, supplied_pubs_list))
-
-    event = Event(type=EventType.NEW_POLL, doc=doc, callback=callback)
-
-    event.handle_queue_item(pubs_list)
-
-    assert calls == [(doc, pubs_list)]
+    assert event.type == EventType.NEW_POLL
+    assert event.doc is doc
 
 
-def test_handle_queue_item_passes_none_doc_to_callback():
-    calls = []
-    pubs_list = cast(PubsList, object())
+def test_event_allows_none_document() -> None:
+    event = Event(type=EventType.TICK, doc=None)
 
-    def callback(document, supplied_pubs_list):
-        calls.append((document, supplied_pubs_list))
-
-    event = Event(type=EventType.TICK, doc=None, callback=callback)
-
-    event.handle_queue_item(pubs_list)
-
-    assert calls == [(None, pubs_list)]
+    assert event.type == EventType.TICK
+    assert event.doc is None
 
 
-def test_event_requires_callback_at_construction():
-    kwargs: Any = {"type": EventType.TICK, "doc": None}
-    with pytest.raises(TypeError, match="callback"):
-        Event(**kwargs)
+def test_event_envelope_document_id_returns_doc_id() -> None:
+    doc = cast(DocumentSnapshot, SimpleNamespace(id="poll-2"))
+    envelope = EventEnvelope(type=EventType.NEW_POLL, doc=doc)
+
+    assert envelope.document_id() == "poll-2"
+
+
+def test_event_envelope_document_id_returns_none_without_doc() -> None:
+    envelope = EventEnvelope(type=EventType.TICK, doc=None)
+
+    assert envelope.document_id() is None

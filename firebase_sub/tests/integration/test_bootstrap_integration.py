@@ -15,11 +15,12 @@ from firebase_sub.cli.bootstrap import (
     ADMIN_DEFAULT_ROLES,
     SMOKE_ADMIN_UID,
     SMOKE_USER_A_UID,
-    SMOKE_USER_B_UID,
     SMOKE_USER_B_ENDPOINT_ID,
+    SMOKE_USER_B_UID,
+    _grant_role,
+    _set_doc_if_missing,
     seed_smoke_data,
 )
-from firebase_sub.cli.bootstrap import _grant_role, _set_doc_if_missing
 
 
 @pytest.mark.integration

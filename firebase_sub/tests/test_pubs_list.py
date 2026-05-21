@@ -54,7 +54,7 @@ def test_context_manager_calls_unsubscribe():
     pub_collection = MagicMock()
     unsubscribe_mock = MagicMock()
     pub_collection.on_snapshot.return_value.unsubscribe = unsubscribe_mock
-    with PubsList(pub_collection) as pubs:
+    with PubsList(pub_collection):
         pass
     unsubscribe_mock.assert_called_once()
 

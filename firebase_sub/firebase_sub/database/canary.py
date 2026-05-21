@@ -9,7 +9,7 @@ updates (e.g. due to a proxy dropping idle TCP connections in Docker).
 import logging
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 
 from google.cloud.firestore import SERVER_TIMESTAMP
@@ -44,7 +44,7 @@ class CanaryWatcher:
         self._sent_nonce: str | None = None
         self._sent_at: datetime | None = None
         self._seen_nonce: str | None = None
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
     def __enter__(self) -> "CanaryWatcher":
         self._unsubscribe = self._doc_ref.on_snapshot(self._on_snapshot).unsubscribe
@@ -53,7 +53,12 @@ class CanaryWatcher:
         )
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -61,9 +66,10 @@ class CanaryWatcher:
     def _on_snapshot(
         self,
         doc_snapshot: Sequence[DocumentSnapshot],
-        changes,
-        read_time,
+        changes: Sequence[object],
+        read_time: object,
     ) -> None:
+        del changes, read_time
         for doc in doc_snapshot:
             payload = doc.to_dict() or {}
             nonce = payload.get("nonce")

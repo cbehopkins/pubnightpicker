@@ -5,13 +5,13 @@ import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom
 const VenueTypes = ["pub", "restaurant", "event"];
 const RecurrenceFrequencies = ["none", "once", "weekly", "monthly", "yearly"];
 const WeekdayOptions = [
-  ["0", "Sunday"],
-  ["1", "Monday"],
-  ["2", "Tuesday"],
-  ["3", "Wednesday"],
-  ["4", "Thursday"],
-  ["5", "Friday"],
-  ["6", "Saturday"],
+  ["0", "Monday"],
+  ["1", "Tuesday"],
+  ["2", "Wednesday"],
+  ["3", "Thursday"],
+  ["4", "Friday"],
+  ["5", "Saturday"],
+  ["6", "Sunday"],
 ];
 const MonthlyOrdinalOptions = [
   ["1", "First"],

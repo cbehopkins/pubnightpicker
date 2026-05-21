@@ -4,21 +4,21 @@ import logging
 import os
 import textwrap
 import time
-from os import getenv
 from collections.abc import Callable, Iterable
+from os import getenv
 from typing import Any, Protocol
 
-from firebase_sub.constants import (
-    ADMIN_EMAIL_ADDR,
-    SELF_EMAIL,
-    SECONDS_IN_DAY,
-    SECONDS_IN_HOUR,
-)
 import mailtrap
 from pydantic import ValidationError
 
 from firebase_sub.action_track import CallbackExceptionRetry
 from firebase_sub.common.rate_limit import SkipCall, TokenBucket, rate_limited
+from firebase_sub.constants import (
+    ADMIN_EMAIL_ADDR,
+    SECONDS_IN_DAY,
+    SECONDS_IN_HOUR,
+    SELF_EMAIL,
+)
 from firebase_sub.models.notification_models import PollPayload, VenuePayload
 from firebase_sub.my_types import (
     EmailAddr,
@@ -77,7 +77,8 @@ _log = logging.getLogger("SendEmail")
 GOOGLEGROUPS_ADDR = "ampubnight@googlegroups.com"
 BASE_TEMPLATE = textwrap.dedent("""\
     Every week we have a pub night to which you are cordially invited.
-    The venue changes each week, though we do tend to frequent a few favourites - suggestions for venues are always welcome.
+    The venue changes each week, though we do tend to frequent a few favourites.
+    Suggestions for venues are always welcome.
     The earliest attendees get there between 6:30 & 7:30pm and we continue through to closing time.
     """)
 PUB_TEMPLATE = textwrap.dedent("""\
@@ -96,10 +97,10 @@ RESTAURANT_TEMPLATE = textwrap.dedent("""\
 RESTAURANT_BLOCK_TEMPLATE = textwrap.dedent("""\
 
     Before the pub we are meeting at {venue_name}.{restaurant_time_block}""")
-OPEN_TEMPLATE = textwrap.dedent(
-    """\
-    Voting has opened for this week's pub night. Please visit https://pubnightpicker.web.app/active_polls to participate in the voting."""
-)
+OPEN_TEMPLATE = textwrap.dedent("""\
+    Voting has opened for this week's pub night.
+    Please visit https://pubnightpicker.web.app/active_polls
+    to participate in the voting.""")
 
 
 def _escape(value: str | None) -> str | None:
@@ -250,7 +251,7 @@ def build_notification_text(
     )
 
 
-def _resolve_payloads(
+def resolve_payloads(
     *, poll_dict: PollDocument, pub_dict: VenueLookup
 ) -> tuple[PollPayload, VenuePayload, VenuePayload | None]:
     try:
@@ -272,6 +273,12 @@ def _resolve_payloads(
     return poll, selected_venue, restaurant_venue
 
 
+def _resolve_payloads(
+    *, poll_dict: PollDocument, pub_dict: VenueLookup
+) -> tuple[PollPayload, VenuePayload, VenuePayload | None]:
+    return resolve_payloads(poll_dict=poll_dict, pub_dict=pub_dict)
+
+
 @rate_limited(MAIL_SEND_BUCKET)
 def send_poll_open_email(
     previously_actioned: bool,
@@ -285,7 +292,7 @@ def send_poll_open_email(
         mail = mailtrap.Mail(
             sender=SELF_EMAIL,
             to=[mailtrap.Address(email=email)],
-            subject=f"Pub Night voting opened",
+            subject="Pub Night voting opened",
             text=OPEN_TEMPLATE,
             category="Pub notification",
         )
@@ -303,7 +310,7 @@ def send_ampub_email(
     dummy_run: bool = False,
     **_: Any,
 ):
-    poll, selected_venue, restaurant_venue = _resolve_payloads(
+    poll, selected_venue, restaurant_venue = resolve_payloads(
         poll_dict=poll_dict,
         pub_dict=pub_dict,
     )

@@ -37,7 +37,7 @@ describe("PubForm", () => {
                         start_date: "2026-05-01",
                         interval: 1,
                         month: 5,
-                        weekday: 3,
+                        weekday: 2,
                         nth: -1,
                         month_day: 27,
                     },

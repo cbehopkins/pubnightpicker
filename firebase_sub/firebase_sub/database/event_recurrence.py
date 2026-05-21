@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from firebase_sub.my_types import EventRecurrenceRule
+from firebase_sub.my_types import EventRecurrenceRule, Weekday
 
 
 def parse_iso_date(value: object | None) -> date | None:
@@ -52,8 +52,8 @@ def _nth_weekday_of_month(year: int, month: int, weekday: int, nth: int) -> date
     return candidate if candidate.month == month else None
 
 
-def _first_weekday_on_or_after(start: date, weekdays: list[int]) -> date | None:
-    candidate_weekdays = sorted({weekday for weekday in weekdays if 0 <= weekday <= 6})
+def _first_weekday_on_or_after(start: date, weekdays: list[Weekday]) -> date | None:
+    candidate_weekdays = sorted(set(weekdays))
     if not candidate_weekdays:
         return None
     candidate = start
@@ -170,6 +170,65 @@ def next_occurrence(
         return None
 
     raise ValueError(f"Unknown recurrence frequency: {frequency!r}")
+
+
+def _matches_recurrence(recurrence: EventRecurrenceRule, candidate: date) -> bool:
+    return next_occurrence(recurrence, candidate) == candidate
+
+
+def _materialized_next_occurrence_from_current_date(
+    recurrence: EventRecurrenceRule | None,
+    current_date: date | None,
+    *,
+    today: date,
+) -> date | None:
+    if recurrence is None:
+        return None
+
+    if current_date is not None and _matches_recurrence(recurrence, current_date):
+        if current_date < today and today >= event_week_completion_start(current_date):
+            return next_occurrence(recurrence, current_date + timedelta(days=1))
+        if current_date >= today:
+            return current_date
+
+    return next_occurrence(recurrence, today)
+
+
+def materialized_next_occurrence_date(
+    recurrence: EventRecurrenceRule | None,
+    current_value: object,
+    *,
+    today: date,
+) -> date | None:
+    """Resolve the canonical next occurrence date for storage.
+
+    This keeps valid future values stable while still allowing fast updates after
+    recurrence edits and deterministic roll-forward once a week is completed.
+    """
+    current_date = parse_iso_date(current_value)
+    return _materialized_next_occurrence_from_current_date(
+        recurrence,
+        current_date,
+        today=today,
+    )
+
+
+def materialized_next_occurrence_iso_state(
+    recurrence: EventRecurrenceRule | None,
+    current_value: object,
+    *,
+    today: date,
+) -> tuple[str | None, str | None]:
+    """Return normalized current/target ISO dates for next_occurrence_date."""
+    current_date = parse_iso_date(current_value)
+    next_date = _materialized_next_occurrence_from_current_date(
+        recurrence,
+        current_date,
+        today=today,
+    )
+    current_iso = current_date.isoformat() if current_date is not None else None
+    next_iso = next_date.isoformat() if next_date is not None else None
+    return current_iso, next_iso
 
 
 def creation_window_start(occurrence_date: date, lead_days: int = 7) -> date:

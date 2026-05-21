@@ -29,6 +29,8 @@ import { db } from "../../firebase";
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
 const DEFAULT_AUDIT_WINDOW = `days:${DEFAULT_AUDIT_DAYS}`;
+const BACKEND_AUTOMATION_ACTOR_UID = "backend:auto";
+const BACKEND_AUTOMATION_ACTOR_LABEL = "Backend (automatic)";
 
 function parseAuditWindowSelection(value) {
     const [kind, rawAmount] = String(value).split(":");
@@ -48,6 +50,17 @@ function formatAuditTimestamp(timestampValue) {
         return "Pending";
     }
     return timestampValue.toDate().toLocaleString();
+}
+
+function isBackendAutomationActorUid(actorUid) {
+    return actorUid === BACKEND_AUTOMATION_ACTOR_UID;
+}
+
+function formatAuditActor(entry, actorNamesByUid) {
+    if (isBackendAutomationActorUid(entry.actorUid)) {
+        return BACKEND_AUTOMATION_ACTOR_LABEL;
+    }
+    return actorNamesByUid[entry.actorUid] || entry.actorUid || "-";
 }
 
 export function PollActionAuditPanel() {
@@ -115,7 +128,12 @@ export function PollActionAuditPanel() {
             new Set(
                 auditEntries
                     .map((entry) => entry.actorUid)
-                    .filter((uid) => typeof uid === "string" && uid.length > 0)
+                    .filter(
+                        (uid) =>
+                            typeof uid === "string"
+                            && uid.length > 0
+                            && !isBackendAutomationActorUid(uid)
+                    )
             )
         );
 
@@ -249,8 +267,9 @@ export function PollActionAuditPanel() {
                                         <div className="small text-body-secondary">{entry.pollDate || "-"}</div>
                                     </td>
                                     <td>
-                                        <div>{actorNamesByUid[entry.actorUid] || entry.actorUid || "-"}</div>
-                                        {actorNamesByUid[entry.actorUid] && (
+                                        <div>{formatAuditActor(entry, actorNamesByUid)}</div>
+                                        {!isBackendAutomationActorUid(entry.actorUid)
+                                            && actorNamesByUid[entry.actorUid] && (
                                             <div className="small text-body-secondary">{entry.actorUid}</div>
                                         )}
                                     </td>

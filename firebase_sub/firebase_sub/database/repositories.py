@@ -8,13 +8,13 @@ import logging
 from collections.abc import Generator
 from typing import Protocol
 
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.collection import CollectionReference
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.my_types import EmailAddr, PollDocument, PollId, UserId
-from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class PollRepository(Protocol):
         """
         ...
 
-    def get_all_polls(self) -> Query:
+    def get_all_polls(self) -> CollectionReference:
         """Get a query for all polls (no filters)."""
         ...
 
@@ -102,12 +102,17 @@ class FirestorePollRepository:
 
     def get_poll(self, poll_id: PollId) -> PollDocument | None:
         """Retrieve a single poll document."""
-        doc = self.polls_collection.document(poll_id).get()
-        poll_dict = doc.to_dict()
-        if poll_dict is None:
+        doc_or_awaitable = self.polls_collection.document(poll_id).get()
+        if not isinstance(doc_or_awaitable, DocumentSnapshot):
+            _log.error("Poll document %s returned unsupported async snapshot", poll_id)
+            return None
+
+        doc = doc_or_awaitable
+        poll_data = _parse_poll_document(doc.to_dict())
+        if poll_data is None:
             _log.error(f"Poll document {poll_id} not found or is empty.")
             return None
-        return poll_dict
+        return poll_data
 
     def get_polls_by_status(self, completed: bool) -> Query:
         """Return query for polls filtered by completion status."""
@@ -115,7 +120,7 @@ class FirestorePollRepository:
             filter=FieldFilter("completed", "==", completed)
         )
 
-    def get_all_polls(self) -> Query:
+    def get_all_polls(self) -> CollectionReference:
         """Return query for all polls."""
         return self.polls_collection
 
@@ -171,3 +176,33 @@ class FirestoreUserRepository:
                 _log.warning(
                     f"User doc {doc.id} missing email or uid fields: email={email}, uid={uid}"
                 )
+
+
+def _parse_poll_document(raw: object) -> PollDocument | None:
+    """Parse untyped Firestore payload into a validated PollDocument."""
+    if not isinstance(raw, dict):
+        return None
+
+    selected = raw.get("selected")
+    poll_date = raw.get("date")
+    if not isinstance(selected, str) or not isinstance(poll_date, str):
+        return None
+
+    parsed: PollDocument = {
+        "selected": selected,
+        "date": poll_date,
+    }
+
+    completed = raw.get("completed")
+    if isinstance(completed, bool):
+        parsed["completed"] = completed
+
+    restaurant = raw.get("restaurant")
+    if isinstance(restaurant, str):
+        parsed["restaurant"] = restaurant
+
+    restaurant_time = raw.get("restaurant_time")
+    if isinstance(restaurant_time, str):
+        parsed["restaurant_time"] = restaurant_time
+
+    return parsed

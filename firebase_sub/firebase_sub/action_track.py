@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
 from firebase_sub.my_types import ActionDict, ActionType, DocumentId
@@ -14,7 +14,8 @@ class ActionCallbackProtocol(Protocol):
     ) -> None: ...
 
 
-class _CallbackException(Exception): ...
+class _CallbackException(Exception):
+    pass
 
 
 class CallbackExceptionIgnore(_CallbackException):
@@ -26,7 +27,10 @@ class CallbackExceptionRetry(_CallbackException):
 
 
 class ActionTrack(defaultdict[str, set[DocumentId]]):
-    def __init__(self, obj=None):
+    def __init__(
+        self,
+        obj: Mapping[str, Iterable[DocumentId]] | None = None,
+    ):
         super().__init__(set)
         if obj is None:
             return
@@ -47,7 +51,7 @@ class ActionTrack(defaultdict[str, set[DocumentId]]):
     def to_action(self, at: ActionType, action_key: DocumentId) -> bool:
         return self.needs_action(at, action_key)
 
-    def previously_actioned(self, at: ActionType):
+    def previously_actioned(self, at: ActionType) -> bool:
         return self.has_any_actioned(at)
 
     def action(self, at: ActionType, action_key: DocumentId) -> None:
@@ -71,7 +75,7 @@ class ActionMan:
         callback: ActionCallbackProtocol,
         *,
         dummy_run: bool | None = None,
-    ):
+    ) -> None:
         """Bind an action type against callbacks"""
         self._callbacks[action] = callback
         if dummy_run is None:
@@ -79,8 +83,27 @@ class ActionMan:
         else:
             self._dummy_run_overrides[action] = dummy_run
 
+    def filter(self, action_dict: ActionDict, action_key: DocumentId) -> bool:
+        """Return True when at least one bound action still needs to run."""
+        ad = ActionTrack(action_dict)
+        for action_type in self._callbacks:
+            if ad.needs_action(action_type, action_key):
+                return True
+        return False
+
+    def mark_done(self, action_dict: ActionDict, action_key: DocumentId) -> ActionDict:
+        """Mark all bound actions as completed for the given action key."""
+        ad = ActionTrack(action_dict)
+        for action_type in self._callbacks:
+            ad.mark_actioned(action_type, action_key=action_key)
+        return ad.as_dict
+
     def run(
-        self, action_dict: ActionDict, action_key: DocumentId, *args, **kwargs
+        self,
+        action_dict: ActionDict,
+        action_key: DocumentId,
+        *args: Any,
+        **kwargs: Any,
     ) -> tuple[ActionDict, bool]:
         """Run all pending action callbacks"""
         ad = ActionTrack(action_dict)
@@ -111,7 +134,7 @@ class ActionMan:
                     )
         return ad, anything_actioned
 
-    def action_event(self, *args, **kwargs):
+    def action_event(self, *args: Any, **kwargs: Any) -> ActionDict | None:
         new_action_dict, actioned = self.run(*args, **kwargs)
         if actioned:
             return new_action_dict

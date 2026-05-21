@@ -3,8 +3,10 @@ from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
+from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.send_push import send_diagnostic_push
 
 _log = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class NotificationPushTestHandler:
 
     def __init__(
         self,
-        db,
+        db: Client,
         query_active_push_endpoints_for_user: Callable[
             [str], Iterable[DocumentSnapshot]
         ],
@@ -30,12 +32,12 @@ class NotificationPushTestHandler:
         self.query_active_push_endpoints_for_user = query_active_push_endpoints_for_user
         self.dummy_push = dummy_push
 
-    def _ack_document(self):
+    def _ack_document(self) -> Any:
         return self.db.collection(NOTIFICATION_ACK_COLLECTION).document(
             PUSH_TEST_DOC_ID
         )
 
-    def _request_document(self):
+    def _request_document(self) -> Any:
         return self.db.collection(NOTIFICATION_REQ_COLLECTION).document(
             PUSH_TEST_DOC_ID
         )
@@ -52,6 +54,14 @@ class NotificationPushTestHandler:
         if request_document is None:
             raise ValueError("request_document cannot be None")
         return request_document.id == PUSH_TEST_DOC_ID
+
+    def handle(
+        self,
+        request_document: DocumentSnapshot | None,
+        pubs_list: PubsList,
+    ) -> None:
+        del pubs_list
+        self.handle_request_document(request_document)
 
     def handle_request_document(
         self, request_document: DocumentSnapshot | None
@@ -76,12 +86,14 @@ class NotificationPushTestHandler:
                 continue
 
             try:
+
+                def endpoints_src() -> Iterable[DocumentSnapshot]:
+                    return self.query_active_push_endpoints_for_user(uid)
+
                 result = send_diagnostic_push(
                     user_id=uid,
                     request_value=request_value,
-                    endpoints_src=lambda uid=uid: self.query_active_push_endpoints_for_user(
-                        uid
-                    ),
+                    endpoints_src=endpoints_src,
                     dummy_run=self.dummy_push,
                 )
             except Exception:

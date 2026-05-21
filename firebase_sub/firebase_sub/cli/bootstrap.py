@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import click
 import firebase_admin
@@ -11,7 +12,6 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import SERVER_TIMESTAMP
 from google.cloud.firestore_v1.client import Client
-from uuid import uuid4
 
 from firebase_sub.common.logging import configure_logging, log_level_to_int
 

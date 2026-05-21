@@ -20,13 +20,13 @@ def _bind_target(call: ast.Call) -> tuple[str, str] | None:
 
 
 def test_poll_complete_actions_binds_email_and_pemail_paths():
-    sub_events_path = (
+    action_policies_path = (
         Path(__file__).resolve().parent.parent
         / "firebase_sub"
-        / "cli"
-        / "sub_events.py"
+        / "runtime"
+        / "action_policies.py"
     )
-    source = sub_events_path.read_text(encoding="utf-8")
+    source = action_policies_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     fn = _find_function(tree, "poll_complete_actions")
 
@@ -52,13 +52,13 @@ def test_poll_complete_actions_binds_email_and_pemail_paths():
 
 
 def test_poll_open_actions_binds_email_and_push_paths():
-    sub_events_path = (
+    action_policies_path = (
         Path(__file__).resolve().parent.parent
         / "firebase_sub"
-        / "cli"
-        / "sub_events.py"
+        / "runtime"
+        / "action_policies.py"
     )
-    source = sub_events_path.read_text(encoding="utf-8")
+    source = action_policies_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     fn = _find_function(tree, "poll_open_actions")
 
@@ -137,3 +137,5 @@ def test_cli_exposes_poll_history_controls():
 
     assert "--all-history/--recent-history" in option_values
     assert "--poll-lookback-days" in option_values
+    assert "--canary-interval-seconds" in option_values
+    assert "--enable-real-auth-delete/--no-enable-real-auth-delete" in option_values

@@ -69,3 +69,34 @@ def test_action_runner_supports_per_action_dummy_override():
 
     assert (ActionType.EMAIL, True) in observed
     assert (ActionType.PUSH, False) in observed
+
+
+def test_filter_returns_true_when_any_bound_action_pending():
+    am = ActionMan()
+    am.bind(ActionType.EMAIL, lambda **kwargs: None)
+    am.bind(ActionType.PUSH, lambda **kwargs: None)
+
+    assert am.filter(action_dict={}, action_key="poll-1")
+
+
+def test_filter_returns_false_when_all_bound_actions_done():
+    am = ActionMan()
+    am.bind(ActionType.EMAIL, lambda **kwargs: None)
+    am.bind(ActionType.PUSH, lambda **kwargs: None)
+    action_dict = {
+        "email": ["poll-1"],
+        "push": ["poll-1"],
+    }
+
+    assert not am.filter(action_dict=action_dict, action_key="poll-1")
+
+
+def test_mark_done_marks_all_bound_actions_for_key():
+    am = ActionMan()
+    am.bind(ActionType.EMAIL, lambda **kwargs: None)
+    am.bind(ActionType.PUSH, lambda **kwargs: None)
+
+    action_dict = am.mark_done(action_dict={}, action_key="poll-1")
+
+    assert "poll-1" in action_dict["email"]
+    assert "poll-1" in action_dict["push"]

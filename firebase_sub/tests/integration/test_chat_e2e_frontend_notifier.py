@@ -8,6 +8,7 @@ This test intentionally avoids direct calls to chat_message_push_handler and ins
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -126,15 +128,15 @@ def _await_chat_action(
     return None
 
 
-@pytest.fixture(scope="module")
-def notifier_worker() -> Generator[subprocess.Popen, None, None]:
+def _notifier_env() -> dict[str, str]:
     env = os.environ.copy()
-    env.setdefault("ENABLE_WEB_PUSH", "true")
     env.setdefault("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8180")
     env.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9199")
     env.setdefault("GOOGLE_CLOUD_PROJECT", "demo-firebase-sub-integration")
+    return env
 
-    # sub_events blocks and listens forever, so run as a child process.
+
+def _start_notifier_worker() -> subprocess.Popen[str]:
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -150,29 +152,49 @@ def notifier_worker() -> Generator[subprocess.Popen, None, None]:
             "3600",
         ],
         cwd=str(REPO_ROOT / "firebase_sub"),
-        env=env,
+        env=_notifier_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        output = proc.stdout.read() if proc.stdout else ""
+        raise AssertionError(
+            f"sub_events exited early: code={proc.returncode}\\n{output}"
+        )
+    return proc
 
+
+def _stop_notifier_worker(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
     try:
-        # Allow worker startup; tests fail fast if process exits unexpectedly.
-        time.sleep(1.0)
-        if proc.poll() is not None:
-            output = proc.stdout.read() if proc.stdout else ""
-            raise AssertionError(
-                f"sub_events exited early: code={proc.returncode}\n{output}"
-            )
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+@contextmanager
+def _running_notifier_worker() -> Generator[subprocess.Popen[str], None, None]:
+    proc = _start_notifier_worker()
+    try:
         yield proc
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+        _stop_notifier_worker(proc)
+
+
+def _endpoint_hash_for_user(*, uid: str, endpoint: str) -> str:
+    raw = f"{uid}__{endpoint}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+@pytest.fixture(scope="module")
+def notifier_worker() -> Generator[subprocess.Popen, None, None]:
+    with _running_notifier_worker() as proc:
+        yield proc
 
 
 @pytest.mark.e2e
@@ -249,3 +271,163 @@ class TestChatE2EFrontendToNotifier:
 
         # Keep fixture reference explicit so lint/test readers see the worker dependency.
         assert notifier_worker.poll() is None
+
+    def test_global_chat_not_replayed_after_worker_restart(self, firestore_client):
+        ok, reason = _has_frontend_runtime()
+        if not ok:
+            pytest.skip(f"Skipping frontend E2E test: {reason}")
+
+        # Create frontend-authenticated users and capture UIDs from Auth emulator.
+        a = _run_frontend_client("signup", "e2e-replay-a@example.com", "pw12345")
+        b = _run_frontend_client("signup", "e2e-replay-b@example.com", "pw12345")
+
+        _seed_user_with_preferences(
+            firestore_client,
+            uid=a["uid"],
+            name="Replay A",
+            web_push_enabled=True,
+            poll_opens=True,
+            poll_completes=True,
+            global_chat=True,
+            event_chat=True,
+        )
+        _seed_user_with_preferences(
+            firestore_client,
+            uid=b["uid"],
+            name="Replay B",
+            web_push_enabled=True,
+            poll_opens=False,
+            poll_completes=False,
+            global_chat=True,
+            event_chat=False,
+        )
+
+        # First run: emit one message and let worker process it.
+        with _running_notifier_worker():
+            msg = _run_frontend_client(
+                "send-message",
+                "e2e-replay-a@example.com",
+                "pw12345",
+                "Replay A",
+                "hello replay guard",
+                "global",
+                "main",
+            )
+            action_doc = _await_chat_action(firestore_client, msg["messageId"])
+
+        assert action_doc is not None, "Expected chat_push_actions for replay test"
+        assert action_doc["processed"] is True
+        initial_notified = set(action_doc.get("notified", []))
+        initial_delivered = set(action_doc.get("delivered_endpoints", []))
+        initial_processed_at = action_doc.get("processedAt")
+
+        base_endpoint = f"https://push.example/{b['uid']}"
+        expected_base_hash = _endpoint_hash_for_user(uid=b["uid"], endpoint=base_endpoint)
+        assert initial_notified == {b["uid"]}
+        assert expected_base_hash in initial_delivered
+
+        # Add a new endpoint after the message was already processed.
+        replay_endpoint = f"https://push.example/{b['uid']}-replay"
+        firestore_client.collection("users").document(b["uid"]).collection(
+            "push_endpoints"
+        ).document(f"ep-{b['uid']}-replay").set(
+            {
+                "endpoint": replay_endpoint,
+                "p256dh": "test-p256dh-key",
+                "auth": "test-auth-key",
+                "active": True,
+            },
+            merge=True,
+        )
+        replay_hash = _endpoint_hash_for_user(uid=b["uid"], endpoint=replay_endpoint)
+
+        # Restart worker: startup replay should not deliver for this old message again.
+        with _running_notifier_worker():
+            time.sleep(2.0)
+
+        action_after = (
+            firestore_client.collection("chat_push_actions")
+            .document(msg["messageId"])
+            .get()
+            .to_dict()
+        )
+        assert action_after is not None
+        assert action_after["processed"] is True
+        assert set(action_after.get("notified", [])) == initial_notified
+        assert set(action_after.get("delivered_endpoints", [])) == initial_delivered
+        assert replay_hash not in set(action_after.get("delivered_endpoints", []))
+        assert action_after.get("processedAt") == initial_processed_at
+
+    def test_no_eligible_recipients_not_replayed_after_restart(self, firestore_client):
+        ok, reason = _has_frontend_runtime()
+        if not ok:
+            pytest.skip(f"Skipping frontend E2E test: {reason}")
+
+        # Only author exists initially, so no recipients are eligible.
+        a = _run_frontend_client(
+            "signup", "e2e-noeligible-a@example.com", "pw12345"
+        )
+        _seed_user_with_preferences(
+            firestore_client,
+            uid=a["uid"],
+            name="NoEligible A",
+            web_push_enabled=True,
+            poll_opens=True,
+            poll_completes=True,
+            global_chat=True,
+            event_chat=True,
+        )
+
+        with _running_notifier_worker():
+            msg = _run_frontend_client(
+                "send-message",
+                "e2e-noeligible-a@example.com",
+                "pw12345",
+                "NoEligible A",
+                "hello no eligible",
+                "global",
+                "main",
+            )
+            action_doc = _await_chat_action(firestore_client, msg["messageId"])
+
+        assert action_doc is not None, "Expected chat_push_actions for no-eligible test"
+        assert action_doc["processed"] is True
+        initial_notified = set(action_doc.get("notified", []))
+        initial_delivered = set(action_doc.get("delivered_endpoints", []))
+        initial_processed_at = action_doc.get("processedAt")
+        assert initial_notified == set()
+        assert initial_delivered == set()
+
+        # Add a newly eligible user after the message was already processed.
+        b = _run_frontend_client(
+            "signup", "e2e-noeligible-b@example.com", "pw12345"
+        )
+        _seed_user_with_preferences(
+            firestore_client,
+            uid=b["uid"],
+            name="NoEligible B",
+            web_push_enabled=True,
+            poll_opens=False,
+            poll_completes=False,
+            global_chat=True,
+            event_chat=False,
+        )
+
+        replay_endpoint = f"https://push.example/{b['uid']}"
+        replay_hash = _endpoint_hash_for_user(uid=b["uid"], endpoint=replay_endpoint)
+
+        with _running_notifier_worker():
+            time.sleep(2.0)
+
+        action_after = (
+            firestore_client.collection("chat_push_actions")
+            .document(msg["messageId"])
+            .get()
+            .to_dict()
+        )
+        assert action_after is not None
+        assert action_after["processed"] is True
+        assert set(action_after.get("notified", [])) == initial_notified
+        assert set(action_after.get("delivered_endpoints", [])) == initial_delivered
+        assert replay_hash not in set(action_after.get("delivered_endpoints", []))
+        assert action_after.get("processedAt") == initial_processed_at

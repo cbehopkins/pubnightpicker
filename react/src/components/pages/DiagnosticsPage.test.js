@@ -85,6 +85,17 @@ describe("PollActionAuditPanel", () => {
                             venueName: "The Anchor",
                         }),
                     },
+                    {
+                        id: "a3",
+                        data: () => ({
+                            at: { toDate: () => new Date("2026-05-15T12:02:00.000Z") },
+                            actionType: "complete",
+                            pollId: "poll-auto",
+                            pollDate: "2026-05-16",
+                            actorUid: "backend:auto",
+                            selectedVenueId: "event-1",
+                        }),
+                    },
                 ],
             });
             return () => undefined;
@@ -101,7 +112,9 @@ describe("PollActionAuditPanel", () => {
         expect(screen.getByText("Poll Action Audit")).toBeTruthy();
         expect(screen.getByText("create")).toBeTruthy();
         expect(screen.getByText("addVenue")).toBeTruthy();
+        expect(screen.getByText("complete")).toBeTruthy();
         expect(screen.getByText(/venue=venue-1 \(The Anchor\)/)).toBeTruthy();
+        expect(screen.getByText("Backend (automatic)")).toBeTruthy();
         expect(screen.getByRole("option", { name: "Last 10 entries" })).toBeTruthy();
         expect(screen.getByRole("option", { name: "Last 50 entries" })).toBeTruthy();
         expect(screen.getByRole("option", { name: "Last 100 entries" })).toBeTruthy();
@@ -109,6 +122,8 @@ describe("PollActionAuditPanel", () => {
         await waitFor(() => {
             expect(screen.getAllByText("Alex").length).toBeGreaterThan(0);
         });
+        expect(getDocMock).toHaveBeenCalledTimes(1);
+        expect(getDocMock).toHaveBeenCalledWith("user-public/user-a");
         expect(screen.getAllByText("user-a").length).toBeGreaterThan(0);
 
         fireEvent.change(screen.getByLabelText("Action"), { target: { value: "addVenue" } });

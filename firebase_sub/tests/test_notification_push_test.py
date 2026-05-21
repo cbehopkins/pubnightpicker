@@ -53,6 +53,29 @@ def test_ignores_non_push_test_document():
     ack_doc.set.assert_not_called()
 
 
+def test_handle_delegates_to_handle_request_document() -> None:
+    db, _req_doc, _ack_doc = _build_db()
+    handler = NotificationPushTestHandler(db, lambda _uid: [], dummy_push=True)
+    handler.handle_request_document = MagicMock()
+    request_document = MagicMock()
+    pubs_list = MagicMock()
+
+    handler.handle(request_document, pubs_list)
+
+    handler.handle_request_document.assert_called_once_with(request_document)
+
+
+def test_handle_passes_through_none_document() -> None:
+    db, _req_doc, _ack_doc = _build_db()
+    handler = NotificationPushTestHandler(db, lambda _uid: [], dummy_push=True)
+    handler.handle_request_document = MagicMock()
+    pubs_list = MagicMock()
+
+    handler.handle(None, pubs_list)
+
+    handler.handle_request_document.assert_called_once_with(None)
+
+
 def test_processes_uid_request_and_acks_then_clears(monkeypatch):
     db, req_doc, ack_doc = _build_db(ack_payload={})
     query_mock = MagicMock(return_value=[])
