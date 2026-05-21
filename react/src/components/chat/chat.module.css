@@ -132,12 +132,18 @@
   }
 
   .sendMessage :global(.input-group) {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     gap: var(--spacing-xs);
   }
 
+  .sendMessage :global(.form-control),
   .sendMessage :global(.btn) {
     width: 100%;
+  }
+
+  .sendMessage :global(.btn) {
+    min-width: 0;
   }
 }
