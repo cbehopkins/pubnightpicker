@@ -137,3 +137,5 @@ def test_cli_exposes_poll_history_controls():
 
     assert "--all-history/--recent-history" in option_values
     assert "--poll-lookback-days" in option_values
+    assert "--canary-interval-seconds" in option_values
+    assert "--enable-real-auth-delete/--no-enable-real-auth-delete" in option_values

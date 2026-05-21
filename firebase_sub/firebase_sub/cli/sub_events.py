@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeGuard
@@ -34,6 +35,13 @@ from firebase_sub.runtime.sub_events_bootstrap import get_db_handler
 _log = logging.getLogger(__name__)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _is_event_plugin(plugin: ListenerPlugin) -> TypeGuard[EventPlugin]:
     return (
         hasattr(plugin, "filter")
@@ -52,6 +60,8 @@ def sub_events(
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
+    canary_interval_seconds: int = 300,
+    enable_real_auth_delete: bool = False,
 ) -> None:
     del restart_interval  # Retained as CLI compatibility flag.
 
@@ -64,8 +74,8 @@ def sub_events(
         housekeeping_cron=housekeeping_cron,
         all_history=all_history,
         poll_lookback_days=poll_lookback_days,
-        enable_real_auth_delete=False,
-        admin_delete_enabled=True,
+        enable_real_auth_delete=enable_real_auth_delete,
+        admin_delete_enabled=_env_flag("ENABLE_ADMIN_DELETE_REQUESTS", default=False),
     )
 
     db_handler = get_db_handler()
@@ -136,6 +146,10 @@ def sub_events(
             )
         ),
         CanaryWatcher(db_handler.db) as canary,
+        PeriodicTrigger(
+            interval_seconds=canary_interval_seconds,
+            callback=canary.send_canary,
+        ),
         PubsList(db_handler.pub_collection) as pubs_list,
     ):
         for plugin in event_plugins:
@@ -205,6 +219,19 @@ def sub_events(
     show_default=True,
     help="When using recent-history, include polls from this many days ago",
 )
+@click.option(
+    "--canary-interval-seconds",
+    type=click.IntRange(min=10),
+    default=300,
+    show_default=True,
+    help="How often (seconds) to write a canary nonce to verify Firestore listener health",
+)
+@click.option(
+    "--enable-real-auth-delete/--no-enable-real-auth-delete",
+    default=False,
+    show_default=True,
+    help="Allow real Firebase Auth deletion for validated requests (requires ENABLE_ADMIN_DELETE_REQUESTS=true)",
+)
 def cli(
     dummy_email: bool,
     dummy_push: bool,
@@ -215,6 +242,8 @@ def cli(
     housekeeping_cron: str | None,
     all_history: bool,
     poll_lookback_days: int,
+    canary_interval_seconds: int,
+    enable_real_auth_delete: bool,
 ) -> None:
     sub_events(
         dummy_email,
@@ -226,6 +255,8 @@ def cli(
         housekeeping_cron,
         all_history,
         poll_lookback_days,
+        canary_interval_seconds,
+        enable_real_auth_delete,
     )
 
 
