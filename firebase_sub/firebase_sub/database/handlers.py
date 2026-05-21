@@ -83,39 +83,6 @@ def _endpoint_parent_user_id(document: DocumentSnapshot) -> str | None:
     return user_id if user_id else None
 
 
-def _compute_action_key(poll_id: PollId, poll_dict: PollDocument, pub_id: str) -> str:
-    """Build the canonical completion action key for email/push dedupe."""
-    _ = poll_id
-    return PushDedupeKeys.complete_key(
-        pub_id=pub_id,
-        restaurant_id=poll_dict.get("restaurant"),
-        restaurant_time=poll_dict.get("restaurant_time"),
-    )
-
-
-def _with_legacy_alias_key(
-    action_dict: dict[str, object] | None,
-    legacy_key: str,
-    canonical_key: str,
-) -> dict[str, object] | None:
-    """Add canonical key when legacy key exists to avoid replay resend after migration."""
-    if action_dict is None or legacy_key == canonical_key:
-        return action_dict
-
-    normalized: dict[str, object] = dict(action_dict)
-    for action_type, values in list(normalized.items()):
-        if not isinstance(values, list | tuple | set):
-            continue
-        key_set: set[str] = set()
-        for entry in cast(Sequence[object] | set[object], values):
-            if isinstance(entry, str):
-                key_set.add(entry)
-        if legacy_key in key_set and canonical_key not in key_set:
-            key_set.add(canonical_key)
-            normalized[action_type] = list(key_set)
-    return normalized
-
-
 class DbHandler:
     def __init__(self):
         self.db: Client = firestore.client()
