@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from typing import cast
 
+from google.api_core.exceptions import FailedPrecondition
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
@@ -27,6 +28,9 @@ PUSH_TEST_DOC_ID = "push_test"
 POLLS_COLLECTION = "polls"
 VOTES_COLLECTION = "votes"
 POLL_ACTION_AUDIT_COLLECTION = "poll_action_audit"
+POLL_ACTION_CREATE = "create"
+POLL_ACTION_COMPLETE = "complete"
+BACKEND_AUTOMATION_ACTOR_UID = "backend:auto"
 PUSH_ENDPOINTS_COLLECTION = "push_endpoints"
 PUSH_ENDPOINT_RETENTION_DAYS = int(os.getenv("PUSH_ENDPOINT_RETENTION_DAYS", "60"))
 PUSH_DIAGNOSTIC_RETENTION_DAYS = 1
@@ -74,15 +78,35 @@ def delete_inactive_push_endpoints(
 
     current_time = now or datetime.now(UTC)
     cutoff = current_time - timedelta(days=retention_days)
-    endpoint_stream = (
+
+    try:
+        endpoint_stream = (
+            db.collection_group(PUSH_ENDPOINTS_COLLECTION)
+            .where(filter=FieldFilter("active", "==", False))
+            .where(filter=FieldFilter("disabledAt", "<", cutoff))
+            .stream()
+        )
+        for endpoint_doc in endpoint_stream:
+            endpoint_doc.reference.delete()
+        return
+    except FailedPrecondition as exc:
+        logger.warning(
+            "Falling back to local disabledAt filtering for inactive push endpoint cleanup "
+            "because composite index is unavailable: %s",
+            exc,
+        )
+
+    fallback_stream = (
         db.collection_group(PUSH_ENDPOINTS_COLLECTION)
         .where(filter=FieldFilter("active", "==", False))
-        .where(filter=FieldFilter("disabledAt", "<", cutoff))
         .stream()
     )
 
-    for endpoint_doc in endpoint_stream:
-        endpoint_doc.reference.delete()
+    for endpoint_doc in fallback_stream:
+        endpoint_data = endpoint_doc.to_dict() or {}
+        disabled_at = endpoint_data.get("disabledAt")
+        if isinstance(disabled_at, datetime) and disabled_at < cutoff:
+            endpoint_doc.reference.delete()
 
 
 def _notification_entry_timestamp_ms(value: object) -> int | None:
@@ -143,6 +167,54 @@ def delete_stale_poll_action_audit_entries(
         audit_doc.reference.delete()
 
 
+def _write_poll_action_audit(
+    db: Client,
+    *,
+    poll_id: str,
+    poll_date: str,
+    action_type: str,
+    selected_venue_id: str | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    timestamp_micros = int(now.timestamp() * 1_000_000)
+    audit_doc_id = f"{poll_id}_{action_type}_{timestamp_micros}"
+    payload = {
+        "pollId": poll_id,
+        "actionType": action_type,
+        "actorUid": BACKEND_AUTOMATION_ACTOR_UID,
+        "at": now,
+        "pollDate": poll_date,
+    }
+    if selected_venue_id:
+        payload["selectedVenueId"] = selected_venue_id
+
+    db.collection(POLL_ACTION_AUDIT_COLLECTION).document(audit_doc_id).set(payload)
+
+
+def _try_write_poll_action_audit(
+    db: Client,
+    *,
+    poll_id: str,
+    poll_date: str,
+    action_type: str,
+    selected_venue_id: str | None = None,
+) -> None:
+    try:
+        _write_poll_action_audit(
+            db,
+            poll_id=poll_id,
+            poll_date=poll_date,
+            action_type=action_type,
+            selected_venue_id=selected_venue_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to write poll action audit for poll %s and action %s",
+            poll_id,
+            action_type,
+        )
+
+
 def auto_complete_single_event_polls_due_tomorrow(
     db: Client,
     *,
@@ -181,6 +253,14 @@ def auto_complete_single_event_polls_due_tomorrow(
                 "selected": selected_venue_id,
             },
             merge=True,
+        )
+        poll_date = poll_data.get("date")
+        _try_write_poll_action_audit(
+            db,
+            poll_id=poll_doc.id,
+            poll_date=poll_date if isinstance(poll_date, str) and poll_date else target_date,
+            action_type=POLL_ACTION_COMPLETE,
+            selected_venue_id=selected_venue_id,
         )
         logger.info(
             "Auto-completed single-event poll %s with venue %s",
@@ -241,6 +321,14 @@ def auto_complete_multi_option_polls_due_today(
                 "selected": winner_venue_id,
             },
             merge=True,
+        )
+        poll_date = poll_data.get("date")
+        _try_write_poll_action_audit(
+            db,
+            poll_id=poll_doc.id,
+            poll_date=poll_date if isinstance(poll_date, str) and poll_date else target_date,
+            action_type=POLL_ACTION_COMPLETE,
+            selected_venue_id=winner_venue_id,
         )
         logger.info(
             "Auto-completed multi-option poll %s with winner %s",
@@ -369,6 +457,12 @@ def _create_event_poll_if_due(
         )
         db.collection("votes").document(poll_id).set({"any": []})
         db.collection("attendance").document(poll_id).set({})
+        _try_write_poll_action_audit(
+            db,
+            poll_id=poll_id,
+            poll_date=occurrence_date.isoformat(),
+            action_type=POLL_ACTION_CREATE,
+        )
         logger.info(
             "Created event recurrence poll %s for venue %s on %s",
             poll_id,

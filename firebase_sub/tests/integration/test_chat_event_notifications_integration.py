@@ -181,4 +181,8 @@ class TestEventChatNotifications:
             .get()
             .to_dict()
         )
-        assert action_doc is None
+        assert action_doc is not None
+        assert action_doc["scopeType"] == "event"
+        assert action_doc["scopeId"] == poll_id
+        assert action_doc["processed"] is True
+        assert action_doc.get("notified") is None

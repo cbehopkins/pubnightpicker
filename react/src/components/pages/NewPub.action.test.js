@@ -95,7 +95,7 @@ describe("NewPub action", () => {
                 recurrence_frequency: "yearly",
                 recurrence_interval: "1",
                 recurrence_month: "5",
-                recurrence_weekday: "3",
+                recurrence_weekday: "2",
                 recurrence_nth: "-1",
             }),
             params: {},
@@ -107,7 +107,7 @@ describe("NewPub action", () => {
                 recurrence: expect.objectContaining({
                     frequency: "yearly",
                     month: 5,
-                    weekday: 3,
+                    weekday: 2,
                     nth: -1,
                     interval: 1,
                 }),

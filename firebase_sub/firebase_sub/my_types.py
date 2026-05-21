@@ -1,6 +1,6 @@
 import datetime
 from collections.abc import Callable, Sequence
-from enum import StrEnum, auto
+from enum import IntEnum, StrEnum, auto
 from typing import Literal, NotRequired, TypedDict
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -24,6 +24,16 @@ class VenueType(StrEnum):
     RESTAURANT = "restaurant"
 
 
+class Weekday(IntEnum):
+    MONDAY = 0
+    TUESDAY = 1
+    WEDNESDAY = 2
+    THURSDAY = 3
+    FRIDAY = 4
+    SATURDAY = 5
+    SUNDAY = 6
+
+
 EmailAddr = str
 DocumentId = str
 PollId = DocumentId
@@ -45,8 +55,8 @@ class EventRecurrenceRule(TypedDict, total=False):
     start_date: str
     date: str
     interval: int
-    weekdays: list[int]
-    weekday: int
+    weekdays: list[Weekday]
+    weekday: Weekday
     nth: int
     month: int
     month_day: int

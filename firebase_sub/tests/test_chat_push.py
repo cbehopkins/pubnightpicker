@@ -589,7 +589,11 @@ def test_chat_handler_global_excludes_author():
         process_chat_message_push(handler, "msg-2", msg)
 
     mock_send.assert_not_called()
-    actions_ref.set.assert_not_called()
+    actions_ref.set.assert_called_once()
+    payload = actions_ref.set.call_args.args[0]
+    assert payload["processed"] is True
+    assert payload["scopeType"] == "global"
+    assert payload["scopeId"] == "main"
 
 
 def test_chat_handler_global_missing_scope_type_treated_as_global():
@@ -761,6 +765,57 @@ def test_chat_handler_skips_already_delivered_endpoint():
 
     with patch("firebase_sub.plugins.chat_push.send_chat_push", side_effect=fake_send):
         process_chat_message_push(handler, "msg-6", msg)
+
+    assert "u1" not in recipients
+    assert "u2" in recipients
+
+
+def test_chat_handler_short_circuits_when_message_already_processed():
+    users = [
+        _user_doc("u1", web_push_enabled=True, push_prefs={"globalChat": True}),
+    ]
+    ep_u1 = _endpoint_doc("u1")
+    handler, actions_ref = _make_db_handler(
+        users,
+        chat_actions_exists=True,
+        endpoint_docs={"u1": [ep_u1]},
+    )
+    actions_ref.get.return_value.to_dict.return_value = {"processed": True}
+    msg = _message_doc("msg-6-processed", uid="author")
+
+    with patch("firebase_sub.plugins.chat_push.send_chat_push") as mock_send:
+        process_chat_message_push(handler, "msg-6-processed", msg)
+
+    mock_send.assert_not_called()
+    actions_ref.set.assert_not_called()
+    actions_ref.update.assert_not_called()
+
+
+def test_chat_handler_skips_legacy_notified_user_without_delivered_endpoints():
+    """Legacy actions docs with only notified users must still suppress re-delivery."""
+    users = [
+        _user_doc("u1", web_push_enabled=True, push_prefs={"globalChat": True}),
+        _user_doc("u2", web_push_enabled=True, push_prefs={"globalChat": True}),
+    ]
+    ep_u1 = _endpoint_doc("u1")
+    ep_u2 = _endpoint_doc("u2")
+    handler, actions_ref = _make_db_handler(
+        users,
+        chat_actions_exists=True,
+        chat_actions_notified=["u1"],
+        endpoint_docs={"u1": [ep_u1], "u2": [ep_u2]},
+    )
+    actions_ref.get.return_value.to_dict.return_value = {"notified": ["u1"]}
+    msg = _message_doc("msg-6b", uid="author")
+    recipients = []
+
+    def fake_send(endpoints, *, payload, **kwargs):
+        del payload, kwargs
+        recipients.extend(ep.user_id for ep in endpoints)
+        return list(dict.fromkeys(recipients))
+
+    with patch("firebase_sub.plugins.chat_push.send_chat_push", side_effect=fake_send):
+        process_chat_message_push(handler, "msg-6b", msg)
 
     assert "u1" not in recipients
     assert "u2" in recipients

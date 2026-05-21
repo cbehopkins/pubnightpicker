@@ -2,6 +2,7 @@ import logging
 from collections.abc import Generator, Mapping, Sequence
 from typing import Any, Protocol, cast, runtime_checkable
 
+from google.cloud.firestore import SERVER_TIMESTAMP
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
 
@@ -118,6 +119,13 @@ def process_chat_message_push(
             else PUSH_EVENT_CHAT_MESSAGE_GLOBAL
         )
     ]
+    actions_ref = db_handler.db.collection("chat_push_actions").document(message_id)
+    actions_snap = cast(DocumentSnapshot, cast(Any, actions_ref).get())
+    actions_data = _snapshot_payload(actions_snap)
+    if bool(actions_data.get("processed")):
+        _log.info("Chat push already processed for message %s", message_id)
+        return
+
     eligible_uids = db_handler._users_with_push_preference(preference_field)
 
     if scope_type == "event":
@@ -131,12 +139,21 @@ def process_chat_message_push(
     eligible_uids.discard(author_uid)
     if not eligible_uids:
         _log.info("No eligible recipients for chat push on message %s", message_id)
+        _mark_chat_message_processed(
+            actions_ref=actions_ref,
+            actions_doc_exists=actions_snap.exists,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
         return
 
-    actions_ref = db_handler.db.collection("chat_push_actions").document(message_id)
-    actions_snap = cast(DocumentSnapshot, cast(Any, actions_ref).get())
-    actions_data = _snapshot_payload(actions_snap)
     already_delivered_eps = set(_string_list(actions_data.get("delivered_endpoints")))
+    legacy_notified_uids = set(_string_list(actions_data.get("notified")))
+    use_legacy_user_dedupe = (
+        actions_snap.exists
+        and "delivered_endpoints" not in actions_data
+        and bool(legacy_notified_uids)
+    )
 
     if scope_type == "event":
         payload = build_chat_event_payload(
@@ -163,10 +180,18 @@ def process_chat_message_push(
                 continue
             if endpoint_hash(valid_ep) in already_delivered_eps:
                 continue
+            if use_legacy_user_dedupe and valid_ep.user_id in legacy_notified_uids:
+                continue
             endpoints.append(valid_ep)
 
     if not endpoints:
         _log.info("No remaining undelivered endpoints for message %s", message_id)
+        _mark_chat_message_processed(
+            actions_ref=actions_ref,
+            actions_doc_exists=actions_snap.exists,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
         return
 
     send_chat_push(
@@ -178,3 +203,29 @@ def process_chat_message_push(
         scope_id=scope_id,
         dummy_run=dummy_run,
     )
+    _mark_chat_message_processed(
+        actions_ref=actions_ref,
+        actions_doc_exists=True,
+        scope_type=scope_type,
+        scope_id=scope_id,
+    )
+
+
+def _mark_chat_message_processed(
+    *,
+    actions_ref: object,
+    actions_doc_exists: bool,
+    scope_type: str,
+    scope_id: str,
+) -> None:
+    write_data: dict[str, object] = {
+        "processed": True,
+        "processedAt": SERVER_TIMESTAMP,
+    }
+    if not actions_doc_exists:
+        write_data["scopeType"] = scope_type
+        write_data["scopeId"] = scope_id
+        write_data["createdAt"] = SERVER_TIMESTAMP
+        cast(Any, actions_ref).set(write_data, merge=True)
+        return
+    cast(Any, actions_ref).update(write_data)

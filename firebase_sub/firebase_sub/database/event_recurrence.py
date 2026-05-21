@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from firebase_sub.my_types import EventRecurrenceRule
+from firebase_sub.my_types import EventRecurrenceRule, Weekday
 
 
 def parse_iso_date(value: object | None) -> date | None:
@@ -52,8 +52,8 @@ def _nth_weekday_of_month(year: int, month: int, weekday: int, nth: int) -> date
     return candidate if candidate.month == month else None
 
 
-def _first_weekday_on_or_after(start: date, weekdays: list[int]) -> date | None:
-    candidate_weekdays = sorted({weekday for weekday in weekdays if 0 <= weekday <= 6})
+def _first_weekday_on_or_after(start: date, weekdays: list[Weekday]) -> date | None:
+    candidate_weekdays = sorted(set(weekdays))
     if not candidate_weekdays:
         return None
     candidate = start
