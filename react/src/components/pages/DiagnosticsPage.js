@@ -25,6 +25,7 @@ import {
     POLL_ACTION_DELETE_VENUE,
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
+import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -49,7 +50,7 @@ function formatAuditTimestamp(timestampValue) {
     if (!timestampValue || typeof timestampValue.toDate !== "function") {
         return "Pending";
     }
-    return timestampValue.toDate().toLocaleString();
+    return formatLocalDateTime(timestampValue.toDate()) || "Pending";
 }
 
 function isBackendAutomationActorUid(actorUid) {

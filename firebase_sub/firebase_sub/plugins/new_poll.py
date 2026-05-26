@@ -74,16 +74,7 @@ class NewPollListenerPlugin(EventPlugin):
         if poll_id is None:
             return
 
-        # Get poll data for the callbacks
-        poll_dict_raw = self._db_handler.poll_repo.get_poll(poll_id)
-        if poll_dict_raw is None:
-            return
-
-        try:
-            raw_date = poll_dict_raw["date"]
-            poll_date = raw_date
-        except (KeyError, TypeError):
-            poll_date = ""
+        poll_date = self._poll_date(envelope)
 
         # Run the action callbacks
         open_action_key = poll_id
@@ -100,6 +91,28 @@ class NewPollListenerPlugin(EventPlugin):
             poll_id=poll_id,
             poll_date=poll_date,
         )
+
+    def _poll_date(self, envelope: EventEnvelope) -> str:
+        if envelope.doc is not None:
+            to_dict = getattr(envelope.doc, "to_dict", None)
+            if callable(to_dict):
+                doc_payload = to_dict()
+                if isinstance(doc_payload, Mapping):
+                    raw_date = doc_payload.get("date")
+                    if isinstance(raw_date, str):
+                        return raw_date
+
+        poll_id = envelope.document_id()
+        if poll_id is None:
+            return ""
+
+        # Fallback for legacy/test doubles where event snapshot has no payload.
+        poll_dict = self._db_handler.poll_repo.get_poll(poll_id)
+        if isinstance(poll_dict, Mapping):
+            raw_date = poll_dict.get("date")
+            if isinstance(raw_date, str):
+                return raw_date
+        return ""
 
     def mark_done(self, envelope: EventEnvelope) -> None:
         """Update the action document state after successful handler execution.
