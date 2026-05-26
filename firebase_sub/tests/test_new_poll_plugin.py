@@ -16,8 +16,11 @@ class _FakeDbHandler:
 
 
 class _FakePollRepo:
-    def get_poll(self, poll_id: str) -> dict[str, str]:
-        return {"date": "2026-01-01", "id": poll_id}
+    def __init__(self, poll: dict[str, str] | None = None) -> None:
+        self._poll = poll or {"date": "2026-01-01"}
+
+    def get_poll(self, _poll_id: str) -> dict[str, str] | None:
+        return self._poll
 
 
 class _FakeDb:
@@ -138,5 +141,36 @@ def test_new_poll_listener_handle_calls_action_manager():
             "action_key": "poll-2",
             "poll_id": "poll-2",
             "poll_date": "2026-01-01",
+        }
+    ]
+
+
+def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable():
+    db_handler: NewPollDbHandler = _FakeDbHandler()
+    db_handler.poll_repo = _FakePollRepo(poll=None)
+
+    action_manager = _FakeActionManager()
+    plugin = NewPollListenerPlugin(
+        db_handler=db_handler,
+        action_manager=action_manager,
+    )
+    plugin._snapshot_get = lambda document_ref: cast(object, document_ref.get())  # type: ignore[method-assign]
+
+    document = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            id="poll-3",
+            to_dict=lambda: {"date": "2026-05-27", "completed": False},
+        ),
+    )
+    envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
+
+    plugin.handle(envelope)
+
+    assert action_manager.calls == [
+        {
+            "action_key": "poll-3",
+            "poll_id": "poll-3",
+            "poll_date": "2026-05-27",
         }
     ]

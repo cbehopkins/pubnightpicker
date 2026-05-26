@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotificationPing } from "../../hooks/useNotificationPing";
 import { notifyError, notifyInfo } from "../../utils/notify";
+import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 
 function formatPingTimestamp(rawPingValue) {
     const numericValue =
@@ -21,7 +22,7 @@ function formatPingTimestamp(rawPingValue) {
         return null;
     }
 
-    return pingDate.toLocaleString();
+    return formatLocalDateTime(pingDate);
 }
 
 function NotificationPingPanel({
