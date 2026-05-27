@@ -342,7 +342,7 @@ function VotablePub({
   return (
     <tr>
       {showDeleteColumn && (
-        <td>
+        <td className={styles.deleteCol}>
           {allowDelete && (
             <Button
               type="button"
@@ -356,18 +356,26 @@ function VotablePub({
           )}
         </td>
       )}
-      <td>
+      <td className={styles.venueCol}>
         {allowCompletePoll ? (
-          <Button type="button" variant="secondary" onClick={completeHandler} title="Select this venue as the winner to complete the poll">{pubName}</Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className={styles.venueButton}
+            onClick={completeHandler}
+            title="Select this venue as the winner to complete the poll"
+          >
+            {pubName}
+          </Button>
         ) : (
           <label>{pubName}</label>
         )}
       </td>
-      <td>
+      <td className={styles.voteCol}>
         <label>{rowData.voteCount}</label>
       </td>
       {rowData.canVote && (
-        <td className={styles.attendanceIndicator}>
+        <td className={`${styles.statusCol} ${styles.attendanceIndicator}`}>
           {pubId !== "any" && (
             rowData.userCanCome ? <span title="You said you can come">✅</span>
               : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
@@ -377,41 +385,41 @@ function VotablePub({
       )}
 
       {rowData.canVote && (
-        <td>
-          <RespondMenu
-            votedFor={rowData.votedFor}
-            userCanCome={rowData.userCanCome}
-            userCannotCome={rowData.userCannotCome}
-            userEta={rowData.userEta}
-            allowAttendanceControls={rowData.allowAttendanceControls}
-            allowGlobalAttendanceControls={allowGlobalAttendanceControls}
-            onVote={rowData.voteHandler}
-            onSetAttendanceStatus={rowData.setAttendanceStatusHandler}
-            onClearAttendance={rowData.clearAttendanceHandler}
-            onSetEta={rowData.setEtaHandler}
-            onClearEta={rowData.clearEtaHandler}
-            defaultEta={defaultEta}
-            onSetAllCanCome={setAllAttendanceToCanCome}
-            onSetAllCannotCome={setAllAttendanceToCannotCome}
-          />
-        </td>
-      )}
-
-      {canShowAttendance && (
-        <td>
-          {rowData.hasAttendanceData && (
-            <QuestionRender
-              className={styles.button}
-              question="Show attendance"
-            >
-              <ShowAttendance
-                voters={votes[pubId] || []}
-                canCome={rowData.canCome}
-                cannotCome={rowData.cannotCome}
-                eta={attendance[pubId]?.eta}
-              />
-            </QuestionRender>
-          )}
+        <td className={styles.actionsCol}>
+          <div className={styles.actionButtons}>
+            <RespondMenu
+              votedFor={rowData.votedFor}
+              userCanCome={rowData.userCanCome}
+              userCannotCome={rowData.userCannotCome}
+              userEta={rowData.userEta}
+              allowAttendanceControls={rowData.allowAttendanceControls}
+              allowGlobalAttendanceControls={allowGlobalAttendanceControls}
+              onVote={rowData.voteHandler}
+              onSetAttendanceStatus={rowData.setAttendanceStatusHandler}
+              onClearAttendance={rowData.clearAttendanceHandler}
+              onSetEta={rowData.setEtaHandler}
+              onClearEta={rowData.clearEtaHandler}
+              defaultEta={defaultEta}
+              onSetAllCanCome={setAllAttendanceToCanCome}
+              onSetAllCannotCome={setAllAttendanceToCannotCome}
+            />
+            {canShowAttendance && rowData.hasAttendanceData && (
+              <QuestionRender
+                className={styles.button}
+                question={<>
+                  <span className={styles.labelDesktop}>Show attendance</span>
+                  <span className={styles.labelMobile}>Attend</span>
+                </>}
+              >
+                <ShowAttendance
+                  voters={votes[pubId] || []}
+                  canCome={rowData.canCome}
+                  cannotCome={rowData.cannotCome}
+                  eta={attendance[pubId]?.eta}
+                />
+              </QuestionRender>
+            )}
+          </div>
         </td>
       )}
     </tr>
@@ -438,6 +446,8 @@ function PollVote(props) {
     props.poll_id,
     canReadProtectedPollData
   );
+  const tableWrapRef = useRef(null);
+  const [isTableOverflowing, setIsTableOverflowing] = useState(false);
 
   // Get sorted poll rows
   const rowEntries = usePollRows(props.poll_data);
@@ -449,18 +459,67 @@ function PollVote(props) {
     setGlobalAttendanceStatus
   );
 
+  useLayoutEffect(() => {
+    const wrap = tableWrapRef.current;
+    if (!(wrap instanceof HTMLElement)) {
+      return;
+    }
+
+    // Use hysteresis to avoid rapid toggling near the exact overflow boundary.
+    const ENTER_OVERFLOW_PX = 2;
+    const EXIT_OVERFLOW_PX = 20;
+
+    let rafId = 0;
+    const syncOverflowState = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const overflowDelta = wrap.scrollWidth - wrap.clientWidth;
+        setIsTableOverflowing((prev) => {
+          if (prev) {
+            // Stay in overflow mode until we have enough spare width.
+            return overflowDelta > -EXIT_OVERFLOW_PX;
+          }
+          return overflowDelta > ENTER_OVERFLOW_PX;
+        });
+      });
+    };
+
+    syncOverflowState();
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(syncOverflowState);
+      resizeObserver.observe(wrap);
+      const table = wrap.querySelector("table");
+      if (table) {
+        resizeObserver.observe(table);
+      }
+    }
+
+    window.addEventListener("resize", syncOverflowState);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      window.removeEventListener("resize", syncOverflowState);
+    };
+  }, [rowEntries.length, canVote, canShowAttendance, allowDelete]);
+
   return (
     <>
-      <div className={styles.tableWrap}>
+      <div
+        ref={tableWrapRef}
+        className={`${styles.tableWrap} ${isTableOverflowing ? styles.tableWrapOverflow : ""}`.trim()}
+      >
         <table>
           <thead>
             <tr>
-              {allowDelete && <th></th>}
-              <th>Venue Name</th>
-              <th>Votes</th>
-              {canVote && <th></th>}
-              {canVote && <th>Actions</th>}
-              {canShowAttendance && <th></th>}
+              {allowDelete && <th className={styles.deleteCol}></th>}
+              <th className={styles.venueCol}>Venue Name</th>
+              <th className={styles.voteCol}>Votes</th>
+              {canVote && <th className={styles.statusCol}></th>}
+              {canVote && <th className={styles.actionsCol}>Actions</th>}
             </tr>
           </thead>
           <tbody>
