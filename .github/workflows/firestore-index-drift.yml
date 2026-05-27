@@ -1,0 +1,68 @@
+name: Firestore Index Drift
+
+on:
+  pull_request:
+    paths:
+      - "react/firestore.indexes.json"
+      - "react/.firebaserc"
+      - "react/scripts/check-firestore-index-drift.mjs"
+      - ".github/workflows/firestore-index-drift.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "react/firestore.indexes.json"
+      - "react/.firebaserc"
+      - "react/scripts/check-firestore-index-drift.mjs"
+      - ".github/workflows/firestore-index-drift.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firestore-index-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check_index_drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: react
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: react/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Firebase CLI token
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          VITE_FIREBASE_TOKEN: ${{ secrets.VITE_FIREBASE_TOKEN }}
+          REACT_APP_FIREBASE_TOKEN: ${{ secrets.REACT_APP_FIREBASE_TOKEN }}
+        run: |
+          TOKEN_CANDIDATE="$FIREBASE_TOKEN"
+          if [ -z "$TOKEN_CANDIDATE" ]; then
+            TOKEN_CANDIDATE="$VITE_FIREBASE_TOKEN"
+          fi
+          if [ -z "$TOKEN_CANDIDATE" ]; then
+            TOKEN_CANDIDATE="$REACT_APP_FIREBASE_TOKEN"
+          fi
+          if [ -z "$TOKEN_CANDIDATE" ]; then
+            echo "Missing Firebase CLI token secret. Set one of: FIREBASE_TOKEN, VITE_FIREBASE_TOKEN, REACT_APP_FIREBASE_TOKEN"
+            exit 1
+          fi
+          echo "FIREBASE_TOKEN=$TOKEN_CANDIDATE" >> "$GITHUB_ENV"
+
+      - name: Check Firestore index drift
+        run: npm run check:firestore-indexes

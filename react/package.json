@@ -25,6 +25,7 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
+    "check:firestore-indexes": "node ./scripts/check-firestore-index-drift.mjs",
     "generate:icons": "node ./scripts/generate-pwa-icons.mjs",
     "prebuild": "npm run generate:icons",
     "build": "vite build",

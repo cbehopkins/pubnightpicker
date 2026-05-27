@@ -89,6 +89,21 @@ VITE_USE_FIREBASE_EMULATORS="false"
 Deployment is now handled by the github runners.
 PRs get a temp URL generated that allows you to test it
 
+## Firestore Index Drift Check
+
+To catch index drift before deploys, run:
+
+```
+npm run check:firestore-indexes
+```
+
+This compares live Firestore indexes in the configured Firebase project with
+`firestore.indexes.json` and fails on drift.
+
+CI also runs this check in `.github/workflows/firestore-index-drift.yml`.
+Set the GitHub Actions repository secret `FIREBASE_TOKEN` so the job can read
+indexes from Firebase.
+
 ## Admin Stats Pages
 
 Admin users can access statistics from the Past Events page.
