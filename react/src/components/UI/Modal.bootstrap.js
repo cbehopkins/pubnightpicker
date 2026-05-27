@@ -65,7 +65,7 @@ const ModalOverlay = (props) => {
                 width: 'auto',
                 minWidth: 'min(32rem, calc(100vw - 1rem))',
                 maxWidth: 'calc(100vw - 1rem)',
-                maxHeight: '90vh',
+                maxHeight: '90dvh',
                 backgroundColor: 'var(--bs-body-bg)',
                 color: 'var(--bs-body-color)',
                 borderRadius: '0.5rem',

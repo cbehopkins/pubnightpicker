@@ -95,18 +95,25 @@
 
 body {
   margin: 0;
+  min-height: 100dvh;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
   color: var(--bs-body-color, var(--color-gray-900));
   background-color: var(--bs-body-bg, var(--color-gray-100));
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 html,
 #root {
+  min-height: 100dvh;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
+}
+
+main {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
 ul {
