@@ -1,6 +1,7 @@
 """Tests for HousekeepingTaskPlugin and HousekeepingPluginRunner."""
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from firebase_sub.database.housekeeping import HousekeepingTask
 from firebase_sub.plugins.housekeeping import (
@@ -280,3 +281,16 @@ def test_daily_utc_scheduled_callable_rejects_naive_now():
         raise AssertionError("Expected ValueError")
     except ValueError:
         pass
+
+
+def test_daily_utc_scheduled_callable_supports_local_wall_clock_timezone():
+    plugin = DailyUtcScheduledCallablePlugin(
+        name="daily16-london",
+        callback=lambda: None,
+        hour=16,
+        minute=0,
+        schedule_timezone=ZoneInfo("Europe/London"),
+    )
+
+    now = datetime(2026, 5, 19, 14, 59, tzinfo=UTC)
+    assert plugin.run_at(now) == datetime(2026, 5, 19, 15, 0, tzinfo=UTC)

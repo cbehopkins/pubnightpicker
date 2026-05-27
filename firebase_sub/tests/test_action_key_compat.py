@@ -11,6 +11,5 @@ def test_complete_key_pub_only_uses_legacy_compact_form():
 
 def test_complete_key_with_restaurant_and_time_is_composite():
     assert (
-        PushDedupeKeys.complete_key("pub-1", "rest-1", "19:00")
-        == "pub-1:rest-1:19:00"
+        PushDedupeKeys.complete_key("pub-1", "rest-1", "19:00") == "pub-1:rest-1:19:00"
     )

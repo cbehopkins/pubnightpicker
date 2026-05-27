@@ -15,6 +15,7 @@ pydantic = "^2.11.7"
 pyserial = "^3.5"
 croniter = "^6.0"
 pywebpush = "^2.0.3"
+tzdata = "^2026.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0"

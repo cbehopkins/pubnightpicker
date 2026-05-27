@@ -106,7 +106,13 @@ class _FakeQueueRunner:
         registry,
         scheduled_runner,
     ):
-        del event_queue, healthcheck_interval_seconds, healthchecks, registry, scheduled_runner
+        del (
+            event_queue,
+            healthcheck_interval_seconds,
+            healthchecks,
+            registry,
+            scheduled_runner,
+        )
 
     def run_forever(self) -> None:
         _FakeQueueRunner.calls += 1
@@ -114,13 +120,21 @@ class _FakeQueueRunner:
 
 def _patch_minimal_runtime(monkeypatch, module):
     monkeypatch.setattr(module, "get_db_handler", lambda: _FakeDbHandler())
-    monkeypatch.setattr(module, "NotificationPushTestHandler", lambda *args, **kwargs: object())
-    monkeypatch.setattr(module, "build_event_producer", lambda **kwargs: _FakeEventProducer())
+    monkeypatch.setattr(
+        module, "NotificationPushTestHandler", lambda *args, **kwargs: object()
+    )
+    monkeypatch.setattr(
+        module, "build_event_producer", lambda **kwargs: _FakeEventProducer()
+    )
     monkeypatch.setattr(module, "poll_open_actions", lambda *args, **kwargs: object())
-    monkeypatch.setattr(module, "poll_complete_actions", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        module, "poll_complete_actions", lambda *args, **kwargs: object()
+    )
     monkeypatch.setattr(module, "build_listener_plugins", lambda **kwargs: [])
     monkeypatch.setattr(module, "build_housekeeping_plugins", lambda **kwargs: [])
-    monkeypatch.setattr(module, "build_scheduled_housekeeping_plugins", lambda **kwargs: [])
+    monkeypatch.setattr(
+        module, "build_scheduled_housekeeping_plugins", lambda **kwargs: []
+    )
     monkeypatch.setattr(module, "build_event_registry", lambda **kwargs: object())
     monkeypatch.setattr(module, "PluginRuntime", _FakePluginRuntime)
     monkeypatch.setattr(module, "CanaryWatcher", _FakeCanaryWatcher)
@@ -140,7 +154,9 @@ def test_sub_events_uses_env_gate_for_admin_delete(monkeypatch):
         return _FakeRuntimeConfig()
 
     _patch_minimal_runtime(monkeypatch, module)
-    monkeypatch.setattr(module.RuntimeConfig, "from_legacy_options", _fake_from_legacy_options)
+    monkeypatch.setattr(
+        module.RuntimeConfig, "from_legacy_options", _fake_from_legacy_options
+    )
 
     monkeypatch.delenv("ENABLE_ADMIN_DELETE_REQUESTS", raising=False)
     module.sub_events(

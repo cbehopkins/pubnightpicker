@@ -322,7 +322,9 @@ class TestChatE2EFrontendToNotifier:
         initial_processed_at = action_doc.get("processedAt")
 
         base_endpoint = f"https://push.example/{b['uid']}"
-        expected_base_hash = _endpoint_hash_for_user(uid=b["uid"], endpoint=base_endpoint)
+        expected_base_hash = _endpoint_hash_for_user(
+            uid=b["uid"], endpoint=base_endpoint
+        )
         assert initial_notified == {b["uid"]}
         assert expected_base_hash in initial_delivered
 
@@ -364,9 +366,7 @@ class TestChatE2EFrontendToNotifier:
             pytest.skip(f"Skipping frontend E2E test: {reason}")
 
         # Only author exists initially, so no recipients are eligible.
-        a = _run_frontend_client(
-            "signup", "e2e-noeligible-a@example.com", "pw12345"
-        )
+        a = _run_frontend_client("signup", "e2e-noeligible-a@example.com", "pw12345")
         _seed_user_with_preferences(
             firestore_client,
             uid=a["uid"],
@@ -399,9 +399,7 @@ class TestChatE2EFrontendToNotifier:
         assert initial_delivered == set()
 
         # Add a newly eligible user after the message was already processed.
-        b = _run_frontend_client(
-            "signup", "e2e-noeligible-b@example.com", "pw12345"
-        )
+        b = _run_frontend_client("signup", "e2e-noeligible-b@example.com", "pw12345")
         _seed_user_with_preferences(
             firestore_client,
             uid=b["uid"],

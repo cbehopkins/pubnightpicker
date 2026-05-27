@@ -1,9 +1,12 @@
+from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import MagicMock
 
 from firebase_sub.plugins.plugin_config import (
     build_housekeeping_plugins,
     build_scheduled_housekeeping_plugins,
 )
+from firebase_sub.plugins.protocols import ScheduledHousekeepingPlugin
 
 
 def test_build_housekeeping_plugins_uses_explicit_static_registration() -> None:
@@ -28,3 +31,24 @@ def test_build_scheduled_housekeeping_plugins_defaults_to_empty() -> None:
         "auto_complete_single_event_polls_due_tomorrow",
         "auto_complete_multi_option_polls_due_today",
     ]
+
+
+def test_multi_option_poll_completion_is_scheduled_for_4pm_london_time() -> None:
+    plugins = build_scheduled_housekeeping_plugins(db=MagicMock())
+    target_plugin = cast(
+        ScheduledHousekeepingPlugin,
+        next(
+            plugin
+            for plugin in plugins
+            if plugin.name() == "auto_complete_multi_option_polls_due_today"
+        ),
+    )
+
+    assert target_plugin.run_at(datetime(2026, 5, 19, 14, 59, tzinfo=UTC)) == datetime(
+        2026,
+        5,
+        19,
+        15,
+        0,
+        tzinfo=UTC,
+    )
