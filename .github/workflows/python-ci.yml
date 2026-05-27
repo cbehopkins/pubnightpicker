@@ -1,0 +1,58 @@
+name: Python CI
+
+on:
+  pull_request:
+    paths:
+      - "firebase_sub/**"
+      - ".github/workflows/python-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "firebase_sub/**"
+      - ".github/workflows/python-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tox:
+    name: tox (${{ matrix.toxenv }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firebase_sub
+    strategy:
+      fail-fast: false
+      matrix:
+        toxenv:
+          - py312
+          - black
+          - flake8
+          - mypy
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            firebase_sub/pyproject.toml
+            firebase_sub/requirements.txt
+            firebase_sub/tox.ini
+
+      - name: Install CI tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install tox poetry poetry-plugin-export
+
+      - name: Run tox
+        run: python -m tox -e "${{ matrix.toxenv }}"
