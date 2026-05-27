@@ -3,3 +3,4 @@ mailtrap==2.0.1
 Mastodon.py==1.8.1
 croniter==2.0.5
 pywebpush==2.0.3
+tzdata==2026.1

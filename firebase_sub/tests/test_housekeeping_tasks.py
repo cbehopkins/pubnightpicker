@@ -956,10 +956,11 @@ def test_auto_complete_multi_option_due_today_completes_clear_food_winner():
     audit_collection.document.return_value.set.assert_called_once()
 
 
-def test_auto_complete_multi_option_due_today_skips_tie():
+def test_auto_complete_multi_option_due_today_skips_tie(caplog):
     db = MagicMock()
     polls_collection = MagicMock()
     votes_collection = MagicMock()
+    caplog.set_level("INFO")
 
     poll_doc = MagicMock()
     poll_doc.id = "poll-4"
@@ -1001,6 +1002,10 @@ def test_auto_complete_multi_option_due_today_skips_tie():
     auto_complete_multi_option_polls_due_today(db, today=date(2026, 5, 19))
 
     poll_doc.reference.set.assert_not_called()
+    assert (
+        "Skipping auto-complete for poll poll-4 because there is no clear winner"
+        in caplog.text
+    )
 
 
 def test_auto_complete_multi_option_due_today_skips_winner_without_food():

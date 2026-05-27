@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from zoneinfo import ZoneInfo
 
 from google.cloud.firestore_v1.client import Client
 
@@ -168,6 +169,7 @@ def build_scheduled_housekeeping_plugins(
             callback=lambda: auto_complete_multi_option_polls_due_today(db),
             hour=16,
             minute=0,
+            schedule_timezone=ZoneInfo("Europe/London"),
         ),
     ]
 
