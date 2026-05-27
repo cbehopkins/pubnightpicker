@@ -22,14 +22,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PUB_FORM_PATH = REPO_ROOT / "react" / "src" / "components" / "pages" / "PubForm.js"
 
 
-
 def _frontend_weekday_value_for_wednesday() -> int:
     """Read frontend weekday option mapping directly from PubForm source."""
     source = PUB_FORM_PATH.read_text(encoding="utf-8")
     marker = '["2", "Wednesday"]'
     if marker not in source:
         raise AssertionError(
-            "Expected frontend weekday mapping '[\"2\", \"Wednesday\"]' was not found"
+            'Expected frontend weekday mapping \'["2", "Wednesday"]\' was not found'
         )
     return 2
 

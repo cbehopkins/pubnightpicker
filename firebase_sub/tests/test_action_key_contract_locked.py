@@ -17,6 +17,5 @@ def test_complete_action_key_contract_pub_restaurant():
 
 def test_complete_action_key_contract_pub_restaurant_time():
     assert (
-        PushDedupeKeys.complete_key("pub_A", "rest_B", "19:00")
-        == "pub_A:rest_B:19:00"
+        PushDedupeKeys.complete_key("pub_A", "rest_B", "19:00") == "pub_A:rest_B:19:00"
     )

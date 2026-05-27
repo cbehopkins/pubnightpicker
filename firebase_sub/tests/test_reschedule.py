@@ -186,9 +186,7 @@ def test_restaurant_time_change_triggers_reschedule_email():
         "date": "2026-04-01",
         "restaurant": "rest_B",
     }
-    initial_key = PushDedupeKeys.complete_key(
-        "pub_A", poll_no_time["restaurant"], None
-    )
+    initial_key = PushDedupeKeys.complete_key("pub_A", poll_no_time["restaurant"], None)
     action_dict, actioned = am.run(action_dict={}, action_key=initial_key)
     assert actioned
     assert calls[-1]["previously_actioned"] is False

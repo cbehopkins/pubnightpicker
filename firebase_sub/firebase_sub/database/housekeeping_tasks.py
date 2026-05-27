@@ -258,7 +258,9 @@ def auto_complete_single_event_polls_due_tomorrow(
         _try_write_poll_action_audit(
             db,
             poll_id=poll_doc.id,
-            poll_date=poll_date if isinstance(poll_date, str) and poll_date else target_date,
+            poll_date=(
+                poll_date if isinstance(poll_date, str) and poll_date else target_date
+            ),
             action_type=POLL_ACTION_COMPLETE,
             selected_venue_id=selected_venue_id,
         )
@@ -330,7 +332,9 @@ def auto_complete_multi_option_polls_due_today(
         _try_write_poll_action_audit(
             db,
             poll_id=poll_doc.id,
-            poll_date=poll_date if isinstance(poll_date, str) and poll_date else target_date,
+            poll_date=(
+                poll_date if isinstance(poll_date, str) and poll_date else target_date
+            ),
             action_type=POLL_ACTION_COMPLETE,
             selected_venue_id=winner_venue_id,
         )
