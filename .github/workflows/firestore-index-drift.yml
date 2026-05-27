@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   check_index_drift:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -45,24 +46,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Resolve Firebase CLI token
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-          VITE_FIREBASE_TOKEN: ${{ secrets.VITE_FIREBASE_TOKEN }}
-          REACT_APP_FIREBASE_TOKEN: ${{ secrets.REACT_APP_FIREBASE_TOKEN }}
-        run: |
-          TOKEN_CANDIDATE="$FIREBASE_TOKEN"
-          if [ -z "$TOKEN_CANDIDATE" ]; then
-            TOKEN_CANDIDATE="$VITE_FIREBASE_TOKEN"
-          fi
-          if [ -z "$TOKEN_CANDIDATE" ]; then
-            TOKEN_CANDIDATE="$REACT_APP_FIREBASE_TOKEN"
-          fi
-          if [ -z "$TOKEN_CANDIDATE" ]; then
-            echo "Missing Firebase CLI token secret. Set one of: FIREBASE_TOKEN, VITE_FIREBASE_TOKEN, REACT_APP_FIREBASE_TOKEN"
-            exit 1
-          fi
-          echo "FIREBASE_TOKEN=$TOKEN_CANDIDATE" >> "$GITHUB_ENV"
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PUBNIGHTPICKER }}
 
       - name: Check Firestore index drift
         run: npm run check:firestore-indexes
