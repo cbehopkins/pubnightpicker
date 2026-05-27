@@ -7,6 +7,7 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
+  --vv-bottom-inset: 0px;
 
   color-scheme: light;
   color: var(--color-gray-900);
@@ -101,7 +102,7 @@ body {
   overflow-x: hidden;
   color: var(--bs-body-color, var(--color-gray-900));
   background-color: var(--bs-body-bg, var(--color-gray-100));
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: max(env(safe-area-inset-bottom), var(--vv-bottom-inset));
 }
 
 html,
@@ -113,7 +114,7 @@ html,
 }
 
 main {
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom), var(--vv-bottom-inset));
 }
 
 ul {

@@ -451,52 +451,54 @@ function PollVote(props) {
 
   return (
     <>
-      <table>
-        <thead>
-          <tr>
-            {allowDelete && <th></th>}
-            <th>Venue Name</th>
-            <th>Votes</th>
-            {canVote && <th></th>}
-            {canVote && <th>Actions</th>}
-            {canShowAttendance && <th></th>}
-          </tr>
-        </thead>
-        <tbody>
-          {rowEntries.map(([pubName, key]) => {
-            const isGlobal = key === "any";
-            return (
-              <VotablePub
-                key={key}
-                pubId={key}
-                pubName={pubName}
-                currUserId={currUserId}
-                votes={votes}
-                attendance={attendance}
-                canShowAttendance={canShowAttendance}
-                makeVote={makeVote}
-                clearVote={clearVote}
-                setAttendanceStatus={setAttendanceStatus}
-                clearAttendance={clearAttendance}
-                setEta={setEta}
-                clearEta={clearEta}
-                setAllAttendanceToCanCome={setAllAttendanceToCanCome}
-                setAllAttendanceToCannotCome={setAllAttendanceToCannotCome}
-                pollPubIds={pollPubIds}
-                showDeleteColumn={allowDelete}
-                allowDelete={!isGlobal && allowDelete}
-                allowCompletePoll={!isGlobal && allowCompletePoll}
-                pollId={props.poll_id}
-                pollDate={props.poll_data?.date}
-                completeHandler={() => {
-                  props.on_complete(key, pubName, props.poll_id);
-                }}
-                defaultEta={defaultEta}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+      <div className={styles.tableWrap}>
+        <table>
+          <thead>
+            <tr>
+              {allowDelete && <th></th>}
+              <th>Venue Name</th>
+              <th>Votes</th>
+              {canVote && <th></th>}
+              {canVote && <th>Actions</th>}
+              {canShowAttendance && <th></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rowEntries.map(([pubName, key]) => {
+              const isGlobal = key === "any";
+              return (
+                <VotablePub
+                  key={key}
+                  pubId={key}
+                  pubName={pubName}
+                  currUserId={currUserId}
+                  votes={votes}
+                  attendance={attendance}
+                  canShowAttendance={canShowAttendance}
+                  makeVote={makeVote}
+                  clearVote={clearVote}
+                  setAttendanceStatus={setAttendanceStatus}
+                  clearAttendance={clearAttendance}
+                  setEta={setEta}
+                  clearEta={clearEta}
+                  setAllAttendanceToCanCome={setAllAttendanceToCanCome}
+                  setAllAttendanceToCannotCome={setAllAttendanceToCannotCome}
+                  pollPubIds={pollPubIds}
+                  showDeleteColumn={allowDelete}
+                  allowDelete={!isGlobal && allowDelete}
+                  allowCompletePoll={!isGlobal && allowCompletePoll}
+                  pollId={props.poll_id}
+                  pollDate={props.poll_data?.date}
+                  completeHandler={() => {
+                    props.on_complete(key, pubName, props.poll_id);
+                  }}
+                  defaultEta={defaultEta}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

@@ -49,6 +49,16 @@
   text-align: left;
 }
 
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tableWrap table {
+  min-width: 32rem;
+}
+
 .attendanceCell {
   display: flex;
   flex-wrap: wrap;
@@ -187,5 +197,9 @@
   .show_votes {
     min-width: auto;
     width: calc(100vw - 2rem);
+  }
+
+  .tableWrap table {
+    min-width: 30rem;
   }
 }
