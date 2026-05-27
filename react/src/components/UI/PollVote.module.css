@@ -5,7 +5,7 @@
 .comingAllButton,
 .cannotComeAllButton,
 .respondSummary {
-  min-width: 120px;
+  min-width: 0;
   font-weight: 600;
 }
 
@@ -49,14 +49,87 @@
   text-align: left;
 }
 
+.tableWrap {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+
+  --pv-delete-col: 3.8rem;
+  --pv-venue-col: 11rem;
+  --pv-vote-col: 2.6rem;
+  --pv-status-col: 1.6rem;
+}
+
+.tableWrap table {
+  display: table;
+  width: max-content;
+  min-width: 0;
+  table-layout: auto;
+}
+
+.tableWrap th,
+.tableWrap td {
+  padding: 0.2rem 0.3rem;
+  vertical-align: middle;
+}
+
+.tableWrap tbody tr+tr td {
+  border-top: 1px solid rgba(127, 127, 127, 0.16);
+  border-top: 1px solid color-mix(in srgb, var(--bs-border-color, #dee2e6) 28%, transparent);
+}
+
+.deleteCol,
+.voteCol,
+.statusCol,
+.actionsCol {
+  white-space: nowrap;
+}
+
+.venueCol {
+  width: var(--pv-venue-col);
+  max-width: var(--pv-venue-col);
+}
+
+.deleteCol {
+  width: var(--pv-delete-col);
+}
+
+.voteCol {
+  width: var(--pv-vote-col);
+  text-align: center;
+}
+
+.statusCol {
+  width: var(--pv-status-col);
+}
+
+.statusCol {
+  text-align: center;
+}
+
+.venueButton,
+.deleter {
+  padding: 0.18rem 0.42rem;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.venueButton,
+.venueCol label {
+  display: inline-block;
+  max-width: var(--pv-venue-col);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
 .attendanceCell {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-}
-
-.attendanceButton {
-  min-width: 96px;
 }
 
 .attending {
@@ -88,7 +161,7 @@
 }
 
 .respondSummary {
-  min-width: 110px;
+  min-width: 0;
   text-align: center;
 }
 
@@ -109,7 +182,7 @@
   background: var(--bs-tertiary-bg, #ffffff);
   color: var(--bs-body-color, #1f1d1b);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
-  max-height: calc(100vh - 1rem);
+  max-height: calc(100dvh - 1rem);
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -160,7 +233,37 @@
   display: inline-flex;
 }
 
-@media (max-width: 480px) {
+.actionButtons {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: nowrap;
+}
+
+.tableWrapOverflow .actionButtons {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.tableWrapOverflow .actionButtons>* {
+  width: 100%;
+}
+
+.tableWrapOverflow .actionsCol :global(.btn),
+.tableWrapOverflow .actionButtons :global(.btn) {
+  width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .tableWrap {
+    --pv-delete-col: 3.4rem;
+    --pv-venue-col: 8.5rem;
+    --pv-vote-col: 2.2rem;
+    --pv-status-col: 1.3rem;
+  }
 
   .voteButton,
   .deleter,
@@ -168,8 +271,63 @@
   .respondSummary,
   .comingAllButton,
   .cannotComeAllButton {
-    min-width: 72px;
-    font-size: var(--font-size-xs);
+    min-width: 68px;
+    font-size: 0.8rem;
+    padding: 0.24rem 0.36rem;
+  }
+
+  .labelDesktop {
+    display: none;
+  }
+
+  .labelMobile {
+    display: inline;
+  }
+
+  .tableWrap table {
+    width: max-content;
+    table-layout: auto;
+  }
+
+  .tableWrap th,
+  .tableWrap td {
+    padding: 0.28rem 0.24rem;
+    font-size: 0.88rem;
+  }
+
+  .tableWrap :global(.btn) {
+    min-width: 0;
+    width: auto;
+    max-width: 100%;
+    padding: 0.24rem 0.36rem;
+    font-size: 0.82rem;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .attendanceIndicator {
+    width: 1.4rem;
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .tableWrap {
+    --pv-delete-col: 3.2rem;
+    --pv-venue-col: 7.25rem;
+    --pv-vote-col: 2rem;
+    --pv-status-col: 1.2rem;
+  }
+
+  .voteButton,
+  .deleter,
+  .attendanceButton,
+  .respondSummary,
+  .comingAllButton,
+  .cannotComeAllButton {
+    min-width: 56px;
+    font-size: 0.75rem;
+    padding: 0.22rem 0.34rem;
   }
 
   .labelDesktop {
@@ -186,6 +344,51 @@
 
   .show_votes {
     min-width: auto;
-    width: calc(100vw - 2rem);
+    width: calc(100vw - 1rem);
+  }
+
+  .tableWrap table {
+    min-width: max-content;
+    width: max-content;
+    table-layout: auto;
+  }
+
+  .tableWrap th,
+  .tableWrap td {
+    padding: 0.24rem 0.2rem;
+    font-size: 0.82rem;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .tableWrap :global(.btn) {
+    min-width: 0;
+    width: auto;
+    max-width: 100%;
+    padding: 0.22rem 0.34rem;
+    font-size: 0.76rem;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
+  .actionsCol :global(.btn),
+  .actionButtons :global(.btn) {
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  .actionsCol :global(.btn),
+  .actionButtons :global(.btn),
+  .respondSummary {
+    min-width: 4.5rem;
+  }
+
+  .attendanceIndicator {
+    width: 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .button {
+    display: block;
   }
 }
