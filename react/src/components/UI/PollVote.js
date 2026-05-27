@@ -408,7 +408,7 @@ function VotablePub({
                 className={styles.button}
                 question={<>
                   <span className={styles.labelDesktop}>Show attendance</span>
-                  <span className={styles.labelMobile}>Attend</span>
+                  <span className={styles.labelMobile}>Attendance</span>
                 </>}
               >
                 <ShowAttendance
