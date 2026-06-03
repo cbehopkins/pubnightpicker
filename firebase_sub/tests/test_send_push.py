@@ -16,6 +16,7 @@ from firebase_sub.send_push import (
     _vapid_claims,
     send_diagnostic_push,
     send_poll_complete_push,
+    send_poll_manual_completion_needed_push,
 )
 
 
@@ -254,6 +255,29 @@ def test_send_poll_complete_push_passes_topic_and_ttl_to_delivery(monkeypatch):
 
     assert captured["topic"] == "poll-9"
     assert 60 * 60 <= captured["ttl_seconds"] <= 5 * 24 * 60 * 60
+
+
+def test_send_poll_manual_completion_needed_push_uses_expected_payload_topic_and_ttl(
+    monkeypatch,
+):
+    captured = {}
+
+    def _fake_deliver_pushes(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=0, invalid=0, retryable_failures=0)
+
+    monkeypatch.setattr("firebase_sub.send_push._deliver_pushes", _fake_deliver_pushes)
+
+    send_poll_manual_completion_needed_push(
+        poll_id="poll-9",
+        poll_date="2026-04-16",
+        endpoints_src=lambda: [],
+        dummy_run=True,
+    )
+
+    assert captured["topic"].startswith("manual-complete-poll-9")
+    assert 60 * 60 <= captured["ttl_seconds"] <= 5 * 24 * 60 * 60
+    assert captured["payload"]["eventType"] == "poll_manual_completion_required"
 
 
 def test_send_diagnostic_push_uses_min_ttl_and_diagnostic_topic(monkeypatch):

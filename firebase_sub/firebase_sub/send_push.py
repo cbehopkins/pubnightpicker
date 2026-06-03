@@ -20,6 +20,7 @@ from firebase_sub.push_contract import (
     PUSH_EVENT_CHAT_MESSAGE_GLOBAL,
     PUSH_EVENT_DIAGNOSTIC_PUSH_TEST,
     PUSH_EVENT_POLL_COMPLETED,
+    PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED,
     PUSH_EVENT_POLL_OPENED,
     PUSH_EVENT_POLL_RESCHEDULED,
 )
@@ -91,7 +92,11 @@ class DiagnosticPushPayload(_BasePushPayload):
 
 
 class CompletePushPayload(_BasePushPayload):
-    eventType: Literal["poll_completed", "poll_rescheduled"]
+    eventType: Literal[
+        "poll_completed",
+        "poll_rescheduled",
+        "poll_manual_completion_required",
+    ]
     pollId: str
 
 
@@ -410,6 +415,24 @@ def _build_complete_payload(
     }
 
 
+def _build_manual_completion_required_payload(
+    poll_id: str,
+    poll_date: str,
+) -> CompletePushPayload:
+    return {
+        "eventType": PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED,
+        "pollId": poll_id,
+        "title": "Poll needs manual completion",
+        "body": (
+            f"{poll_date}: auto-complete could not choose a clear winner. "
+            "Tap to complete the poll."
+        ),
+        "url": f"{_base_url()}/active_polls",
+        "tag": f"poll-manual-complete:{poll_id}",
+        "sentAt": datetime.now(UTC).isoformat(),
+    }
+
+
 def send_poll_open_push(
     *,
     poll_id: str,
@@ -448,6 +471,28 @@ def send_poll_complete_push(
     )
     ttl_seconds = _ttl_for_poll_date(poll_dict["date"])
     topic = _topic_for_poll_id(poll_id)
+    return _deliver_pushes(
+        payload=payload,
+        ttl_seconds=ttl_seconds,
+        topic=topic,
+        endpoints_src=endpoints_src,
+        dummy_run=dummy_run,
+    )
+
+
+def send_poll_manual_completion_needed_push(
+    *,
+    poll_id: str,
+    poll_date: str,
+    endpoints_src: Callable[[], Iterable[DocumentSnapshot]],
+    dummy_run: bool = False,
+) -> PushDeliveryResult:
+    payload = _build_manual_completion_required_payload(
+        poll_id=poll_id,
+        poll_date=poll_date,
+    )
+    ttl_seconds = _ttl_for_poll_date(poll_date)
+    topic = _topic_for_poll_id(f"manual-complete-{poll_id}")
     return _deliver_pushes(
         payload=payload,
         ttl_seconds=ttl_seconds,

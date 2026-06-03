@@ -20,6 +20,12 @@ from firebase_sub.database.event_recurrence import (
 )
 from firebase_sub.database.housekeeping import HousekeepingTask
 from firebase_sub.my_types import EventRecurrenceRule, VenueType
+from firebase_sub.push_contract import (
+    PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED,
+    PUSH_PREFERENCE_DEFAULTS,
+    PUSH_PREFERENCE_FIELD,
+)
+from firebase_sub.send_push import send_poll_manual_completion_needed_push
 
 NOTIFICATION_REQ_COLLECTION = "notification_req"
 NOTIFICATION_ACK_COLLECTION = "notification_ack"
@@ -40,6 +46,9 @@ POLL_ACTION_AUDIT_RETENTION_DAYS = int(
 EVENT_POLL_CREATION_LEAD_DAYS = int(os.getenv("EVENT_POLL_CREATION_LEAD_DAYS", "7"))
 EVENTS_COLLECTION = "pubs"
 POLL_VENUE_TYPE = VenueType.EVENT.value
+USERS_COLLECTION = "users"
+ROLES_COLLECTION = "roles"
+CAN_COMPLETE_POLL_ROLE = "canCompletePoll"
 logger = logging.getLogger(__name__)
 
 
@@ -307,6 +316,15 @@ def auto_complete_multi_option_polls_due_today(
             candidate_venue_ids=list(pubs.keys()),
         )
         if winner_venue_id is None:
+            poll_date = poll_data.get("date")
+            resolved_poll_date = (
+                poll_date if isinstance(poll_date, str) and poll_date else target_date
+            )
+            _notify_manual_completion_needed(
+                db=db,
+                poll_id=poll_doc.id,
+                poll_date=resolved_poll_date,
+            )
             logger.info(
                 "Skipping auto-complete for poll %s because there is no clear winner",
                 poll_doc.id,
@@ -382,6 +400,78 @@ def _resolve_clear_winner(
         return None
 
     return winners[0]
+
+
+def _iter_manual_completion_notification_endpoints(
+    *,
+    db: Client,
+):
+    role_snapshot = db.collection(ROLES_COLLECTION).document(CAN_COMPLETE_POLL_ROLE).get()
+    role_payload = cast(DocumentSnapshot, role_snapshot).to_dict() or {}
+    if not isinstance(role_payload, dict):
+        return
+
+    preference_field = PUSH_PREFERENCE_FIELD[
+        PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED
+    ]
+    preference_default = PUSH_PREFERENCE_DEFAULTS.get(preference_field, True)
+
+    for uid, has_role in role_payload.items():
+        if not isinstance(uid, str) or not uid or not bool(has_role):
+            continue
+
+        user_reference = db.collection(USERS_COLLECTION).document(uid)
+        user_snapshot = user_reference.get()
+        user_payload = cast(DocumentSnapshot, user_snapshot).to_dict() or {}
+        if not isinstance(user_payload, Mapping):
+            continue
+        if not bool(user_payload.get("webPushEnabled")):
+            continue
+
+        push_preferences = user_payload.get("pushPreferences")
+        if isinstance(push_preferences, Mapping):
+            push_enabled_for_type = bool(
+                push_preferences.get(preference_field, preference_default)
+            )
+        else:
+            push_enabled_for_type = preference_default
+
+        if not push_enabled_for_type:
+            continue
+
+        endpoint_stream = (
+            user_reference.collection(PUSH_ENDPOINTS_COLLECTION)
+            .where(filter=FieldFilter("active", "==", True))
+            .stream()
+        )
+        for endpoint_doc in endpoint_stream:
+            yield endpoint_doc
+
+
+def _notify_manual_completion_needed(
+    *,
+    db: Client,
+    poll_id: str,
+    poll_date: str,
+) -> None:
+    try:
+        result = send_poll_manual_completion_needed_push(
+            poll_id=poll_id,
+            poll_date=poll_date,
+            endpoints_src=lambda: _iter_manual_completion_notification_endpoints(db=db),
+        )
+        logger.info(
+            "Manual completion push for poll %s: delivered=%s invalid=%s retryable_failures=%s",
+            poll_id,
+            result.delivered,
+            result.invalid,
+            result.retryable_failures,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send manual completion push for poll %s",
+            poll_id,
+        )
 
 
 def _venue_has_food(*, db: Client, venue_id: str) -> bool:
