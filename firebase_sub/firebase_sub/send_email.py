@@ -273,12 +273,6 @@ def resolve_payloads(
     return poll, selected_venue, restaurant_venue
 
 
-def _resolve_payloads(
-    *, poll_dict: PollDocument, pub_dict: VenueLookup
-) -> tuple[PollPayload, VenuePayload, VenuePayload | None]:
-    return resolve_payloads(poll_dict=poll_dict, pub_dict=pub_dict)
-
-
 @rate_limited(MAIL_SEND_BUCKET)
 def send_poll_open_email(
     previously_actioned: bool,

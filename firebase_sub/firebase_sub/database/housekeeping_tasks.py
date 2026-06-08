@@ -241,6 +241,7 @@ def _open_polls(db: Client, *, target_date: str) -> Iterable[PollDataHolder]:
             continue
         yield poll_stuff
 
+
 def _complete_polls(db: Client, *, target_date: str) -> Iterable[PollDataHolder]:
     for poll_stuff in _repository(db).uncompleted_polls_on_date(target_date):
         if not poll_stuff.poll_data:
@@ -248,6 +249,7 @@ def _complete_polls(db: Client, *, target_date: str) -> Iterable[PollDataHolder]
         if len(poll_stuff.pubs) < 1:
             continue
         yield poll_stuff
+
 
 def auto_complete_single_event_polls_due_tomorrow(
     db: Client,
@@ -345,6 +347,7 @@ def auto_complete_multi_option_polls_due_today(
             winner_venue_id,
         )
 
+
 def _iter_manual_completion_notification_endpoints(
     db: Client,
 ) -> Generator[DocumentSnapshot, None, None]:
@@ -366,7 +369,9 @@ def _iter_manual_completion_notification_endpoints(
         if not bool(user_payload.get("webPushEnabled")):
             continue
 
-        if not _is_push_enabled_for_user(user_payload, preference_field, preference_default):
+        if not _is_push_enabled_for_user(
+            user_payload, preference_field, preference_default
+        ):
             continue
 
         endpoint_stream = repository.active_push_endpoints(

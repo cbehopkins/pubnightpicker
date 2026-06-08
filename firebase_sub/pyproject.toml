@@ -24,6 +24,7 @@ isort = "^6.0"
 tox = "^4.24"
 flake8 = "^7.0"
 mypy = "^1.0"
+vulture = "^2.16"
 
 [tool.black]
 force-exclude = '''

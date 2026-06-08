@@ -2579,6 +2579,18 @@ platformdirs = ">=3.9.1,<5"
 python-discovery = ">=1.2.2"
 
 [[package]]
+name = "vulture"
+version = "2.16"
+description = "Find dead code"
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "vulture-2.16-py3-none-any.whl", hash = "sha256:6e0f1c312cef1c87856957e5c2ca9608834a7c794c2180477f30bf0e4cc58eee"},
+    {file = "vulture-2.16.tar.gz", hash = "sha256:f8d9f6e2af03011664a3c6c240c9765b3f392917d3135fddca6d6a68d359f717"},
+]
+
+[[package]]
 name = "yarl"
 version = "1.23.0"
 description = "Yet another URL library"
@@ -2724,4 +2736,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "dfd111a43921f4a82c64282cde46268bc386be9d31771f08ac1f83d8d29ced75"
+content-hash = "a6af25f60d0eb792e80d4baed47d9cef599bbb86a6c80a53262f1446c5c6dacd"

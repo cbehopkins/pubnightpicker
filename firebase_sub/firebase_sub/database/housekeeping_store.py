@@ -227,7 +227,9 @@ class HousekeepingRepository:
             context="user document",
         )
 
-    def active_push_endpoints(self, uid: str, *, collection_name: str) -> Iterable[DocumentSnapshot]:
+    def active_push_endpoints(
+        self, uid: str, *, collection_name: str
+    ) -> Iterable[DocumentSnapshot]:
         user_reference = self._factory.user_ref(uid)
         return cast(
             Iterable[DocumentSnapshot],
@@ -285,7 +287,9 @@ class HousekeepingRepository:
     def event_poll_ref(self, poll_id: str) -> DocumentReference:
         return self._db.document(f"{self._polls_collection}/{poll_id}")
 
-    def event_poll_state(self, poll_id: str) -> tuple[DocumentReference, DocumentSnapshot]:
+    def event_poll_state(
+        self, poll_id: str
+    ) -> tuple[DocumentReference, DocumentSnapshot]:
         poll_ref = self.event_poll_ref(poll_id)
         return poll_ref, doc_get(poll_ref)
 
@@ -297,7 +301,10 @@ class HousekeepingRepository:
     ) -> None:
         doc_set(poll_ref, poll_data)
         doc_set(
-            cast(DocumentReference, self._db.collection(self._votes_collection).document(poll_id)),
+            cast(
+                DocumentReference,
+                self._db.collection(self._votes_collection).document(poll_id),
+            ),
             {"any": []},
         )
         doc_set(
