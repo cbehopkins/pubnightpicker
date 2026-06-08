@@ -428,6 +428,7 @@ def test_maintain_event_recurrence_polls_creates_due_event_poll_without_auto_com
 
 def test_resolve_event_occurrence_date_backfills_when_missing():
     """When occurrence_date is missing but recurrence exists, backfill it."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.to_dict.return_value = {}
@@ -443,7 +444,7 @@ def test_resolve_event_occurrence_date_backfills_when_missing():
     }
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert recurrence is not None
@@ -456,6 +457,7 @@ def test_resolve_event_occurrence_date_backfills_when_missing():
 
 def test_resolve_event_occurrence_date_returns_existing_when_present():
     """When occurrence_date already exists, return it without recomputation."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.reference = MagicMock()
@@ -470,7 +472,7 @@ def test_resolve_event_occurrence_date_returns_existing_when_present():
     }
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert occurrence_date == date(2027, 5, 15)
@@ -479,13 +481,14 @@ def test_resolve_event_occurrence_date_returns_existing_when_present():
 
 def test_resolve_event_occurrence_date_no_recurrence():
     """When recurrence is None, return None for occurrence_date."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "event-no-recurrence"
 
     venue_data: VenueDataDict = {}  # no recurrence key
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert recurrence is None
@@ -494,6 +497,7 @@ def test_resolve_event_occurrence_date_no_recurrence():
 
 def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
     """When recurrence exists but produces no valid date, return None."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-invalid"
     venue_doc.reference = MagicMock()
@@ -510,7 +514,7 @@ def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
 
     # Reference date is beyond any possible recurrence.
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2030, 6, 1)
+        db, venue_doc, venue_data, today=date(2030, 6, 1)
     )
 
     assert recurrence is not None
@@ -677,12 +681,14 @@ def test_create_event_poll_if_due_skips_when_completed_event_poll_exists():
 
 def test_advance_event_occurrence_if_due_early_return_before_window():
     """When today < completion window, return without changes."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_data: VenueDataDict = {}
     occurrence_date = date(2026, 5, 27)
     today = date(2026, 5, 26)  # Before the week of the event
 
     _advance_event_occurrence_if_due(
+        db,
         venue_doc=venue_doc,
         venue_data=venue_data,
         recurrence=None,
@@ -743,6 +749,7 @@ def test_maintain_event_recurrence_polls_does_not_mark_poll_complete():
 
 def test_advance_event_occurrence_if_due_advances_next_date():
     """Advance next_occurrence_date when recurrence continues."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.reference = MagicMock()
@@ -760,6 +767,7 @@ def test_advance_event_occurrence_if_due_advances_next_date():
     today = date(2026, 5, 25)  # After completion week
 
     _advance_event_occurrence_if_due(
+        db,
         venue_doc=venue_doc,
         venue_data=venue_data,
         recurrence=recurrence_rule,

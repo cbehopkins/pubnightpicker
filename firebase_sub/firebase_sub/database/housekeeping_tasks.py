@@ -2,11 +2,10 @@ import logging
 import os
 from collections.abc import Generator, Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from typing import cast
 
 from google.api_core.exceptions import FailedPrecondition
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
-from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.document import DocumentReference
 from google.cloud.firestore_v1.transforms import DELETE_FIELD
@@ -20,6 +19,14 @@ from firebase_sub.database.event_recurrence import (
     parse_iso_date,
 )
 from firebase_sub.database.housekeeping import HousekeepingTask
+from firebase_sub.database.housekeeping_store import (
+    HousekeepingRepository,
+    PollDataHolder,
+    as_mapping as _as_mapping,
+    doc_set as _doc_set,
+    is_push_enabled_for_user as _is_push_enabled_for_user,
+    snapshot_payload as _snapshot_payload,
+)
 from firebase_sub.my_types import EventRecurrenceRule, VenueType
 from firebase_sub.push_contract import (
     PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED,
@@ -34,6 +41,7 @@ DIAGNOSTICS_DOC_ID = "diagnostics"
 PUSH_TEST_DOC_ID = "push_test"
 POLLS_COLLECTION = "polls"
 VOTES_COLLECTION = "votes"
+ATTENDANCE_COLLECTION = "attendance"
 POLL_ACTION_AUDIT_COLLECTION = "poll_action_audit"
 POLL_ACTION_CREATE = "create"
 POLL_ACTION_COMPLETE = "complete"
@@ -53,61 +61,34 @@ CAN_COMPLETE_POLL_ROLE = "canCompletePoll"
 _log = logging.getLogger(__name__)
 
 
-def _snapshot_payload(snapshot: object) -> dict[str, object]:
-    """Normalize firestore snapshot payloads to a typed mapping."""
-    if not hasattr(snapshot, "to_dict"):
-        return {}
-
-    raw_payload = cast(DocumentSnapshot, snapshot).to_dict()
-    if not isinstance(raw_payload, Mapping):
-        return {}
-
-    return cast(dict[str, object], dict(raw_payload))
-
-
-def _as_mapping(value: object) -> Mapping[str, object] | None:
-    if isinstance(value, Mapping):
-        return cast(Mapping[str, object], value)
-    return None
-
-
-def _doc_get(doc_ref: DocumentReference) -> DocumentSnapshot:
-    return cast(DocumentSnapshot, cast(Any, doc_ref).get())
-
-
-def _doc_set(
-    doc_ref: DocumentReference,
-    payload: dict[str, object],
-    *,
-    merge: bool = False,
-) -> None:
-    if merge:
-        cast(Any, doc_ref).set(payload, merge=True)
-        return
-    cast(Any, doc_ref).set(payload)
+def _repository(db: Client) -> HousekeepingRepository:
+    return HousekeepingRepository(
+        db,
+        events_collection=EVENTS_COLLECTION,
+        polls_collection=POLLS_COLLECTION,
+        votes_collection=VOTES_COLLECTION,
+        attendance_collection=ATTENDANCE_COLLECTION,
+        roles_collection=ROLES_COLLECTION,
+        users_collection=USERS_COLLECTION,
+    )
 
 
 def delete_notification_diagnostics(db: Client) -> None:
     """Delete diagnostics docs used by manual health checks."""
-    db.collection(NOTIFICATION_REQ_COLLECTION).document(DIAGNOSTICS_DOC_ID).delete()
-    db.collection(NOTIFICATION_ACK_COLLECTION).document(DIAGNOSTICS_DOC_ID).delete()
+    repository = _repository(db)
+    repository.delete_document(NOTIFICATION_REQ_COLLECTION, DIAGNOSTICS_DOC_ID)
+    repository.delete_document(NOTIFICATION_ACK_COLLECTION, DIAGNOSTICS_DOC_ID)
 
 
 def delete_notification_docs_for_past_polls(
     db: Client, today: date | None = None
 ) -> None:
     """Delete req/ack notification docs for polls with dates before today."""
+    repository = _repository(db)
     cutoff = (today or date.today()).isoformat()
-    poll_query: Any = db.collection(POLLS_COLLECTION)
-    poll_stream = cast(
-        Iterable[DocumentSnapshot],
-        poll_query.where(filter=FieldFilter("date", "<", cutoff)).stream(),
-    )
-
-    for poll_doc in poll_stream:
-        poll_id = poll_doc.id
-        db.collection(NOTIFICATION_REQ_COLLECTION).document(poll_id).delete()
-        db.collection(NOTIFICATION_ACK_COLLECTION).document(poll_id).delete()
+    for poll_id in repository.poll_ids_before_date(cutoff):
+        repository.delete_document(NOTIFICATION_REQ_COLLECTION, poll_id)
+        repository.delete_document(NOTIFICATION_ACK_COLLECTION, poll_id)
 
 
 def delete_inactive_push_endpoints(
@@ -120,16 +101,14 @@ def delete_inactive_push_endpoints(
     if retention_days < 0:
         raise ValueError("retention_days must be >= 0")
 
+    repository = _repository(db)
     current_time = now or datetime.now(UTC)
     cutoff = current_time - timedelta(days=retention_days)
 
     try:
-        endpoint_query: Any = db.collection_group(PUSH_ENDPOINTS_COLLECTION)
-        endpoint_stream = cast(
-            Iterable[DocumentSnapshot],
-            endpoint_query.where(filter=FieldFilter("active", "==", False))
-            .where(filter=FieldFilter("disabledAt", "<", cutoff))
-            .stream(),
+        endpoint_stream = repository.inactive_push_endpoint_candidates(
+            PUSH_ENDPOINTS_COLLECTION,
+            cutoff=cutoff,
         )
         for endpoint_doc in endpoint_stream:
             endpoint_doc.reference.delete()
@@ -141,10 +120,8 @@ def delete_inactive_push_endpoints(
             exc,
         )
 
-    fallback_query: Any = db.collection_group(PUSH_ENDPOINTS_COLLECTION)
-    fallback_stream = cast(
-        Iterable[DocumentSnapshot],
-        fallback_query.where(filter=FieldFilter("active", "==", False)).stream(),
+    fallback_stream = repository.inactive_push_endpoint_fallback_candidates(
+        PUSH_ENDPOINTS_COLLECTION,
     )
 
     for endpoint_doc in fallback_stream:
@@ -175,13 +152,15 @@ def delete_stale_push_diagnostic_entries(
     if retention_days < 0:
         raise ValueError("retention_days must be >= 0")
 
+    repository = _repository(db)
     cutoff_time = (now or datetime.now(UTC)) - timedelta(days=retention_days)
     cutoff_ms = int(cutoff_time.timestamp() * 1000)
 
     for collection_name in (NOTIFICATION_REQ_COLLECTION, NOTIFICATION_ACK_COLLECTION):
-        push_doc = db.document(f"{collection_name}/{PUSH_TEST_DOC_ID}")
-        snapshot = _doc_get(push_doc)
-        payload = _snapshot_payload(snapshot)
+        push_doc, payload = repository.push_diagnostic_state(
+            collection_name,
+            PUSH_TEST_DOC_ID,
+        )
         stale_keys: dict[str, object] = {
             key: DELETE_FIELD
             for key, value in payload.items()
@@ -203,10 +182,9 @@ def delete_stale_poll_action_audit_entries(
         raise ValueError("retention_days must be >= 0")
 
     cutoff_time = (now or datetime.now(UTC)) - timedelta(days=retention_days)
-    stale_query: Any = db.collection(POLL_ACTION_AUDIT_COLLECTION)
-    stale_records = cast(
-        Iterable[DocumentSnapshot],
-        stale_query.where(filter=FieldFilter("at", "<", cutoff_time)).stream(),
+    stale_records = _repository(db).stale_audit_documents(
+        POLL_ACTION_AUDIT_COLLECTION,
+        cutoff_time,
     )
 
     for audit_doc in stale_records:
@@ -221,24 +199,14 @@ def _write_poll_action_audit(
     action_type: str,
     selected_venue_id: str | None = None,
 ) -> None:
-    now = datetime.now(UTC)
-    timestamp_micros = int(now.timestamp() * 1_000_000)
-    audit_doc_id = f"{poll_id}_{action_type}_{timestamp_micros}"
-    payload: dict[str, object] = {
-        "pollId": poll_id,
-        "actionType": action_type,
-        "actorUid": BACKEND_AUTOMATION_ACTOR_UID,
-        "at": now,
-        "pollDate": poll_date,
-    }
-    if selected_venue_id:
-        payload["selectedVenueId"] = selected_venue_id
-
-    audit_doc = cast(
-        DocumentReference,
-        db.collection(POLL_ACTION_AUDIT_COLLECTION).document(audit_doc_id),
+    _repository(db).write_poll_action_audit(
+        audit_collection=POLL_ACTION_AUDIT_COLLECTION,
+        actor_uid=BACKEND_AUTOMATION_ACTOR_UID,
+        poll_id=poll_id,
+        poll_date=poll_date,
+        action_type=action_type,
+        selected_venue_id=selected_venue_id,
     )
-    _doc_set(audit_doc, payload)
 
 
 def _try_write_poll_action_audit(
@@ -263,64 +231,18 @@ def _try_write_poll_action_audit(
             poll_id,
             action_type,
         )
-class pollDataHolder:
-    def __init__(self, db: Client, poll_doc: DocumentSnapshot) -> None:
-        self._db = db
-        self._poll_doc = poll_doc
-        self.poll_data: dict[str, object] = _snapshot_payload(poll_doc)
 
-    @property
-    def poll_doc(self) -> DocumentSnapshot:
-        return self._poll_doc
 
-    @property
-    def pubs(self) -> list[str]:
-        pd = _as_mapping(self.poll_data.get("pubs"))
-        if pd is None:
-            return []
-        return list(pd)
-
-    def winning_venue_id(self) -> str | None:
-        return _resolve_clear_winner(
-            db=self._db,
-            poll_id=self._poll_doc.id,
-            candidate_venue_ids=self.pubs,
-        )
-
-    def mark_completed_with_winner(self, winner_venue_id: str) -> None:
-        _doc_set(
-            cast(DocumentReference, self._poll_doc.reference),
-            {
-                "completed": True,
-                "selected": winner_venue_id,
-            },
-            merge=True,
-        )
-def _open_polls(*, db: Client, target_date: str) -> Iterable[pollDataHolder]:
-    poll_query: Any = db.collection(POLLS_COLLECTION)
-    for poll_doc in cast(
-        Iterable[DocumentSnapshot],
-        poll_query.where(filter=FieldFilter("completed", "==", False))
-        .where(filter=FieldFilter("date", "==", target_date))
-        .stream(),
-    ):
-        poll_stuff = pollDataHolder(db, poll_doc)
+def _open_polls(db: Client, *, target_date: str) -> Iterable[PollDataHolder]:
+    for poll_stuff in _repository(db).uncompleted_polls_on_date(target_date):
         if not poll_stuff.poll_data:
             continue
         if not poll_stuff.pubs or len(poll_stuff.pubs) != 1:
             continue
         yield poll_stuff
 
-def _complete_polls(*, db: Client, target_date: str) -> Iterable[pollDataHolder]:
-    poll_query: Any = db.collection(POLLS_COLLECTION)
-
-    for poll_doc in cast(
-        Iterable[DocumentSnapshot],
-        poll_query.where(filter=FieldFilter("completed", "==", False))
-        .where(filter=FieldFilter("date", "==", target_date))
-        .stream(),
-    ):
-        poll_stuff = pollDataHolder(db, poll_doc)
+def _complete_polls(db: Client, *, target_date: str) -> Iterable[PollDataHolder]:
+    for poll_stuff in _repository(db).uncompleted_polls_on_date(target_date):
         if not poll_stuff.poll_data:
             continue
         if len(poll_stuff.pubs) < 1:
@@ -339,7 +261,7 @@ def auto_complete_single_event_polls_due_tomorrow(
     current_day = today or date.today()
     target_date = (current_day + timedelta(days=1)).isoformat()
 
-    for poll_stuff in _open_polls(db=db, target_date=target_date):
+    for poll_stuff in _open_polls(db, target_date=target_date):
 
         selected_venue_id = next(iter(poll_stuff.pubs))
         if not selected_venue_id:
@@ -371,13 +293,13 @@ def auto_complete_multi_option_polls_due_today(
     """Auto-complete open multi-option polls due today when winner is clear.
 
     Rules:
-    - poll must contain at least two venues in ``pubs`` # FIXME <- this is an incorrect rule - if we only have 1 venue we should still complete with it.
+    - poll must contain at least one venue in ``pubs``
     - a single top-voted venue must exist in ``votes/{poll_id}``
-    - top-voted venue must have ``food`` (or ``hasFood``) enabled
+    - top-voted venue must have ``food``
     """
     target_date = (today or date.today()).isoformat()
 
-    for poll_stuff in _complete_polls(db=db, target_date=target_date):
+    for poll_stuff in _complete_polls(db, target_date=target_date):
         poll_data = poll_stuff.poll_data
         winner_venue_id = poll_stuff.winning_venue_id()
         poll_date = poll_data.get("date")
@@ -386,7 +308,7 @@ def auto_complete_multi_option_polls_due_today(
         )
         if winner_venue_id is None:
             _notify_manual_completion_needed(
-                db=db,
+                db,
                 poll_id=poll_stuff.poll_doc.id,
                 poll_date=resolved_poll_date,
             )
@@ -396,9 +318,9 @@ def auto_complete_multi_option_polls_due_today(
             )
             continue
 
-        if not _venue_has_food(db=db, venue_id=winner_venue_id):
+        if not _venue_has_food(db, venue_id=winner_venue_id):
             _notify_manual_completion_needed(
-                db=db,
+                db,
                 poll_id=poll_stuff.poll_doc.id,
                 poll_date=resolved_poll_date,
             )
@@ -423,64 +345,13 @@ def auto_complete_multi_option_polls_due_today(
             winner_venue_id,
         )
 
-
-
-def _resolve_clear_winner(
-    *,
-    db: Client,
-    poll_id: str,
-    candidate_venue_ids: list[str],
-) -> str | None:
-    votes_doc = cast(
-        DocumentReference, db.collection(VOTES_COLLECTION).document(poll_id)
-    )
-    vote_snapshot = _doc_get(votes_doc)
-    if not hasattr(vote_snapshot, "to_dict"):
-        _log.error(
-            "Votes document %s returned unsupported async snapshot",
-            poll_id,
-        )
-        return None
-
-    vote_doc = _snapshot_payload(vote_snapshot)
-
-    counts: dict[str, int] = {}
-    for venue_id in candidate_venue_ids:
-        voters = vote_doc.get(venue_id)
-        if isinstance(voters, list):
-            counts[venue_id] = len(cast(list[object], voters))
-        else:
-            counts[venue_id] = 0
-
-    top_vote_count = max(counts.values(), default=0)
-    if top_vote_count <= 0:
-        return None
-
-    winners = [
-        venue_id for venue_id, count in counts.items() if count == top_vote_count
-    ]
-    if len(winners) != 1:
-        return None
-
-    return winners[0]
-
-
 def _iter_manual_completion_notification_endpoints(
-    *,
     db: Client,
 ) -> Generator[DocumentSnapshot, None, None]:
-    role_doc = cast(
-        DocumentReference,
-        db.collection(ROLES_COLLECTION).document(CAN_COMPLETE_POLL_ROLE),
-    )
-    role_snapshot = _doc_get(role_doc)
-    if not hasattr(role_snapshot, "to_dict"):
-        _log.error(
-            "Role document %s returned unsupported async snapshot",
-            CAN_COMPLETE_POLL_ROLE,
-        )
+    repository = _repository(db)
+    role_payload = repository.role_payload(CAN_COMPLETE_POLL_ROLE)
+    if role_payload is None:
         return
-    role_payload = _snapshot_payload(role_snapshot)
 
     preference_field = PUSH_PREFERENCE_FIELD[PUSH_EVENT_POLL_MANUAL_COMPLETION_REQUIRED]
     preference_default = PUSH_PREFERENCE_DEFAULTS.get(preference_field, True)
@@ -489,41 +360,26 @@ def _iter_manual_completion_notification_endpoints(
         if not uid or not bool(has_role):
             continue
 
-        user_reference = cast(
-            DocumentReference,
-            db.collection(USERS_COLLECTION).document(uid),
-        )
-        user_snapshot = _doc_get(user_reference)
-        if not hasattr(user_snapshot, "to_dict"):
+        user_payload = repository.user_payload(uid)
+        if user_payload is None:
             continue
-        user_payload = _snapshot_payload(user_snapshot)
         if not bool(user_payload.get("webPushEnabled")):
             continue
 
-        push_preferences = _as_mapping(user_payload.get("pushPreferences"))
-        if push_preferences is not None:
-            push_enabled_for_type = bool(
-                push_preferences.get(preference_field, preference_default)
-            )
-        else:
-            push_enabled_for_type = preference_default
-
-        if not push_enabled_for_type:
+        if not _is_push_enabled_for_user(user_payload, preference_field, preference_default):
             continue
 
-        endpoint_stream = cast(
-            Iterable[DocumentSnapshot],
-            cast(Any, user_reference.collection(PUSH_ENDPOINTS_COLLECTION))
-            .where(filter=FieldFilter("active", "==", True))
-            .stream(),
+        endpoint_stream = repository.active_push_endpoints(
+            uid,
+            collection_name=PUSH_ENDPOINTS_COLLECTION,
         )
         for endpoint_doc in endpoint_stream:
             yield endpoint_doc
 
 
 def _notify_manual_completion_needed(
-    *,
     db: Client,
+    *,
     poll_id: str,
     poll_date: str,
 ) -> None:
@@ -531,7 +387,7 @@ def _notify_manual_completion_needed(
         result = send_poll_manual_completion_needed_push(
             poll_id=poll_id,
             poll_date=poll_date,
-            endpoints_src=lambda: _iter_manual_completion_notification_endpoints(db=db),
+            endpoints_src=lambda: _iter_manual_completion_notification_endpoints(db),
         )
         _log.info(
             "Manual completion push for poll %s: delivered=%s invalid=%s retryable_failures=%s",
@@ -547,29 +403,17 @@ def _notify_manual_completion_needed(
         )
 
 
-def _venue_has_food(*, db: Client, venue_id: str) -> bool:
-    venue_doc = cast(
-        DocumentReference, db.collection(EVENTS_COLLECTION).document(venue_id)
-    )
-    venue_snapshot = _doc_get(venue_doc)
-    if not hasattr(venue_snapshot, "to_dict"):
-        _log.error(
-            "Venue document %s returned unsupported async snapshot",
-            venue_id,
-        )
+def _venue_has_food(db: Client, *, venue_id: str) -> bool:
+    venue_data = _repository(db).venue_payload(venue_id)
+    if venue_data is None:
         return False
 
-    venue_data = _snapshot_payload(venue_snapshot)
-
     food_value = venue_data.get("food")
-    if isinstance(food_value, bool):
-        return food_value
-
-    has_food_value = venue_data.get("hasFood")
-    return isinstance(has_food_value, bool) and has_food_value
+    return isinstance(food_value, bool) and food_value
 
 
 def _resolve_event_occurrence_date(
+    db: Client,
     venue_doc: DocumentSnapshot,
     venue_data: Mapping[str, object],
     *,
@@ -582,11 +426,9 @@ def _resolve_event_occurrence_date(
         reference_date = parse_iso_date(recurrence.get("start_date")) or today
         occurrence_date = next_occurrence(recurrence, reference_date)
         if occurrence_date is not None:
-            venue_ref = cast(DocumentReference, venue_doc.reference)
-            _doc_set(
-                venue_ref,
-                {"next_occurrence_date": occurrence_date.isoformat()},
-                merge=True,
+            _repository(db).set_next_occurrence_date(
+                cast(DocumentReference, venue_doc.reference),
+                occurrence_date.isoformat(),
             )
             _log.info(
                 "Set next_occurrence_date for venue %s to %s",
@@ -606,17 +448,18 @@ def _create_event_poll_if_due(
     today: date,
     creation_lead_days: int,
 ) -> None:
+    repository = _repository(db)
     poll_id = event_poll_id(venue_doc.id, occurrence_date)
-    poll_ref = db.document(f"{POLLS_COLLECTION}/{poll_id}")
-    poll_snapshot = _doc_get(poll_ref)
+    poll_ref, poll_snapshot = repository.event_poll_state(poll_id)
     event_name = cast(str, venue_data.get("name") or venue_doc.id)
 
     if (
         today >= creation_window_start(occurrence_date, lead_days=creation_lead_days)
         and not poll_snapshot.exists
     ):
-        _doc_set(
+        repository.initialize_event_poll(
             poll_ref,
+            poll_id,
             {
                 "date": occurrence_date.isoformat(),
                 "completed": False,
@@ -629,14 +472,6 @@ def _create_event_poll_if_due(
                 "eventVenueId": venue_doc.id,
                 "eventOccurrenceDate": occurrence_date.isoformat(),
             },
-        )
-        _doc_set(
-            cast(DocumentReference, db.collection("votes").document(poll_id)),
-            {"any": []},
-        )
-        _doc_set(
-            cast(DocumentReference, db.collection("attendance").document(poll_id)),
-            {},
         )
         _try_write_poll_action_audit(
             db,
@@ -653,6 +488,7 @@ def _create_event_poll_if_due(
 
 
 def _advance_event_occurrence_if_due(
+    db: Client,
     *,
     venue_doc: DocumentSnapshot,
     venue_data: Mapping[str, object],
@@ -673,11 +509,9 @@ def _advance_event_occurrence_if_due(
         return
 
     if next_iso is not None:
-        venue_ref = cast(DocumentReference, venue_doc.reference)
-        _doc_set(
-            venue_ref,
-            {"next_occurrence_date": next_iso},
-            merge=True,
+        _repository(db).set_next_occurrence_date(
+            cast(DocumentReference, venue_doc.reference),
+            next_iso,
         )
         _log.info(
             "Advanced next_occurrence_date for venue %s to %s",
@@ -686,8 +520,10 @@ def _advance_event_occurrence_if_due(
         )
         return
 
-    venue_ref = cast(DocumentReference, venue_doc.reference)
-    _doc_set(venue_ref, {"next_occurrence_date": DELETE_FIELD}, merge=True)
+    _repository(db).clear_next_occurrence_date(
+        cast(DocumentReference, venue_doc.reference),
+        DELETE_FIELD,
+    )
     if recurrence is None:
         _log.info(
             "Cleared next_occurrence_date for venue %s because recurrence is missing",
@@ -708,8 +544,7 @@ def maintain_event_recurrence_polls(
 ) -> None:
     """Materialize recurring event polls and update next occurrence metadata."""
     current_day = today or date.today()
-    event_query: Any = db.collection(EVENTS_COLLECTION)
-    event_stream = cast(Iterable[DocumentSnapshot], event_query.stream())
+    event_stream = _repository(db).event_documents()
 
     for venue_doc in event_stream:
         try:
@@ -718,6 +553,7 @@ def maintain_event_recurrence_polls(
                 continue
 
             recurrence, occurrence_date = _resolve_event_occurrence_date(
+                db,
                 venue_doc,
                 venue_data,
                 today=current_day,
@@ -746,6 +582,7 @@ def maintain_event_recurrence_polls(
             )
 
             _advance_event_occurrence_if_due(
+                db,
                 venue_doc=venue_doc,
                 venue_data=venue_data,
                 recurrence=recurrence,
