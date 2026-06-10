@@ -3,13 +3,14 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import { useVotableRow } from "../../hooks/useVotableRow";
 import { usePollRows } from "../../hooks/usePollRows";
 import { useBallotActions } from "../../hooks/useBallotActions";
 import useUserPrivateData from "../../hooks/useUserPrivateData";
+import useUsers from "../../hooks/useUsers";
 import ShowAttendance from "./ShowAttendance";
 import AttendanceActions from "./AttendanceActions";
 import ETAInput from "./ETAInput";
@@ -23,6 +24,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollPubEntry */
 /** @typedef {{ pubs?: Record<string, PollPubEntry>, date?: string }} PollData */
+/** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
 /**
  * @typedef {Object} RespondMenuProps
@@ -66,6 +68,9 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @property {string} pollId
  * @property {string | undefined} pollDate
  * @property {() => void} completeHandler
+ * @property {boolean} mobile
+ * @property {boolean} showAttendanceColumns
+ * @property {Record<string, UserEntry>} usersByUid
  */
 
 /**
@@ -73,7 +78,35 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @property {string} poll_id
  * @property {PollData} poll_data
  * @property {(pubId: string, pubName: string, pollId: string) => void} on_complete
+ * @property {boolean=} mobile
  */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeUserId(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+/**
+ * @param {string[]} ids
+ * @param {Record<string, UserEntry>} usersByUid
+ * @param {Record<string, string>=} etaMap
+ * @returns {string[]}
+ */
+function formatPeople(ids, usersByUid, etaMap = {}) {
+  return [...new Set(ids.map(normalizeUserId).filter(Boolean))]
+    .map((id) => {
+      const displayName = usersByUid[id]?.name || "No Name Recorded";
+      const eta = etaMap[id];
+      return eta ? `${displayName} (${eta})` : displayName;
+    })
+    .sort((a, b) => a.localeCompare(b));
+}
 
 /** @param {RespondMenuProps} props */
 function RespondMenu({
@@ -319,6 +352,9 @@ function VotablePub({
   pollId,
   pollDate,
   completeHandler,
+  mobile,
+  showAttendanceColumns,
+  usersByUid,
 }) {
   const rowData = useVotableRow(
     pubId,
@@ -338,6 +374,20 @@ function VotablePub({
 
   // Override allowGlobalAttendanceControls to include pollPubIds length check
   const allowGlobalAttendanceControls = rowData.canVote && pubId === "any" && pollPubIds.length > 0;
+  const rowAttendance = attendance[pubId] || {};
+  const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
+  const rowCanCome = rowAttendance.canCome || [];
+  const rowCannotCome = rowAttendance.cannotCome || [];
+  const rowEtaMap = rowAttendance.eta || {};
+
+  const votedNames = formatPeople(rowVoters, usersByUid);
+  const canComeNames = formatPeople(rowCanCome, usersByUid);
+  const cannotComeNames = formatPeople(rowCannotCome, usersByUid);
+  const etaNames = formatPeople(
+    rowCanCome.filter((id) => Boolean(rowEtaMap[normalizeUserId(id)])),
+    usersByUid,
+    rowEtaMap
+  );
 
   return (
     <tr>
@@ -403,7 +453,7 @@ function VotablePub({
               onSetAllCanCome={setAllAttendanceToCanCome}
               onSetAllCannotCome={setAllAttendanceToCannotCome}
             />
-            {canShowAttendance && rowData.hasAttendanceData && (
+            {!showAttendanceColumns && canShowAttendance && rowData.hasAttendanceData && (
               <QuestionRender
                 className={styles.button}
                 question={<>
@@ -421,6 +471,14 @@ function VotablePub({
             )}
           </div>
         </td>
+      )}
+      {showAttendanceColumns && (
+        <>
+          <td className={styles.attendancePeopleCell}>{votedNames.join(", ")}</td>
+          <td className={styles.attendancePeopleCell}>{canComeNames.join(", ")}</td>
+          <td className={styles.attendancePeopleCell}>{cannotComeNames.join(", ")}</td>
+          <td className={styles.attendancePeopleCell}>{etaNames.join(", ")}</td>
+        </>
       )}
     </tr>
   );
@@ -446,6 +504,9 @@ function PollVote(props) {
     props.poll_id,
     canReadProtectedPollData
   );
+  const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
+  const mobile = Boolean(props.mobile);
+  const showAttendanceColumns = canShowAttendance && !mobile;
   const tableWrapRef = useRef(null);
   const [isTableOverflowing, setIsTableOverflowing] = useState(false);
 
@@ -458,6 +519,24 @@ function PollVote(props) {
     currUserId,
     setGlobalAttendanceStatus
   );
+  const usersByUid = useMemo(() => {
+    /** @type {Record<string, UserEntry>} */
+    const map = {};
+    Object.entries(users).forEach(([key, userEntry]) => {
+      if (!userEntry) {
+        return;
+      }
+      const keyUid = normalizeUserId(key);
+      const entryUid = normalizeUserId(userEntry.uid);
+      if (keyUid) {
+        map[keyUid] = userEntry;
+      }
+      if (entryUid) {
+        map[entryUid] = userEntry;
+      }
+    });
+    return map;
+  }, [users]);
 
   useLayoutEffect(() => {
     const wrap = tableWrapRef.current;
@@ -520,6 +599,10 @@ function PollVote(props) {
               <th className={styles.voteCol}>Votes</th>
               {canVote && <th className={styles.statusCol}></th>}
               {canVote && <th className={styles.actionsCol}>Actions</th>}
+              {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Voted</th>}
+              {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Can come</th>}
+              {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Cannot come</th>}
+              {showAttendanceColumns && <th className={styles.attendancePeopleCol}>ETA</th>}
             </tr>
           </thead>
           <tbody>
@@ -551,6 +634,9 @@ function PollVote(props) {
                   completeHandler={() => {
                     props.on_complete(key, pubName, props.poll_id);
                   }}
+                  mobile={mobile}
+                  showAttendanceColumns={showAttendanceColumns}
+                  usersByUid={usersByUid}
                   defaultEta={defaultEta}
                 />
               );

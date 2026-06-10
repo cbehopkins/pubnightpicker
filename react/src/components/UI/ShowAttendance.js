@@ -25,13 +25,67 @@ function normalizeUserId(value) {
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
  * @property {Record<string, string>=} eta
+ * @property {boolean=} inline
+ * @property {string=} className
  * @property {() => void=} on_cancel
  */
 
 /**
+ * @param {{
+ *   votersSet: Set<string>,
+ *   canComeSet: Set<string>,
+ *   cannotComeSet: Set<string>,
+ *   etaMap: Record<string, string>,
+ *   sortedUsers: Array<{ id: string, name: string }>,
+ *   showVoters: boolean,
+ *   showCanCome: boolean,
+ *   showCannotCome: boolean,
+ *   showEta: boolean,
+ * }} props
+ */
+function AttendanceTable({ votersSet, canComeSet, cannotComeSet, etaMap, sortedUsers, showVoters, showCanCome, showCannotCome, showEta }) {
+    return (
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    {showVoters && <th>Voted</th>}
+                    {showCanCome && <th>Can Come</th>}
+                    {showCannotCome && <th>Cannot Come</th>}
+                    {showEta && <th>ETA</th>}
+                </tr>
+            </thead>
+            <tbody>
+                {sortedUsers.map(({ id, name }) => (
+                    <tr key={id}>
+                        <td>{name}</td>
+                        {showVoters && (
+                            <td className={votersSet.has(id) ? styles.attendanceCheckYes : ""}>
+                                {votersSet.has(id) ? "✓" : ""}
+                            </td>
+                        )}
+                        {showCanCome && (
+                            <td className={canComeSet.has(id) ? styles.attendanceCheckYes : ""}>
+                                {canComeSet.has(id) ? "✓" : ""}
+                            </td>
+                        )}
+                        {showCannotCome && (
+                            <td className={cannotComeSet.has(id) ? styles.attendanceCheckNo : ""}>
+                                {cannotComeSet.has(id) ? "✓" : ""}
+                            </td>
+                        )}
+                        {showEta && <td>{etaMap[id] ?? ""}</td>}
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    );
+}
+
+/**
  * @param {ShowAttendanceProps} params
  */
-export default function ShowAttendance(params) {
+function ShowAttendanceContent(params) {
     const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
     const voters = (params.voters || []).map(normalizeUserId).filter(Boolean);
     const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
@@ -71,48 +125,39 @@ export default function ShowAttendance(params) {
     const showCanCome = canCome.length > 0;
     const showCannotCome = cannotCome.length > 0;
     const showEta = canCome.some((id) => Boolean(etaMap[id]));
+    const inline = Boolean(params.inline);
+
+    return (
+        <div className={`${styles.show_votes} ${inline ? styles.show_votesInline : ""} ${params.className || ""}`.trim()}>
+            <AttendanceTable
+                votersSet={votersSet}
+                canComeSet={canComeSet}
+                cannotComeSet={cannotComeSet}
+                etaMap={etaMap}
+                sortedUsers={sortedUsers}
+                showVoters={showVoters}
+                showCanCome={showCanCome}
+                showCannotCome={showCannotCome}
+                showEta={showEta}
+            />
+            {!inline && (
+                <Button type="button" variant="secondary" onClick={params.on_cancel || (() => { })}>Close</Button>
+            )}
+        </div>
+    );
+}
+
+/**
+ * @param {ShowAttendanceProps} params
+ */
+export default function ShowAttendance(params) {
+    if (params.inline) {
+        return <ShowAttendanceContent {...params} />;
+    }
 
     return (
         <Modal>
-            <div className={styles.show_votes}>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            {showVoters && <th>Voted</th>}
-                            {showCanCome && <th>Can Come</th>}
-                            {showCannotCome && <th>Cannot Come</th>}
-                            {showEta && <th>ETA</th>}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {sortedUsers.map(({ id, name }) => (
-                            <tr key={id}>
-                                <td>{name}</td>
-                                {showVoters && (
-                                    <td className={votersSet.has(id) ? styles.attendanceCheckYes : ""}>
-                                        {votersSet.has(id) ? "✓" : ""}
-                                    </td>
-                                )}
-                                {showCanCome && (
-                                    <td className={canComeSet.has(id) ? styles.attendanceCheckYes : ""}>
-                                        {canComeSet.has(id) ? "✓" : ""}
-                                    </td>
-                                )}
-                                {showCannotCome && (
-                                    <td className={cannotComeSet.has(id) ? styles.attendanceCheckNo : ""}>
-                                        {cannotComeSet.has(id) ? "✓" : ""}
-                                    </td>
-                                )}
-                                {showEta && (
-                                    <td>{etaMap[id] ?? ""}</td>
-                                )}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-                <Button type="button" variant="secondary" onClick={params.on_cancel || (() => { })}>Close</Button>
-            </div>
+            <ShowAttendanceContent {...params} />
         </Modal>
     );
 }

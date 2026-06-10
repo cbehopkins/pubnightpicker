@@ -23,6 +23,12 @@
   min-width: min(28rem, calc(100vw - 4rem));
 }
 
+.show_votesInline {
+  min-width: 0;
+  width: 100%;
+  padding: 0.75rem;
+}
+
 .show_votes h3,
 .show_votes p,
 .show_votes label {
@@ -85,6 +91,20 @@
 .statusCol,
 .actionsCol {
   white-space: nowrap;
+}
+
+.attendancePeopleCol {
+  min-width: 11rem;
+  max-width: 16rem;
+}
+
+.attendancePeopleCell {
+  min-width: 11rem;
+  max-width: 16rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  line-height: 1.25;
 }
 
 .venueCol {
@@ -215,6 +235,19 @@
   font-size: 1.1rem;
   width: 2rem;
   white-space: nowrap;
+}
+
+.attendanceDetailRow td {
+  border-top: 0;
+}
+
+.attendanceDetailCell {
+  padding-top: 0;
+  padding-bottom: 0.6rem;
+}
+
+.attendanceInline {
+  margin-top: 0;
 }
 
 .attendanceCheckYes {
