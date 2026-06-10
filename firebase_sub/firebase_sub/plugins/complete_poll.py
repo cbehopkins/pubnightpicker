@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -7,7 +7,7 @@ from firebase_sub.common.retry import retry
 from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
-from firebase_sub.my_types import ActionDict
+from firebase_sub.my_types import ActionDict, PollId
 from firebase_sub.plugins.protocols import CompletePollDbHandler, EventPlugin
 from firebase_sub.push_contract import PushDedupeKeys
 
@@ -26,7 +26,7 @@ class CompletePollListenerPlugin(EventPlugin):
         self._db_handler = db_handler
         self._action_manager = action_manager
         self._pubs_list: PubsList | None = None
-        self._pending_updates: dict[str, dict[str, set[str]]] = {}
+        self._pending_updates: dict[PollId, ActionDict] = {}
 
         @retry(
             retry_errors=(RetryablePollDataNotReadyError,),
@@ -73,12 +73,7 @@ class CompletePollListenerPlugin(EventPlugin):
             return False
         pub_id = poll_dict["selected"]
 
-        action_document = cast(
-            Any,
-            self._db_handler.db.collection("comp_actions").document(poll_id),
-        )
-        action_snapshot = cast(DocumentSnapshot, action_document.get())
-        action_dict = action_snapshot.to_dict() or {}
+        action_dict = self._db_handler.action_dict(poll_id)
         complete_action_key = PushDedupeKeys.complete_key(
             pub_id=pub_id,
             restaurant_id=poll_dict.get("restaurant"),
@@ -114,11 +109,7 @@ class CompletePollListenerPlugin(EventPlugin):
         if not pending_update:
             return
 
-        action_document = cast(
-            Any,
-            self._db_handler.db.collection("comp_actions").document(poll_id),
-        )
-        action_document.set(pending_update, merge=True)
+        self._db_handler.mark_done(poll_id, pending_update)
 
     def _run_complete_poll_handler(
         self,
@@ -134,10 +125,12 @@ class CompletePollListenerPlugin(EventPlugin):
         poll_id = document.id
         poll_dict_raw = self._db_handler.poll_repo.get_poll(poll_id)
         if poll_dict_raw is None:
+            # No poll of that ID, so clear any associated updates
             self._pending_updates.pop(poll_id, None)
             return
         poll_dict = poll_dict_raw
         if "selected" not in poll_dict:
+            # Poll has no selected pub, so clear any associated updates
             self._pending_updates.pop(poll_id, None)
             return
         pub_id = poll_dict["selected"]
@@ -148,26 +141,21 @@ class CompletePollListenerPlugin(EventPlugin):
                 "This usually indicates startup race while pubs list is warming."
             )
 
-        action_document = cast(
-            Any,
-            self._db_handler.db.collection("comp_actions").document(poll_id),
-        )
-        action_snapshot = cast(DocumentSnapshot, action_document.get())
-        action_dict = cast(ActionDict, action_snapshot.to_dict() or {})
+        action_dict = self._db_handler.action_dict(poll_id)
         complete_action_key = PushDedupeKeys.complete_key(
             pub_id=pub_id,
             restaurant_id=poll_dict.get("restaurant"),
             restaurant_time=poll_dict.get("restaurant_time"),
         )
-        action_event = getattr(self._action_manager, "action_event")
-        new_action_dict = action_event(
+        new_action_dict = self._action_manager.action_event(
             action_dict=action_dict,
             action_key=complete_action_key,
             poll_id=poll_id,
             poll_dict=poll_dict,
             pub_dict=cast(dict[str, dict[str, object]], pubs_list),
         )
-        if new_action_dict is not None:
-            self._pending_updates[poll_id] = new_action_dict
-        else:
+        if new_action_dict is None:
+            # Nothing needed to be actioned, so ensure any pending update is cleared
             self._pending_updates.pop(poll_id, None)
+        else:
+            self._pending_updates[poll_id] = new_action_dict

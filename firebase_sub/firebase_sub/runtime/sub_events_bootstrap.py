@@ -1,4 +1,5 @@
 import os
+from functools import cache
 from pathlib import Path
 
 import firebase_admin
@@ -7,10 +8,6 @@ from firebase_admin import credentials
 from firebase_sub.database.handlers import DbHandler
 
 CWD = Path(__file__).resolve().parent
-
-CRED_PATH = Path(".")
-_FIREBASE_APP_INITIALIZED = False
-_DB_HANDLER: DbHandler | None = None
 
 
 def _resolve_cred_path() -> Path:
@@ -30,24 +27,22 @@ def _resolve_cred_path() -> Path:
     return cwd_path
 
 
+CRED_PATH = _resolve_cred_path()
+
+
 def _ensure_firebase_app() -> None:
-    global _FIREBASE_APP_INITIALIZED
-    if _FIREBASE_APP_INITIALIZED:
-        return
     try:
         firebase_admin.get_app()
     except ValueError:
-        cred = credentials.Certificate(CRED_PATH)
+        cred = credentials.Certificate(str(CRED_PATH))
         firebase_admin.initialize_app(cred)
-    _FIREBASE_APP_INITIALIZED = True
+
+
+@cache
+def _get_cached_db_handler() -> DbHandler:
+    _ensure_firebase_app()
+    return DbHandler()
 
 
 def get_db_handler() -> DbHandler:
-    global _DB_HANDLER
-    if _DB_HANDLER is None:
-        _ensure_firebase_app()
-        _DB_HANDLER = DbHandler()
-    return _DB_HANDLER
-
-
-CRED_PATH = _resolve_cred_path()
+    return _get_cached_db_handler()

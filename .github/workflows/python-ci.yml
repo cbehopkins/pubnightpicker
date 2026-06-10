@@ -11,6 +11,7 @@ on:
     paths:
       - "firebase_sub/**"
       - ".github/workflows/python-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read

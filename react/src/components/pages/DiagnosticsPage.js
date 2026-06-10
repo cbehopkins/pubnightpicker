@@ -26,6 +26,8 @@ import {
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
+import usePolls from "../../hooks/usePolls";
+import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -62,6 +64,130 @@ function formatAuditActor(entry, actorNamesByUid) {
         return BACKEND_AUTOMATION_ACTOR_LABEL;
     }
     return actorNamesByUid[entry.actorUid] || entry.actorUid || "-";
+}
+
+function AutopopulateCandidateBucket({ title, rows, emptyText }) {
+    return (
+        <div className="col-12 col-lg-4">
+            <h4 className="h6 mb-2">{title}</h4>
+            {rows.length === 0 ? (
+                <p className="small text-body-secondary mb-0">{emptyText}</p>
+            ) : (
+                <ul className="small mb-0 ps-3">
+                    {rows.map((row) => (
+                        <li key={`${title}-${row.id}`}>
+                            <strong>{row.label || row.id}</strong>
+                            {` (${row.id})`}
+                            {typeof row.count === "number" ? `, wins=${row.count}` : ""}
+                            {row.lastWonDate ? `, lastWon=${row.lastWonDate}` : ""}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+function AutopopulateCandidatePollCard({ pollId, poll }) {
+    const {
+        mostVisited,
+        leastVisited,
+        random,
+        isLoading,
+        error,
+    } = useAutopopulateVenueSelector(pollId, poll?.pubs);
+
+    return (
+        <article className="card mb-3">
+            <div className="card-body">
+                <h3 className="h6 mb-1">Poll: {poll?.date || "Unknown date"}</h3>
+                <p className="small text-body-secondary mb-3">pollId={pollId}</p>
+                {isLoading && (
+                    <p className="small text-body-secondary mb-0">Loading candidate venues...</p>
+                )}
+                {!isLoading && error && (
+                    <p className="small text-danger mb-0">{error}</p>
+                )}
+                {!isLoading && !error && (
+                    <div className="row g-3">
+                        <AutopopulateCandidateBucket
+                            title="Most visited"
+                            rows={mostVisited}
+                            emptyText="No most-visited candidates available."
+                        />
+                        <AutopopulateCandidateBucket
+                            title="Least visited"
+                            rows={leastVisited}
+                            emptyText="No least-visited candidates available."
+                        />
+                        <AutopopulateCandidateBucket
+                            title="Random viable"
+                            rows={random}
+                            emptyText="No random viable candidates available."
+                        />
+                    </div>
+                )}
+            </div>
+        </article>
+    );
+}
+
+export function AutopopulateCandidateListsPanel() {
+    const [isEnabled, setIsEnabled] = useState(false);
+
+    return (
+        <section className="mb-4">
+            <h2 className="h5 mb-2">Autopopulate Candidate Lists</h2>
+            <p className="mb-3 text-body-secondary">
+                Shows the three candidate pools used by Active Polls autopopulate.
+            </p>
+            {!isEnabled && (
+                <>
+                    <p className="small text-body-secondary">
+                        This view performs additional ranking queries. Load it only when needed.
+                    </p>
+                    <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => setIsEnabled(true)}
+                    >
+                        Load Candidate Lists
+                    </button>
+                </>
+            )}
+            {isEnabled && (
+                <>
+                    <div className="mb-3">
+                        <button
+                            type="button"
+                            className="btn btn-outline-secondary btn-sm"
+                            onClick={() => setIsEnabled(false)}
+                        >
+                            Hide Candidate Lists
+                        </button>
+                    </div>
+                    <AutopopulateCandidateListsContent />
+                </>
+            )}
+        </section>
+    );
+}
+
+function AutopopulateCandidateListsContent() {
+    const pollData = usePolls();
+    const activePolls = [...pollData.sortedByDate()];
+
+    return (
+        <>
+            {activePolls.length === 0 ? (
+                <p className="small text-body-secondary mb-0">No active polls found.</p>
+            ) : (
+                activePolls.map(([pollId, poll]) => (
+                    <AutopopulateCandidatePollCard key={pollId} pollId={pollId} poll={poll} />
+                ))
+            )}
+        </>
+    );
 }
 
 export function PollActionAuditPanel() {
@@ -271,8 +397,8 @@ export function PollActionAuditPanel() {
                                         <div>{formatAuditActor(entry, actorNamesByUid)}</div>
                                         {!isBackendAutomationActorUid(entry.actorUid)
                                             && actorNamesByUid[entry.actorUid] && (
-                                            <div className="small text-body-secondary">{entry.actorUid}</div>
-                                        )}
+                                                <div className="small text-body-secondary">{entry.actorUid}</div>
+                                            )}
                                     </td>
                                     <td>
                                         {entry.selectedVenueId
@@ -327,6 +453,8 @@ function DiagnosticsPage() {
                     preSendDelaySeconds={5}
                 />
             )}
+
+            <AutopopulateCandidateListsPanel />
 
             <PollActionAuditPanel />
         </div>

@@ -428,6 +428,7 @@ def test_maintain_event_recurrence_polls_creates_due_event_poll_without_auto_com
 
 def test_resolve_event_occurrence_date_backfills_when_missing():
     """When occurrence_date is missing but recurrence exists, backfill it."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.to_dict.return_value = {}
@@ -443,7 +444,7 @@ def test_resolve_event_occurrence_date_backfills_when_missing():
     }
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert recurrence is not None
@@ -456,6 +457,7 @@ def test_resolve_event_occurrence_date_backfills_when_missing():
 
 def test_resolve_event_occurrence_date_returns_existing_when_present():
     """When occurrence_date already exists, return it without recomputation."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.reference = MagicMock()
@@ -470,7 +472,7 @@ def test_resolve_event_occurrence_date_returns_existing_when_present():
     }
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert occurrence_date == date(2027, 5, 15)
@@ -479,13 +481,14 @@ def test_resolve_event_occurrence_date_returns_existing_when_present():
 
 def test_resolve_event_occurrence_date_no_recurrence():
     """When recurrence is None, return None for occurrence_date."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "event-no-recurrence"
 
     venue_data: VenueDataDict = {}  # no recurrence key
 
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2026, 5, 14)
+        db, venue_doc, venue_data, today=date(2026, 5, 14)
     )
 
     assert recurrence is None
@@ -494,6 +497,7 @@ def test_resolve_event_occurrence_date_no_recurrence():
 
 def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
     """When recurrence exists but produces no valid date, return None."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-invalid"
     venue_doc.reference = MagicMock()
@@ -510,7 +514,7 @@ def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
 
     # Reference date is beyond any possible recurrence.
     recurrence, occurrence_date = _resolve_event_occurrence_date(
-        venue_doc, venue_data, today=date(2030, 6, 1)
+        db, venue_doc, venue_data, today=date(2030, 6, 1)
     )
 
     assert recurrence is not None
@@ -677,12 +681,14 @@ def test_create_event_poll_if_due_skips_when_completed_event_poll_exists():
 
 def test_advance_event_occurrence_if_due_early_return_before_window():
     """When today < completion window, return without changes."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_data: VenueDataDict = {}
     occurrence_date = date(2026, 5, 27)
     today = date(2026, 5, 26)  # Before the week of the event
 
     _advance_event_occurrence_if_due(
+        db,
         venue_doc=venue_doc,
         venue_data=venue_data,
         recurrence=None,
@@ -743,6 +749,7 @@ def test_maintain_event_recurrence_polls_does_not_mark_poll_complete():
 
 def test_advance_event_occurrence_if_due_advances_next_date():
     """Advance next_occurrence_date when recurrence continues."""
+    db = MagicMock()
     venue_doc = MagicMock()
     venue_doc.id = "festival-1"
     venue_doc.reference = MagicMock()
@@ -760,6 +767,7 @@ def test_advance_event_occurrence_if_due_advances_next_date():
     today = date(2026, 5, 25)  # After completion week
 
     _advance_event_occurrence_if_due(
+        db,
         venue_doc=venue_doc,
         venue_data=venue_data,
         recurrence=recurrence_rule,
@@ -1006,6 +1014,112 @@ def test_auto_complete_multi_option_due_today_skips_tie(caplog):
         "Skipping auto-complete for poll poll-4 because there is no clear winner"
         in caplog.text
     )
+
+
+def test_auto_complete_multi_option_due_today_tie_notifies_can_complete_push_users(
+    monkeypatch,
+):
+    db = MagicMock()
+    polls_collection = MagicMock()
+    votes_collection = MagicMock()
+    roles_collection = MagicMock()
+    users_collection = MagicMock()
+
+    poll_doc = MagicMock()
+    poll_doc.id = "poll-4"
+    poll_doc.to_dict.return_value = {
+        "completed": False,
+        "date": "2026-05-19",
+        "pubs": {
+            "pub-a": {"name": "Pub A"},
+            "pub-b": {"name": "Pub B"},
+        },
+    }
+
+    where_completed_query = MagicMock()
+    where_date_query = MagicMock()
+    where_date_query.stream.return_value = [poll_doc]
+    where_completed_query.where.return_value = where_date_query
+    polls_collection.where.return_value = where_completed_query
+
+    votes_doc = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            to_dict=lambda: {
+                "pub-a": ["u1"],
+                "pub-b": ["u2"],
+            }
+        ),
+    )
+    votes_collection.document.return_value.get.return_value = votes_doc
+
+    roles_collection.document.return_value.get.return_value = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            to_dict=lambda: {
+                "uid-eligible": True,
+                "uid-no-push": True,
+                "uid-no-role": False,
+            }
+        ),
+    )
+
+    def _user_doc(web_push_enabled: bool, *, include_endpoint: bool) -> MagicMock:
+        user_doc = MagicMock()
+        user_doc.get.return_value = cast(
+            DocumentSnapshot,
+            SimpleNamespace(
+                to_dict=lambda: {
+                    "webPushEnabled": web_push_enabled,
+                    "pushPreferences": {"pollCompletes": True},
+                }
+            ),
+        )
+        endpoint_query = MagicMock()
+        endpoint_query.stream.return_value = [MagicMock()] if include_endpoint else []
+        endpoint_collection = MagicMock()
+        endpoint_collection.where.return_value = endpoint_query
+        user_doc.collection.return_value = endpoint_collection
+        return user_doc
+
+    user_docs = {
+        "uid-eligible": _user_doc(True, include_endpoint=True),
+        "uid-no-push": _user_doc(False, include_endpoint=True),
+        "uid-no-role": _user_doc(True, include_endpoint=True),
+    }
+
+    users_collection.document.side_effect = user_docs.__getitem__
+
+    sent_endpoints = []
+
+    def _fake_send_manual_completion_needed_push(*, poll_id, poll_date, endpoints_src):
+        sent_endpoints.extend(list(endpoints_src()))
+        assert poll_id == "poll-4"
+        assert poll_date == "2026-05-19"
+        return SimpleNamespace(delivered=1, invalid=0, retryable_failures=0)
+
+    monkeypatch.setattr(
+        "firebase_sub.database.housekeeping_tasks.send_poll_manual_completion_needed_push",
+        _fake_send_manual_completion_needed_push,
+    )
+
+    def collection_side_effect(name: str):
+        if name == POLLS_COLLECTION:
+            return polls_collection
+        if name == "votes":
+            return votes_collection
+        if name == "roles":
+            return roles_collection
+        if name == "users":
+            return users_collection
+        return MagicMock()
+
+    db.collection.side_effect = collection_side_effect
+
+    auto_complete_multi_option_polls_due_today(db, today=date(2026, 5, 19))
+
+    poll_doc.reference.set.assert_not_called()
+    assert len(sent_endpoints) == 1
 
 
 def test_auto_complete_multi_option_due_today_skips_winner_without_food():
