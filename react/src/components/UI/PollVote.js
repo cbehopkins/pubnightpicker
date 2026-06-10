@@ -374,20 +374,26 @@ function VotablePub({
 
   // Override allowGlobalAttendanceControls to include pollPubIds length check
   const allowGlobalAttendanceControls = rowData.canVote && pubId === "any" && pollPubIds.length > 0;
-  const rowAttendance = attendance[pubId] || {};
-  const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
-  const rowCanCome = rowAttendance.canCome || [];
-  const rowCannotCome = rowAttendance.cannotCome || [];
-  const rowEtaMap = rowAttendance.eta || {};
+  const [votedNames, canComeNames, cannotComeNames, etaNames] = showAttendanceColumns
+    ? (() => {
+      const rowAttendance = attendance[pubId] || {};
+      const rowEtaMap = rowAttendance.eta || {};
+      const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
+      const rowCanCome = rowAttendance.canCome || [];
+      const rowCannotCome = rowAttendance.cannotCome || [];
 
-  const votedNames = formatPeople(rowVoters, usersByUid);
-  const canComeNames = formatPeople(rowCanCome, usersByUid);
-  const cannotComeNames = formatPeople(rowCannotCome, usersByUid);
-  const etaNames = formatPeople(
-    rowCanCome.filter((id) => Boolean(rowEtaMap[normalizeUserId(id)])),
-    usersByUid,
-    rowEtaMap
-  );
+      return [
+        formatPeople(rowVoters, usersByUid),
+        formatPeople(rowCanCome, usersByUid),
+        formatPeople(rowCannotCome, usersByUid),
+        formatPeople(
+          rowCanCome.filter((id) => Boolean(rowEtaMap[normalizeUserId(id)])),
+          usersByUid,
+          rowEtaMap
+        ),
+      ];
+    })()
+    : [[], [], [], []];
 
   return (
     <tr>
