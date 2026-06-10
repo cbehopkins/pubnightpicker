@@ -11,6 +11,7 @@ from firebase_sub.my_types import ActionDict, PollId
 from firebase_sub.plugins.protocols import CompletePollDbHandler, EventPlugin
 from firebase_sub.push_contract import PushDedupeKeys
 
+
 class CompletePollListenerPlugin(EventPlugin):
     """Listener plugin that processes COMP_POLL events for completed polls."""
 

@@ -33,11 +33,12 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
 from google.cloud.firestore_v1.query import Query
 
 from firebase_sub.database.repositories import PollRepository
-from firebase_sub.my_types import ActionDict, DocumentId, PollId, PollId
+from firebase_sub.my_types import ActionDict, DocumentId, PollId
 
 if TYPE_CHECKING:
     from firebase_sub.event import EventEnvelope
@@ -314,7 +315,6 @@ class NewPollDbHandler(PollStatusQueryDbHandler, Protocol):
 
     @property
     def poll_repo(self) -> PollRepository: ...
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 
 class CompletePollDbHandler(PollStatusQueryDbHandler, Protocol):
@@ -334,13 +334,14 @@ class CompletePollDbHandler(PollStatusQueryDbHandler, Protocol):
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         action_dict = action_snapshot.to_dict() or {}
         return action_dict
-    
+
     def mark_done(self, poll_id: PollId, pending_update: ActionDict) -> None:
         action_document = cast(
             Any,
             self.db.collection("comp_actions").document(poll_id),
         )
         action_document.set(pending_update, merge=True)
+
 
 @runtime_checkable
 class PollListenerDbHandler(NewPollDbHandler, CompletePollDbHandler, Protocol):
