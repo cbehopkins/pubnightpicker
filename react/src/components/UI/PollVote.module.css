@@ -23,6 +23,12 @@
   min-width: min(28rem, calc(100vw - 4rem));
 }
 
+.show_votesInline {
+  min-width: 0;
+  width: 100%;
+  padding: 0.75rem;
+}
+
 .show_votes h3,
 .show_votes p,
 .show_votes label {
@@ -85,6 +91,20 @@
 .statusCol,
 .actionsCol {
   white-space: nowrap;
+}
+
+.attendancePeopleCol {
+  min-width: 11rem;
+  max-width: 16rem;
+}
+
+.attendancePeopleCell {
+  min-width: 11rem;
+  max-width: 16rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  line-height: 1.25;
 }
 
 .venueCol {
@@ -217,6 +237,19 @@
   white-space: nowrap;
 }
 
+.attendanceDetailRow td {
+  border-top: 0;
+}
+
+.attendanceDetailCell {
+  padding-top: 0;
+  padding-bottom: 0.6rem;
+}
+
+.attendanceInline {
+  margin-top: 0;
+}
+
 .attendanceCheckYes {
   color: #198754;
   font-weight: 700;
@@ -241,19 +274,19 @@
 }
 
 .tableWrapOverflow .actionButtons {
-  flex-direction: column;
+  flex-direction: row;
   flex-wrap: nowrap;
-  align-items: stretch;
+  align-items: center;
 }
 
 .tableWrapOverflow .actionButtons>* {
-  width: 100%;
+  width: auto;
 }
 
 .tableWrapOverflow .actionsCol :global(.btn),
 .tableWrapOverflow .actionButtons :global(.btn) {
-  width: 100%;
-  white-space: normal;
+  width: auto;
+  white-space: nowrap;
   text-align: center;
 }
 
@@ -390,5 +423,25 @@
 
   .button {
     display: block;
+  }
+
+  .actionButtons,
+  .tableWrapOverflow .actionButtons {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .actionButtons>*,
+  .tableWrapOverflow .actionButtons>* {
+    width: 100%;
+  }
+
+  .actionsCol :global(.btn),
+  .actionButtons :global(.btn),
+  .tableWrapOverflow .actionsCol :global(.btn),
+  .tableWrapOverflow .actionButtons :global(.btn) {
+    width: 100%;
+    white-space: normal;
   }
 }
