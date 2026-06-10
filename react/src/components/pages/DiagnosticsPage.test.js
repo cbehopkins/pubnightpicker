@@ -25,6 +25,14 @@ const {
     timestampFromDateMock: vi.fn((date) => ({ fromDate: date })),
 }));
 
+const {
+    usePollsMock,
+    useAutopopulateVenueSelectorMock,
+} = vi.hoisted(() => ({
+    usePollsMock: vi.fn(),
+    useAutopopulateVenueSelectorMock: vi.fn(),
+}));
+
 vi.mock("firebase/firestore", () => ({
     Timestamp: {
         fromDate: timestampFromDateMock,
@@ -43,11 +51,109 @@ vi.mock("../../firebase", () => ({
     db: {},
 }));
 
-import { PollActionAuditPanel } from "./DiagnosticsPage";
+vi.mock("../../hooks/usePolls", () => ({
+    default: usePollsMock,
+}));
+
+vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
+    default: useAutopopulateVenueSelectorMock,
+}));
+
+import { AutopopulateCandidateListsPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+
+describe("AutopopulateCandidateListsPanel", () => {
+    beforeEach(() => {
+        usePollsMock.mockReturnValue({
+            sortedByDate: () => [
+                ["poll-1", { date: "2026-06-10", pubs: { "venue-1": true } }],
+            ],
+        });
+
+        useAutopopulateVenueSelectorMock.mockImplementation((pollId) => {
+            if (pollId !== "poll-1") {
+                return {
+                    mostVisited: [],
+                    leastVisited: [],
+                    random: [],
+                    isLoading: false,
+                    error: null,
+                };
+            }
+
+            return {
+                mostVisited: [
+                    {
+                        id: "venue-2",
+                        label: "The Oak",
+                        count: 4,
+                        lastWonDate: "2026-05-01",
+                    },
+                ],
+                leastVisited: [
+                    {
+                        id: "venue-3",
+                        label: "The Crown",
+                        count: 1,
+                        lastWonDate: "2026-02-14",
+                    },
+                ],
+                random: [
+                    {
+                        id: "venue-4",
+                        label: "The Bell",
+                        count: 2,
+                        lastWonDate: null,
+                    },
+                ],
+                isLoading: false,
+                error: null,
+            };
+        });
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it("loads on demand and can be hidden again", () => {
+        render(<AutopopulateCandidateListsPanel />);
+
+        expect(screen.getByText("Autopopulate Candidate Lists")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Load Candidate Lists" })).toBeTruthy();
+        expect(usePollsMock).not.toHaveBeenCalled();
+        expect(useAutopopulateVenueSelectorMock).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "Load Candidate Lists" }));
+
+        expect(screen.getByText("Most visited")).toBeTruthy();
+        expect(screen.getByText("Least visited")).toBeTruthy();
+        expect(screen.getByText("Random viable")).toBeTruthy();
+        expect(screen.getByText(/The Oak/)).toBeTruthy();
+        expect(screen.getByText(/The Crown/)).toBeTruthy();
+        expect(screen.getByText(/The Bell/)).toBeTruthy();
+
+        fireEvent.click(screen.getByRole("button", { name: "Hide Candidate Lists" }));
+
+        expect(screen.queryByText("Most visited")).toBeNull();
+        expect(screen.queryByText("Least visited")).toBeNull();
+        expect(screen.queryByText("Random viable")).toBeNull();
+        expect(screen.getByRole("button", { name: "Load Candidate Lists" })).toBeTruthy();
+    });
+});
 
 describe("PollActionAuditPanel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        usePollsMock.mockReturnValue({
+            sortedByDate: () => [],
+        });
+        useAutopopulateVenueSelectorMock.mockReturnValue({
+            mostVisited: [],
+            leastVisited: [],
+            random: [],
+            isLoading: false,
+            error: null,
+        });
         getDocMock.mockImplementation(async (path) => {
             if (path === "user-public/user-a") {
                 return {
