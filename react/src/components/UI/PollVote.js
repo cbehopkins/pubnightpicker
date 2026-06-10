@@ -508,7 +508,9 @@ function PollVote(props) {
   const mobile = Boolean(props.mobile);
   const tableWrapRef = useRef(null);
   const [isTableOverflowing, setIsTableOverflowing] = useState(false);
-  const showAttendanceColumns = canShowAttendance && !mobile && !isTableOverflowing;
+  const [isWideForAttendance, setIsWideForAttendance] = useState(!mobile);
+  const [wideModeMinWidth, setWideModeMinWidth] = useState(0);
+  const showAttendanceColumns = canShowAttendance && !mobile && isWideForAttendance;
 
   // Get sorted poll rows
   const rowEntries = usePollRows(props.poll_data);
@@ -544,21 +546,45 @@ function PollVote(props) {
       return;
     }
 
-    // Use hysteresis to avoid rapid toggling near the exact overflow boundary.
-    const ENTER_OVERFLOW_PX = 2;
-    const EXIT_OVERFLOW_PX = 20;
-
     let rafId = 0;
     const syncOverflowState = () => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
+        // Treat any positive horizontal delta as overflow; this keeps mode switching symmetric.
         const overflowDelta = wrap.scrollWidth - wrap.clientWidth;
-        setIsTableOverflowing((prev) => {
+        const hasOverflow = overflowDelta > 0;
+        setIsTableOverflowing(hasOverflow);
+
+        const containerWidth =
+          (wrap.parentElement instanceof HTMLElement && wrap.parentElement.clientWidth > 0)
+            ? wrap.parentElement.clientWidth
+            : window.innerWidth;
+        if (containerWidth <= 0) {
+          // JSDOM and other non-laid-out contexts report zero width.
+          setIsWideForAttendance(!mobile);
+          return;
+        }
+
+        if (mobile) {
+          setIsWideForAttendance(false);
+          setWideModeMinWidth(0);
+          return;
+        }
+
+        setIsWideForAttendance((prev) => {
           if (prev) {
-            // Stay in overflow mode until we have enough spare width.
-            return overflowDelta > -EXIT_OVERFLOW_PX;
+            if (hasOverflow) {
+              // If wide mode overflows for this dataset, drop to normal mode and
+              // require additional room before retrying wide mode.
+              const reenterBufferPx = Math.max(32, Math.ceil(containerWidth * 0.05));
+              setWideModeMinWidth(containerWidth + reenterBufferPx);
+              return false;
+            }
+
+            return true;
           }
-          return overflowDelta > ENTER_OVERFLOW_PX;
+
+          return containerWidth >= wideModeMinWidth;
         });
       });
     };
@@ -583,7 +609,7 @@ function PollVote(props) {
       }
       window.removeEventListener("resize", syncOverflowState);
     };
-  }, [rowEntries.length, canVote, canShowAttendance, allowDelete]);
+  }, [rowEntries.length, canVote, canShowAttendance, allowDelete, mobile, wideModeMinWidth]);
 
   return (
     <>

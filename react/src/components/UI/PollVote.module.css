@@ -425,18 +425,18 @@
     display: block;
   }
 
-  .tableWrapOverflow .actionButtons {
+  .actionButtons {
     flex-direction: column;
     flex-wrap: nowrap;
     align-items: stretch;
   }
 
-  .tableWrapOverflow .actionButtons>* {
+  .actionButtons>* {
     width: 100%;
   }
 
-  .tableWrapOverflow .actionsCol :global(.btn),
-  .tableWrapOverflow .actionButtons :global(.btn) {
+  .actionsCol :global(.btn),
+  .actionButtons :global(.btn) {
     width: 100%;
     white-space: normal;
   }
