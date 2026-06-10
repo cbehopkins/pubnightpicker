@@ -506,9 +506,9 @@ function PollVote(props) {
   );
   const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
   const mobile = Boolean(props.mobile);
-  const showAttendanceColumns = canShowAttendance && !mobile;
   const tableWrapRef = useRef(null);
   const [isTableOverflowing, setIsTableOverflowing] = useState(false);
+  const showAttendanceColumns = canShowAttendance && !mobile && !isTableOverflowing;
 
   // Get sorted poll rows
   const rowEntries = usePollRows(props.poll_data);

@@ -274,19 +274,19 @@
 }
 
 .tableWrapOverflow .actionButtons {
-  flex-direction: column;
+  flex-direction: row;
   flex-wrap: nowrap;
-  align-items: stretch;
+  align-items: center;
 }
 
 .tableWrapOverflow .actionButtons>* {
-  width: 100%;
+  width: auto;
 }
 
 .tableWrapOverflow .actionsCol :global(.btn),
 .tableWrapOverflow .actionButtons :global(.btn) {
-  width: 100%;
-  white-space: normal;
+  width: auto;
+  white-space: nowrap;
   text-align: center;
 }
 
@@ -423,5 +423,21 @@
 
   .button {
     display: block;
+  }
+
+  .tableWrapOverflow .actionButtons {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .tableWrapOverflow .actionButtons>* {
+    width: 100%;
+  }
+
+  .tableWrapOverflow .actionsCol :global(.btn),
+  .tableWrapOverflow .actionButtons :global(.btn) {
+    width: 100%;
+    white-space: normal;
   }
 }
