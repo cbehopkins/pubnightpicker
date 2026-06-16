@@ -256,7 +256,10 @@ def test_transient_dispatch_retry_uses_bounded_backoff():
     max_delay = 0.25
 
     delays = [
-        min(max_delay, _retry_backoff_seconds(attempt=attempt, base_delay_seconds=base_delay))
+        min(
+            max_delay,
+            _retry_backoff_seconds(attempt=attempt, base_delay_seconds=base_delay),
+        )
         for attempt in (1, 2, 3)
     ]
 
