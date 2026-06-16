@@ -4,7 +4,11 @@ import threading
 
 from firebase_sub.event import Event, EventType
 from firebase_sub.runtime.job_queue import JobQueue
-from firebase_sub.runtime.queue_runner import QueueRunner, _is_transient_runtime_error
+from firebase_sub.runtime.queue_runner import (
+    QueueRunner,
+    _is_transient_runtime_error,
+    _retry_backoff_seconds,
+)
 
 
 class _FakeRegistry:
@@ -39,6 +43,7 @@ def _make_runner(
     healthchecks=None,
     healthcheck_interval_seconds: float = 0.05,
     scheduled_runner: _FakeScheduledRunner | None = None,
+    **kwargs,
 ) -> QueueRunner:
     return QueueRunner(
         event_queue=event_queue,
@@ -46,6 +51,7 @@ def _make_runner(
         healthchecks=healthchecks or [],
         registry=registry or _FakeRegistry(),
         scheduled_runner=scheduled_runner,
+        **kwargs,
     )
 
 
@@ -205,9 +211,8 @@ def test_scheduled_runner_invoked_after_event_dispatch():
     assert scheduled.run_due_calls >= 2
 
 
-def test_run_forever_continues_after_transient_dispatch_error():
+def test_run_forever_retries_same_event_after_transient_dispatch_error():
     q: JobQueue[Event] = JobQueue()
-    q.put(Event(type=EventType.TICK, doc=None))
     q.put(Event(type=EventType.TICK, doc=None))
 
     class _TransientRegistry:
@@ -233,6 +238,8 @@ def test_run_forever_continues_after_transient_dispatch_error():
         registry=registry,
         healthchecks=[lambda: "stop"],
         healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
     )
 
     try:
@@ -242,6 +249,18 @@ def test_run_forever_continues_after_transient_dispatch_error():
 
     assert registry.calls >= 2
     assert registry.dispatched == [EventType.TICK]
+
+
+def test_transient_dispatch_retry_uses_bounded_backoff():
+    base_delay = 0.2
+    max_delay = 0.25
+
+    delays = [
+        min(max_delay, _retry_backoff_seconds(attempt=attempt, base_delay_seconds=base_delay))
+        for attempt in (1, 2, 3)
+    ]
+
+    assert delays == [0.2, 0.25, 0.25]
 
 
 def test_is_transient_runtime_error_detects_nested_transport_error():
