@@ -167,6 +167,7 @@ def sub_events(
                     else None
                 ),
             ]
+            healthchecks.extend(event_producer.listener_healthchecks())
             runner = QueueRunner(
                 event_queue=event_queue,
                 healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
