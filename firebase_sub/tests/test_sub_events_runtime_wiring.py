@@ -142,6 +142,11 @@ def _patch_minimal_runtime(monkeypatch, module):
     monkeypatch.setattr(module, "PubsList", _FakePubsList)
     monkeypatch.setattr(module, "QueueRunner", _FakeQueueRunner)
     monkeypatch.setattr(module, "ScheduledHousekeepingRunner", lambda plugins: object())
+    monkeypatch.setattr(
+        module,
+        "install_fail_fast_thread_excepthook",
+        lambda: (lambda: None),
+    )
 
 
 def test_sub_events_uses_env_gate_for_admin_delete(monkeypatch):
@@ -223,3 +228,42 @@ def test_sub_events_registers_canary_trigger(monkeypatch):
 
     assert (61, "<lambda>") in _FakePeriodicTrigger.calls
     assert (123, "send_canary") in _FakePeriodicTrigger.calls
+
+
+def test_sub_events_installs_and_restores_fail_fast_hook(monkeypatch):
+    import firebase_sub.cli.sub_events as module
+
+    _patch_minimal_runtime(monkeypatch, module)
+    monkeypatch.setattr(
+        module.RuntimeConfig,
+        "from_legacy_options",
+        lambda **kwargs: _FakeRuntimeConfig(),
+    )
+
+    calls: list[str] = []
+
+    def _install_hook():
+        calls.append("install")
+
+        def _restore() -> None:
+            calls.append("restore")
+
+        return _restore
+
+    monkeypatch.setattr(module, "install_fail_fast_thread_excepthook", _install_hook)
+
+    module.sub_events(
+        dummy_email=False,
+        dummy_push=False,
+        loglevel=20,
+        logfile=None,
+        restart_interval=0,
+        housekeeping_interval_seconds=60,
+        housekeeping_cron=None,
+        all_history=False,
+        poll_lookback_days=7,
+        canary_interval_seconds=300,
+        enable_real_auth_delete=False,
+    )
+
+    assert calls == ["install", "restore"]

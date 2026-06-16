@@ -28,6 +28,7 @@ from firebase_sub.runtime.action_policies import (
     poll_open_actions,
 )
 from firebase_sub.runtime.config import RuntimeConfig
+from firebase_sub.runtime.fail_fast import install_fail_fast_thread_excepthook
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.queue_runner import QueueRunner
 from firebase_sub.runtime.sub_events_bootstrap import get_db_handler
@@ -152,27 +153,31 @@ def sub_events(
         ),
         PubsList(db_handler.pub_collection) as pubs_list,
     ):
-        for plugin in event_plugins:
-            if isinstance(plugin, CompletePollListenerPlugin):
-                plugin.set_pubs_list(pubs_list)
+        restore_thread_hook = install_fail_fast_thread_excepthook()
+        try:
+            for plugin in event_plugins:
+                if isinstance(plugin, CompletePollListenerPlugin):
+                    plugin.set_pubs_list(pubs_list)
 
-        healthchecks: list[Callable[[], str | None]] = [
-            lambda: None if db_handler.okay else "Exiting due to db is not okay",
-            lambda: (
-                "Exiting due to stale Firestore listener canary"
-                if canary.is_stale()
-                else None
-            ),
-        ]
-        runner = QueueRunner(
-            event_queue=event_queue,
-            healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
-            healthchecks=healthchecks,
-            registry=event_registry,
-            scheduled_runner=scheduled_runner,
-        )
-        _log.info("sub_events runtime started")
-        runner.run_forever()
+            healthchecks: list[Callable[[], str | None]] = [
+                lambda: None if db_handler.okay else "Exiting due to db is not okay",
+                lambda: (
+                    "Exiting due to stale Firestore listener canary"
+                    if canary.is_stale()
+                    else None
+                ),
+            ]
+            runner = QueueRunner(
+                event_queue=event_queue,
+                healthcheck_interval_seconds=runtime_config.healthcheck_interval_seconds,
+                healthchecks=healthchecks,
+                registry=event_registry,
+                scheduled_runner=scheduled_runner,
+            )
+            _log.info("sub_events runtime started")
+            runner.run_forever()
+        finally:
+            restore_thread_hook()
 
 
 @click.command()

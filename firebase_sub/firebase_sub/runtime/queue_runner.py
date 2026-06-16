@@ -12,6 +12,16 @@ from firebase_sub.runtime.job_queue import JobQueue
 
 _log = logging.getLogger(__name__)
 
+_TRANSIENT_EXCEPTION_FQCNS = {
+    "google.auth.exceptions.TransportError",
+    "requests.exceptions.ConnectionError",
+    "urllib3.exceptions.MaxRetryError",
+    "urllib3.exceptions.NameResolutionError",
+    "socket.gaierror",
+    "grpc.RpcError",
+    "grpc._channel._InactiveRpcError",
+}
+
 
 class ScheduledRunnerProtocol(Protocol):
     def run_due(self, *, now: datetime) -> None: ...
@@ -66,10 +76,54 @@ class QueueRunner:
                 continue
 
             envelope = EventEnvelope(type=event.type, doc=event.doc)
-            self._registry.dispatch(envelope)
+            try:
+                self._registry.dispatch(envelope)
+            except Exception as exc:
+                if _is_transient_runtime_error(exc):
+                    _log.warning(
+                        "Transient dispatch failure for event %s doc_id=%s; "
+                        "deferring to next retry cycle: %s",
+                        event.type,
+                        envelope.document_id(),
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
+                raise
             if self._scheduled_runner is not None:
                 self._scheduled_runner.run_due(now=datetime.now(UTC))
             _log_event(event)
+
+
+def _is_transient_runtime_error(exc: BaseException) -> bool:
+    """Return True for known transient network/auth failures.
+
+    We walk ``__cause__``/``__context__`` because Google auth and requests often
+    wrap lower-level network failures.
+    """
+    visited: set[int] = set()
+    pending: list[BaseException] = [exc]
+
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+
+        for exception_type in type(current).__mro__:
+            fqcn = f"{exception_type.__module__}.{exception_type.__name__}"
+            if fqcn in _TRANSIENT_EXCEPTION_FQCNS:
+                return True
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            pending.append(context)
+
+    return False
 
 
 def _log_event(event: Event) -> None:

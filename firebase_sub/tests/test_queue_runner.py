@@ -4,7 +4,7 @@ import threading
 
 from firebase_sub.event import Event, EventType
 from firebase_sub.runtime.job_queue import JobQueue
-from firebase_sub.runtime.queue_runner import QueueRunner
+from firebase_sub.runtime.queue_runner import QueueRunner, _is_transient_runtime_error
 
 
 class _FakeRegistry:
@@ -203,3 +203,54 @@ def test_scheduled_runner_invoked_after_event_dispatch():
 
     # One call before blocking plus one call after event dispatch.
     assert scheduled.run_due_calls >= 2
+
+
+def test_run_forever_continues_after_transient_dispatch_error():
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _TransientRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.dispatched: list[EventType] = []
+
+        def dispatch(self, envelope) -> int:
+            self.calls += 1
+            if self.calls == 1:
+                transport_error = type(
+                    "TransportError",
+                    (Exception,),
+                    {"__module__": "google.auth.exceptions"},
+                )
+                raise transport_error("temporary outage")
+            self.dispatched.append(envelope.type)
+            return 1
+
+    registry = _TransientRegistry()
+    runner = _make_runner(
+        event_queue=q,
+        registry=registry,
+        healthchecks=[lambda: "stop"],
+        healthcheck_interval_seconds=0.01,
+    )
+
+    try:
+        runner.run_forever()
+    except SystemExit:
+        pass
+
+    assert registry.calls >= 2
+    assert registry.dispatched == [EventType.TICK]
+
+
+def test_is_transient_runtime_error_detects_nested_transport_error():
+    transport_error = type(
+        "TransportError",
+        (Exception,),
+        {"__module__": "google.auth.exceptions"},
+    )
+    wrapped = RuntimeError("wrapper")
+    wrapped.__cause__ = transport_error("dns unavailable")
+
+    assert _is_transient_runtime_error(wrapped) is True
