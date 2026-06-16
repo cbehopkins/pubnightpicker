@@ -10,6 +10,7 @@ This ensures the query -> event -> queue -> plugin flow is decoupled.
 """
 
 from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -121,6 +122,13 @@ class EventProducer:
             add=self._complete_poll_callback,
             modify=self._complete_poll_callback,
         )
+
+    def listener_healthchecks(self) -> list[Callable[[], str | None]]:
+        """Return additional listener healthchecks for runtime fail-fast behavior.
+
+        Default event producer does not expose per-listener checks.
+        """
+        return []
 
     def _new_poll_callback(self, document: DocumentSnapshot) -> None:
         """Called when a new (open) poll document is created."""
