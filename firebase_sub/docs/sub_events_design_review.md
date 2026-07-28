@@ -320,9 +320,11 @@ Error handling for both:
 
 ### Job: auto_complete_single_event_polls_due_tomorrow
 
-- Schedule: daily 00:01 UTC
+- Schedule: daily 16:00 Europe/London
 - Behavior:
-  - Auto-completes tomorrow's single-option event polls
+  - Auto-completes same-day single-option event polls
+  - Legacy naming note: the plugin name still includes `due_tomorrow` for compatibility
+  - Correction note: this schedule was moved after a bug that could run around 01:00 on the day before the event
 - Idempotency:
   - Operates on uncompleted polls only
 - Retry/error:

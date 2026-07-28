@@ -1,6 +1,9 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
+from firebase_sub.my_types import RetryableServiceError
 
 
 def _snapshot(doc_id: str, payload: dict | None) -> MagicMock:
@@ -89,3 +92,19 @@ def test_noop_when_ack_already_matches_request():
     mirror.mirror_request_document(_snapshot("diagnostics", {"manual": 456}))
 
     ack_document.set.assert_not_called()
+
+
+def test_mirror_write_failure_raises_retryable_service_error() -> None:
+    db = MagicMock()
+    ack_document = MagicMock()
+    ack_document.get.return_value = _snapshot("diagnostics", None)
+    ack_document.set.side_effect = RuntimeError("write failed")
+    db.collection.return_value.document.return_value = ack_document
+
+    mirror = NotificationAckMirrorHandler(db)
+
+    with pytest.raises(RetryableServiceError) as exc_info:
+        mirror.mirror_request_document(_snapshot("diagnostics", {"manual": 123}))
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert "write failed" in str(exc_info.value.__cause__)

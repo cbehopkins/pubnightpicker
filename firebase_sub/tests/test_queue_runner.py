@@ -389,6 +389,75 @@ def test_run_forever_does_not_retry_event_for_terminal_service_error():
     assert registry.calls == 1
 
 
+def test_run_forever_retries_unknown_error_until_budget_then_raises() -> None:
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _UnknownFailureRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def dispatch(self, envelope) -> int:
+            del envelope
+            self.calls += 1
+            raise RuntimeError("unexpected failure")
+
+    registry = _UnknownFailureRegistry()
+    runner = _make_runner(
+        event_queue=q,
+        registry=registry,
+        healthchecks=[lambda: None],
+        healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
+        unknown_error_max_retries=2,
+    )
+
+    try:
+        runner.run_forever()
+        raise AssertionError("Expected unknown failure after retry budget")
+    except RuntimeError as exc:
+        assert str(exc) == "unexpected failure"
+
+    assert registry.calls == 3
+
+
+def test_run_forever_unknown_error_retry_can_recover_before_budget() -> None:
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _UnknownThenSuccessRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.dispatched: list[EventType] = []
+
+        def dispatch(self, envelope) -> int:
+            self.calls += 1
+            if self.calls <= 2:
+                raise RuntimeError("unexpected failure")
+            self.dispatched.append(envelope.type)
+            return 1
+
+    registry = _UnknownThenSuccessRegistry()
+    runner = _make_runner(
+        event_queue=q,
+        registry=registry,
+        healthchecks=[lambda: "stop"],
+        healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
+        unknown_error_max_retries=3,
+    )
+
+    try:
+        runner.run_forever()
+    except SystemExit:
+        pass
+
+    assert registry.calls >= 3
+    assert registry.dispatched == [EventType.TICK]
+
+
 def test_is_transient_runtime_error_detects_retryable_service_error_in_cause_chain():
     wrapped = RuntimeError("wrapper")
     wrapped.__cause__ = RetryableServiceError("retryable")

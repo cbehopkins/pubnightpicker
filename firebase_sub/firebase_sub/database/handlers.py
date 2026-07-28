@@ -17,13 +17,13 @@ from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
 )
-from firebase_sub.my_types import EmailAddr, UserId
+from firebase_sub.my_types import EmailAddr, RetryableServiceError, UserId
 from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
 
 
-class RetryablePollDataNotReadyError(RuntimeError):
+class RetryablePollDataNotReadyError(RetryableServiceError):
     """Raised when event handling should retry because dependent data is not ready."""
 
 
