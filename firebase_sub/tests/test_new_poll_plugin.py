@@ -131,10 +131,10 @@ def test_new_poll_listener_handle_calls_action_manager():
         db_handler=db_handler,
         action_manager=action_manager,
     )
-    plugin._snapshot_get = lambda document_ref: cast(object, document_ref.get())  # type: ignore[method-assign]
     document = cast(DocumentSnapshot, SimpleNamespace(id="poll-2"))
     envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
 
+    assert plugin.filter(envelope) is True
     plugin.handle(envelope)
 
     assert action_manager.calls == [
@@ -155,7 +155,6 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
         db_handler=db_handler,
         action_manager=action_manager,
     )
-    plugin._snapshot_get = lambda document_ref: cast(object, document_ref.get())  # type: ignore[method-assign]
 
     document = cast(
         DocumentSnapshot,
@@ -166,6 +165,7 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
     )
     envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
 
+    assert plugin.filter(envelope) is True
     plugin.handle(envelope)
 
     assert action_manager.calls == [

@@ -212,6 +212,7 @@ def test_complete_poll_mark_done_persists_action_state_after_handle():
 
     # Test that methods can be called (actual logic requires complex Firestore mocks)
     try:
+        assert plugin.filter(envelope) is True
         plugin.handle(envelope)
         plugin.mark_done(envelope)
     except (TypeError, AttributeError):
@@ -249,6 +250,7 @@ def test_complete_poll_handle_uses_bound_pubs_list():
 
     # Test that methods can be called with pubs_list bound
     try:
+        assert plugin.filter(envelope) is True
         plugin.handle(envelope)
         plugin.mark_done(envelope)
     except (TypeError, AttributeError, RetryablePollDataNotReadyError):

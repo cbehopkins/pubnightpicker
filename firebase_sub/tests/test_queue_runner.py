@@ -1,5 +1,6 @@
 """Tests for QueueRunner: healthcheck logic and event dispatch."""
 
+import logging
 import threading
 
 from firebase_sub.event import Event, EventType
@@ -8,7 +9,6 @@ from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.event_registry import EventWritebackError
 from firebase_sub.runtime.queue_runner import (
     QueueRunner,
-    _is_transient_runtime_error,
     _retry_backoff_seconds,
 )
 from firebase_sub.plugins.protocols import EventWorkItemState, ScheduledWorkItemState
@@ -269,18 +269,6 @@ def test_transient_dispatch_retry_uses_bounded_backoff():
     assert delays == [0.2, 0.25, 0.25]
 
 
-def test_is_transient_runtime_error_detects_nested_transport_error():
-    transport_error = type(
-        "TransportError",
-        (Exception,),
-        {"__module__": "google.auth.exceptions"},
-    )
-    wrapped = RuntimeError("wrapper")
-    wrapped.__cause__ = transport_error("dns unavailable")
-
-    assert _is_transient_runtime_error(wrapped) is True
-
-
 def test_run_forever_retries_event_when_writeback_error_cause_is_transient():
     q: JobQueue[Event] = JobQueue()
     q.put(Event(type=EventType.TICK, doc=None))
@@ -357,6 +345,44 @@ def test_run_forever_retries_event_for_retryable_service_error():
     assert registry.dispatched == [EventType.TICK]
 
 
+def test_run_forever_logs_retry_scheduled_state_for_retryable_error(caplog) -> None:
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _RetryableRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def dispatch(self, envelope) -> int:
+            del envelope
+            self.calls += 1
+            if self.calls == 1:
+                raise RetryableServiceError("retry me")
+            return 1
+
+    registry = _RetryableRegistry()
+    runner = _make_runner(
+        event_queue=q,
+        registry=registry,
+        healthchecks=[lambda: "stop"],
+        healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        try:
+            runner.run_forever()
+        except SystemExit:
+            pass
+
+    assert any(
+        "state=retry_scheduled" in record.message
+        for record in caplog.records
+        if record.name == "firebase_sub.runtime.queue_runner"
+    )
+
+
 def test_run_forever_does_not_retry_event_for_terminal_service_error():
     q: JobQueue[Event] = JobQueue()
     q.put(Event(type=EventType.TICK, doc=None))
@@ -422,6 +448,79 @@ def test_run_forever_retries_unknown_error_until_budget_then_raises() -> None:
     assert registry.calls == 3
 
 
+def test_run_forever_logs_terminal_failed_when_unknown_retry_budget_exhausted(
+    caplog,
+) -> None:
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _UnknownFailureRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def dispatch(self, envelope) -> int:
+            del envelope
+            self.calls += 1
+            raise RuntimeError("unexpected failure")
+
+    registry = _UnknownFailureRegistry()
+    runner = _make_runner(
+        event_queue=q,
+        registry=registry,
+        healthchecks=[lambda: None],
+        healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
+        unknown_error_max_retries=1,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            runner.run_forever()
+            raise AssertionError("Expected unknown failure after retry budget")
+        except RuntimeError as exc:
+            assert str(exc) == "unexpected failure"
+
+    assert any(
+        "state=terminal_failed" in record.message
+        and "retry budget exhausted" in record.message
+        for record in caplog.records
+        if record.name == "firebase_sub.runtime.queue_runner"
+    )
+
+
+def test_run_forever_logs_terminal_failed_for_terminal_service_error(caplog) -> None:
+    q: JobQueue[Event] = JobQueue()
+    q.put(Event(type=EventType.TICK, doc=None))
+
+    class _TerminalRegistry:
+        def dispatch(self, envelope) -> int:
+            del envelope
+            raise TerminalServiceError("do not retry")
+
+    runner = _make_runner(
+        event_queue=q,
+        registry=_TerminalRegistry(),
+        healthchecks=[lambda: None],
+        healthcheck_interval_seconds=0.01,
+        requeue_base_delay_seconds=0.0,
+        requeue_max_delay_seconds=0.0,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            runner.run_forever()
+            raise AssertionError("Expected TerminalServiceError")
+        except TerminalServiceError as exc:
+            assert str(exc) == "do not retry"
+
+    assert any(
+        "state=terminal_failed" in record.message and "terminal error" in record.message
+        for record in caplog.records
+        if record.name == "firebase_sub.runtime.queue_runner"
+    )
+
+
 def test_run_forever_unknown_error_retry_can_recover_before_budget() -> None:
     q: JobQueue[Event] = JobQueue()
     q.put(Event(type=EventType.TICK, doc=None))
@@ -456,20 +555,6 @@ def test_run_forever_unknown_error_retry_can_recover_before_budget() -> None:
 
     assert registry.calls >= 3
     assert registry.dispatched == [EventType.TICK]
-
-
-def test_is_transient_runtime_error_detects_retryable_service_error_in_cause_chain():
-    wrapped = RuntimeError("wrapper")
-    wrapped.__cause__ = RetryableServiceError("retryable")
-
-    assert _is_transient_runtime_error(wrapped) is True
-
-
-def test_is_transient_runtime_error_honors_terminal_service_error():
-    wrapped = RuntimeError("wrapper")
-    wrapped.__cause__ = TerminalServiceError("terminal")
-
-    assert _is_transient_runtime_error(wrapped) is False
 
 
 def test_work_item_state_enums_define_explicit_lifecycle_terms():
