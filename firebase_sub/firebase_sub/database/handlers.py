@@ -17,7 +17,13 @@ from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
 )
-from firebase_sub.my_types import ActionDict, EmailAddr, PollId, RetryableServiceError, UserId
+from firebase_sub.my_types import (
+    ActionDict,
+    EmailAddr,
+    PollId,
+    RetryableServiceError,
+    UserId,
+)
 from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
@@ -106,12 +112,16 @@ class DbHandler:
         return self.db.collection("pubs")
 
     def action_dict(self, poll_id: PollId) -> ActionDict:
-        action_document = cast(Any, self.db.collection("comp_actions").document(poll_id))
+        action_document = cast(
+            Any, self.db.collection("comp_actions").document(poll_id)
+        )
         action_snapshot = cast(DocumentSnapshot, action_document.get())
         return action_snapshot.to_dict() or {}
 
     def mark_done(self, poll_id: PollId, pending_update: ActionDict) -> None:
-        action_document = cast(Any, self.db.collection("comp_actions").document(poll_id))
+        action_document = cast(
+            Any, self.db.collection("comp_actions").document(poll_id)
+        )
         action_document.set(pending_update, merge=True)
 
     def query_personal_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:

@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from os import getenv
 from typing import Any, Protocol
 
-import mailtrap # type: ignore[import]
+import mailtrap  # type: ignore[import]
 from pydantic import ValidationError
 
 from firebase_sub.action_track import CallbackExceptionRetry
