@@ -244,6 +244,23 @@ def test_scheduled_runner_continues_after_plugin_exception():
     assert succeeding.run_count == 1
 
 
+def test_scheduled_runner_emits_explicit_lifecycle_states(caplog):
+    now = datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
+    next_run = now + timedelta(minutes=10)
+    plugin = _ScheduledPlugin("sched", run_times=[now, next_run])
+    runner = ScheduledHousekeepingRunner([plugin])
+
+    with caplog.at_level("DEBUG"):
+        runner.run_due(now=now)
+
+    messages = [record.message for record in caplog.records]
+    assert any("Scheduled work item state=due" in message for message in messages)
+    assert any("Scheduled work item state=running" in message for message in messages)
+    assert any(
+        "Scheduled work item state=rescheduled" in message for message in messages
+    )
+
+
 def test_daily_utc_scheduled_callable_returns_today_target_when_before():
     plugin = DailyUtcScheduledCallablePlugin(
         name="daily16",

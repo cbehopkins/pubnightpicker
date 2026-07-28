@@ -1,4 +1,10 @@
-"""Queue runner: event dispatch loop with healthcheck integration."""
+"""Queue runner: event dispatch loop with healthcheck integration.
+
+Event work items are treated as a state machine with explicit lifecycle states
+(`enqueued`, `running`, `retry_scheduled`, `completed`, `terminal_failed`,
+`dequeued`). Completion is not final until the plugin's writeback/mark_done
+step succeeds.
+"""
 
 import heapq
 import logging
@@ -9,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from firebase_sub.event import Event, EventEnvelope
+from firebase_sub.my_types import RetryableServiceError, TerminalServiceError
+from firebase_sub.plugins.protocols import EventWorkItemState
 from firebase_sub.runtime.event_registry import EventRegistry
 from firebase_sub.runtime.job_queue import JobQueue
 
@@ -47,7 +55,8 @@ class QueueRunner:
     message string when a problem is detected.  The first non-None message
     triggers ``SystemExit``.
 
-    Dispatches all events through EventRegistry.
+    Dispatches all events through EventRegistry and manages the event-work-item
+    lifecycle from enqueue through retry scheduling and completion.
     """
 
     def __init__(
@@ -105,6 +114,12 @@ class QueueRunner:
             envelope = EventEnvelope(type=event.type, doc=event.doc)
             event_key = _event_retry_key(event)
             try:
+                _log.debug(
+                    "Event work item state=%s event=%s doc_id=%s",
+                    EventWorkItemState.RUNNING,
+                    event.type,
+                    envelope.document_id(),
+                )
                 self._registry.dispatch(envelope)
             except Exception as exc:
                 if _is_transient_runtime_error(exc):
@@ -118,8 +133,9 @@ class QueueRunner:
                         ),
                     )
                     _log.warning(
-                        "Transient dispatch failure for event %s doc_id=%s; "
+                        "Event work item state=%s event=%s doc_id=%s; "
                         "scheduling retry attempt=%s in %.3fs: %s",
+                        EventWorkItemState.RETRY_SCHEDULED,
                         event.type,
                         envelope.document_id(),
                         next_attempt,
@@ -131,8 +147,20 @@ class QueueRunner:
                     continue
                 raise
             self._retry_attempts.pop(event_key, None)
+            _log.debug(
+                "Event work item state=%s event=%s doc_id=%s",
+                EventWorkItemState.COMPLETED,
+                event.type,
+                envelope.document_id(),
+            )
             if self._scheduled_runner is not None:
                 self._scheduled_runner.run_due(now=datetime.now(UTC))
+            _log.debug(
+                "Event work item state=%s event=%s doc_id=%s",
+                EventWorkItemState.DEQUEUED,
+                event.type,
+                envelope.document_id(),
+            )
             _log_event(event)
 
     def _schedule_retry(self, *, event: Event, delay_seconds: float) -> None:
@@ -155,10 +183,14 @@ class QueueRunner:
 
 
 def _is_transient_runtime_error(exc: BaseException) -> bool:
-    """Return True for known transient network/auth failures.
+    """Return True for retryable runtime failures.
 
-    We walk ``__cause__``/``__context__`` because Google auth and requests often
-    wrap lower-level network failures.
+    We first respect explicit service taxonomy:
+    - RetryableServiceError -> retry
+    - TerminalServiceError -> do not retry
+
+    Then we apply FQCN transient matching for infrastructure/network errors.
+    We walk ``__cause__``/``__context__`` because wrappers are common.
     """
     visited: set[int] = set()
     pending: list[BaseException] = [exc]
@@ -169,6 +201,11 @@ def _is_transient_runtime_error(exc: BaseException) -> bool:
         if current_id in visited:
             continue
         visited.add(current_id)
+
+        if isinstance(current, TerminalServiceError):
+            return False
+        if isinstance(current, RetryableServiceError):
+            return True
 
         for exception_type in type(current).__mro__:
             fqcn = f"{exception_type.__module__}.{exception_type.__name__}"

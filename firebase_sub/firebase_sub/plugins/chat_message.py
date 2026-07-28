@@ -4,7 +4,11 @@ from firebase_sub.plugins.protocols import EventPlugin
 
 
 class ChatMessageListenerPlugin(EventPlugin):
-    """Listener plugin for chat message push processing."""
+    """Listener plugin for chat message push processing.
+
+    Delivery state is written inline during chat push processing. ``mark_done()``
+    is retained as the lifecycle acknowledgment hook and is a no-op.
+    """
 
     def __init__(
         self,
@@ -27,6 +31,7 @@ class ChatMessageListenerPlugin(EventPlugin):
     def handle(self, envelope: EventEnvelope) -> None:
         if envelope.doc is None:
             return
+        # The chat push helper persists message delivery state inline.
         process_chat_message_push(
             self._db_handler,
             envelope.doc.id,
@@ -35,6 +40,6 @@ class ChatMessageListenerPlugin(EventPlugin):
         )
 
     def mark_done(self, envelope: EventEnvelope) -> None:
-        # Chat push delivery state is persisted inside the handler.
+        # Chat push delivery state is persisted inline by the handler.
         del envelope
         return

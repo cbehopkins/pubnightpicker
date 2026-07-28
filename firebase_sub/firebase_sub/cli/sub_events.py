@@ -56,7 +56,6 @@ def sub_events(
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
-    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
@@ -64,7 +63,6 @@ def sub_events(
     canary_interval_seconds: int = 300,
     enable_real_auth_delete: bool = False,
 ) -> None:
-    del restart_interval  # Retained as CLI compatibility flag.
 
     configure_logging(loglevel, logfile)
 
@@ -195,23 +193,17 @@ def sub_events(
     "--logfile", type=click.Path(path_type=Path), default=None, help="Log file path"
 )
 @click.option(
-    "--restart-interval",
-    type=int,
-    default=60 * 24,
-    help="Restart interval in minutes (default: 1 day)",
-)
-@click.option(
     "--housekeeping-interval-seconds",
     type=int,
     default=60,
     show_default=True,
-    help="Housekeeping trigger interval in seconds (ignored if --housekeeping-cron is set)",
+    help="Periodic maintenance trigger interval in seconds (ignored if --housekeeping-cron is set)",
 )
 @click.option(
     "--housekeeping-cron",
     type=str,
     default=None,
-    help="Cron expression for housekeeping trigger (e.g. '0 0 * * 4')",
+    help="Cron expression for periodic maintenance trigger (e.g. '0 0 * * 4')",
 )
 @click.option(
     "--all-history/--recent-history",
@@ -243,7 +235,6 @@ def cli(
     dummy_push: bool,
     loglevel: int,
     logfile: Path | None,
-    restart_interval: int,
     housekeeping_interval_seconds: int,
     housekeeping_cron: str | None,
     all_history: bool,
@@ -256,7 +247,6 @@ def cli(
         dummy_push,
         loglevel,
         logfile,
-        restart_interval,
         housekeeping_interval_seconds,
         housekeeping_cron,
         all_history,

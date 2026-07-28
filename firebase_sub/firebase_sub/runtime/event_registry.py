@@ -14,8 +14,16 @@ from firebase_sub.plugins.protocols import EventPlugin
 _log = logging.getLogger(__name__)
 
 
+class EventWritebackError(RuntimeError):
+    """Raised when a plugin handler succeeds but mark_done writeback fails."""
+
+
 class EventRegistry:
-    """Registry mapping EventType to ordered EventPlugin handlers."""
+    """Registry mapping EventType to ordered EventPlugin handlers.
+
+    Each dispatched event follows the explicit lifecycle:
+    filter -> running(handle) -> completion(writeback via mark_done).
+    """
 
     def __init__(self) -> None:
         """Initialize an empty registry."""
@@ -56,7 +64,8 @@ class EventRegistry:
         For each subscribed plugin (in order):
         1. Call filter(envelope) to check if plugin should run.
         2. If True, call handle(envelope) to execute side effect.
-        3. If handle succeeds (no exception), call mark_done(envelope) to persist state.
+          3. If handle succeeds (no exception), call mark_done(envelope) to persist state.
+              The event is not considered completed until this writeback succeeds.
 
         Args:
             envelope: The event to dispatch.
@@ -72,47 +81,60 @@ class EventRegistry:
         executed_count = 0
 
         for plugin in plugins:
+            if not plugin.filter(envelope):
+                _log.debug(
+                    "Plugin %s filter returned False for event %s doc_id=%s",
+                    plugin.name(),
+                    envelope.type,
+                    envelope.document_id(),
+                )
+                continue
+
+            _log.debug(
+                "Plugin %s filter returned True; calling handle for event %s doc_id=%s",
+                plugin.name(),
+                envelope.type,
+                envelope.document_id(),
+            )
             try:
-                if not plugin.filter(envelope):
-                    _log.debug(
-                        "Plugin %s filter returned False for event %s doc_id=%s",
-                        plugin.name(),
-                        envelope.type,
-                        envelope.document_id(),
-                    )
-                    continue
-
-                _log.debug(
-                    "Plugin %s filter returned True; calling handle for event %s doc_id=%s",
-                    plugin.name(),
-                    envelope.type,
-                    envelope.document_id(),
-                )
                 plugin.handle(envelope)
-                executed_count += 1
-
-                _log.debug(
-                    "Plugin %s handle succeeded; calling mark_done for event %s doc_id=%s",
-                    plugin.name(),
-                    envelope.type,
-                    envelope.document_id(),
-                )
-                plugin.mark_done(envelope)
-                _log.info(
-                    "Plugin %s successfully processed event %s doc_id=%s",
-                    plugin.name(),
-                    envelope.type,
-                    envelope.document_id(),
-                )
-
             except Exception as exc:
                 _log.exception(
-                    "Plugin %s raised exception while processing event %s doc_id=%s: %s",
+                    "Plugin %s handle failed for event %s doc_id=%s: %s",
                     plugin.name(),
                     envelope.type,
                     envelope.document_id(),
                     exc,
                 )
                 raise
+
+            executed_count += 1
+            _log.debug(
+                "Plugin %s handle succeeded; calling mark_done for event %s doc_id=%s",
+                plugin.name(),
+                envelope.type,
+                envelope.document_id(),
+            )
+            try:
+                plugin.mark_done(envelope)
+            except Exception as exc:
+                _log.exception(
+                    "Plugin %s mark_done writeback failed for event %s doc_id=%s: %s",
+                    plugin.name(),
+                    envelope.type,
+                    envelope.document_id(),
+                    exc,
+                )
+                raise EventWritebackError(
+                    f"Plugin {plugin.name()} mark_done writeback failed for event "
+                    f"{envelope.type} doc_id={envelope.document_id()}"
+                ) from exc
+
+            _log.info(
+                "Plugin %s successfully processed event %s doc_id=%s",
+                plugin.name(),
+                envelope.type,
+                envelope.document_id(),
+            )
 
         return executed_count

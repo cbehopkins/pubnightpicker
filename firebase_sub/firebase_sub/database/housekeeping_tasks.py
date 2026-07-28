@@ -260,12 +260,12 @@ def auto_complete_single_event_polls_due_tomorrow(
     *,
     today: date | None = None,
 ) -> None:
-    """Auto-complete open polls with a single venue when due tomorrow.
+    """Auto-complete open polls with a single venue when due today.
 
     The selected venue is deterministically the only venue key in ``pubs``.
     """
     current_day = today or date.today()
-    target_date = (current_day + timedelta(days=1)).isoformat()
+    target_date = current_day.isoformat()
 
     for poll_stuff in _open_polls(db, target_date=target_date):
 

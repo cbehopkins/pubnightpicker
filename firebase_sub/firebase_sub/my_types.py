@@ -77,6 +77,14 @@ Callback = Callable[[], None] | None
 DocCallback = Callable[[DocumentSnapshot], None] | None
 
 
+class RetryableServiceError(RuntimeError):
+    """Service-level failure that should be retried by the runtime."""
+
+
+class TerminalServiceError(RuntimeError):
+    """Service-level failure that should not be retried by the runtime."""
+
+
 class MissingPubError(KeyError):
     """Raised when a pub/venue is not found in the pubs list.
 

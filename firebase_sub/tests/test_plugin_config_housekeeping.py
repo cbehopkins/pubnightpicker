@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -52,3 +53,24 @@ def test_multi_option_poll_completion_is_scheduled_for_4pm_london_time() -> None
         0,
         tzinfo=UTC,
     )
+
+
+def test_single_event_poll_completion_is_scheduled_for_event_day_late_afternoon() -> (
+    None
+):
+    plugins = build_scheduled_housekeeping_plugins(db=MagicMock())
+    target_plugin = cast(
+        ScheduledHousekeepingPlugin,
+        next(
+            plugin
+            for plugin in plugins
+            if plugin.name() == "auto_complete_single_event_polls_due_tomorrow"
+        ),
+    )
+
+    next_run = target_plugin.run_at(datetime(2026, 5, 19, 14, 59, tzinfo=UTC))
+    assert next_run is not None
+    london_time = next_run.astimezone(ZoneInfo("Europe/London"))
+
+    assert london_time.date() == date(2026, 5, 19)
+    assert (london_time.hour, london_time.minute) in {(16, 0), (17, 0)}

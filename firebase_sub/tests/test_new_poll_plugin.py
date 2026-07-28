@@ -7,6 +7,7 @@ from firebase_sub.action_track import ActionMan
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.new_poll import NewPollListenerPlugin
 from firebase_sub.plugins.protocols import NewPollDbHandler
+from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
 
 
 class _FakeDbHandler:
@@ -174,3 +175,59 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
             "poll_date": "2026-05-27",
         }
     ]
+
+
+def test_new_poll_dispatch_distinguishes_handler_failure() -> None:
+    db_handler: NewPollDbHandler = _FakeDbHandler()
+    action_manager = _FakeActionManager()
+    plugin = NewPollListenerPlugin(
+        db_handler=db_handler,
+        action_manager=action_manager,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("handler failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.NEW_POLL, plugin)
+    envelope = EventEnvelope(
+        type=EventType.NEW_POLL,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="poll-fail")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected handler failure")
+    except EventWritebackError as exc:
+        raise AssertionError(f"Did not expect writeback error: {exc}")
+    except RuntimeError as exc:
+        assert str(exc) == "handler failed"
+
+
+def test_new_poll_dispatch_wraps_writeback_failure() -> None:
+    db_handler: NewPollDbHandler = _FakeDbHandler()
+    action_manager = _FakeActionManager()
+    plugin = NewPollListenerPlugin(
+        db_handler=db_handler,
+        action_manager=action_manager,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: None  # type: ignore[method-assign]
+    plugin.mark_done = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("writeback failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.NEW_POLL, plugin)
+    envelope = EventEnvelope(
+        type=EventType.NEW_POLL,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="poll-writeback")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected EventWritebackError")
+    except EventWritebackError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == "writeback failed"

@@ -5,6 +5,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.notification_request import NotificationRequestListenerPlugin
+from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
 
 
 class _FakeNotificationMirrorHandler:
@@ -80,7 +81,7 @@ def test_notification_request_filter_and_handle_for_push_test() -> None:
 
     assert plugin.filter(envelope) is True
     plugin.handle(envelope)
-    plugin.mark_done(envelope)
+    assert plugin.mark_done(envelope) is None
 
     assert push_test_handler.handled == ["push_test"]
     assert mirror_handler.handled == []
@@ -98,7 +99,76 @@ def test_notification_request_filter_and_handle_for_mirror_push() -> None:
 
     assert plugin.filter(envelope) is True
     plugin.handle(envelope)
-    plugin.mark_done(envelope)
+    assert plugin.mark_done(envelope) is None
 
     assert mirror_handler.handled == ["req-2"]
     assert push_test_handler.handled == []
+
+
+def test_notification_request_dispatch_distinguishes_handler_failure() -> None:
+    plugin = NotificationRequestListenerPlugin(
+        notification_mirror=_FakeNotificationMirrorHandler(),
+        notification_push_test=_FakeNotificationPushTestHandler(
+            push_test_ids={"push_test"}
+        ),
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("handler failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.PUSH, plugin)
+    envelope = EventEnvelope(
+        type=EventType.PUSH,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="req-fail")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected handler failure")
+    except EventWritebackError as exc:
+        raise AssertionError(f"Did not expect writeback error: {exc}")
+    except RuntimeError as exc:
+        assert str(exc) == "handler failed"
+
+
+def test_notification_request_dispatch_wraps_writeback_failure() -> None:
+    plugin = NotificationRequestListenerPlugin(
+        notification_mirror=_FakeNotificationMirrorHandler(),
+        notification_push_test=_FakeNotificationPushTestHandler(
+            push_test_ids={"push_test"}
+        ),
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: None  # type: ignore[method-assign]
+    plugin.mark_done = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("writeback failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.PUSH, plugin)
+    envelope = EventEnvelope(
+        type=EventType.PUSH,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="req-writeback")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected EventWritebackError")
+    except EventWritebackError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == "writeback failed"
+
+
+def test_notification_request_filter_rejects_unhandled_event_type() -> None:
+    plugin = NotificationRequestListenerPlugin(
+        notification_mirror=_FakeNotificationMirrorHandler(),
+        notification_push_test=_FakeNotificationPushTestHandler(
+            push_test_ids={"push_test"}
+        ),
+    )
+    document = cast(DocumentSnapshot, SimpleNamespace(id="tick-doc"))
+    envelope = EventEnvelope(type=EventType.TICK, doc=document)
+
+    assert plugin.filter(envelope) is False

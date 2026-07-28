@@ -123,7 +123,7 @@ def build_event_registry(
 
 
 def build_housekeeping_plugins(*, db: Client) -> Sequence[HousekeepingPlugin]:
-    """Build explicit in-code housekeeping plugin registrations."""
+    """Build explicit in-code periodic maintenance plugin registrations."""
     return [
         HousekeepingCallablePlugin(
             name="delete_notification_diagnostics",
@@ -156,13 +156,14 @@ def build_scheduled_housekeeping_plugins(
     *,
     db: Client,
 ) -> Sequence[HousekeepingPlugin]:
-    """Build explicit in-code scheduled housekeeping registrations."""
+    """Build explicit in-code time-triggered work registrations."""
     return [
         DailyUtcScheduledCallablePlugin(
             name="auto_complete_single_event_polls_due_tomorrow",
             callback=lambda: auto_complete_single_event_polls_due_tomorrow(db),
-            hour=0,
-            minute=1,
+            hour=16,
+            minute=0,
+            schedule_timezone=ZoneInfo("Europe/London"),
         ),
         DailyUtcScheduledCallablePlugin(
             name="auto_complete_multi_option_polls_due_today",
