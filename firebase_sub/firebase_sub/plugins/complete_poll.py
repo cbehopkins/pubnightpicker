@@ -8,12 +8,18 @@ from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.my_types import ActionDict, PollId
-from firebase_sub.plugins.protocols import CompletePollDbHandler, EventPlugin
+from firebase_sub.plugins.protocols import CompletePollDbHandler
 from firebase_sub.push_contract import PushDedupeKeys
+from firebase_sub.runtime.service_adapter import (
+    AdapterBackedEventPlugin,
+    ServiceAdapter,
+    ServiceContext,
+    ServiceResult,
+)
 
 
-class CompletePollListenerPlugin(EventPlugin):
-    """Listener plugin that processes COMP_POLL events for completed polls."""
+class _CompletePollServiceAdapter(ServiceAdapter):
+    """Adapter implementation for completed poll notification processing."""
 
     def __init__(
         self,
@@ -45,32 +51,26 @@ class CompletePollListenerPlugin(EventPlugin):
     def name(self) -> str:
         return "complete_poll_listener"
 
-    def on_registered(self) -> None:
-        return
-
-    def on_unregistered(self) -> None:
-        return
-
     def set_pubs_list(self, pubs_list: PubsList) -> None:
         """Bind runtime pubs cache required by complete-poll handlers."""
         self._pubs_list = pubs_list
 
-    def filter(self, envelope: EventEnvelope) -> bool:
+    def prepare(self, envelope: EventEnvelope) -> ServiceContext | None:
         """Check if complete-poll actions still need to run for this event."""
         if envelope.doc is None or envelope.type != EventType.COMP_POLL:
-            return False
+            return None
 
         poll_id = envelope.document_id()
         if poll_id is None:
-            return False
+            return None
 
         poll_dict_raw = self._db_handler.poll_repo.get_poll(poll_id)
         if not isinstance(poll_dict_raw, dict):
-            return False
+            return None
         poll_dict = poll_dict_raw
 
         if "selected" not in poll_dict:
-            return False
+            return None
         pub_id = poll_dict["selected"]
 
         action_dict = self._db_handler.action_dict(poll_id)
@@ -79,15 +79,23 @@ class CompletePollListenerPlugin(EventPlugin):
             restaurant_id=poll_dict.get("restaurant"),
             restaurant_time=poll_dict.get("restaurant_time"),
         )
-        return self._action_manager.filter(
+        should_run = self._action_manager.filter(
             action_dict=action_dict,
             action_key=complete_action_key,
         )
+        if not should_run:
+            return None
 
-    def handle(self, envelope: EventEnvelope) -> None:
-        """Run complete-poll handler with retry semantics."""
+        return ServiceContext(
+            envelope=envelope,
+            entity_id=poll_id,
+            dedupe_key=f"complete_poll:{complete_action_key}",
+        )
+
+    def execute(self, context: ServiceContext) -> ServiceResult:
+        envelope = context.envelope
         if envelope.doc is None or envelope.type != EventType.COMP_POLL:
-            return
+            return ServiceResult(success=True)
 
         if self._pubs_list is None:
             raise RetryablePollDataNotReadyError(
@@ -95,16 +103,13 @@ class CompletePollListenerPlugin(EventPlugin):
             )
 
         self._retrying_handler(envelope.doc, self._pubs_list)
+        return ServiceResult(success=True)
 
-    def mark_done(self, envelope: EventEnvelope) -> None:
-        """Persist success state after handle."""
-        if envelope.doc is None or envelope.type != EventType.COMP_POLL:
-            return
+    def commit(self, context: ServiceContext, result: ServiceResult) -> None:
+        """Persist success state after execute."""
+        del result
 
-        poll_id = envelope.document_id()
-        if poll_id is None:
-            return
-
+        poll_id = context.entity_id
         pending_update = self._pending_updates.pop(poll_id, None)
         if not pending_update:
             return
@@ -159,3 +164,47 @@ class CompletePollListenerPlugin(EventPlugin):
             self._pending_updates.pop(poll_id, None)
         else:
             self._pending_updates[poll_id] = new_action_dict
+
+
+class CompletePollListenerPlugin(AdapterBackedEventPlugin):
+    """Listener plugin that processes COMP_POLL events for completed polls."""
+
+    def __init__(
+        self,
+        *,
+        db_handler: CompletePollDbHandler,
+        action_manager: ActionMan,
+        max_retries: int,
+        retry_delay_seconds: float,
+    ) -> None:
+        self._complete_poll_adapter = _CompletePollServiceAdapter(
+            db_handler=db_handler,
+            action_manager=action_manager,
+            max_retries=max_retries,
+            retry_delay_seconds=retry_delay_seconds,
+        )
+        super().__init__(self._complete_poll_adapter)
+
+    def name(self) -> str:
+        return "complete_poll_listener"
+
+    def on_registered(self) -> None:
+        return
+
+    def on_unregistered(self) -> None:
+        return
+
+    def set_pubs_list(self, pubs_list: PubsList) -> None:
+        """Bind runtime pubs cache required by complete-poll handlers."""
+        self._complete_poll_adapter.set_pubs_list(pubs_list)
+
+    def _run_complete_poll_handler(
+        self,
+        *,
+        document: DocumentSnapshot | None,
+        pubs_list: PubsList,
+    ) -> None:
+        self._complete_poll_adapter._run_complete_poll_handler(
+            document=document,
+            pubs_list=pubs_list,
+        )

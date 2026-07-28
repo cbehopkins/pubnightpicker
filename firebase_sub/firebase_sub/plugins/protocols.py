@@ -48,6 +48,8 @@ __all__ = [
     "PlannedPluginException",
     "UnexpectedPluginException",
     "PluginKind",
+    "EventWorkItemState",
+    "ScheduledWorkItemState",
     "Plugin",
     "ListenerPlugin",
     "ManagedListenerPlugin",
@@ -112,6 +114,29 @@ class UnexpectedPluginException(BasePluginException):
 class PluginKind(StrEnum):
     LISTENER = "listener"
     HOUSEKEEPING = "housekeeping"
+
+
+class EventWorkItemState(StrEnum):
+    """Lifecycle states for event-driven queue work items."""
+
+    ENQUEUED = "enqueued"
+    RUNNING = "running"
+    RETRY_SCHEDULED = "retry_scheduled"
+    COMPLETED = "completed"
+    TERMINAL_FAILED = "terminal_failed"
+    DEQUEUED = "dequeued"
+
+
+class ScheduledWorkItemState(StrEnum):
+    """Lifecycle states for time-triggered work items."""
+
+    REGISTERED = "registered"
+    SCHEDULED = "scheduled"
+    DUE = "due"
+    RUNNING = "running"
+    RESCHEDULED = "rescheduled"
+    COMPLETED = "completed"
+    TERMINAL_FAILED = "terminal_failed"
 
 
 class Plugin(ABC):
@@ -187,7 +212,8 @@ class EventPlugin(ListenerPlugin):
     3. mark_done: persist success state (if handle succeeded)
 
     This separates gate-checking, execution, and state persistence concerns,
-    making idempotency and retry logic explicit and testable.
+    making idempotency and retry logic explicit and testable. The work item is
+    not complete until mark_done succeeds.
 
     Event plugins must raise only exceptions derived from BasePluginException.
     """
@@ -243,7 +269,8 @@ class HousekeepingPlugin(Plugin):
 
     Housekeeping plugins are called on a regular schedule (currently a central
     tick) and perform background work like cleanup, data migration, or metric
-    aggregation.
+    aggregation. These are periodic maintenance tasks, not deadline-driven
+    business events.
 
     Design Notes:
     - Housekeeping plugins should be idempotent: running the same task multiple
@@ -287,6 +314,9 @@ class ScheduledHousekeepingPlugin(Protocol):
 
     Returning ``None`` from ``run_at()`` means the plugin is currently
     unscheduled/disabled.
+
+    These are time-triggered work items: they share the same runtime machinery
+    as maintenance tasks, but their lifecycle is deadline-driven.
 
     Contract:
     - Returned datetimes must be timezone-aware UTC datetimes.

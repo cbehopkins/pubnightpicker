@@ -10,6 +10,7 @@ from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.protocols import CompletePollDbHandler
+from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
 
 
 class _FakeDbHandler:
@@ -211,6 +212,7 @@ def test_complete_poll_mark_done_persists_action_state_after_handle():
 
     # Test that methods can be called (actual logic requires complex Firestore mocks)
     try:
+        assert plugin.filter(envelope) is True
         plugin.handle(envelope)
         plugin.mark_done(envelope)
     except (TypeError, AttributeError):
@@ -248,8 +250,69 @@ def test_complete_poll_handle_uses_bound_pubs_list():
 
     # Test that methods can be called with pubs_list bound
     try:
+        assert plugin.filter(envelope) is True
         plugin.handle(envelope)
         plugin.mark_done(envelope)
     except (TypeError, AttributeError, RetryablePollDataNotReadyError):
         # If mock setup is insufficient, that's OK - we're testing the refactoring, not Firestore mocks
         pass
+
+
+def test_complete_poll_dispatch_distinguishes_handler_failure() -> None:
+    db_handler: CompletePollDbHandler = _FakeDbHandler()
+    action_manager: ActionMan = _FakeActionManager()
+    plugin = CompletePollListenerPlugin(
+        db_handler=db_handler,
+        action_manager=action_manager,
+        max_retries=3,
+        retry_delay_seconds=0.0,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("handler failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.COMP_POLL, plugin)
+    envelope = EventEnvelope(
+        type=EventType.COMP_POLL,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="poll-fail")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected handler failure")
+    except EventWritebackError as exc:
+        raise AssertionError(f"Did not expect writeback error: {exc}")
+    except RuntimeError as exc:
+        assert str(exc) == "handler failed"
+
+
+def test_complete_poll_dispatch_wraps_writeback_failure() -> None:
+    db_handler: CompletePollDbHandler = _FakeDbHandler()
+    action_manager: ActionMan = _FakeActionManager()
+    plugin = CompletePollListenerPlugin(
+        db_handler=db_handler,
+        action_manager=action_manager,
+        max_retries=3,
+        retry_delay_seconds=0.0,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: None  # type: ignore[method-assign]
+    plugin.mark_done = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("writeback failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.COMP_POLL, plugin)
+    envelope = EventEnvelope(
+        type=EventType.COMP_POLL,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="poll-writeback")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected EventWritebackError")
+    except EventWritebackError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == "writeback failed"

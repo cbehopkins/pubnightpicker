@@ -9,6 +9,12 @@ from firebase_sub.runtime.config import (
 )
 from firebase_sub.runtime.job_queue import JobQueue
 from firebase_sub.runtime.queue_runner import QueueRunner
+from firebase_sub.runtime.service_adapter import (
+    AdapterBackedEventPlugin,
+    ServiceAdapter,
+    ServiceContext,
+    ServiceResult,
+)
 
 __all__ = [
     "AuthDeleteMode",
@@ -20,4 +26,8 @@ __all__ = [
     "PushMode",
     "QueueRunner",
     "RuntimeConfig",
+    "AdapterBackedEventPlugin",
+    "ServiceAdapter",
+    "ServiceContext",
+    "ServiceResult",
 ]

@@ -6,6 +6,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.chat_message import ChatMessageListenerPlugin
+from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
 
 
 class _FakeDbHandler:
@@ -59,7 +60,7 @@ def test_chat_message_filter_and_handle() -> None:
     ) as mock_push:
         plugin.handle(envelope)
     mock_push.assert_called_once_with(db_handler, "msg-2", document, dummy_run=True)
-    plugin.mark_done(envelope)
+    assert plugin.mark_done(envelope) is None
 
 
 def test_chat_message_filter_rejects_other_event_types() -> None:
@@ -70,3 +71,55 @@ def test_chat_message_filter_rejects_other_event_types() -> None:
     document = cast(DocumentSnapshot, SimpleNamespace(id="msg-3"))
 
     assert plugin.filter(EventEnvelope(type=EventType.PUSH, doc=document)) is False
+
+
+def test_chat_message_dispatch_distinguishes_handler_failure() -> None:
+    plugin = ChatMessageListenerPlugin(
+        db_handler=cast(object, _FakeDbHandler()),
+        dummy_run=True,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("handler failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.CHAT_MESSAGE, plugin)
+    envelope = EventEnvelope(
+        type=EventType.CHAT_MESSAGE,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="msg-fail")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected handler failure")
+    except EventWritebackError as exc:
+        raise AssertionError(f"Did not expect writeback error: {exc}")
+    except RuntimeError as exc:
+        assert str(exc) == "handler failed"
+
+
+def test_chat_message_dispatch_wraps_writeback_failure() -> None:
+    plugin = ChatMessageListenerPlugin(
+        db_handler=cast(object, _FakeDbHandler()),
+        dummy_run=True,
+    )
+    plugin.filter = lambda envelope: True  # type: ignore[method-assign]
+    plugin.handle = lambda envelope: None  # type: ignore[method-assign]
+    plugin.mark_done = lambda envelope: (_ for _ in ()).throw(
+        RuntimeError("writeback failed")
+    )  # type: ignore[method-assign]
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.CHAT_MESSAGE, plugin)
+    envelope = EventEnvelope(
+        type=EventType.CHAT_MESSAGE,
+        doc=cast(DocumentSnapshot, SimpleNamespace(id="msg-writeback")),
+    )
+
+    try:
+        registry.dispatch(envelope)
+        raise AssertionError("Expected EventWritebackError")
+    except EventWritebackError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == "writeback failed"

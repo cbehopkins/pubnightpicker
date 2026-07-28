@@ -13,7 +13,7 @@ _log = logging.getLogger(__name__)
 
 
 class PluginRuntime(AbstractContextManager["PluginRuntime"]):
-    """Context manager that owns listener + housekeeping plugin lifecycle."""
+    """Context manager that owns listener + periodic maintenance plugin lifecycle."""
 
     def __init__(
         self,
@@ -35,6 +35,7 @@ class PluginRuntime(AbstractContextManager["PluginRuntime"]):
         return self
 
     def run_housekeeping(self) -> None:
+        """Run one periodic maintenance cycle across registered plugins."""
         if self._housekeeping_runner is None:
             raise RuntimeError(
                 "PluginRuntime must be entered before running housekeeping"

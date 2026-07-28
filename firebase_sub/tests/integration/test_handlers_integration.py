@@ -28,6 +28,21 @@ def test_query_open_emails_returns_only_enabled(firestore_client):
 
 
 @pytest.mark.integration
+def test_complete_poll_action_dict_round_trip(firestore_client):
+    firestore_client.collection("comp_actions").document("poll-1").set(
+        {"email": [], "push": {"sent": False}}
+    )
+
+    handler = DbHandler()
+
+    assert handler.action_dict("poll-1") == {"email": [], "push": {"sent": False}}
+
+    handler.mark_done("poll-1", {"push": {"sent": True}})
+
+    assert handler.action_dict("poll-1") == {"email": [], "push": {"sent": True}}
+
+
+@pytest.mark.integration
 def test_query_personal_emails_returns_only_enabled(firestore_client):
     firestore_client.collection("users").document("u1").set(
         {

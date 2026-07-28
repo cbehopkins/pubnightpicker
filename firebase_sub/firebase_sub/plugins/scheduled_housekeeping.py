@@ -1,4 +1,10 @@
-"""Scheduled housekeeping runner for per-plugin next-run timestamps."""
+"""Time-triggered work runner for per-plugin next-run timestamps.
+
+Time-triggered work items are treated as a state machine with explicit states
+(`registered`, `scheduled`, `due`, `running`, `rescheduled`, `completed`,
+`terminal_failed`). These tasks share the same runtime machinery as periodic
+maintenance, but their lifecycle is deadline-driven rather than cleanup-driven.
+"""
 
 import heapq
 import logging
@@ -8,6 +14,7 @@ from typing import cast
 
 from firebase_sub.plugins.protocols import (
     HousekeepingPlugin,
+    ScheduledWorkItemState,
     PlannedPluginException,
     ScheduledHousekeepingPlugin,
     UnexpectedPluginException,
@@ -24,7 +31,11 @@ class _ScheduledEntry:
 
 
 class ScheduledHousekeepingRunner:
-    """Run scheduled housekeeping plugins inside the main runtime loop."""
+    """Run time-triggered work plugins inside the main runtime loop.
+
+    A scheduled plugin is registered, becomes due at its next run time, runs,
+    and is then rescheduled or marked complete depending on its next_run state.
+    """
 
     def __init__(self, plugins: list[HousekeepingPlugin] | None = None) -> None:
         self._queue: list[_ScheduledEntry] = []
@@ -47,7 +58,7 @@ class ScheduledHousekeepingRunner:
                 continue
             self._enqueue(plugin, next_run)
             _log.info(
-                "Scheduled housekeeping plugin %s at %s",
+                "Time-triggered plugin %s scheduled at %s",
                 plugin.name(),
                 next_run.isoformat(),
             )
@@ -66,42 +77,78 @@ class ScheduledHousekeepingRunner:
             entry = heapq.heappop(self._queue)
             plugin = entry.plugin
             _log.info(
-                "Scheduled housekeeping plugin due: %s at %s",
+                "Time-triggered plugin due: %s at %s",
                 plugin.name(),
                 entry.run_at.isoformat(),
             )
+            _log.debug(
+                "Scheduled work item state=%s plugin=%s",
+                ScheduledWorkItemState.DUE,
+                plugin.name(),
+            )
 
             try:
+                _log.debug(
+                    "Scheduled work item state=%s plugin=%s",
+                    ScheduledWorkItemState.RUNNING,
+                    plugin.name(),
+                )
                 plugin.run()
-                _log.info("Scheduled housekeeping plugin completed: %s", plugin.name())
+                _log.info("Time-triggered plugin completed: %s", plugin.name())
             except PlannedPluginException:
+                _log.debug(
+                    "Scheduled work item state=%s plugin=%s",
+                    ScheduledWorkItemState.TERMINAL_FAILED,
+                    plugin.name(),
+                )
                 _log.warning(
-                    "Scheduled housekeeping plugin planned failure: %s",
+                    "Time-triggered plugin planned failure: %s",
                     plugin.name(),
                     exc_info=True,
                 )
             except UnexpectedPluginException:
+                _log.debug(
+                    "Scheduled work item state=%s plugin=%s",
+                    ScheduledWorkItemState.TERMINAL_FAILED,
+                    plugin.name(),
+                )
                 _log.error(
-                    "Scheduled housekeeping plugin unexpected failure: %s",
+                    "Time-triggered plugin unexpected failure: %s",
                     plugin.name(),
                     exc_info=True,
                 )
             except Exception:
+                _log.debug(
+                    "Scheduled work item state=%s plugin=%s",
+                    ScheduledWorkItemState.TERMINAL_FAILED,
+                    plugin.name(),
+                )
                 _log.exception(
-                    "Scheduled housekeeping plugin uncaught failure: %s",
+                    "Time-triggered plugin uncaught failure: %s",
                     plugin.name(),
                 )
 
             after_run = current_time
             next_run = self._plugin_next_run(plugin, after_run)
             if next_run is None:
+                _log.debug(
+                    "Scheduled work item state=%s plugin=%s",
+                    ScheduledWorkItemState.COMPLETED,
+                    plugin.name(),
+                )
                 continue
             if next_run <= after_run:
                 # Prevent tight loops if a plugin returns a non-future schedule.
                 next_run = after_run + timedelta(seconds=1)
+            _log.debug(
+                "Scheduled work item state=%s plugin=%s next_run=%s",
+                ScheduledWorkItemState.RESCHEDULED,
+                plugin.name(),
+                next_run.isoformat(),
+            )
             self._enqueue(plugin, next_run)
             _log.info(
-                "Scheduled housekeeping plugin %s next run at %s",
+                "Time-triggered plugin %s next run at %s",
                 plugin.name(),
                 next_run.isoformat(),
             )
@@ -128,7 +175,7 @@ class ScheduledHousekeepingRunner:
             return None
         if next_run_raw.tzinfo is None:
             _log.error(
-                "Scheduled housekeeping plugin %s returned naive datetime; skipping",
+                "Time-triggered plugin %s returned naive datetime; skipping",
                 plugin.name(),
             )
             return None

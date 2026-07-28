@@ -11,7 +11,7 @@ _log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HousekeepingTask:
-    """A named housekeeping callback."""
+    """A named periodic maintenance callback."""
 
     name: str
     callback: Callable[[], None]
@@ -32,7 +32,7 @@ class IntervalSchedule:
 
 
 class HousekeepingRunner:
-    """Run housekeeping tasks whenever the schedule says a run is due."""
+    """Run periodic maintenance tasks whenever the schedule says a run is due."""
 
     def __init__(self, tasks: Sequence[HousekeepingTask], schedule: IntervalSchedule):
         self.tasks = list(tasks)
@@ -44,15 +44,15 @@ class HousekeepingRunner:
         if not self.schedule.is_due(current_time, self.last_run):
             return
 
-        _log.info("Housekeeping run started (%s tasks)", len(self.tasks))
+        _log.info("Periodic maintenance run started (%s tasks)", len(self.tasks))
         for task in self.tasks:
             try:
                 task.callback()
-                _log.info("Housekeeping task completed: %s", task.name)
+                _log.info("Periodic maintenance task completed: %s", task.name)
             except Exception:
-                _log.exception("Housekeeping task failed: %s", task.name)
+                _log.exception("Periodic maintenance task failed: %s", task.name)
         self.last_run = current_time
-        _log.info("Housekeeping run finished")
+        _log.info("Periodic maintenance run finished")
 
 
 class PeriodicTrigger:

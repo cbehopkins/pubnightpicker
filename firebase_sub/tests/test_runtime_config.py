@@ -9,8 +9,8 @@ from firebase_sub.runtime.config import (
 )
 
 
-def test_runtime_config_from_legacy_options_maps_dummy_flags_to_modes() -> None:
-    config = RuntimeConfig.from_legacy_options(
+def test_runtime_config_from_cli_options_maps_dummy_flags_to_modes() -> None:
+    config = RuntimeConfig.from_cli_options(
         dummy_email=True,
         dummy_push=False,
         housekeeping_interval_seconds=60,
@@ -36,7 +36,7 @@ def test_runtime_config_from_legacy_options_maps_dummy_flags_to_modes() -> None:
 
 
 def test_runtime_config_poll_history_min_date_respects_all_history() -> None:
-    config = RuntimeConfig.from_legacy_options(
+    config = RuntimeConfig.from_cli_options(
         dummy_email=False,
         dummy_push=True,
         housekeeping_interval_seconds=300,
@@ -54,7 +54,7 @@ def test_runtime_config_poll_history_min_date_respects_all_history() -> None:
 
 
 def test_runtime_config_poll_history_min_date_uses_lookback_days() -> None:
-    config = RuntimeConfig.from_legacy_options(
+    config = RuntimeConfig.from_cli_options(
         dummy_email=False,
         dummy_push=False,
         housekeeping_interval_seconds=120,
@@ -66,3 +66,22 @@ def test_runtime_config_poll_history_min_date_uses_lookback_days() -> None:
     )
 
     assert config.poll_history.min_date(today=date(2026, 5, 18)) == "2026-05-13"
+
+
+def test_runtime_config_from_cli_options_expected_mapping() -> None:
+    config = RuntimeConfig.from_cli_options(
+        dummy_email=True,
+        dummy_push=False,
+        housekeeping_interval_seconds=60,
+        housekeeping_cron=None,
+        all_history=False,
+        poll_lookback_days=14,
+        enable_real_auth_delete=False,
+        admin_delete_enabled=True,
+    )
+
+    assert config.email_mode is EmailMode.DRY_RUN
+    assert config.push_mode is PushMode.LIVE
+    assert config.auth_delete_mode is AuthDeleteMode.DRY_RUN
+    assert config.admin_delete_enabled is True
+    assert config.poll_history.mode is PollHistoryMode.RECENT

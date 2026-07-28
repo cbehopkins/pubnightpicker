@@ -73,7 +73,7 @@ class RuntimeConfig:
         return self.auth_delete_mode is AuthDeleteMode.LIVE
 
     @classmethod
-    def from_legacy_options(
+    def from_cli_options(
         cls,
         *,
         dummy_email: bool,

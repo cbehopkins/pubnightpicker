@@ -831,7 +831,7 @@ def test_maintain_event_recurrence_polls_continues_on_venue_error():
     assert db.document.called or True  # Process continued despite first error
 
 
-def test_auto_complete_single_event_polls_due_tomorrow_completes_single_option():
+def test_auto_complete_single_event_polls_due_today_completes_single_option():
     db = MagicMock()
     polls_collection = MagicMock()
     audit_collection = MagicMock()
@@ -861,7 +861,7 @@ def test_auto_complete_single_event_polls_due_tomorrow_completes_single_option()
 
     db.collection.side_effect = collection_side_effect
 
-    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 19))
+    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 20))
 
     poll_doc.reference.set.assert_called_once_with(
         {"completed": True, "selected": "event-a"},
@@ -871,7 +871,7 @@ def test_auto_complete_single_event_polls_due_tomorrow_completes_single_option()
     audit_collection.document.return_value.set.assert_called_once()
 
 
-def test_auto_complete_single_event_polls_due_tomorrow_skips_multi_option():
+def test_auto_complete_single_event_polls_due_today_skips_multi_option():
     db = MagicMock()
     polls_collection = MagicMock()
 
@@ -894,7 +894,7 @@ def test_auto_complete_single_event_polls_due_tomorrow_skips_multi_option():
 
     db.collection.return_value = polls_collection
 
-    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 19))
+    auto_complete_single_event_polls_due_tomorrow(db, today=date(2026, 5, 20))
 
     poll_doc.reference.set.assert_not_called()
 

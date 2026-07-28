@@ -6,6 +6,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client
 
 from firebase_sub.database.pubs_list import PubsList
+from firebase_sub.my_types import RetryableServiceError
 
 _log = logging.getLogger(__name__)
 
@@ -73,5 +74,8 @@ class NotificationAckMirrorHandler:
                 len(patch),
                 doc_id,
             )
-        except Exception:
+        except Exception as exc:
             _log.exception("Notification mirror failed for doc %s", doc_id)
+            raise RetryableServiceError(
+                f"notification mirror failed for doc {doc_id}"
+            ) from exc

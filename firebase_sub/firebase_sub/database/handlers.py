@@ -17,13 +17,19 @@ from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
 )
-from firebase_sub.my_types import EmailAddr, UserId
+from firebase_sub.my_types import (
+    ActionDict,
+    EmailAddr,
+    PollId,
+    RetryableServiceError,
+    UserId,
+)
 from firebase_sub.push_contract import PUSH_PREFERENCE_DEFAULTS
 
 _log = logging.getLogger(__name__)
 
 
-class RetryablePollDataNotReadyError(RuntimeError):
+class RetryablePollDataNotReadyError(RetryableServiceError):
     """Raised when event handling should retry because dependent data is not ready."""
 
 
@@ -105,6 +111,19 @@ class DbHandler:
     def pub_collection(self) -> CollectionReference:
         return self.db.collection("pubs")
 
+    def action_dict(self, poll_id: PollId) -> ActionDict:
+        action_document = cast(
+            Any, self.db.collection("comp_actions").document(poll_id)
+        )
+        action_snapshot = cast(DocumentSnapshot, action_document.get())
+        return action_snapshot.to_dict() or {}
+
+    def mark_done(self, poll_id: PollId, pending_update: ActionDict) -> None:
+        action_document = cast(
+            Any, self.db.collection("comp_actions").document(poll_id)
+        )
+        action_document.set(pending_update, merge=True)
+
     def query_personal_emails(self) -> Generator[tuple[EmailAddr, UserId], None, None]:
         """Query users who want personal email notifications (via personal email)."""
         yield from self.user_repo.query_users_by_email_preference(
@@ -142,14 +161,14 @@ class DbHandler:
                 )
                 user_payload = _snapshot_payload(user_snapshot)
                 if "webPushEnabled" not in user_payload:
-                    # Temporary rollout observability: missing preference now defaults off.
+                    # Missing master preference defaults to disabled for safety.
                     _log.warning(
                         "Skipping push endpoints for user %s because webPushEnabled is missing",
                         user_id,
                     )
                     user_preference_cache[user_id] = False
                 elif not bool(user_payload.get("webPushEnabled")):
-                    # Temporary rollout observability: explicit opt-out.
+                    # Explicit opt-out at the user level.
                     _log.info(
                         "Skipping push endpoints for user %s because webPushEnabled is false",
                         user_id,

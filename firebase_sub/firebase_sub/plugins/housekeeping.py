@@ -1,4 +1,4 @@
-"""Housekeeping plugin implementations.
+"""Periodic maintenance plugin implementations.
 
 Adapts existing HousekeepingTask callbacks to the HousekeepingPlugin protocol
 and provides a runner that enforces the plugin exception contract.
@@ -32,7 +32,7 @@ class HousekeepingTaskPlugin(HousekeepingPlugin):
 
 
 class HousekeepingCallablePlugin(HousekeepingPlugin):
-    """Housekeeping plugin backed by an explicit callback."""
+    """Periodic maintenance plugin backed by an explicit callback."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class HousekeepingCallablePlugin(HousekeepingPlugin):
 
 
 class DailyUtcScheduledCallablePlugin(HousekeepingCallablePlugin):
-    """Housekeeping callback scheduled at a fixed daily wall-clock time."""
+    """Time-triggered callback scheduled at a fixed daily wall-clock time."""
 
     def __init__(
         self,
@@ -96,7 +96,7 @@ class DailyUtcScheduledCallablePlugin(HousekeepingCallablePlugin):
 
 
 class HousekeepingPluginRunner:
-    """Runs all registered housekeeping plugins in sequence.
+    """Runs all registered periodic maintenance plugins in sequence.
 
     Exception contract:
     - ``PlannedPluginException``: logged as a warning; execution continues.
@@ -117,25 +117,25 @@ class HousekeepingPluginRunner:
             plugin.on_unregistered()
 
     def run_all(self) -> None:
-        _log.info("Housekeeping run started (%s tasks)", len(self._plugins))
+        _log.info("Periodic maintenance run started (%s tasks)", len(self._plugins))
         for plugin in self._plugins:
             try:
                 plugin.run()
-                _log.info("Housekeeping plugin completed: %s", plugin.name())
+                _log.info("Periodic maintenance plugin completed: %s", plugin.name())
             except PlannedPluginException:
                 _log.warning(
-                    "Housekeeping plugin planned failure: %s",
+                    "Periodic maintenance plugin planned failure: %s",
                     plugin.name(),
                     exc_info=True,
                 )
             except UnexpectedPluginException:
                 _log.error(
-                    "Housekeeping plugin unexpected failure: %s",
+                    "Periodic maintenance plugin unexpected failure: %s",
                     plugin.name(),
                     exc_info=True,
                 )
             except Exception:
                 _log.exception(
-                    "Housekeeping plugin uncaught failure: %s", plugin.name()
+                    "Periodic maintenance plugin uncaught failure: %s", plugin.name()
                 )
-        _log.info("Housekeeping run finished")
+        _log.info("Periodic maintenance run finished")
