@@ -130,7 +130,7 @@ def _poll_date(*, envelope: EventEnvelope, db_handler: NewPollDbHandler) -> str:
     if poll_id is None:
         return ""
 
-    # Fallback for legacy/test doubles where event snapshot has no payload.
+    # Fallback for snapshot-like docs where event payload is unavailable.
     poll_dict = db_handler.poll_repo.get_poll(poll_id)
     if isinstance(poll_dict, Mapping):
         raw_date = poll_dict.get("date")

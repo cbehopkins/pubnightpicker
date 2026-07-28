@@ -791,8 +791,8 @@ def test_chat_handler_short_circuits_when_message_already_processed():
     actions_ref.update.assert_not_called()
 
 
-def test_chat_handler_skips_legacy_notified_user_without_delivered_endpoints():
-    """Legacy actions docs with only notified users must still suppress re-delivery."""
+def test_chat_handler_legacy_notified_only_does_not_suppress_delivery():
+    """Legacy notified-only docs no longer suppress delivery without endpoint hashes."""
     users = [
         _user_doc("u1", web_push_enabled=True, push_prefs={"globalChat": True}),
         _user_doc("u2", web_push_enabled=True, push_prefs={"globalChat": True}),
@@ -817,7 +817,7 @@ def test_chat_handler_skips_legacy_notified_user_without_delivered_endpoints():
     with patch("firebase_sub.plugins.chat_push.send_chat_push", side_effect=fake_send):
         process_chat_message_push(handler, "msg-6b", msg)
 
-    assert "u1" not in recipients
+    assert "u1" in recipients
     assert "u2" in recipients
 
 

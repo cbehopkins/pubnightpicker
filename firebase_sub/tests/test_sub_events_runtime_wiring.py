@@ -157,13 +157,13 @@ def test_sub_events_uses_env_gate_for_admin_delete(monkeypatch):
 
     captured_calls: list[dict[str, object]] = []
 
-    def _fake_from_legacy_options(**kwargs):
+    def _fake_from_cli_options(**kwargs):
         captured_calls.append(kwargs)
         return _FakeRuntimeConfig()
 
     _patch_minimal_runtime(monkeypatch, module)
     monkeypatch.setattr(
-        module.RuntimeConfig, "from_legacy_options", _fake_from_legacy_options
+        module.RuntimeConfig, "from_cli_options", _fake_from_cli_options
     )
 
     monkeypatch.delenv("ENABLE_ADMIN_DELETE_REQUESTS", raising=False)
@@ -209,7 +209,7 @@ def test_sub_events_registers_canary_trigger(monkeypatch):
     _patch_minimal_runtime(monkeypatch, module)
     monkeypatch.setattr(
         module.RuntimeConfig,
-        "from_legacy_options",
+        "from_cli_options",
         lambda **kwargs: _FakeRuntimeConfig(),
     )
 
@@ -236,7 +236,7 @@ def test_sub_events_installs_and_restores_fail_fast_hook(monkeypatch):
     _patch_minimal_runtime(monkeypatch, module)
     monkeypatch.setattr(
         module.RuntimeConfig,
-        "from_legacy_options",
+        "from_cli_options",
         lambda **kwargs: _FakeRuntimeConfig(),
     )
 
@@ -310,7 +310,7 @@ def test_sub_events_exits_when_any_listener_healthcheck_reports_failure(monkeypa
     monkeypatch.setattr(module, "QueueRunner", _HealthcheckQueueRunner)
     monkeypatch.setattr(
         module.RuntimeConfig,
-        "from_legacy_options",
+        "from_cli_options",
         lambda **kwargs: _FakeRuntimeConfig(),
     )
 

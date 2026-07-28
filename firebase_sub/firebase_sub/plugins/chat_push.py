@@ -148,12 +148,6 @@ def process_chat_message_push(
         return
 
     already_delivered_eps = set(_string_list(actions_data.get("delivered_endpoints")))
-    legacy_notified_uids = set(_string_list(actions_data.get("notified")))
-    use_legacy_user_dedupe = (
-        actions_snap.exists
-        and "delivered_endpoints" not in actions_data
-        and bool(legacy_notified_uids)
-    )
 
     if scope_type == "event":
         payload = build_chat_event_payload(
@@ -179,8 +173,6 @@ def process_chat_message_push(
             if valid_ep is None:
                 continue
             if endpoint_hash(valid_ep) in already_delivered_eps:
-                continue
-            if use_legacy_user_dedupe and valid_ep.user_id in legacy_notified_uids:
                 continue
             endpoints.append(valid_ep)
 

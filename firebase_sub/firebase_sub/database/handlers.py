@@ -142,14 +142,14 @@ class DbHandler:
                 )
                 user_payload = _snapshot_payload(user_snapshot)
                 if "webPushEnabled" not in user_payload:
-                    # Temporary rollout observability: missing preference now defaults off.
+                    # Missing master preference defaults to disabled for safety.
                     _log.warning(
                         "Skipping push endpoints for user %s because webPushEnabled is missing",
                         user_id,
                     )
                     user_preference_cache[user_id] = False
                 elif not bool(user_payload.get("webPushEnabled")):
-                    # Temporary rollout observability: explicit opt-out.
+                    # Explicit opt-out at the user level.
                     _log.info(
                         "Skipping push endpoints for user %s because webPushEnabled is false",
                         user_id,

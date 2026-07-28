@@ -158,7 +158,6 @@ Idempotency and action tracking:
 
 - Message-level dedupe marker: `chat_push_actions/{message_id}.processed`.
 - Endpoint-level dedupe: `delivered_endpoints` array of endpoint hashes.
-- Legacy compatibility: falls back to `notified` UID dedupe for old docs.
 - During send, each successful endpoint append is persisted immediately, so partial progress survives retry/crash.
 
 Retry/error handling:
@@ -474,6 +473,40 @@ Idempotency storage in v2:
 3. Roll through poll services, chat, admin delete, periodic maintenance, and time-triggered work.
 4. Preserve existing collection layout while normalizing semantics and observability.
 5. Add architecture guardrails documenting frontend-owned vs backend-owned collections.
+
+## Current implementation status (2026-07-28)
+
+This section tracks where the codebase currently sits relative to the v2 plan.
+
+### Completed
+
+1. Queue retry taxonomy is class-first:
+  - `RetryableServiceError` is retried with backoff.
+  - `TerminalServiceError` is treated as terminal without retry.
+  - Unknown exceptions follow bounded retry budget then terminal failure.
+2. Queue lifecycle observability now includes explicit retry and terminal failure state logging with test coverage.
+3. Notification request flow is adapter-backed (`prepare/execute/commit`) and now records idempotency metadata in ack docs under a dedicated service metadata field.
+4. Poll listeners are adapter-converged:
+  - New poll listener migrated to adapter lifecycle.
+  - Complete poll listener migrated to adapter lifecycle while preserving pending writeback and pubs cache binding behavior.
+5. Time-triggered single-event auto-complete schedule is aligned to intended production behavior:
+  - Daily `16:00 Europe/London` same-day completion semantics.
+6. Chat push dedupe no longer uses legacy user-level fallback:
+  - `notified` is no longer used as a dedupe input.
+  - Endpoint-hash dedupe via `delivered_endpoints` is the sole dedupe path.
+7. Compatibility restart APIs and legacy runtime-config constructor wrappers were removed:
+  - `start_periodic_restart` compatibility shims removed from watch manager/pub list.
+  - `RuntimeConfig.from_legacy_options` removed in favor of `from_cli_options`.
+
+### In progress / follow-up
+
+1. Optional full-suite hardening is still recommended on each merge candidate branch.
+2. Some repo-level comments/TODOs remain outside sub-events runtime core (for example in handler/query) and can be handled as separate cleanup tasks.
+
+### Explicitly no longer applicable
+
+1. Legacy helper-based transient-classifier path in queue runner (exception-chain/FQCN matching) has been removed.
+2. Queue runner no longer depends on `_is_transient_runtime_error` helper for retry decisions.
 
 ## Explicitly deferred to v3
 

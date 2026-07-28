@@ -12,7 +12,7 @@ class PubsList:
     """Container for pub/venue documents with automatic Firestore sync.
 
     Maintains a dict-like interface for accessing pubs while delegating lifecycle
-    management (watch, restart) to an internal PollManager instance.
+    management (watch) to an internal PollManager instance.
 
     Usage:
         with PubsList(pub_collection) as pubs:
@@ -57,11 +57,6 @@ class PubsList:
     ) -> None:
         """Stop watching the pubs collection."""
         self._poll_manager.__exit__(exc_type, exc_val, exc_tb)
-
-    def start_periodic_restart(self, minutes: int) -> None:
-        """Retained for compatibility; periodic watch restarts are disabled."""
-        del minutes
-        raise NotImplementedError("Periodic watch restarts are disabled for PubsList.")
 
     def _add(self, document: DocumentSnapshot) -> None:
         from datetime import date

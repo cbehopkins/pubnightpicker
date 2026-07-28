@@ -66,7 +66,7 @@ def sub_events(
 
     configure_logging(loglevel, logfile)
 
-    runtime_config = RuntimeConfig.from_legacy_options(
+    runtime_config = RuntimeConfig.from_cli_options(
         dummy_email=dummy_email,
         dummy_push=dummy_push,
         housekeeping_interval_seconds=housekeeping_interval_seconds,
