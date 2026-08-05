@@ -2,7 +2,6 @@ from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.action_track import ActionMan
 from firebase_sub.common.retry import retry
 from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
@@ -10,6 +9,8 @@ from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.my_types import ActionDict, PollId
 from firebase_sub.plugins.protocols import CompletePollDbHandler
 from firebase_sub.push_contract import PushDedupeKeys
+from firebase_sub.runtime.idempotency import IdempotencyStore
+from firebase_sub.runtime.action_execution import PollActionExecutor
 from firebase_sub.runtime.service_adapter import (
     AdapterBackedEventPlugin,
     ServiceAdapter,
@@ -25,14 +26,16 @@ class _CompletePollServiceAdapter(ServiceAdapter):
         self,
         *,
         db_handler: CompletePollDbHandler,
-        action_manager: ActionMan,
+        action_executor: PollActionExecutor,
         max_retries: int,
         retry_delay_seconds: float,
+        idempotency_store: IdempotencyStore,
     ) -> None:
         self._db_handler = db_handler
-        self._action_manager = action_manager
+        self._action_executor = action_executor
         self._pubs_list: PubsList | None = None
         self._pending_updates: dict[PollId, ActionDict] = {}
+        self._idempotency_store = idempotency_store
 
         @retry(
             retry_errors=(RetryablePollDataNotReadyError,),
@@ -73,15 +76,14 @@ class _CompletePollServiceAdapter(ServiceAdapter):
             return None
         pub_id = poll_dict["selected"]
 
-        action_dict = self._db_handler.action_dict(poll_id)
         complete_action_key = PushDedupeKeys.complete_key(
             pub_id=pub_id,
             restaurant_id=poll_dict.get("restaurant"),
             restaurant_time=poll_dict.get("restaurant_time"),
         )
-        should_run = self._action_manager.filter(
-            action_dict=action_dict,
-            action_key=complete_action_key,
+        should_run = not self._idempotency_store.is_done(
+            entity_id=poll_id,
+            dedupe_key=complete_action_key,
         )
         if not should_run:
             return None
@@ -152,7 +154,7 @@ class _CompletePollServiceAdapter(ServiceAdapter):
             restaurant_id=poll_dict.get("restaurant"),
             restaurant_time=poll_dict.get("restaurant_time"),
         )
-        new_action_dict = self._action_manager.action_event(
+        new_action_dict = self._action_executor.action_event(
             action_dict=action_dict,
             action_key=complete_action_key,
             poll_id=poll_id,
@@ -167,21 +169,30 @@ class _CompletePollServiceAdapter(ServiceAdapter):
 
 
 class CompletePollListenerPlugin(AdapterBackedEventPlugin):
-    """Listener plugin that processes COMP_POLL events for completed polls."""
+    """Listener plugin that processes COMP_POLL events for completed polls.
+
+    This adapter-backed listener maps runtime lifecycle phases onto service
+    contracts:
+    - `prepare`: checks completion dedupe state via IdempotencyStore
+    - `execute`: runs completion notification side effects via PollActionExecutor
+    - `commit`: persists pending completion updates
+    """
 
     def __init__(
         self,
         *,
         db_handler: CompletePollDbHandler,
-        action_manager: ActionMan,
+        action_executor: PollActionExecutor,
         max_retries: int,
         retry_delay_seconds: float,
+        idempotency_store: IdempotencyStore,
     ) -> None:
         self._complete_poll_adapter = _CompletePollServiceAdapter(
             db_handler=db_handler,
-            action_manager=action_manager,
+            action_executor=action_executor,
             max_retries=max_retries,
             retry_delay_seconds=retry_delay_seconds,
+            idempotency_store=idempotency_store,
         )
         super().__init__(self._complete_poll_adapter)
 

@@ -33,9 +33,11 @@ from firebase_sub.plugins.protocols import (
     HousekeepingPlugin,
     ListenerPlugin,
 )
+from firebase_sub.runtime.action_execution import ActionManPollActionExecutor
 from firebase_sub.runtime.config import RuntimeConfig
 from firebase_sub.runtime.event_producers import EventProducer
 from firebase_sub.runtime.event_registry import EventRegistry
+from firebase_sub.runtime.idempotency import FirestoreActionManIdempotencyStore
 from firebase_sub.runtime.job_queue import JobQueue
 
 
@@ -61,16 +63,32 @@ def build_listener_plugins(
         dry_run=not runtime_config.enable_real_auth_delete,
         enable_real_auth_delete=runtime_config.enable_real_auth_delete,
     )
+    open_poll_store = FirestoreActionManIdempotencyStore(
+        action_manager=open_action_manager,
+        document_for_entity=lambda poll_id: db_handler.db.collection(
+            "open_actions"
+        ).document(poll_id),
+    )
+    open_poll_executor = ActionManPollActionExecutor(open_action_manager)
+    complete_poll_store = FirestoreActionManIdempotencyStore(
+        action_manager=complete_action_manager,
+        document_for_entity=lambda poll_id: db_handler.db.collection(
+            "comp_actions"
+        ).document(poll_id),
+    )
+    complete_poll_executor = ActionManPollActionExecutor(complete_action_manager)
     return [
         NewPollListenerPlugin(
             db_handler=db_handler,
-            action_manager=open_action_manager,
+            action_executor=open_poll_executor,
+            idempotency_store=open_poll_store,
         ),
         CompletePollListenerPlugin(
             db_handler=db_handler,
-            action_manager=complete_action_manager,
+            action_executor=complete_poll_executor,
             max_retries=comp_poll_max_retries,
             retry_delay_seconds=comp_poll_retry_delay_seconds,
+            idempotency_store=complete_poll_store,
         ),
         NotificationRequestListenerPlugin(
             notification_mirror=notification_mirror,

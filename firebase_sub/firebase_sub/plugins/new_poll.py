@@ -3,9 +3,11 @@ from typing import Any, cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.action_track import ActionMan
 from firebase_sub.event import EventEnvelope, EventType
+from firebase_sub.my_types import TerminalServiceError
 from firebase_sub.plugins.protocols import NewPollDbHandler
+from firebase_sub.runtime.action_execution import PollActionExecutor
+from firebase_sub.runtime.idempotency import IdempotencyStore
 from firebase_sub.runtime.service_adapter import (
     AdapterBackedEventPlugin,
     ServiceAdapter,
@@ -21,10 +23,12 @@ class _NewPollServiceAdapter(ServiceAdapter):
         self,
         *,
         db_handler: NewPollDbHandler,
-        action_manager: ActionMan,
+        action_executor: PollActionExecutor,
+        idempotency_store: IdempotencyStore,
     ) -> None:
         self._db_handler = db_handler
-        self._action_manager = action_manager
+        self._action_executor = action_executor
+        self._idempotency_store = idempotency_store
 
     def name(self) -> str:
         return "new_poll_listener"
@@ -42,9 +46,9 @@ class _NewPollServiceAdapter(ServiceAdapter):
         action_dict = action_snapshot.to_dict() or {}
         open_action_key = poll_id
 
-        if not self._action_manager.filter(
-            action_dict=action_dict,
-            action_key=open_action_key,
+        if self._idempotency_store.is_done(
+            entity_id=poll_id,
+            dedupe_key=open_action_key,
         ):
             return None
 
@@ -64,7 +68,7 @@ class _NewPollServiceAdapter(ServiceAdapter):
         action_dict = cast(dict[str, object], context.extras.get("action_dict", {}))
         poll_date = cast(str, context.extras.get("poll_date", ""))
 
-        self._action_manager.action_event(
+        self._action_executor.action_event(
             action_dict=action_dict,
             action_key=open_action_key,
             poll_id=poll_id,
@@ -75,34 +79,33 @@ class _NewPollServiceAdapter(ServiceAdapter):
     def commit(self, context: ServiceContext, result: ServiceResult) -> None:
         del result
         poll_id = context.entity_id
-        action_document = _action_document(self._db_handler, poll_id)
-        action_snapshot = _snapshot_get(action_document)
-        action_dict = action_snapshot.to_dict() or {}
-        new_action_dict = self._action_manager.mark_done(
-            action_dict=action_dict,
-            action_key=poll_id,
+        self._idempotency_store.mark_done(
+            entity_id=poll_id,
+            dedupe_key=poll_id,
         )
-        _document_set(action_document, new_action_dict, merge=True)
 
 
 class NewPollListenerPlugin(AdapterBackedEventPlugin):
     """Listener plugin that processes NEW_POLL events for open polls.
 
-    Implements EventPlugin contract with gated execution:
-    - filter: checks if the poll action needs to run (via ActionMan)
-    - handle: sends notifications (emails and push)
-    - mark_done: updates action document state
+    This adapter-backed listener maps runtime lifecycle phases onto service
+    contracts:
+    - `prepare`: checks if poll notifications are still pending via IdempotencyStore
+    - `execute`: dispatches notification side effects via PollActionExecutor
+    - `commit`: marks completion in IdempotencyStore
     """
 
     def __init__(
         self,
         *,
         db_handler: NewPollDbHandler,
-        action_manager: ActionMan,
+        action_executor: PollActionExecutor,
+        idempotency_store: IdempotencyStore,
     ) -> None:
         self._new_poll_adapter = _NewPollServiceAdapter(
             db_handler=db_handler,
-            action_manager=action_manager,
+            action_executor=action_executor,
+            idempotency_store=idempotency_store,
         )
         super().__init__(self._new_poll_adapter)
 
@@ -116,27 +119,35 @@ class NewPollListenerPlugin(AdapterBackedEventPlugin):
         return
 
 
+class MissingPollDateError(TerminalServiceError):
+    """Raised when a NEW_POLL event has no resolvable poll date."""
+
+
 def _poll_date(*, envelope: EventEnvelope, db_handler: NewPollDbHandler) -> str:
+    poll_id = envelope.document_id()
+    if poll_id is None:
+        raise MissingPollDateError("NEW_POLL event missing document id")
+
     if envelope.doc is not None:
         to_dict = getattr(envelope.doc, "to_dict", None)
         if callable(to_dict):
             doc_payload = to_dict()
             if isinstance(doc_payload, Mapping):
-                raw_date = doc_payload.get("date")
-                if isinstance(raw_date, str):
-                    return raw_date
-
-    poll_id = envelope.document_id()
-    if poll_id is None:
-        return ""
+                payload_map = cast(Mapping[str, object], doc_payload)
+                raw_date_obj = payload_map.get("date", None)
+                if isinstance(raw_date_obj, str):
+                    return raw_date_obj
 
     # Fallback for snapshot-like docs where event payload is unavailable.
     poll_dict = db_handler.poll_repo.get_poll(poll_id)
-    if isinstance(poll_dict, Mapping):
-        raw_date = poll_dict.get("date")
-        if isinstance(raw_date, str):
-            return raw_date
-    return ""
+    if poll_dict is not None:
+        poll_date = poll_dict.get("date")
+        if isinstance(poll_date, str):
+            return poll_date
+
+    raise MissingPollDateError(
+        f"NEW_POLL poll '{poll_id}' is missing required date"
+    )
 
 
 def _action_document(db_handler: NewPollDbHandler, poll_id: str) -> object:
@@ -150,12 +161,3 @@ def _snapshot_get(document_ref: object) -> DocumentSnapshot:
     if raw_snapshot is not None and hasattr(raw_snapshot, "to_dict"):
         return cast(DocumentSnapshot, raw_snapshot)
     raise TypeError("Expected synchronous DocumentSnapshot from Firestore get()")
-
-
-def _document_set(
-    document_ref: object,
-    payload: Mapping[str, object],
-    *,
-    merge: bool,
-) -> None:
-    cast(Any, document_ref).set(payload, merge=merge)

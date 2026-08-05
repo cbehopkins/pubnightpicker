@@ -3,11 +3,12 @@ from typing import cast
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from firebase_sub.action_track import ActionMan
 from firebase_sub.event import EventEnvelope, EventType
-from firebase_sub.plugins.new_poll import NewPollListenerPlugin
+from firebase_sub.my_types import TerminalServiceError
+from firebase_sub.plugins.new_poll import MissingPollDateError, NewPollListenerPlugin
 from firebase_sub.plugins.protocols import NewPollDbHandler
 from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
+from firebase_sub.runtime.idempotency import IdempotencyMetadata, IdempotencyStore
 
 
 class _FakeDbHandler:
@@ -66,13 +67,9 @@ class _FakeDocSnapshot:
         return self._payload
 
 
-class _FakeActionManager(ActionMan):
+class _FakeActionExecutor:
     def __init__(self) -> None:
-        super().__init__()
         self.calls: list[dict[str, str]] = []
-
-    def filter(self, action_dict: dict, action_key: str) -> bool:
-        return True
 
     def action_event(
         self, action_dict: dict, action_key: str, poll_id: str, poll_date: str
@@ -86,17 +83,51 @@ class _FakeActionManager(ActionMan):
             }
         )
 
-    def mark_done(self, action_dict: dict, action_key: str) -> dict:
-        return {}
+
+class _FakeIdempotencyStore(IdempotencyStore):
+    def __init__(self, *, done: bool = False) -> None:
+        self.done = done
+
+    def is_done(self, *, entity_id: str, dedupe_key: str) -> bool:
+        del entity_id, dedupe_key
+        return self.done
+
+    def mark_done(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata | None = None,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
+
+    def mark_retryable_failure(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
+
+    def mark_terminal_failure(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
 
 
 def test_new_poll_listener_initialization():
     """Test that the plugin can be initialized without errors."""
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
 
     assert plugin.name() == "new_poll_listener"
@@ -106,10 +137,11 @@ def test_new_poll_listener_initialization():
 def test_new_poll_listener_filter_accepts_new_poll_events():
     """Test that filter accepts NEW_POLL event type."""
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
     document = cast(DocumentSnapshot, SimpleNamespace(id="poll-1"))
     envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
@@ -126,10 +158,11 @@ def test_new_poll_listener_filter_accepts_new_poll_events():
 
 def test_new_poll_listener_handle_calls_action_manager():
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
     document = cast(DocumentSnapshot, SimpleNamespace(id="poll-2"))
     envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
@@ -137,7 +170,7 @@ def test_new_poll_listener_handle_calls_action_manager():
     assert plugin.filter(envelope) is True
     plugin.handle(envelope)
 
-    assert action_manager.calls == [
+    assert action_executor.calls == [
         {
             "action_key": "poll-2",
             "poll_id": "poll-2",
@@ -150,10 +183,11 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
     db_handler: NewPollDbHandler = _FakeDbHandler()
     db_handler.poll_repo = _FakePollRepo(poll=None)
 
-    action_manager = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
 
     document = cast(
@@ -168,7 +202,7 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
     assert plugin.filter(envelope) is True
     plugin.handle(envelope)
 
-    assert action_manager.calls == [
+    assert action_executor.calls == [
         {
             "action_key": "poll-3",
             "poll_id": "poll-3",
@@ -177,12 +211,63 @@ def test_new_poll_listener_uses_event_snapshot_date_when_poll_repo_unavailable()
     ]
 
 
-def test_new_poll_dispatch_distinguishes_handler_failure() -> None:
+def test_new_poll_listener_filter_raises_terminal_error_when_date_missing() -> None:
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager = _FakeActionManager()
+    db_handler.poll_repo = _FakePollRepo()
+    db_handler.poll_repo._poll = None
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=_FakeActionExecutor(),
+        idempotency_store=_FakeIdempotencyStore(),
+    )
+    document = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            id="poll-missing-date",
+            to_dict=lambda: {"completed": False},
+        ),
+    )
+    envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
+
+    try:
+        plugin.filter(envelope)
+        raise AssertionError("Expected MissingPollDateError")
+    except MissingPollDateError as exc:
+        assert "poll-missing-date" in str(exc)
+        assert isinstance(exc, TerminalServiceError)
+
+
+def test_new_poll_listener_filter_raises_terminal_error_when_repo_date_missing() -> None:
+    db_handler: NewPollDbHandler = _FakeDbHandler()
+    db_handler.poll_repo = _FakePollRepo(poll={"completed": "false"})
+    plugin = NewPollListenerPlugin(
+        db_handler=db_handler,
+        action_executor=_FakeActionExecutor(),
+        idempotency_store=_FakeIdempotencyStore(),
+    )
+    document = cast(
+        DocumentSnapshot,
+        SimpleNamespace(
+            id="poll-missing-repo-date",
+            to_dict=lambda: {"completed": False},
+        ),
+    )
+    envelope = EventEnvelope(type=EventType.NEW_POLL, doc=document)
+
+    try:
+        plugin.filter(envelope)
+        raise AssertionError("Expected MissingPollDateError")
+    except MissingPollDateError as exc:
+        assert "poll-missing-repo-date" in str(exc)
+
+
+def test_new_poll_dispatch_distinguishes_handler_failure() -> None:
+    db_handler: NewPollDbHandler = _FakeDbHandler()
+    action_executor = _FakeActionExecutor()
+    plugin = NewPollListenerPlugin(
+        db_handler=db_handler,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
     plugin.filter = lambda envelope: True  # type: ignore[method-assign]
     plugin.handle = lambda envelope: (_ for _ in ()).throw(
@@ -207,10 +292,11 @@ def test_new_poll_dispatch_distinguishes_handler_failure() -> None:
 
 def test_new_poll_dispatch_wraps_writeback_failure() -> None:
     db_handler: NewPollDbHandler = _FakeDbHandler()
-    action_manager = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = NewPollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
     )
     plugin.filter = lambda envelope: True  # type: ignore[method-assign]
     plugin.handle = lambda envelope: None  # type: ignore[method-assign]

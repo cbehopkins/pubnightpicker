@@ -65,8 +65,9 @@ class _NotificationRequestServiceAdapter(ServiceAdapter):
 class NotificationRequestListenerPlugin(AdapterBackedEventPlugin):
     """Listener plugin for notification request documents.
 
-    Completion state is written inline by the notification handlers themselves.
-    ``mark_done()`` remains as the lifecycle acknowledgment hook and is a no-op.
+    This adapter-backed listener applies `prepare/execute/commit` semantics.
+    Completion state is written inline by notification handlers during execute,
+    so commit is an acknowledgment no-op.
     """
 
     def __init__(

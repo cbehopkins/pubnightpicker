@@ -22,6 +22,20 @@ Current flow:
   - Interval/cron trigger calls `PluginRuntime.run_housekeeping` for periodic maintenance plugins.
   - `ScheduledHousekeepingRunner` runs time-triggered work plugins from the queue loop.
 
+### Listener boundary shape (current)
+
+Listener orchestration now follows a shared contract boundary:
+
+1. `AdapterBackedEventPlugin` bridges `filter -> handle -> mark_done` onto `prepare -> execute -> commit`.
+2. Poll listeners depend on two explicit contracts:
+  - `PollActionExecutor` for side-effect execution.
+  - `IdempotencyStore` for gating and completion writeback.
+3. `ActionMan` remains in use, but behind adapters:
+  - `ActionManPollActionExecutor` for callback execution.
+  - `FirestoreActionManIdempotencyStore` for action-document idempotency persistence.
+
+This keeps listener classes independent from direct `ActionMan` coupling while preserving existing runtime behavior.
+
 ## Queue Lifecycle Model
 
 The queue should be treated as a work-item state machine, not just a transport pipe. A work item is not complete until its runtime work and its writeback/idempotency state both succeed.
@@ -37,7 +51,7 @@ Event-driven work items move through these states:
 5. `terminal_failed` - the item failed with a non-retryable error or exhausted retries.
 6. `dequeued` - the item has fully completed its lifecycle and is no longer active in the queue.
 
-The important boundary is between `handle()` succeeding and `mark_done()` succeeding. For plugins that persist through ActionMan/Firestore, successful runtime work is not considered complete until the writeback has also succeeded.
+The important boundary is between `handle()` succeeding and `mark_done()` succeeding. For plugins that persist through an `IdempotencyStore` (currently ActionMan-backed for poll flows), successful runtime work is not considered complete until the writeback has also succeeded.
 
 ### Time-triggered work items
 
@@ -71,17 +85,18 @@ This is why the document distinguishes periodic maintenance from time-triggered 
 
 Idempotency and action tracking:
 
-- Uses `ActionMan` + `ActionTrack` over `open_actions/{poll_id}`.
+- Uses `IdempotencyStore` over `open_actions/{poll_id}` at the listener boundary.
+- Current runtime implementation uses `FirestoreActionManIdempotencyStore` under that contract.
 - Action key is `poll_id`.
 - `filter()` checks if any bound action type is still missing for this key.
 - `mark_done()` currently marks all bound actions as completed for the key.
 
 Retry/error handling:
 
-- Callback-level retry signal uses `CallbackExceptionRetry`.
+- Callback-level retry signal uses `CallbackExceptionRetry` in the current `ActionMan`-backed executor implementation.
 - In `ActionMan.run()`, `CallbackExceptionRetry` is logged and the specific action is left unmarked in memory.
 - `CallbackExceptionIgnore` is logged and the action is marked as done.
-- `NewPollListenerPlugin.handle()` does not raise on callback retry exceptions (they are handled inside `ActionMan`).
+- `NewPollListenerPlugin.execute()` delegates side effects to the action executor contract.
 
 ### Service: Complete Poll Notifications
 
@@ -99,7 +114,8 @@ Retry/error handling:
 
 Idempotency and action tracking:
 
-- Uses `ActionMan` + `ActionTrack` over `comp_actions/{poll_id}`.
+- Uses `IdempotencyStore` over `comp_actions/{poll_id}` at the listener boundary.
+- Current runtime implementation uses `FirestoreActionManIdempotencyStore` under that contract.
 - Action key is `PushDedupeKeys.complete_key(pub_id, restaurant_id, restaurant_time)`.
 - This key changes when winner/restaurant/time changes, enabling reschedule behavior.
 - `handle()` computes a pending update and stores it in `_pending_updates[poll_id]`.
@@ -109,7 +125,7 @@ Retry/error handling:
 
 - Extra handler-level retry decorator retries `RetryablePollDataNotReadyError` (e.g., pubs cache not ready).
 - Retry count and delay are configurable (`comp_poll_max_retries`, `comp_poll_retry_delay_seconds`).
-- Push/email callbacks may raise `CallbackExceptionRetry`; `ActionMan` logs and leaves action unmarked.
+- Push/email callbacks may raise `CallbackExceptionRetry`; current `ActionMan`-backed executor logs and leaves action unmarked.
 - Unmarked actions remain pending for future runs.
 
 ### Service: Notification Request Processor
@@ -215,11 +231,12 @@ Retry/error handling:
 - Non-transient exceptions propagate and stop the runtime.
 - Retry classification follows the exception chain, so transient causes wrapped by runtime errors (including `EventWritebackError`) are still retryable.
 
-### Action callback semantics (`ActionMan`)
+### Action callback semantics (`ActionMan` backend)
 
 - `CallbackExceptionRetry` means leave action unmarked and log.
 - `CallbackExceptionIgnore` means mark as done despite callback failure.
 - Callbacks run per action type, with per-action dummy-run override support.
+- In current runtime wiring, this behavior is exposed to listeners through `PollActionExecutor` and `IdempotencyStore` contracts.
 
 ## Periodic Maintenance and Time-Triggered Work
 
@@ -489,6 +506,8 @@ This section tracks where the codebase currently sits relative to the v2 plan.
 4. Poll listeners are adapter-converged:
   - New poll listener migrated to adapter lifecycle.
   - Complete poll listener migrated to adapter lifecycle while preserving pending writeback and pubs cache binding behavior.
+  - Poll listener constructors now require `PollActionExecutor` and `IdempotencyStore` contracts.
+  - Listener classes no longer import `ActionMan` directly.
 5. Time-triggered single-event auto-complete schedule is aligned to intended production behavior:
   - Daily `16:00 Europe/London` same-day completion semantics.
 6. Chat push dedupe no longer uses legacy user-level fallback:

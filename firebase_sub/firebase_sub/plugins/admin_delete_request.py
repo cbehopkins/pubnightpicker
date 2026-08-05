@@ -59,9 +59,9 @@ class _AdminDeleteRequestServiceAdapter(ServiceAdapter):
 class AdminDeleteRequestListenerPlugin(AdapterBackedEventPlugin):
     """Listener plugin for admin delete request documents.
 
+    This adapter-backed listener applies `prepare/execute/commit` semantics.
     The admin-delete handler owns the request state machine and persists status
-    transitions inline. ``mark_done()`` remains as the lifecycle acknowledgment
-    hook and is a no-op.
+    transitions inline during execute, so commit is an acknowledgment no-op.
     """
 
     def __init__(

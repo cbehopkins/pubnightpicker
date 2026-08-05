@@ -57,8 +57,9 @@ class _ChatMessageServiceAdapter(ServiceAdapter):
 class ChatMessageListenerPlugin(AdapterBackedEventPlugin):
     """Listener plugin for chat message push processing.
 
-    Delivery state is written inline during chat push processing. ``mark_done()``
-    is retained as the lifecycle acknowledgment hook and is a no-op.
+    This adapter-backed listener applies `prepare/execute/commit` semantics.
+    Delivery state is written inline during execute, so commit is an
+    acknowledgment no-op.
     """
 
     def __init__(

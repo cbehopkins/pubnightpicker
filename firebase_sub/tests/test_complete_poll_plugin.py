@@ -4,13 +4,13 @@ from typing import cast
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from google.cloud.firestore_v1.query import Query
 
-from firebase_sub.action_track import ActionMan
 from firebase_sub.database.handlers import RetryablePollDataNotReadyError
 from firebase_sub.database.pubs_list import PubsList
 from firebase_sub.event import EventEnvelope, EventType
 from firebase_sub.plugins.complete_poll import CompletePollListenerPlugin
 from firebase_sub.plugins.protocols import CompletePollDbHandler
 from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
+from firebase_sub.runtime.idempotency import IdempotencyMetadata, IdempotencyStore
 
 
 class _FakeDbHandler:
@@ -25,8 +25,46 @@ class _FakeDbHandler:
         return cast(Query, SimpleNamespace(on_snapshot=lambda _cb: None))
 
 
-class _FakeActionManager(ActionMan):
-    pass
+class _FakeActionExecutor:
+    def action_event(self, *args, **kwargs):
+        del args, kwargs
+        return {}
+
+
+class _FakeIdempotencyStore(IdempotencyStore):
+    def __init__(self, *, done: bool = False) -> None:
+        self.done = done
+
+    def is_done(self, *, entity_id: str, dedupe_key: str) -> bool:
+        del entity_id, dedupe_key
+        return self.done
+
+    def mark_done(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata | None = None,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
+
+    def mark_retryable_failure(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
+
+    def mark_terminal_failure(
+        self,
+        *,
+        entity_id: str,
+        dedupe_key: str,
+        metadata: IdempotencyMetadata,
+    ) -> None:
+        del entity_id, dedupe_key, metadata
 
 
 class _FakeDocSnapshot:
@@ -101,11 +139,11 @@ def test_complete_poll_listener_filter_accepts_comp_poll_events():
         action_doc={"email": []},
         poll_doc={"selected": "pub-1", "restaurant": None, "restaurant_time": None},
     )
-    action_manager = ActionMan()
-    action_manager.bind("email", lambda *args, **kwargs: None)
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=cast(CompletePollDbHandler, db_handler),
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -126,10 +164,11 @@ def test_complete_poll_listener_filter_accepts_comp_poll_events():
 def test_complete_poll_listener_filter_rejects_other_event_types():
     """Test that filter rejects non-COMP_POLL event types."""
     db_handler: CompletePollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -142,10 +181,11 @@ def test_complete_poll_listener_filter_rejects_other_event_types():
 def test_complete_poll_listener_initialization():
     """Test that the plugin can be initialized without errors."""
     db_handler: CompletePollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -161,11 +201,11 @@ def test_complete_poll_filter_returns_true_when_action_pending():
         action_doc={"email": []},
         poll_doc={"selected": "pub-1", "restaurant": None, "restaurant_time": None},
     )
-    action_manager = ActionMan()
-    action_manager.bind("email", lambda *args, **kwargs: None)
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=cast(CompletePollDbHandler, db_handler),
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -196,11 +236,11 @@ def test_complete_poll_mark_done_persists_action_state_after_handle():
             "restaurant_time": None,
         },
     )
-    action_manager = ActionMan()
-    action_manager.bind("email", lambda *args, **kwargs: None)
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=cast(CompletePollDbHandler, db_handler),
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -233,11 +273,11 @@ def test_complete_poll_handle_uses_bound_pubs_list():
             "restaurant_time": None,
         },
     )
-    action_manager = ActionMan()
-    action_manager.bind("email", lambda *args, **kwargs: None)
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=cast(CompletePollDbHandler, db_handler),
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -260,10 +300,11 @@ def test_complete_poll_handle_uses_bound_pubs_list():
 
 def test_complete_poll_dispatch_distinguishes_handler_failure() -> None:
     db_handler: CompletePollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
@@ -290,10 +331,11 @@ def test_complete_poll_dispatch_distinguishes_handler_failure() -> None:
 
 def test_complete_poll_dispatch_wraps_writeback_failure() -> None:
     db_handler: CompletePollDbHandler = _FakeDbHandler()
-    action_manager: ActionMan = _FakeActionManager()
+    action_executor = _FakeActionExecutor()
     plugin = CompletePollListenerPlugin(
         db_handler=db_handler,
-        action_manager=action_manager,
+        action_executor=action_executor,
+        idempotency_store=_FakeIdempotencyStore(),
         max_retries=3,
         retry_delay_seconds=0.0,
     )
