@@ -4,7 +4,7 @@ from typing import cast
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from firebase_sub.event import EventEnvelope, EventType
-from firebase_sub.runtime.event_registry import EventRegistry
+from firebase_sub.runtime.event_registry import EventRegistry, EventWritebackError
 from firebase_sub.runtime.service_adapter import (
     AdapterBackedEventPlugin,
     ServiceContext,
@@ -45,6 +45,12 @@ class _ExplodingExecuteAdapter(_FakeAdapter):
     def execute(self, context: ServiceContext) -> ServiceResult:
         del context
         raise RuntimeError("execute failed")
+
+
+class _ExplodingCommitAdapter(_FakeAdapter):
+    def commit(self, context: ServiceContext, result: ServiceResult) -> None:
+        del context, result
+        raise RuntimeError("commit failed")
 
 
 def test_adapter_backed_plugin_dispatch_success_path() -> None:
@@ -97,3 +103,28 @@ def test_adapter_backed_plugin_propagates_execute_failure() -> None:
     assert adapter.prepared == ["req-err"]
     assert adapter.executed == []
     assert adapter.committed == []
+    assert plugin._prepared == {}  # noqa: SLF001
+    assert plugin._results == {}  # noqa: SLF001
+
+
+def test_adapter_backed_plugin_cleans_state_when_commit_fails() -> None:
+    adapter = _ExplodingCommitAdapter()
+    plugin = AdapterBackedEventPlugin(adapter)
+
+    registry = EventRegistry()
+    registry.subscribe(EventType.PUSH, plugin)
+
+    document = cast(DocumentSnapshot, SimpleNamespace(id="req-commit-err"))
+
+    try:
+        registry.dispatch(EventEnvelope(type=EventType.PUSH, doc=document))
+        raise AssertionError("Expected commit failure")
+    except EventWritebackError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == "commit failed"
+
+    assert adapter.prepared == ["req-commit-err"]
+    assert adapter.executed == ["req-commit-err"]
+    assert adapter.committed == []
+    assert plugin._prepared == {}  # noqa: SLF001
+    assert plugin._results == {}  # noqa: SLF001

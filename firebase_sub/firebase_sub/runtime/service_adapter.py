@@ -9,8 +9,12 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from firebase_sub.event import EventEnvelope
-from firebase_sub.runtime.idempotency import IdempotencyStore
 from firebase_sub.plugins.protocols import EventPlugin
+from firebase_sub.runtime.idempotency import IdempotencyStore
+
+
+def _new_extras_dict() -> dict[str, Any]:
+    return {}
 
 
 @dataclass(slots=True)
@@ -24,7 +28,7 @@ class ServiceContext:
     attempt_count: int = 0
     next_attempt_at: datetime | None = None
     last_error: Exception | None = None
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, Any] = field(default_factory=_new_extras_dict)
 
 
 @dataclass(slots=True)
@@ -35,7 +39,7 @@ class ServiceResult:
     retryable: bool = False
     terminal: bool = False
     error: Exception | None = None
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, Any] = field(default_factory=_new_extras_dict)
 
 
 class ServiceAdapter(Protocol):
@@ -43,15 +47,19 @@ class ServiceAdapter(Protocol):
 
     def name(self) -> str:
         """Return a human-readable service name."""
+        ...
 
     def prepare(self, envelope: EventEnvelope) -> ServiceContext | None:
         """Build and return context for execution, or None to skip."""
+        ...
 
     def execute(self, context: ServiceContext) -> ServiceResult:
         """Run side effects for a prepared work item and return result metadata."""
+        ...
 
     def commit(self, context: ServiceContext, result: ServiceResult) -> None:
         """Persist completion/writeback state after successful execute."""
+        ...
 
 
 class AdapterBackedEventPlugin(EventPlugin):
@@ -70,10 +78,11 @@ class AdapterBackedEventPlugin(EventPlugin):
         return self._adapter.name()
 
     def filter(self, envelope: EventEnvelope) -> bool:
+        key = _envelope_key(envelope)
+        self._clear_key(key)
         context = self._adapter.prepare(envelope)
         if context is None:
             return False
-        key = _envelope_key(envelope)
         self._prepared[key] = context
         return True
 
@@ -84,7 +93,11 @@ class AdapterBackedEventPlugin(EventPlugin):
             raise RuntimeError(
                 "AdapterBackedEventPlugin.handle called before successful filter"
             )
-        self._results[key] = self._adapter.execute(context)
+        try:
+            self._results[key] = self._adapter.execute(context)
+        except Exception:
+            self._clear_key(key)
+            raise
 
     def mark_done(self, envelope: EventEnvelope) -> None:
         key = _envelope_key(envelope)
@@ -99,6 +112,10 @@ class AdapterBackedEventPlugin(EventPlugin):
                 "AdapterBackedEventPlugin.mark_done called before handle result"
             )
         self._adapter.commit(context, result)
+
+    def _clear_key(self, key: tuple[str, str | None]) -> None:
+        self._prepared.pop(key, None)
+        self._results.pop(key, None)
 
 
 def _envelope_key(envelope: EventEnvelope) -> tuple[str, str | None]:
