@@ -113,7 +113,9 @@ def test_notification_request_dispatch_distinguishes_handler_failure() -> None:
         ),
     )
     plugin.filter = lambda envelope: True  # type: ignore[method-assign]
-    plugin.handle = lambda envelope: (_ for _ in ()).throw(RuntimeError("handler failed"))  # type: ignore[method-assign]
+    plugin.handle = (  # type: ignore[method-assign]
+        lambda envelope: (_ for _ in ()).throw(RuntimeError("handler failed"))
+    )
 
     registry = EventRegistry()
     registry.subscribe(EventType.PUSH, plugin)
@@ -140,7 +142,9 @@ def test_notification_request_dispatch_wraps_writeback_failure() -> None:
     )
     plugin.filter = lambda envelope: True  # type: ignore[method-assign]
     plugin.handle = lambda envelope: None  # type: ignore[method-assign]
-    plugin.mark_done = lambda envelope: (_ for _ in ()).throw(RuntimeError("writeback failed"))  # type: ignore[method-assign]
+    plugin.mark_done = (  # type: ignore[method-assign]
+        lambda envelope: (_ for _ in ()).throw(RuntimeError("writeback failed"))
+    )
 
     registry = EventRegistry()
     registry.subscribe(EventType.PUSH, plugin)
