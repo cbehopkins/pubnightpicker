@@ -1,7 +1,5 @@
 """Shared helpers for tests that run against Firebase emulators."""
 
-from __future__ import annotations
-
 import firebase_admin
 import google.oauth2.credentials
 

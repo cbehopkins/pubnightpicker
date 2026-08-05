@@ -21,9 +21,18 @@ from firebase_sub.runtime.event_registry import EventRegistry
 from firebase_sub.runtime.job_queue import JobQueue
 
 _log = logging.getLogger(__name__)
+
+_TRANSIENT_EXCEPTION_FQCNS = {
+    "google.auth.exceptions.TransportError",
+    "requests.exceptions.ConnectionError",
+    "urllib3.exceptions.MaxRetryError",
+    "urllib3.exceptions.NameResolutionError",
+    "socket.gaierror",
+    "grpc.RpcError",
+    "grpc._channel._InactiveRpcError",
+}
 _DEFAULT_REQUEUE_BASE_DELAY_SECONDS = 0.1
 _DEFAULT_REQUEUE_MAX_DELAY_SECONDS = 5.0
-_DEFAULT_UNKNOWN_ERROR_MAX_RETRIES = 3
 
 
 @dataclass(order=True)
@@ -60,7 +69,6 @@ class QueueRunner:
         scheduled_runner: ScheduledRunnerProtocol | None = None,
         requeue_base_delay_seconds: float = _DEFAULT_REQUEUE_BASE_DELAY_SECONDS,
         requeue_max_delay_seconds: float = _DEFAULT_REQUEUE_MAX_DELAY_SECONDS,
-        unknown_error_max_retries: int = _DEFAULT_UNKNOWN_ERROR_MAX_RETRIES,
     ) -> None:
         self._queue = event_queue
         self._healthcheck_interval_seconds = healthcheck_interval_seconds
@@ -72,9 +80,7 @@ class QueueRunner:
             self._requeue_base_delay_seconds,
             requeue_max_delay_seconds,
         )
-        self._unknown_error_max_retries = max(0, unknown_error_max_retries)
         self._retry_attempts: dict[tuple[str, str | None], int] = {}
-        self._unknown_retry_attempts: dict[tuple[str, str | None], int] = {}
         self._retry_queue: list[_RetryEntry] = []
         self._retry_sequence = 0
 
@@ -115,45 +121,10 @@ class QueueRunner:
                     envelope.document_id(),
                 )
                 self._registry.dispatch(envelope)
-            except RetryableServiceError as exc:
-                next_attempt = self._retry_attempts.get(event_key, 0) + 1
-                self._retry_attempts[event_key] = next_attempt
-                self._unknown_retry_attempts.pop(event_key, None)
-                backoff_seconds = min(
-                    self._requeue_max_delay_seconds,
-                    _retry_backoff_seconds(
-                        attempt=next_attempt,
-                        base_delay_seconds=self._requeue_base_delay_seconds,
-                    ),
-                )
-                _log.warning(
-                    "Event work item state=%s event=%s doc_id=%s; "
-                    "scheduling retry attempt=%s in %.3fs: %s",
-                    EventWorkItemState.RETRY_SCHEDULED,
-                    event.type,
-                    envelope.document_id(),
-                    next_attempt,
-                    backoff_seconds,
-                    exc,
-                    exc_info=True,
-                )
-                self._schedule_retry(event=event, delay_seconds=backoff_seconds)
-                continue
-            except TerminalServiceError as exc:
-                _log.error(
-                    "Event work item state=%s event=%s doc_id=%s; terminal error: %s",
-                    EventWorkItemState.TERMINAL_FAILED,
-                    event.type,
-                    envelope.document_id(),
-                    exc,
-                    exc_info=True,
-                )
-                raise
             except Exception as exc:
-                next_attempt = self._unknown_retry_attempts.get(event_key, 0) + 1
-                if next_attempt <= self._unknown_error_max_retries:
-                    self._unknown_retry_attempts[event_key] = next_attempt
-                    self._retry_attempts.pop(event_key, None)
+                if _is_transient_runtime_error(exc):
+                    next_attempt = self._retry_attempts.get(event_key, 0) + 1
+                    self._retry_attempts[event_key] = next_attempt
                     backoff_seconds = min(
                         self._requeue_max_delay_seconds,
                         _retry_backoff_seconds(
@@ -163,33 +134,19 @@ class QueueRunner:
                     )
                     _log.warning(
                         "Event work item state=%s event=%s doc_id=%s; "
-                        "unknown error retry attempt=%s/%s in %.3fs: %s",
+                        "scheduling retry attempt=%s in %.3fs: %s",
                         EventWorkItemState.RETRY_SCHEDULED,
                         event.type,
                         envelope.document_id(),
                         next_attempt,
-                        self._unknown_error_max_retries,
                         backoff_seconds,
                         exc,
                         exc_info=True,
                     )
                     self._schedule_retry(event=event, delay_seconds=backoff_seconds)
                     continue
-
-                _log.error(
-                    "Event work item state=%s event=%s doc_id=%s; "
-                    "unknown error retry budget exhausted attempts=%s: %s",
-                    EventWorkItemState.TERMINAL_FAILED,
-                    event.type,
-                    envelope.document_id(),
-                    next_attempt - 1,
-                    exc,
-                    exc_info=True,
-                )
-                self._unknown_retry_attempts.pop(event_key, None)
                 raise
             self._retry_attempts.pop(event_key, None)
-            self._unknown_retry_attempts.pop(event_key, None)
             _log.debug(
                 "Event work item state=%s event=%s doc_id=%s",
                 EventWorkItemState.COMPLETED,
@@ -223,6 +180,46 @@ class QueueRunner:
         if not self._retry_queue:
             return None
         return max((self._retry_queue[0].run_at - now).total_seconds(), 0.0)
+
+
+def _is_transient_runtime_error(exc: BaseException) -> bool:
+    """Return True for retryable runtime failures.
+
+    We first respect explicit service taxonomy:
+    - RetryableServiceError -> retry
+    - TerminalServiceError -> do not retry
+
+    Then we apply FQCN transient matching for infrastructure/network errors.
+    We walk ``__cause__``/``__context__`` because wrappers are common.
+    """
+    visited: set[int] = set()
+    pending: list[BaseException] = [exc]
+
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+
+        if isinstance(current, TerminalServiceError):
+            return False
+        if isinstance(current, RetryableServiceError):
+            return True
+
+        for exception_type in type(current).__mro__:
+            fqcn = f"{exception_type.__module__}.{exception_type.__name__}"
+            if fqcn in _TRANSIENT_EXCEPTION_FQCNS:
+                return True
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            pending.append(context)
+
+    return False
 
 
 def _log_event(event: Event) -> None:

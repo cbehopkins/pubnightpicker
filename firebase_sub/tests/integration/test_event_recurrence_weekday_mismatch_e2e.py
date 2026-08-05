@@ -8,8 +8,6 @@ Expected behavior:
 For "3rd Wednesday in May", the computed next occurrence must be Wednesday.
 """
 
-from __future__ import annotations
-
 from datetime import date
 from pathlib import Path
 

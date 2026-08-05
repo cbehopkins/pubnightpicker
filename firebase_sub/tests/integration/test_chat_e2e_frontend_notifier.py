@@ -6,8 +6,6 @@ This test intentionally avoids direct calls to chat_message_push_handler and ins
 3) Asserts outcomes via chat_push_actions documents in Firestore.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
