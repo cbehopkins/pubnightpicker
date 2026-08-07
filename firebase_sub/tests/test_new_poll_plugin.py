@@ -237,7 +237,9 @@ def test_new_poll_listener_filter_raises_terminal_error_when_date_missing() -> N
         assert isinstance(exc, TerminalServiceError)
 
 
-def test_new_poll_listener_filter_raises_terminal_error_when_repo_date_missing() -> None:
+def test_new_poll_listener_filter_raises_terminal_error_when_repo_date_missing() -> (
+    None
+):
     db_handler: NewPollDbHandler = _FakeDbHandler()
     db_handler.poll_repo = _FakePollRepo(poll={"completed": "false"})
     plugin = NewPollListenerPlugin(

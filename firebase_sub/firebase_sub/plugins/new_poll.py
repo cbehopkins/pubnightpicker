@@ -145,9 +145,7 @@ def _poll_date(*, envelope: EventEnvelope, db_handler: NewPollDbHandler) -> str:
         if isinstance(poll_date, str):
             return poll_date
 
-    raise MissingPollDateError(
-        f"NEW_POLL poll '{poll_id}' is missing required date"
-    )
+    raise MissingPollDateError(f"NEW_POLL poll '{poll_id}' is missing required date")
 
 
 def _action_document(db_handler: NewPollDbHandler, poll_id: str) -> object:
