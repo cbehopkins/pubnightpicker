@@ -1,0 +1,303 @@
+# CDD: Cell Store
+
+## Purpose
+
+The Cell Store is the persistence layer used by Cellar to maintain the current state of Cells.
+
+The Store is the authoritative source of persisted Cell state.
+
+The Store is responsible for ensuring that Cell lifecycle transitions requested by Cellar are persisted correctly.
+
+The Store does not execute Cells or understand application behaviour.
+
+---
+
+## Responsibilities
+
+The Store is responsible for:
+
+* persisting newly created Cells;
+* retrieving runnable Cells;
+* atomically claiming Cells for execution;
+* deleting completed Cells;
+* recovering claimed Cells after restart;
+* providing access to persisted Cell data for inspection and administration.
+
+The Store is not responsible for:
+
+* generating CellIDs;
+* executing Handlers;
+* decoding Payloads;
+* deciding retry policy;
+* emitting Notices;
+* scheduling policy.
+
+---
+
+## Stored Entity
+
+The Store persists Cells.
+
+Conceptually:
+
+```go
+type Cell struct {
+    ID          CellID
+    HandlerName HandlerName
+    Payload     []byte
+
+    State       CellState
+    NotBefore   *time.Time
+}
+```
+
+The Store treats Payload as opaque bytes.
+
+The Store does not understand the type represented by Payload.
+
+---
+
+## Cell Lifecycle Ownership
+
+The Store does not own lifecycle decisions.
+
+Cellar decides when lifecycle transitions should occur.
+
+The Store provides the persistence primitives required to make those transitions safe.
+
+Lifecycle:
+
+```text
+READY
+  |
+  | Cellar Scheduler
+  |
+  v
+CLAIMED
+  |
+  | Cellar Worker
+  |
+  v
+DELETED
+```
+
+Recovery:
+
+```text
+CLAIMED
+  |
+  | Cellar startup recovery
+  |
+  v
+READY
+```
+
+---
+
+## Required Operations
+
+Conceptually, the Store provides:
+
+```go
+type Store interface {
+
+    Add(Cell) error
+
+    ClaimNext(now time.Time) (Cell, bool, error)
+
+    Delete(CellID) error
+
+    Recover() error
+}
+```
+
+Additional inspection operations may exist:
+
+```go
+List() ([]Cell, error)
+
+Get(CellID) (Cell, error)
+```
+
+These operations support debugging and administration.
+
+---
+
+## Adding Cells
+
+When Cellar creates a Cell:
+
+1. Cellar obtains a CellID from the Allocator.
+2. Cellar constructs the Cell.
+3. The Store persists the Cell.
+
+The Store does not generate identifiers.
+
+The Store does not modify the Cell contents.
+
+---
+
+## Claiming Cells
+
+The Scheduler requires an atomic operation:
+
+```text
+Find runnable Cell
+        +
+Transition READY -> CLAIMED
+        +
+Return Cell
+```
+
+The Store must ensure that only one Scheduler action can successfully claim a given Cell.
+
+A Cell is runnable when:
+
+```text
+State == READY
+
+AND
+
+(NotBefore == NULL OR NotBefore <= now)
+```
+
+---
+
+## Deleting Cells
+
+Deletion is terminal.
+
+When a Handler result requires completion:
+
+```text
+CLAIMED -> DELETED
+```
+
+Cellar requests deletion from the Store.
+
+Deleted Cells no longer participate in execution.
+
+---
+
+## Recovery
+
+On startup, Cellar requests recovery of unfinished work.
+
+The Store supports:
+
+```text
+CLAIMED -> READY
+```
+
+Recovery does not distinguish between:
+
+* panic;
+* process termination;
+* power failure;
+* unexpected shutdown.
+
+All claimed Cells are treated as incomplete execution.
+
+---
+
+## Transaction Requirements
+
+The Store must provide atomicity for lifecycle-critical operations.
+
+In particular:
+
+### Claim
+
+The following must behave as one operation:
+
+```text
+SELECT runnable Cell
+
+UPDATE state READY -> CLAIMED
+
+RETURN Cell
+```
+
+Multiple competing claims for the same Cell must not occur.
+
+---
+
+## Payload Handling
+
+Payloads are opaque.
+
+The Store stores:
+
+```go
+[]byte
+```
+
+and does not:
+
+* decode;
+* validate;
+* inspect;
+* modify.
+
+Payload interpretation belongs to the registered Codec.
+
+---
+
+## Implementation
+
+The initial Store implementation may use a relational database.
+
+The initial design targets:
+
+* single Cellar process;
+* single Scheduler;
+* low throughput;
+* simple recovery.
+
+Distributed storage semantics are not required.
+
+---
+
+## Testing
+
+The Store should support tests for:
+
+* creating Cells;
+* retrieving runnable Cells;
+* claiming Cells atomically;
+* deleting Cells;
+* recovering claimed Cells;
+* handling duplicate IDs;
+* handling concurrent access.
+
+A test Store implementation may be provided for unit tests.
+
+---
+
+## Non-goals
+
+The V0 Store does not provide:
+
+* distributed coordination;
+* multi-Scheduler locking;
+* event sourcing;
+* execution history;
+* retry history;
+* payload storage separate from Cells;
+* business queries.
+
+---
+
+## Future Considerations
+
+Future versions may introduce:
+
+* execution history tables;
+* durable Notice storage;
+* advanced indexing;
+* alternative persistence engines;
+* distributed execution support.
+
+These should not change the Store's core responsibility:
+
+> Persist and safely transition Cell state.
