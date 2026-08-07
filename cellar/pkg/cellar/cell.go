@@ -1,11 +1,37 @@
 // Package cellar defines the public API for durable Cell execution primitives.
 package cellar
 
-// Context carries execution-scoped values for cell runtimes.
-type Context interface{}
+import "time"
 
-// Cell represents a durable executable unit managed by the runtime.
-type Cell interface {
-	ID() string
-	Run(ctx Context) (Result, error)
+// CellID is an opaque runtime-owned identifier for a cell.
+type CellID string
+
+// HandlerName identifies the registered handler for a persisted cell.
+type HandlerName string
+
+// CellState is the persisted lifecycle state of an active cell.
+type CellState string
+
+const (
+	// CellStateReady is eligible for scheduling when NotBefore permits.
+	CellStateReady CellState = "READY"
+	// CellStateClaimed is currently owned by the runtime for execution.
+	CellStateClaimed CellState = "CLAIMED"
+)
+
+// Cell is the persisted execution primitive managed by Cellar.
+type Cell struct {
+	ID          CellID
+	HandlerName HandlerName
+	Payload     []byte
+
+	State     CellState
+	NotBefore *time.Time
+}
+
+// CellRequest describes new work to be persisted by the store.
+type CellRequest struct {
+	HandlerName HandlerName
+	Payload     []byte
+	NotBefore   *time.Time
 }
