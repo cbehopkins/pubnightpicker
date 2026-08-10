@@ -503,3 +503,214 @@ The operational interface prevents accidental lifecycle violations.
 ## Administrative power is separate
 
 Debugging requires powerful tools, but those tools must be explicitly separate from normal execution.
+
+## Application Transaction Participation
+
+The Store provides the persistence boundary between Cellar and the underlying database.
+
+In addition to Cellar-owned persistence, the Store may execute application persistence work as part of Cell completion.
+
+The purpose is to allow:
+
+```text
+Application state changes
++
+Cellar state changes
+```
+
+to be committed atomically.
+
+---
+
+## Execution Completion
+
+The Store provides an operation conceptually equivalent to:
+
+```go
+CommitExecution(
+    completed CellID,
+    additions []CellRequest,
+    applicationWork ApplicationWork,
+) error
+```
+
+The exact Go types may vary in the implementation.
+
+The operation is atomic.
+
+Conceptually:
+
+```text
+BEGIN
+
+applicationWork
+
+complete completed Cell
+
+create additions
+
+COMMIT
+```
+
+If the transaction cannot commit, none of these changes become durable.
+
+---
+
+## Application Transaction API
+
+`ApplicationWork` represents database operations requested by the application.
+
+The API should remain as close as practical to the native transaction API of the underlying database.
+
+Cellar should not provide an ORM or application-specific persistence abstraction.
+
+For a V0 SQLite implementation, the preferred design is an API closely corresponding to the transaction facilities provided by Go's database API.
+
+Conceptually:
+
+```go
+type ApplicationTx interface {
+    ExecContext(...)
+    QueryContext(...)
+    QueryRowContext(...)
+}
+```
+
+The exact signatures should follow the underlying database API rather than inventing a parallel abstraction.
+
+The Store owns the transaction and supplies the transaction object to the application work.
+
+---
+
+## Transaction Ownership
+
+The Store owns:
+
+* transaction creation;
+* transaction lifetime;
+* transaction commit;
+* transaction rollback.
+
+Application code does not:
+
+* call `BEGIN`;
+* call `COMMIT`;
+* call `ROLLBACK`.
+
+Application code only performs operations against the transaction supplied by Cellar.
+
+The transaction must not escape the completion operation.
+
+---
+
+## Cellar-Owned State
+
+The Store remains the sole authority over Cellar lifecycle state.
+
+Application transaction work must not directly modify Cellar-owned tables.
+
+Cellar-owned database objects use the reserved namespace:
+
+```text
+_cellar_*
+```
+
+V0 does not enforce this restriction programmatically.
+
+---
+
+## Existing Store Operations
+
+The Store continues to expose first-class lifecycle operations for Cellar itself.
+
+These include the concepts already defined for:
+
+* adding Cells;
+* claiming runnable Cells;
+* completing execution;
+* retrying execution;
+* recovering claimed Cells;
+* listing active Cells.
+
+The Store must not expose a generic lifecycle-state mutation operation through the normal Store interface.
+
+Administrative mutation remains part of `DebuggableStore`.
+
+---
+
+## Atomicity Requirement
+
+`CommitExecution` must provide all-or-nothing semantics.
+
+Given:
+
+```text
+completed Cell
+new Cells
+application persistence work
+```
+
+the Store must ensure that either:
+
+```text
+all changes commit
+```
+
+or:
+
+```text
+no changes commit
+```
+
+A partial completion is not a valid Store outcome.
+
+---
+
+## Store Failure
+
+Failure during an execution completion operation is a fatal runtime error in V0.
+
+Examples include:
+
+* database becoming unwritable;
+* completed Cell not existing;
+* invalid Cell lifecycle state;
+* Cell ID collision;
+* failure to commit the transaction.
+
+The Store must report the failure.
+
+The Runtime is responsible for shutting down Cellar.
+
+---
+
+## Concurrency
+
+The Store implementation must be safe for the concurrent operations performed by Cellar.
+
+In particular:
+
+* multiple Workers may complete different Cells concurrently;
+* the Scheduler may claim Cells while Workers complete other Cells;
+* Store locking/transaction semantics must preserve Cell lifecycle invariants.
+
+The Store implementation must not rely on the assumption that only one Worker exists.
+
+V0 may use SQLite's normal transaction and locking behaviour.
+
+---
+
+## DebuggableStore
+
+The normal Store interface must not expose arbitrary Cell mutation.
+
+A separate `DebuggableStore` interface may expose administrative operations such as:
+
+* inspecting Cells;
+* forcing state changes;
+* deleting Cells;
+* modifying persisted Cell contents.
+
+These operations are intended for use while Cellar is not running.
+
+They are administrative overrides rather than normal runtime operations.

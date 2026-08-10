@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -10,6 +11,16 @@ import (
 
 	"cellar/pkg/cellar"
 )
+
+func TestStoreDBAccessorReturnsUnderlyingConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	if store.DB() == nil {
+		t.Fatal("Store.DB() = nil, want underlying database connection")
+	}
+}
 
 func TestStorePersistsAcrossReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
@@ -122,6 +133,139 @@ func TestStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 	}
 }
 
+func TestStoreCompleteAppliesApplicationWorkAtomically(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	_, err = store.db.Exec(`CREATE TABLE app_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("CREATE TABLE app_state error = %v", err)
+	}
+
+	err = store.Complete(
+		parent.ID,
+		[]cellar.CellRequest{{HandlerName: "child"}},
+		cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
+			return tx.Exec(`INSERT INTO app_state (id, value) VALUES (?, ?)`, "one", "ok")
+		}),
+		cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
+			return tx.Exec(`INSERT INTO app_state (id, value) VALUES (?, ?)`, "two", "ok")
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	if _, err := store.Get(parent.ID); err != cellar.ErrCellNotFound {
+		t.Fatalf("Get(parent) err = %v, want ErrCellNotFound", err)
+	}
+
+	var count int
+	err = store.db.QueryRow(`SELECT COUNT(*) FROM app_state`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query app_state count error = %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("app_state rows = %d, want 2", count)
+	}
+}
+
+func TestStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	ids, err := store.Add([]cellar.CellRequest{{HandlerName: "ready"}, {HandlerName: "claimed"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	claimed, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", claimed, ok, err)
+	}
+	if claimed.ID != ids[0] {
+		t.Fatalf("ClaimNext().ID = %q, want %q", claimed.ID, ids[0])
+	}
+
+	if err := store.Recover(); err != nil {
+		t.Fatalf("Recover() error = %v", err)
+	}
+
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("ListActive() error = %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("len(ListActive()) = %d, want 2", len(active))
+	}
+	for _, cell := range active {
+		if cell.State != cellar.CellStateReady {
+			t.Fatalf("state after Recover() = %q, want %q", cell.State, cellar.CellStateReady)
+		}
+	}
+}
+
+func TestStoreCompleteRollsBackOnApplicationWorkError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	_, err = store.db.Exec(`CREATE TABLE app_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("CREATE TABLE app_state error = %v", err)
+	}
+
+	err = store.Complete(parent.ID, nil, cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
+		execErr := tx.Exec(`INSERT INTO app_state (id, value) VALUES (?, ?)`, "one", "ok")
+		if execErr != nil {
+			return execErr
+		}
+		return errors.New("boom")
+	}))
+	if err == nil {
+		t.Fatal("Complete() error = nil, want application work failure")
+	}
+
+	got, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if got.State != cellar.CellStateClaimed {
+		t.Fatalf("Get(parent).State = %q, want %q", got.State, cellar.CellStateClaimed)
+	}
+
+	var count int
+	err = store.db.QueryRow(`SELECT COUNT(*) FROM app_state`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query app_state count error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app_state rows = %d, want 0", count)
+	}
+}
+
 func TestInspectorIntegrationWithSQLiteStore(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
@@ -161,7 +305,7 @@ func TestInspectorIntegrationWithSQLiteStore(t *testing.T) {
 func mustOpenStore(t *testing.T, dbPath string) *Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout("+defaultBusyTimeout+")")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout("+defaultBusyTimeout+")&_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v", err)
 	}

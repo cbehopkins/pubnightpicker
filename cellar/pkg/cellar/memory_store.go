@@ -72,7 +72,7 @@ func (s *MemoryStore) ClaimNext(now time.Time) (Cell, bool, error) {
 }
 
 // Complete atomically deletes the claimed parent and adds zero or more children.
-func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest) error {
+func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest, applicationWork ...ApplicationWork) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -82,6 +82,15 @@ func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest) error {
 	}
 	if parent.State != CellStateClaimed {
 		return ErrCellNotClaimed
+	}
+
+	for _, work := range applicationWork {
+		if work == nil {
+			continue
+		}
+		if err := work(noopApplicationTx{}); err != nil {
+			return err
+		}
 	}
 
 	_, newCells, err := s.buildNewCellsLocked(additions)
@@ -279,5 +288,19 @@ func validateCellForPersistence(cell Cell) error {
 	if cell.State != CellStateReady && cell.State != CellStateClaimed {
 		return fmt.Errorf("invalid cell state: %q", cell.State)
 	}
+	return nil
+}
+
+type noopApplicationTx struct{}
+
+func (noopApplicationTx) Exec(query string, args ...any) error {
+	return nil
+}
+
+func (noopApplicationTx) Query(query string, args ...any) (ApplicationRows, error) {
+	return nil, nil
+}
+
+func (noopApplicationTx) QueryRow(query string, args ...any) ApplicationRow {
 	return nil
 }

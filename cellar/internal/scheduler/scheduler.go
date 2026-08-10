@@ -33,7 +33,7 @@ func NewScheduler(store cellar.SchedulerStore, dispatcher Dispatcher, workers in
 }
 
 // Run repeatedly claims and dispatches work until the context is cancelled.
-func (e *Scheduler) Run(ctx context.Context) {
+func (s *Scheduler) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -41,13 +41,13 @@ func (e *Scheduler) Run(ctx context.Context) {
 		default:
 		}
 
-		cell, ok, err := e.store.ClaimNext(time.Now())
+		cell, ok, err := s.store.ClaimNext(time.Now())
 		if err != nil || !ok {
-			time.Sleep(e.pollDelay)
+			time.Sleep(s.pollDelay)
 			continue
 		}
 
-		if err := e.dispatcher.Dispatch(ctx, cell); err != nil {
+		if err := s.dispatcher.Dispatch(ctx, cell); err != nil {
 			continue
 		}
 	}

@@ -48,7 +48,7 @@ func Open(path string, allocator cellar.CellIDAllocator) (*Store, error) {
 		return nil, errors.New("path is required")
 	}
 
-	dsn := path + "?_pragma=busy_timeout(" + defaultBusyTimeout + ")"
+	dsn := path + "?_pragma=busy_timeout(" + defaultBusyTimeout + ")&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -65,6 +65,14 @@ func Open(path string, allocator cellar.CellIDAllocator) (*Store, error) {
 // Close closes the underlying SQLite connection.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// DB returns the underlying SQLite database connection for application-level access.
+func (s *Store) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
 }
 
 // Add persists one or more READY cells atomically.
@@ -173,7 +181,7 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 }
 
 // Complete atomically deletes a claimed cell and adds replacement cells.
-func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest) error {
+func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, applicationWork ...cellar.ApplicationWork) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -182,6 +190,15 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest) e
 
 	if err := ensureClaimed(tx, cellID); err != nil {
 		return err
+	}
+
+	for _, work := range applicationWork {
+		if work == nil {
+			continue
+		}
+		if err := work(sqlTxAdapter{tx: tx}); err != nil {
+			return err
+		}
 	}
 
 	for _, req := range additions {
@@ -339,6 +356,8 @@ func (s *Store) ForceDelete(id cellar.CellID) error {
 
 func (s *Store) initSchema() error {
 	_, err := s.db.Exec(`
+		PRAGMA busy_timeout = 5000;
+		PRAGMA journal_mode = WAL;
 		CREATE TABLE IF NOT EXISTS cells (
 			id TEXT PRIMARY KEY,
 			handler_name TEXT NOT NULL,
@@ -440,6 +459,55 @@ func timeOrNil(value *time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+type sqlTxAdapter struct {
+	tx *sql.Tx
+}
+
+func (a sqlTxAdapter) Exec(query string, args ...any) error {
+	_, err := a.tx.Exec(query, args...)
+	return err
+}
+
+func (a sqlTxAdapter) Query(query string, args ...any) (cellar.ApplicationRows, error) {
+	rows, err := a.tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return sqlRowsAdapter{rows: rows}, nil
+}
+
+func (a sqlTxAdapter) QueryRow(query string, args ...any) cellar.ApplicationRow {
+	return sqlRowAdapter{row: a.tx.QueryRow(query, args...)}
+}
+
+type sqlRowsAdapter struct {
+	rows *sql.Rows
+}
+
+func (a sqlRowsAdapter) Close() error {
+	return a.rows.Close()
+}
+
+func (a sqlRowsAdapter) Next() bool {
+	return a.rows.Next()
+}
+
+func (a sqlRowsAdapter) Scan(dest ...any) error {
+	return a.rows.Scan(dest...)
+}
+
+func (a sqlRowsAdapter) Err() error {
+	return a.rows.Err()
+}
+
+type sqlRowAdapter struct {
+	row *sql.Row
+}
+
+func (a sqlRowAdapter) Scan(dest ...any) error {
+	return a.row.Scan(dest...)
 }
 
 func payloadOrEmpty(payload []byte) []byte {

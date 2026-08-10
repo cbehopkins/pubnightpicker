@@ -15,7 +15,7 @@ var (
 type Store interface {
 	Add(requests []CellRequest) ([]CellID, error)
 	ClaimNext(now time.Time) (Cell, bool, error)
-	Complete(cellID CellID, additions []CellRequest) error
+	Complete(cellID CellID, additions []CellRequest, applicationWork ...ApplicationWork) error
 	Retry(cellID CellID, notBefore *time.Time) error
 	Recover() error
 	ListActive() ([]Cell, error)
