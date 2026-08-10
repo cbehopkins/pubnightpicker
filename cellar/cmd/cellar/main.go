@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"cellar/internal/sqlite"
 	"cellar/pkg/cellar"
 )
 
@@ -36,30 +38,31 @@ func runInspect(args []string) error {
 	fs.SetOutput(os.Stderr)
 
 	var inputPath string
+	var sqlitePath string
 	var id string
 	var jsonHandlers string
 
 	fs.StringVar(&inputPath, "input", "", "path to JSON snapshot of active cells")
+	fs.StringVar(&sqlitePath, "sqlite", "", "path to SQLite database")
 	fs.StringVar(&id, "id", "", "optional cell ID to inspect")
 	fs.StringVar(&jsonHandlers, "json-handlers", "", "comma-separated handler names to decode as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if inputPath == "" {
-		return errors.New("-input is required")
+	if inputPath == "" && sqlitePath == "" {
+		return errors.New("one of -input or -sqlite is required")
+	}
+	if inputPath != "" && sqlitePath != "" {
+		return errors.New("-input and -sqlite are mutually exclusive")
 	}
 
-	cells, err := loadCellsSnapshot(inputPath)
+	store, err := buildInspectStore(inputPath, sqlitePath)
 	if err != nil {
 		return err
 	}
-
-	store := cellar.NewMemoryStore(nil)
-	for _, cell := range cells {
-		if err := store.ForceUpdate(cell); err != nil {
-			return fmt.Errorf("load snapshot cell %s: %w", cell.ID, err)
-		}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
 	}
 
 	inspector := cellar.NewCellInspector()
@@ -94,7 +97,36 @@ func runInspect(args []string) error {
 
 func printUsage(out *os.File) {
 	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  cellar inspect -input <cells.json> [-id <cell-id>] [-json-handlers handlerA,handlerB]")
+	fmt.Fprintln(out, "  cellar inspect (-input <cells.json> | -sqlite <cells.db>) [-id <cell-id>] [-json-handlers handlerA,handlerB]")
+}
+
+func buildInspectStore(inputPath, sqlitePath string) (cellar.DebuggableStore, error) {
+	if sqlitePath != "" {
+		db, err := sql.Open("sqlite", sqlitePath)
+		if err != nil {
+			return nil, err
+		}
+
+		store, err := sqlite.NewStore(db, nil)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		return store, nil
+	}
+
+	cells, err := loadCellsSnapshot(inputPath)
+	if err != nil {
+		return nil, err
+	}
+
+	store := cellar.NewMemoryStore(nil)
+	for _, cell := range cells {
+		if err := store.ForceUpdate(cell); err != nil {
+			return nil, fmt.Errorf("load snapshot cell %s: %w", cell.ID, err)
+		}
+	}
+	return store, nil
 }
 
 func loadCellsSnapshot(path string) ([]cellar.Cell, error) {

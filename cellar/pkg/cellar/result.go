@@ -20,3 +20,11 @@ type Retry struct {
 }
 
 func (Retry) isResult() {}
+
+// ErrorResult represents a handler or runtime failure that should be surfaced.
+type ErrorResult struct {
+	Message string
+	Err     error
+}
+
+func (ErrorResult) isResult() {}
