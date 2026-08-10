@@ -57,12 +57,23 @@ A simple setup with SQLite looks like this:
 
 ```go
 import (
+    "context"
     "database/sql"
     "log"
+    "time"
 
-    "cellar/internal/sqlite"
+    publicsqlite "cellar/pkg/sqlite"
     "cellar/pkg/cellar"
 )
+
+type runtimeDispatcher struct {
+    worker *cellar.Worker
+}
+
+func (d runtimeDispatcher) Dispatch(ctx context.Context, cell cellar.Cell) error {
+    _ = d.worker.Run(ctx, cell)
+    return nil
+}
 
 func main() {
     db, err := sql.Open("sqlite", "./cells.db")
@@ -71,7 +82,7 @@ func main() {
     }
     defer db.Close()
 
-    store, err := sqlite.NewStore(db, nil)
+    store, err := publicsqlite.NewStore(db, nil)
     if err != nil {
         log.Fatal(err)
     }
@@ -82,12 +93,17 @@ func main() {
     registry.Freeze()
 
     worker := cellar.NewWorker(registry, cellar.NewStoreResultApplier(store))
-    _ = worker
-    _ = store
+    dispatcher := runtimeDispatcher{worker: worker}
+    scheduler := cellar.NewScheduler(store, dispatcher, 1, 5*time.Second)
+
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    go scheduler.Run(ctx)
 }
 ```
 
-In practice you will usually use the SQLite package directly because it provides the persistence implementation and the underlying `database/sql` instance.
+The worker and scheduler constructors are now part of the public package, so sibling modules can create and start the runtime without reaching into internal packages. In practice you will usually use the public SQLite package because it provides the persistence implementation and the underlying `database/sql` instance without requiring downstream code to import internal packages.
 
 ## Accessing the underlying database
 

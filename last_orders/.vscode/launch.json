@@ -1,0 +1,86 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Proto: Phase 1",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders-proto/main.go",
+            "env": {
+                "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+            },
+            "args": [
+                "-phase=1",
+                "-firebase=true",
+                "-firebase-project=pubnightpicker",
+                "-run-for=0",
+            ],
+        },
+        // go run ./cmd/last-orders-proto -phase=2 -run-for=20s -housekeeping-every=5s -housekeeping-lead=2s
+        {
+            "name": "Proto: Phase 2",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders-proto/main.go",
+            "args": [
+                "-phase=2",
+                "-run-for=20s",
+                "-housekeeping-every=5s",
+                "-housekeeping-lead=2s",
+            ],
+        },
+        // go run ./cmd/last-orders-proto -phase=3 -run-for=25s -chain-delay=10s
+        {
+            "name": "Proto: Phase 3",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders-proto/main.go",
+            "args": [
+                "-phase=3",
+                "-run-for=25s",
+                "-chain-delay=10s",
+            ],
+        },
+        // go run ./cmd/last-orders-proto -phase=4 -firebase=true -firebase-project=<project> -run-for=60s
+        {
+            "name": "Proto: Phase 4",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders-proto/main.go",
+            "env": {
+                "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080"
+            },
+            "args": [
+                "-phase=4",
+                "-firebase=true",
+                "-firebase-project=pubnightpicker",
+                "-run-for=60s",
+            ],
+        },
+        // go run ./cmd/last-orders-proto -phase=5 -firebase=true -firebase-project=<project> -idempotency=firestore -run-for=60s
+        {
+            "name": "Proto: Phase 5",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders-proto/main.go",
+            "env": {
+                "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080"
+            },
+            "args": [
+                "-phase=5",
+                "-firebase=true",
+                "-firebase-project=pubnightpicker",
+                "-idempotency=firestore",
+                "-run-for=60s",
+            ],
+        }
+    ]
+}
