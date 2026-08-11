@@ -1,0 +1,62 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/users",
+    "title": "users/{uid}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "properties": {
+        "uid": {
+            "type": "string"
+        },
+        "name": {
+            "type": "string"
+        },
+        "email": {
+            "type": "string"
+        },
+        "notificationEmail": {
+            "type": "string"
+        },
+        "notificationEmailEnabled": {
+            "type": "boolean"
+        },
+        "votesVisible": {
+            "type": "boolean"
+        },
+        "openPollEmailEnabled": {
+            "type": "boolean"
+        },
+        "defaultArrivalTime": {
+            "type": "string",
+            "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "photoUrl": {
+            "type": "string"
+        },
+        "customPhotoUrl": {
+            "type": "string"
+        },
+        "webPushEnabled": {
+            "type": "boolean"
+        },
+        "pushPreferences": {
+            "type": "object",
+            "properties": {
+                "pollOpens": {
+                    "type": "boolean"
+                },
+                "pollCompletes": {
+                    "type": "boolean"
+                },
+                "globalChat": {
+                    "type": "boolean"
+                },
+                "eventChat": {
+                    "type": "boolean"
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "additionalProperties": true
+}

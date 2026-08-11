@@ -1,0 +1,38 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/attendance",
+    "title": "attendance/{pollId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "propertyNames": {
+        "type": "string"
+    },
+    "additionalProperties": {
+        "type": "object",
+        "properties": {
+            "canCome": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "cannotCome": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "eta": {
+                "type": "object",
+                "propertyNames": {
+                    "type": "string"
+                },
+                "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+                }
+            }
+        },
+        "additionalProperties": false
+    }
+}

@@ -1,0 +1,58 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/pubs",
+    "title": "pubs/{venueId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "required": [
+        "name"
+    ],
+    "properties": {
+        "name": {
+            "type": "string",
+            "minLength": 1
+        },
+        "venueType": {
+            "type": "string",
+            "enum": [
+                "pub",
+                "restaurant",
+                "event"
+            ]
+        },
+        "web_site": {
+            "type": "string"
+        },
+        "map": {
+            "type": "string"
+        },
+        "address": {
+            "type": "string"
+        },
+        "notes": {
+            "type": "string"
+        },
+        "pubImage": {
+            "type": "string"
+        },
+        "parking": {
+            "type": "boolean"
+        },
+        "food": {
+            "type": "boolean"
+        },
+        "dog_friend": {
+            "type": "boolean"
+        },
+        "beer_gerden": {
+            "type": "boolean"
+        },
+        "out_of_town": {
+            "type": "boolean"
+        },
+        "banned": {
+            "type": "boolean"
+        }
+    },
+    "additionalProperties": true
+}
