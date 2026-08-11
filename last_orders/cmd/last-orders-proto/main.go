@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/option"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -61,8 +63,14 @@ func main() {
 	var err error
 
 	if *sqlitePath != "" {
-		store, err = publicsqlite.Open(*sqlitePath, nil)
+		db, openErr := sql.Open("sqlite", sqliteDSN(*sqlitePath))
+		if openErr != nil {
+			fatalf("sqlite db open failed: %v", openErr)
+		}
+
+		store, err = publicsqlite.NewStore(db, nil)
 		if err != nil {
+			_ = db.Close()
 			fatalf("sqlite store init failed: %v", err)
 		}
 		defer store.Close()
@@ -145,6 +153,10 @@ func buildFirestoreClient(ctx context.Context, projectID, credentialsPath string
 func fatalf(format string, args ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+func sqliteDSN(path string) string {
+	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 }
 
 type appStoreCloser interface {

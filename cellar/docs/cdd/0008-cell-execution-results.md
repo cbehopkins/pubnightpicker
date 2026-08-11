@@ -107,11 +107,12 @@ The exact type is defined by the Store implementation and application transactio
 
 The application work:
 
-* operates against the transaction supplied by Cellar;
+* operates against the transaction supplied by Cellar for the shared Base DB;
 * may modify application-owned state;
 * must not modify Cellar-owned state;
 * must not commit or roll back the transaction;
-* must not retain the transaction after completion.
+* must not retain the transaction after completion;
+* is executed as part of the same SQLite transaction that also completes the current Cell and creates any replacement Cells.
 
 ---
 
@@ -176,7 +177,7 @@ The Runtime then invokes the appropriate Store operation.
 
 # Atomic Completion
 
-A `Complete` Result represents one atomic persistence operation.
+A `Complete` Result represents one atomic persistence operation over the shared Base DB.
 
 For example:
 
@@ -207,7 +208,7 @@ create SendEmail(bob)
 COMMIT
 ```
 
-The Handler does not control the transaction boundary.
+The transaction is executed against the shared Base DB so that Cellar state changes and application state changes commit together. The application owns the Base DB lifecycle and supplies it to Cellar; Cellar owns the transaction lifecycle for the completion operation. The Handler does not control the transaction boundary.
 
 ---
 

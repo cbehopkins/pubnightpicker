@@ -12,11 +12,15 @@ type Result interface {
 
 // ApplicationTx is a narrow transaction interface supplied to application work.
 //
-// Implementations are intentionally generic so the public API remains database-agnostic.
+// Implementations are intentionally generic so the public API remains database-agnostic
+// while still exposing a database/sql-style transaction surface for application code.
 type ApplicationTx interface {
 	Exec(query string, args ...any) error
+	ExecContext(ctx context.Context, query string, args ...any) error
 	Query(query string, args ...any) (ApplicationRows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (ApplicationRows, error)
 	QueryRow(query string, args ...any) ApplicationRow
+	QueryRowContext(ctx context.Context, query string, args ...any) ApplicationRow
 }
 
 // ApplicationRows represents a row result set for application work.

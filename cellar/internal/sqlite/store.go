@@ -2,6 +2,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -470,6 +471,11 @@ func (a sqlTxAdapter) Exec(query string, args ...any) error {
 	return err
 }
 
+func (a sqlTxAdapter) ExecContext(ctx context.Context, query string, args ...any) error {
+	_, err := a.tx.ExecContext(ctx, query, args...)
+	return err
+}
+
 func (a sqlTxAdapter) Query(query string, args ...any) (cellar.ApplicationRows, error) {
 	rows, err := a.tx.Query(query, args...)
 	if err != nil {
@@ -478,8 +484,20 @@ func (a sqlTxAdapter) Query(query string, args ...any) (cellar.ApplicationRows, 
 	return sqlRowsAdapter{rows: rows}, nil
 }
 
+func (a sqlTxAdapter) QueryContext(ctx context.Context, query string, args ...any) (cellar.ApplicationRows, error) {
+	rows, err := a.tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return sqlRowsAdapter{rows: rows}, nil
+}
+
 func (a sqlTxAdapter) QueryRow(query string, args ...any) cellar.ApplicationRow {
 	return sqlRowAdapter{row: a.tx.QueryRow(query, args...)}
+}
+
+func (a sqlTxAdapter) QueryRowContext(ctx context.Context, query string, args ...any) cellar.ApplicationRow {
+	return sqlRowAdapter{row: a.tx.QueryRowContext(ctx, query, args...)}
 }
 
 type sqlRowsAdapter struct {

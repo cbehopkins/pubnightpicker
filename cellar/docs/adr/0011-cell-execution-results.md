@@ -24,7 +24,7 @@ The design must preserve the separation between:
 
 Handlers must not directly modify Cell state or interact with the Store.
 
-Cellar must also support atomic replacement of completed Cells with newly created Cells.
+Cellar must also support atomic replacement of completed Cells with newly created Cells, including application persistence work that must commit with the same transaction when the application and Cellar share a Base DB.
 
 Example:
 
@@ -84,10 +84,14 @@ A Complete Result means:
 
 The Runtime applies completion atomically through the Store.
 
+When the Result includes application persistence work, the Store applies that work in the same transaction as the Cellar lifecycle operation.
+
 Conceptually:
 
 ```text
 BEGIN
+
+application persistence work
 
 DELETE completed Cell
 

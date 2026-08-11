@@ -8,14 +8,21 @@ Draft
 
 Cellar executes persisted Cells.
 
-A Handler may perform work that changes application state in addition to changing Cellar state.
-
-For example, a Handler may:
+A Handler may need to perform work that changes application-owned state as part of completing a Cell. For example, a Handler may:
 
 1. perform an external operation;
 2. record the outcome in the application's database;
-3. create a new Cell representing follow-up work;
+3. create successor Cells;
 4. complete the current Cell.
+
+The backend architecture introduces a shared physical database, referred to as the Base DB. The Base DB hosts two conceptual ownership domains:
+
+- the Cellar DB, owned by Cellar; and
+- the Application DB, owned by the application.
+
+The application owns creation and lifecycle of the Base DB. Cellar is given access to that database and is responsible only for its own schema and state.
+
+This shared physical database allows Cellar and the application to participate in a single atomic commit when the Handler's outcome includes both Cellar lifecycle changes and application state changes.
 
 Without transactional coordination, these operations can leave the application in an ambiguous state.
 
@@ -32,7 +39,7 @@ Cellar:
 
 The Handler may then execute again after recovery.
 
-Cellar can provide atomicity for its own persisted state, but the application should also be able to make application database changes atomically with Cell completion when both are persisted by the same database.
+Cellar can provide atomicity for its own persisted state, but the application must also be able to make application database changes atomically with Cell completion when both are persisted by the same Base DB instance.
 
 The capability must not turn Cellar into an application database abstraction or require Cellar to understand application semantics.
 
@@ -63,6 +70,45 @@ The `COMMIT` remains the responsibility of Cellar.
 The Handler does not begin, commit, or roll back the transaction.
 
 ---
+
+## Shared Base DB and ownership boundaries
+
+The Base DB is the single physical database instance used by both Cellar and the application for a given backend process.
+
+That means:
+
+- Cellar and the application operate against the same physical database;
+- Cellar-owned state and application-owned state can participate in one commit;
+- sharing a physical database does not mean sharing ownership of the data model.
+
+The application is responsible for:
+
+- creating or opening the Base DB;
+- configuring SQLite appropriately;
+- creating application-owned tables;
+- maintaining application-owned schema;
+- deciding the semantics of application data.
+
+Cellar is responsible for:
+
+- creating and maintaining its own tables;
+- managing Cellar lifecycle state;
+- providing the Cellar Store interface;
+- providing the transaction boundary used when completing Cells;
+- exposing that transaction to application work where required.
+
+Cellar must not require ownership of the database connection or database file. Cellar must not modify application-owned tables except through explicitly supplied application work.
+
+## Application database capability
+
+The integration should expose an application-facing database capability that allows the application to:
+
+- execute application queries;
+- execute application writes;
+- create application schema;
+- construct transactions that can be attached to a Cell Result.
+
+The exact Go API is an implementation detail. The important requirement is that the capability operates against the same Base DB instance as Cellar and that it is distinct from Cellar's own persistence mechanism.
 
 ## Application Transaction Boundary
 
@@ -113,7 +159,7 @@ Cellar should expose application transaction access as close as practical to the
 
 Cellar should not introduce an application-specific ORM or business-oriented database abstraction.
 
-For example, a SQLite implementation may expose an interface closely corresponding to the native Go database transaction API.
+The application-facing API should support normal database requirements without allowing arbitrary application code to reach into Cellar-owned tables. The transaction supplied to application work should be represented by a narrow interface rather than by exposing the underlying `*sql.Tx` directly.
 
 The exact Go API is defined by the Store CDD and its implementation.
 

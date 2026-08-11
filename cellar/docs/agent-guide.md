@@ -181,11 +181,12 @@ result := cellar.Complete{
 }
 ```
 
-These callbacks run in the same transaction as the cell completion. That means:
+These callbacks run in the same transaction as the cell completion over the shared Base DB. That means:
 
 - the application work and the cell replacement happen together
 - if the application work fails, the completion is rolled back
 - the parent cell is not deleted unless the whole operation succeeds
+- the application can use its own schema and tables in the same database without needing to modify Cellar-owned tables
 
 This is the main mechanism for making Cellar and application state changes atomic.
 

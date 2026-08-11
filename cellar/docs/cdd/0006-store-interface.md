@@ -560,25 +560,28 @@ If the transaction cannot commit, none of these changes become durable.
 
 `ApplicationWork` represents database operations requested by the application.
 
-The API should remain as close as practical to the native transaction API of the underlying database.
+The API should remain as close as practical to the native transaction API of the underlying database while still preventing the application from managing the transaction lifecycle directly.
 
 Cellar should not provide an ORM or application-specific persistence abstraction.
 
-For a V0 SQLite implementation, the preferred design is an API closely corresponding to the transaction facilities provided by Go's database API.
-
-Conceptually:
+For a V0 SQLite implementation, the preferred design is an API closely corresponding to the transaction facilities provided by Go's database API but wrapped in an abstract interface. Conceptually:
 
 ```go
 type ApplicationTx interface {
-    ExecContext(...)
-    QueryContext(...)
-    QueryRowContext(...)
+    Exec(query string, args ...any) error
+    ExecContext(ctx context.Context, query string, args ...any) error
+
+    Query(query string, args ...any) (ApplicationRows, error)
+    QueryContext(ctx context.Context, query string, args ...any) (ApplicationRows, error)
+
+    QueryRow(query string, args ...any) ApplicationRow
+    QueryRowContext(ctx context.Context, query string, args ...any) ApplicationRow
 }
 ```
 
 The exact signatures should follow the underlying database API rather than inventing a parallel abstraction.
 
-The Store owns the transaction and supplies the transaction object to the application work.
+The Store owns the transaction and supplies the transaction object to the application work. Application code cannot commit, roll back, or otherwise interfere with the transaction lifecycle.
 
 ---
 

@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -214,6 +215,47 @@ func TestStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
 		if cell.State != cellar.CellStateReady {
 			t.Fatalf("state after Recover() = %q, want %q", cell.State, cellar.CellStateReady)
 		}
+	}
+}
+
+func TestStoreCompleteSupportsContextAwareApplicationWork(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	_, err = store.db.Exec(`CREATE TABLE app_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("CREATE TABLE app_state error = %v", err)
+	}
+
+	err = store.Complete(
+		parent.ID,
+		[]cellar.CellRequest{{HandlerName: "child"}},
+		cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
+			return tx.ExecContext(context.Background(), `INSERT INTO app_state (id, value) VALUES (?, ?)`, "one", "ok")
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	var count int
+	err = store.db.QueryRow(`SELECT COUNT(*) FROM app_state`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query app_state count error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("app_state rows = %d, want 1", count)
 	}
 }
 

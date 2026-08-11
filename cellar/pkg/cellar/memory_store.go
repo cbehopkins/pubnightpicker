@@ -1,6 +1,7 @@
 package cellar
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -297,10 +298,25 @@ func (noopApplicationTx) Exec(query string, args ...any) error {
 	return nil
 }
 
+func (noopApplicationTx) ExecContext(ctx context.Context, query string, args ...any) error {
+	_ = ctx
+	return nil
+}
+
 func (noopApplicationTx) Query(query string, args ...any) (ApplicationRows, error) {
 	return nil, nil
 }
 
+func (noopApplicationTx) QueryContext(ctx context.Context, query string, args ...any) (ApplicationRows, error) {
+	_ = ctx
+	return nil, nil
+}
+
 func (noopApplicationTx) QueryRow(query string, args ...any) ApplicationRow {
+	return nil
+}
+
+func (noopApplicationTx) QueryRowContext(ctx context.Context, query string, args ...any) ApplicationRow {
+	_ = ctx
 	return nil
 }

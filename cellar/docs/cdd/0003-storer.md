@@ -10,6 +10,8 @@ The Store is responsible for ensuring that Cell lifecycle transitions requested 
 
 The Store does not execute Cells or understand application behaviour.
 
+The persistence boundary is a single Base DB that may host both Cellar-owned and application-owned schema. The Store implementation therefore preserves Cellar lifecycle semantics while also enabling the application to create and manage its own schema and transactions in the shared database.
+
 ---
 
 ## Responsibilities
@@ -21,7 +23,8 @@ The Store is responsible for:
 * atomically claiming Cells for execution;
 * deleting completed Cells;
 * recovering claimed Cells after restart;
-* providing access to persisted Cell data for inspection and administration.
+* providing access to persisted Cell data for inspection and administration;
+* enabling the application to create and manage its own schema and transactions within the shared Base DB.
 
 The Store is not responsible for:
 
