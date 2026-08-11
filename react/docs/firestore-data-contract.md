@@ -10,6 +10,20 @@ This document describes the effective Firestore data contract used by the app an
 
 It also captures the planned future rename from pubs to venues.
 
+## Canonical Schema Registry
+
+The machine-readable source of truth for the current production schema is now in:
+
+- ../../schema/firestore/contract-manifest.json
+- ../../schema/firestore/collections/*.schema.json
+
+Scope policy:
+
+- Authoritative now: react and firebase_sub production behaviour.
+- Explicitly excluded until promoted: cellar, last_orders, sweego_client rewrite assumptions.
+
+This document remains a human-readable companion and flow guide.
+
 ## Source of Truth in Code
 Key implementation references:
 - src/dbtools/polls.js
