@@ -26,7 +26,7 @@ func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "backend.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), false, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
 	defer a.Close()
 
 	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 1})
@@ -60,7 +60,7 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "atomic.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), false, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
 	defer a.Close()
 
 	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 5})
@@ -105,7 +105,7 @@ func TestCellFanoutCreatesMultipleReplacementCellsAtomically(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "fanout.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), false, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
 	defer a.Close()
 
 	raw, err := cellar.JSONCodec[handlers.FanoutPayload]().Marshal(handlers.FanoutPayload{
@@ -142,7 +142,7 @@ func TestCellFanoutCreatesMultipleReplacementCellsAtomically(t *testing.T) {
 func TestIdempotencyPendingToPresent(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewMemoryRemote(true)
+	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
 	remote.SeedExisting("listener-a", "event-1", true)
 	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-pending-present.db"), remote, false, nil)
 	defer a.Close()
@@ -173,7 +173,7 @@ func TestIdempotencyPendingToPresent(t *testing.T) {
 func TestIdempotencyPendingPushCheckPresentWithFanout(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewMemoryRemote(true)
+	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
 	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-flow.db"), remote, false, nil)
 	defer a.Close()
 
@@ -203,7 +203,7 @@ func TestIdempotencyPendingPushCheckPresentWithFanout(t *testing.T) {
 func TestIdempotencyPushedPushCheckPath(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewMemoryRemote(false)
+	remote := firebaseidempotency.NewInMemoryRemoteStandIn(false)
 	dbPath := filepath.Join(t.TempDir(), "idem-pushed.db")
 	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
@@ -254,7 +254,7 @@ func TestIdempotencyPushedPushCheckPath(t *testing.T) {
 func TestIdempotencyPresentNoWork(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewMemoryRemote(true)
+	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
 	dbPath := filepath.Join(t.TempDir(), "idem-present.db")
 	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
@@ -284,7 +284,7 @@ func TestIdempotencyPresentNoWork(t *testing.T) {
 func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	t.Parallel()
 
-	remote := newCheckBarrierRemote(firebaseidempotency.NewMemoryRemote(true), "listener-race", "event-5")
+	remote := newCheckBarrierRemote(firebaseidempotency.NewInMemoryRemoteStandIn(true), "listener-race", "event-5")
 	remote.seedExisting("listener-race", "event-5", true)
 	dbPath := filepath.Join(t.TempDir(), "idem-race.db")
 	a := mustNewApp(t, dbPath, remote, false, nil)
@@ -393,7 +393,7 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 	t.Parallel()
 
 	t.Run("rollback_keeps_pushed_and_retryable", func(t *testing.T) {
-		remote := firebaseidempotency.NewMemoryRemote(true)
+		remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
 		dbPath := filepath.Join(t.TempDir(), "idem-atomic-fail.db")
 		a := mustNewApp(t, dbPath, remote, false, nil)
 		defer a.Close()
@@ -459,7 +459,7 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 	})
 
 	t.Run("success_commits_present_and_single_fanout", func(t *testing.T) {
-		remote := firebaseidempotency.NewMemoryRemote(true)
+		remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
 		dbPath := filepath.Join(t.TempDir(), "idem-atomic-success.db")
 		a := mustNewApp(t, dbPath, remote, false, nil)
 		defer a.Close()
@@ -522,7 +522,7 @@ func TestStartupFailureBlocksListeners(t *testing.T) {
 		DBPath:                dbPath,
 		PollDelay:             5 * time.Millisecond,
 		Logger:                testLogger(),
-		IdempotencyRemote:     firebaseidempotency.NewMemoryRemote(true),
+		IdempotencyRemote:     firebaseidempotency.NewInMemoryRemoteStandIn(true),
 		EnableExampleListener: true,
 		StartupComponentChecks: []func(*basestore.Store) error{
 			func(*basestore.Store) error { return errors.New("synthetic startup failure") },
@@ -552,7 +552,7 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "restart.db")
-	a1 := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), false, nil)
+	a1 := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
 
 	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 1})
 	if err != nil {
@@ -573,7 +573,7 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 		t.Fatalf("close first app: %v", err)
 	}
 
-	a2 := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), false, nil)
+	a2 := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
 	defer a2.Close()
 
 	runFor(t, a2, 300*time.Millisecond)
@@ -591,7 +591,7 @@ func TestCloseStopsSchedulerBeforeClosingSQLite(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "shutdown.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), true, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), true, nil)
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

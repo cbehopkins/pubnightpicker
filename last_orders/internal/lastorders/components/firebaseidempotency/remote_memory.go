@@ -5,11 +5,19 @@ import (
 	"sync"
 )
 
+// Remote is the external Firebase idempotency surface used by the idempotency component.
+//
+// Production code should bind this to a real Firebase-backed implementation.
+// Early skeleton/runtime and integration tests may bind this to an in-memory stand-in.
 type Remote interface {
 	CreateKey(ctx context.Context, listener, eventKey string) (alreadyExists bool, err error)
 	HasKey(ctx context.Context, listener, eventKey string) (bool, error)
 }
 
+// MemoryRemote is an in-memory stand-in for the external Firebase idempotency store.
+//
+// It exists to support early skeleton execution and integration tests before wiring a
+// real Firebase implementation. It is process-local and non-durable.
 type MemoryRemote struct {
 	mu          sync.Mutex
 	exists      map[string]bool
@@ -19,7 +27,11 @@ type MemoryRemote struct {
 	hasCalls    map[string]int
 }
 
-func NewMemoryRemote(autoVisible bool) *MemoryRemote {
+// NewInMemoryRemoteStandIn creates a process-local, in-memory Firebase idempotency stand-in.
+//
+// When autoVisible is true, newly created keys become visible immediately to HasKey.
+// When false, tests can explicitly control visibility with SetVisible.
+func NewInMemoryRemoteStandIn(autoVisible bool) *MemoryRemote {
 	return &MemoryRemote{
 		exists:      map[string]bool{},
 		visible:     map[string]bool{},
@@ -27,6 +39,11 @@ func NewMemoryRemote(autoVisible bool) *MemoryRemote {
 		createCalls: map[string]int{},
 		hasCalls:    map[string]int{},
 	}
+}
+
+// NewMemoryRemote is kept for compatibility; prefer NewInMemoryRemoteStandIn for clarity.
+func NewMemoryRemote(autoVisible bool) *MemoryRemote {
+	return NewInMemoryRemoteStandIn(autoVisible)
 }
 
 func (r *MemoryRemote) CreateKey(ctx context.Context, listener, eventKey string) (bool, error) {

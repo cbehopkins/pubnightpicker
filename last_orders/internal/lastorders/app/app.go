@@ -95,7 +95,7 @@ func New(cfg Config) (*App, error) {
 		cfg.PollDelay = 50 * time.Millisecond
 	}
 	if cfg.IdempotencyRemote == nil {
-		cfg.IdempotencyRemote = firebaseidempotency.NewMemoryRemote(true)
+		cfg.IdempotencyRemote = firebaseidempotency.NewInMemoryRemoteStandIn(true)
 	}
 
 	db, err := sql.Open("sqlite", sqliteDSN(cfg.DBPath))

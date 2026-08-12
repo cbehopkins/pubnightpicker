@@ -13,6 +13,8 @@ import (
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/counter"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+
+	"cloud.google.com/go/firestore"
 )
 
 func main() {
@@ -34,11 +36,32 @@ func main() {
 		defer timeoutCancel()
 	}
 
+	idempotencyRemote := firebaseidempotency.Remote(firebaseidempotency.NewInMemoryRemoteStandIn(true))
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+		projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+		if projectID == "" {
+			projectID = "last-orders-emulator"
+		}
+
+		firestoreClient, err := firestore.NewClient(ctx, projectID)
+		if err != nil {
+			fatalf("initialise firestore emulator client: %v", err)
+		}
+		defer firestoreClient.Close()
+
+		idempotencyRemote, err = firebaseidempotency.NewFirestoreRemote(firestoreClient, "listener_state", "last_orders")
+		if err != nil {
+			fatalf("initialise firestore idempotency remote: %v", err)
+		}
+
+		logger.Info("using Firestore emulator for idempotency remote", "firestore_emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"), "project_id", projectID)
+	}
+
 	application, err := app.New(app.Config{
 		DBPath:                *dbPath,
 		PollDelay:             *pollDelay,
 		Logger:                logger,
-		IdempotencyRemote:     firebaseidempotency.NewMemoryRemote(true),
+		IdempotencyRemote:     idempotencyRemote,
 		EnableExampleListener: *enableExampleListener,
 	})
 	if err != nil {
