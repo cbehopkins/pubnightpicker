@@ -45,7 +45,7 @@ type PendingHandler struct {
 }
 
 func (h PendingHandler) Handle(ctx context.Context, payload PendingPayload) cellar.Result {
-	state, err := h.Store.EnsurePending(ctx, payload.Listener, payload.EventKey)
+	state, err := h.Store.CreateOrRefreshPending(ctx, payload.Listener, payload.EventKey)
 	if err != nil {
 		return cellar.ErrorResult{Message: "ensure pending", Err: err}
 	}
@@ -58,8 +58,18 @@ func (h PendingHandler) Handle(ctx context.Context, payload PendingPayload) cell
 		return cellar.ErrorResult{Message: "pending has key", Err: err}
 	}
 	if exists {
-		if err := h.Store.MarkPresent(ctx, payload.Listener, payload.EventKey); err != nil {
-			return cellar.ErrorResult{Message: "mark present from pending", Err: err}
+		transitioned, err := h.Store.TransitionPendingToPresent(ctx, payload.Listener, payload.EventKey)
+		if err != nil {
+			return cellar.ErrorResult{Message: "transition pending to present", Err: err}
+		}
+		if !transitioned {
+			latest, ok, stateErr := h.Store.CurrentState(ctx, payload.Listener, payload.EventKey)
+			if stateErr != nil {
+				return cellar.ErrorResult{Message: "load state after pending->present", Err: stateErr}
+			}
+			if !ok || latest != StatePresent {
+				return cellar.ErrorResult{Message: "pending direct present rejected by current state"}
+			}
 		}
 		if h.Logger != nil {
 			h.Logger.Info("idempotency pending direct present", "listener", payload.Listener, "event_key", payload.EventKey)
@@ -148,27 +158,21 @@ func (h CheckHandler) Handle(ctx context.Context, payload CheckPayload) cellar.R
 		return cellar.Retry{NotBefore: &retryAt}
 	}
 
-	transitioned, err := h.Store.MarkPresentFromPushed(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "mark present from pushed", Err: err}
-	}
-	if !transitioned {
-		return cellar.Complete{}
-	}
-
 	if h.Logger != nil {
-		h.Logger.Info("idempotency present transition won", "listener", payload.Listener, "event_key", payload.EventKey)
+		h.Logger.Info("idempotency check scheduling atomic transition+fanout", "listener", payload.Listener, "event_key", payload.EventKey)
 	}
-	return cellar.Complete{NewCells: fanoutCellRequests(payload.Fanout)}
+	return cellar.Complete{
+		NewCells: fanoutCellRequests(payload.Fanout),
+		ApplicationWork: []cellar.ApplicationWork{
+			h.Store.TransitionPushedToPresentWork(payload.Listener, payload.EventKey),
+		},
+	}
 }
 
 func fanoutCellRequests(targets []FanoutTarget) []cellar.CellRequest {
 	requests := make([]cellar.CellRequest, 0, len(targets))
 	now := time.Now().UTC()
 	for _, target := range targets {
-		if target.HandlerName == "" {
-			continue
-		}
 		requests = append(requests, cellar.CellRequest{
 			HandlerName: target.HandlerName,
 			Payload:     []byte(target.Payload),

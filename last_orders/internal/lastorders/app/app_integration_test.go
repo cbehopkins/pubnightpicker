@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -203,10 +204,11 @@ func TestIdempotencyPushedPushCheckPath(t *testing.T) {
 	t.Parallel()
 
 	remote := firebaseidempotency.NewMemoryRemote(false)
-	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-pushed.db"), remote, false, nil)
+	dbPath := filepath.Join(t.TempDir(), "idem-pushed.db")
+	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
 
-	if err := a.ForceIdempotencyState(context.Background(), "listener-c", "event-3", firebaseidempotency.StatePushed); err != nil {
+	if err := seedIdempotencyState(t, dbPath, "listener-c", "event-3", firebaseidempotency.StatePushed); err != nil {
 		t.Fatalf("seed pushed state: %v", err)
 	}
 
@@ -253,10 +255,11 @@ func TestIdempotencyPresentNoWork(t *testing.T) {
 	t.Parallel()
 
 	remote := firebaseidempotency.NewMemoryRemote(true)
-	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-present.db"), remote, false, nil)
+	dbPath := filepath.Join(t.TempDir(), "idem-present.db")
+	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
 
-	if err := a.ForceIdempotencyState(context.Background(), "listener-d", "event-4", firebaseidempotency.StatePresent); err != nil {
+	if err := seedIdempotencyState(t, dbPath, "listener-d", "event-4", firebaseidempotency.StatePresent); err != nil {
 		t.Fatalf("seed present state: %v", err)
 	}
 
@@ -281,12 +284,13 @@ func TestIdempotencyPresentNoWork(t *testing.T) {
 func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewMemoryRemote(true)
-	remote.SeedExisting("listener-race", "event-5", true)
-	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-race.db"), remote, false, nil)
+	remote := newCheckBarrierRemote(firebaseidempotency.NewMemoryRemote(true), "listener-race", "event-5")
+	remote.seedExisting("listener-race", "event-5", true)
+	dbPath := filepath.Join(t.TempDir(), "idem-race.db")
+	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
 
-	if err := a.ForceIdempotencyState(context.Background(), "listener-race", "event-5", firebaseidempotency.StatePushed); err != nil {
+	if err := seedIdempotencyState(t, dbPath, "listener-race", "event-5", firebaseidempotency.StatePushed); err != nil {
 		t.Fatalf("seed pushed state: %v", err)
 	}
 
@@ -321,16 +325,57 @@ func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		a.Worker().Run(context.Background(), first)
+		errCh <- executeClaimedCellLikeRuntime(a, first)
 	}()
 	go func() {
 		defer wg.Done()
-		a.Worker().Run(context.Background(), second)
+		errCh <- executeClaimedCellLikeRuntime(a, second)
 	}()
+	remote.waitUntilBothChecksEntered()
+	remote.releaseChecks()
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("dispatch claimed check cell: %v", err)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		active, err := store.ListActive()
+		if err != nil {
+			t.Fatalf("list active during follow-up drain: %v", err)
+		}
+		if countByHandler(active, firebaseidempotency.HandlerCheck) == 0 {
+			break
+		}
+
+		next, ok, err := store.ClaimNext(time.Now().UTC())
+		if err != nil {
+			t.Fatalf("claim follow-up check cell: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if next.HandlerName != firebaseidempotency.HandlerCheck {
+			continue
+		}
+		if err := executeClaimedCellLikeRuntime(a, next); err != nil {
+			t.Fatalf("dispatch follow-up claimed check cell: %v", err)
+		}
+	}
+
+	state, ok, err := a.IdempotencyState(context.Background(), "listener-race", "event-5")
+	if err != nil {
+		t.Fatalf("idempotency state: %v", err)
+	}
+	if !ok || state != firebaseidempotency.StatePresent {
+		t.Fatalf("expected PRESENT after duplicate checks, got ok=%v state=%s", ok, state)
+	}
 
 	active, err := store.ListActive()
 	if err != nil {
@@ -339,6 +384,134 @@ func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	if countByHandler(active, handlers.HandlerExampleIncrement) != 1 {
 		t.Fatalf("expected exactly one fanout increment cell, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
 	}
+	if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
+		t.Fatalf("expected both check cells to complete, found %d", countByHandler(active, firebaseidempotency.HandlerCheck))
+	}
+}
+
+func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rollback_keeps_pushed_and_retryable", func(t *testing.T) {
+		remote := firebaseidempotency.NewMemoryRemote(true)
+		dbPath := filepath.Join(t.TempDir(), "idem-atomic-fail.db")
+		a := mustNewApp(t, dbPath, remote, false, nil)
+		defer a.Close()
+
+		if err := seedIdempotencyState(t, dbPath, "listener-atomic", "event-fail", firebaseidempotency.StatePushed); err != nil {
+			t.Fatalf("seed pushed state: %v", err)
+		}
+		remote.SeedExisting("listener-atomic", "event-fail", true)
+
+		badRaw, err := cellar.JSONCodec[firebaseidempotency.CheckPayload]().Marshal(firebaseidempotency.CheckPayload{
+			Listener: "listener-atomic",
+			EventKey: "event-fail",
+			Fanout: []firebaseidempotency.FanoutTarget{{
+				HandlerName: "",
+				Payload:     []byte(`{"invalid":true}`),
+			}},
+		})
+		if err != nil {
+			t.Fatalf("marshal bad check payload: %v", err)
+		}
+		if _, err := a.CellarStore().Add([]cellar.CellRequest{{
+			HandlerName: firebaseidempotency.HandlerCheck,
+			Payload:     badRaw,
+		}}); err != nil {
+			t.Fatalf("add bad check cell: %v", err)
+		}
+
+		claimed, ok, err := a.CellarStore().ClaimNext(time.Now().UTC())
+		if err != nil || !ok {
+			t.Fatalf("claim bad check cell: ok=%v err=%v", ok, err)
+		}
+		result := a.Worker().Run(context.Background(), claimed)
+		if _, isErr := result.(cellar.ErrorResult); !isErr {
+			t.Fatalf("expected apply-result failure, got %T", result)
+		}
+
+		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-fail")
+		if err != nil {
+			t.Fatalf("idempotency state after failed complete: %v", err)
+		}
+		if !exists || state != firebaseidempotency.StatePushed {
+			t.Fatalf("expected rollback to keep PUSHED, got exists=%v state=%s", exists, state)
+		}
+
+		active, err := a.CellarStore().ListActive()
+		if err != nil {
+			t.Fatalf("list active: %v", err)
+		}
+		if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
+			t.Fatalf("expected no fanout cells on rollback, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
+		}
+		if countByHandler(active, firebaseidempotency.HandlerCheck) != 1 {
+			t.Fatalf("expected failed check cell to remain active for recovery, got %d", countByHandler(active, firebaseidempotency.HandlerCheck))
+		}
+
+		if err := a.CellarStore().Recover(); err != nil {
+			t.Fatalf("recover failed check cell: %v", err)
+		}
+		_, ok, err = a.CellarStore().ClaimNext(time.Now().UTC())
+		if err != nil || !ok {
+			t.Fatalf("expected failed check cell to be claimable after recover: ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("success_commits_present_and_single_fanout", func(t *testing.T) {
+		remote := firebaseidempotency.NewMemoryRemote(true)
+		dbPath := filepath.Join(t.TempDir(), "idem-atomic-success.db")
+		a := mustNewApp(t, dbPath, remote, false, nil)
+		defer a.Close()
+
+		if err := seedIdempotencyState(t, dbPath, "listener-atomic", "event-ok", firebaseidempotency.StatePushed); err != nil {
+			t.Fatalf("seed pushed success case: %v", err)
+		}
+		remote.SeedExisting("listener-atomic", "event-ok", true)
+		target, err := incrementFanoutTarget()
+		if err != nil {
+			t.Fatalf("increment fanout target: %v", err)
+		}
+		goodRaw, err := cellar.JSONCodec[firebaseidempotency.CheckPayload]().Marshal(firebaseidempotency.CheckPayload{
+			Listener: "listener-atomic",
+			EventKey: "event-ok",
+			Fanout:   []firebaseidempotency.FanoutTarget{target},
+		})
+		if err != nil {
+			t.Fatalf("marshal good check payload: %v", err)
+		}
+		if err := a.AddCell(cellar.CellRequest{HandlerName: firebaseidempotency.HandlerCheck, Payload: goodRaw}); err != nil {
+			t.Fatalf("add good check cell: %v", err)
+		}
+
+		claimed, ok, err := a.CellarStore().ClaimNext(time.Now().UTC())
+		if err != nil || !ok {
+			t.Fatalf("claim success check cell: ok=%v err=%v", ok, err)
+		}
+		result := a.Worker().Run(context.Background(), claimed)
+		if _, isComplete := result.(cellar.Complete); !isComplete {
+			t.Fatalf("expected complete result, got %T", result)
+		}
+
+		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-ok")
+		if err != nil {
+			t.Fatalf("idempotency state after success: %v", err)
+		}
+		if !exists || state != firebaseidempotency.StatePresent {
+			t.Fatalf("expected PRESENT on success, got exists=%v state=%s", exists, state)
+		}
+
+		active, err := a.CellarStore().ListActive()
+		if err != nil {
+			t.Fatalf("list active after success: %v", err)
+		}
+		if countByHandler(active, handlers.HandlerExampleIncrement) != 1 {
+			t.Fatalf("expected exactly one fanout cell in success case, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
+		}
+		if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
+			t.Fatalf("expected check cell to complete, got %d active check cells", countByHandler(active, firebaseidempotency.HandlerCheck))
+		}
+	})
 }
 
 func TestStartupFailureBlocksListeners(t *testing.T) {
@@ -414,6 +587,34 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 	}
 }
 
+func TestCloseStopsSchedulerBeforeClosingSQLite(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "shutdown.db")
+	a := mustNewApp(t, dbPath, firebaseidempotency.NewMemoryRemote(true), true, nil)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- a.Run(runCtx)
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	if err := a.Close(); err != nil {
+		t.Fatalf("close app: %v", err)
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not return after close")
+	}
+}
+
 func mustNewApp(
 	t *testing.T,
 	dbPath string,
@@ -424,11 +625,11 @@ func mustNewApp(
 	t.Helper()
 
 	a, err := app.New(app.Config{
-		DBPath:                dbPath,
-		PollDelay:             5 * time.Millisecond,
-		Logger:                testLogger(),
-		IdempotencyRemote:     remote,
-		EnableExampleListener: enableExampleListener,
+		DBPath:                 dbPath,
+		PollDelay:              5 * time.Millisecond,
+		Logger:                 testLogger(),
+		IdempotencyRemote:      remote,
+		EnableExampleListener:  enableExampleListener,
 		StartupComponentChecks: startupChecks,
 	})
 	if err != nil {
@@ -496,4 +697,91 @@ func mustTable(t *testing.T, db *sql.DB, tableName string) {
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
+func seedIdempotencyState(t *testing.T, dbPath, listener, eventKey string, state firebaseidempotency.State) error {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
+		VALUES(?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(listener, event_key) DO UPDATE SET
+			state = excluded.state,
+			updated_at = excluded.updated_at
+	`, listener, eventKey, state)
+	return err
+}
+
+type checkBarrierRemote struct {
+	inner    *firebaseidempotency.MemoryRemote
+	listener string
+	eventKey string
+	entered  sync.WaitGroup
+	release  chan struct{}
+}
+
+func newCheckBarrierRemote(inner *firebaseidempotency.MemoryRemote, listener, eventKey string) *checkBarrierRemote {
+	r := &checkBarrierRemote{
+		inner:    inner,
+		listener: listener,
+		eventKey: eventKey,
+		release:  make(chan struct{}),
+	}
+	r.entered.Add(2)
+	return r
+}
+
+func (r *checkBarrierRemote) CreateKey(ctx context.Context, listener, eventKey string) (bool, error) {
+	return r.inner.CreateKey(ctx, listener, eventKey)
+}
+
+func (r *checkBarrierRemote) HasKey(ctx context.Context, listener, eventKey string) (bool, error) {
+	if listener == r.listener && eventKey == r.eventKey {
+		r.entered.Done()
+		<-r.release
+	}
+	return r.inner.HasKey(ctx, listener, eventKey)
+}
+
+func (r *checkBarrierRemote) seedExisting(listener, eventKey string, visible bool) {
+	r.inner.SeedExisting(listener, eventKey, visible)
+}
+
+func (r *checkBarrierRemote) waitUntilBothChecksEntered() {
+	r.entered.Wait()
+}
+
+func (r *checkBarrierRemote) releaseChecks() {
+	close(r.release)
+}
+
+func executeClaimedCellLikeRuntime(application *app.App, cell cellar.Cell) error {
+	result := application.Worker().Run(context.Background(), cell)
+	errResult, isErr := result.(cellar.ErrorResult)
+	if !isErr {
+		return nil
+	}
+	if isSQLiteBusyError(errResult.Err) {
+		return application.CellarStore().Retry(cell.ID, nil)
+	}
+	if !errors.Is(errResult.Err, firebaseidempotency.ErrTransitionRejected) {
+		return errResult.Err
+	}
+	err := application.CellarStore().Complete(cell.ID, nil)
+	if errors.Is(err, cellar.ErrCellNotFound) || errors.Is(err, cellar.ErrCellNotClaimed) {
+		return nil
+	}
+	return err
+}
+
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
 }

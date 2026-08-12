@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/basestore"
 )
 
@@ -57,7 +58,7 @@ func (s *Store) CurrentState(ctx context.Context, listener, eventKey string) (St
 	return State(state), true, nil
 }
 
-func (s *Store) EnsurePending(ctx context.Context, listener, eventKey string) (State, error) {
+func (s *Store) CreateOrRefreshPending(ctx context.Context, listener, eventKey string) (State, error) {
 	_, err := s.base.DB().ExecContext(ctx, `
 		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
 		VALUES(?, ?, ?, ?)
@@ -95,23 +96,12 @@ func (s *Store) MarkPushedUnlessPresent(ctx context.Context, listener, eventKey 
 	return state, nil
 }
 
-func (s *Store) MarkPresent(ctx context.Context, listener, eventKey string) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
-		VALUES(?, ?, ?, ?)
-		ON CONFLICT(listener, event_key) DO UPDATE SET
-			state = excluded.state,
-			updated_at = excluded.updated_at
-	`, listener, eventKey, StatePresent, time.Now().UTC())
-	return err
-}
-
-func (s *Store) MarkPresentFromPushed(ctx context.Context, listener, eventKey string) (bool, error) {
+func (s *Store) TransitionPendingToPresent(ctx context.Context, listener, eventKey string) (bool, error) {
 	res, err := s.base.DB().ExecContext(ctx, `
 		UPDATE firebase_idempotency_records
 		SET state = ?, updated_at = ?
 		WHERE listener = ? AND event_key = ? AND state = ?
-	`, StatePresent, time.Now().UTC(), listener, eventKey, StatePushed)
+	`, StatePresent, time.Now().UTC(), listener, eventKey, StatePending)
 	if err != nil {
 		return false, err
 	}
@@ -122,13 +112,26 @@ func (s *Store) MarkPresentFromPushed(ctx context.Context, listener, eventKey st
 	return rows == 1, nil
 }
 
-func (s *Store) ForceState(ctx context.Context, listener, eventKey string, state State) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
-		VALUES(?, ?, ?, ?)
-		ON CONFLICT(listener, event_key) DO UPDATE SET
-			state = excluded.state,
-			updated_at = excluded.updated_at
-	`, listener, eventKey, state, time.Now().UTC())
-	return err
+func (s *Store) TransitionPushedToPresentWork(listener, eventKey string) cellar.ApplicationWork {
+	return func(tx cellar.ApplicationTx) error {
+		if err := tx.Exec(`
+			UPDATE firebase_idempotency_records
+			SET state = ?, updated_at = ?
+			WHERE listener = ? AND event_key = ? AND state = ?
+		`, StatePresent, time.Now().UTC(), listener, eventKey, StatePushed); err != nil {
+			return err
+		}
+
+		var changed int64
+		if err := tx.QueryRow(`SELECT changes()`).Scan(&changed); err != nil {
+			return err
+		}
+		if changed != 1 {
+			return ErrTransitionRejected
+		}
+
+		return nil
+	}
 }
+
+var ErrTransitionRejected = fmt.Errorf("idempotency transition rejected")
