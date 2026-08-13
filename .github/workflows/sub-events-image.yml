@@ -1,12 +1,14 @@
 name: sub_events image
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Python CI
+    types:
+      - completed
     branches:
       - main
-    paths:
-      - "firebase_sub/**"
-      - ".github/workflows/sub-events-image.yml"
+  push:
     tags:
       - "v*"
       - "sub_events-v*"
@@ -24,6 +26,7 @@ jobs:
   build-and-push:
     name: Build and push to GHCR
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,7 +54,7 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' || github.event.workflow_run.head_branch == 'main' }}
             type=ref,event=tag
             type=sha,format=long,prefix=sha-
 
