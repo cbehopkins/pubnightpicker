@@ -15,7 +15,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  attestations: write
   contents: read
+  id-token: write
   packages: write
 
 concurrency:
@@ -65,7 +67,7 @@ jobs:
           file: firebase_sub/Dockerfile
           platforms: linux/arm64
           push: true
-          provenance: false
+          provenance: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
