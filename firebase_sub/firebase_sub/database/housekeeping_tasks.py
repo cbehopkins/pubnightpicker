@@ -432,8 +432,7 @@ def _resolve_event_occurrence_date(
     occurrence_date = parse_iso_date(venue_data.get("next_occurrence_date"))
 
     if occurrence_date is None and recurrence is not None:
-        reference_date = parse_iso_date(recurrence.get("start_date")) or today
-        occurrence_date = next_occurrence(recurrence, reference_date)
+        occurrence_date = next_occurrence(recurrence, today)
         if occurrence_date is not None:
             _repository(db).set_next_occurrence_date(
                 cast(DocumentReference, venue_doc.reference),

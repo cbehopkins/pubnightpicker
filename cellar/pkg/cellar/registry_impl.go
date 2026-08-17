@@ -3,6 +3,9 @@ package cellar
 import "errors"
 
 // MemoryRegistry is an in-memory handler registry.
+// That is, it stores handler registrations in memory
+// This relies upon the application to register handlers at startup.
+// Which is the design intent - so there is no need to persist this registration if you do your job right
 type MemoryRegistry struct {
 	registrations map[HandlerName]Registration
 	frozen        bool

@@ -15,9 +15,15 @@ import (
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/counter"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/handlers"
+	completedpolllistener "last_orders/internal/lastorders/listeners/completedpolls"
+	eventvenuelistener "last_orders/internal/lastorders/listeners/eventvenues"
 	examplelistener "last_orders/internal/lastorders/listeners/example"
+	newpolllistener "last_orders/internal/lastorders/listeners/newpolls"
 	"last_orders/internal/lastorders/runtime"
+
+	"cloud.google.com/go/firestore"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,24 +32,32 @@ type Config struct {
 	DBPath                 string
 	PollDelay              time.Duration
 	Logger                 *slog.Logger
+	FirestoreProjectID     string
+	EnableFirestore        bool
 	IdempotencyRemote      firebaseidempotency.Remote
 	EnableExampleListener  bool
+	EventReevaluateEvery   time.Duration
 	StartupComponentChecks []func(*basestore.Store) error
 }
 
 type App struct {
-	logger             *slog.Logger
-	baseStore          *basestore.Store
-	cellarStore        cellar.Store
-	counterStore       *counter.Store
-	idempotencyStore   *firebaseidempotency.Store
-	registry           *cellar.MemoryRegistry
-	worker             *cellar.Worker
-	scheduler          *cellar.Scheduler
-	exampleListener    *examplelistener.Producer
-	runCancel          context.CancelFunc
-	runCancelMu        sync.Mutex
-	schedulerWG        sync.WaitGroup
+	logger                *slog.Logger
+	baseStore             *basestore.Store
+	cellarStore           cellar.Store
+	counterStore          *counter.Store
+	idempotencyStore      *firebaseidempotency.Store
+	recurrenceService     *recurrence.Service
+	firestoreClient       *firestore.Client
+	registry              *cellar.MemoryRegistry
+	worker                *cellar.Worker
+	scheduler             *cellar.Scheduler
+	exampleListener       *examplelistener.Producer
+	eventVenueListener    *eventvenuelistener.Listener
+	newPollListener       *newpolllistener.Listener
+	completedPollListener *completedpolllistener.Listener
+	runCancel             context.CancelFunc
+	runCancelMu           sync.Mutex
+	schedulerWG           sync.WaitGroup
 }
 
 type runtimeDispatcher struct {
@@ -94,8 +108,8 @@ func New(cfg Config) (*App, error) {
 	if cfg.PollDelay <= 0 {
 		cfg.PollDelay = 50 * time.Millisecond
 	}
-	if cfg.IdempotencyRemote == nil {
-		cfg.IdempotencyRemote = firebaseidempotency.NewInMemoryRemoteStandIn(true)
+	if cfg.EnableFirestore && cfg.FirestoreProjectID == "" {
+		cfg.FirestoreProjectID = "last-orders-emulator"
 	}
 
 	db, err := sql.Open("sqlite", sqliteDSN(cfg.DBPath))
@@ -121,8 +135,41 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 
+	var firestoreClient *firestore.Client
+	var recurrenceService *recurrence.Service
+	if cfg.EnableFirestore {
+		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID)
+		if err != nil {
+			_ = baseStore.Close()
+			return nil, fmt.Errorf("init firestore client: %w", err)
+		}
+
+		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+	}
+
+	if cfg.IdempotencyRemote == nil {
+		if firestoreClient != nil {
+			cfg.IdempotencyRemote, err = firebaseidempotency.NewFirestoreRemote(firestoreClient, "listener_state", "last_orders")
+			if err != nil {
+				_ = firestoreClient.Close()
+				_ = baseStore.Close()
+				return nil, err
+			}
+		} else {
+			cfg.IdempotencyRemote = firebaseidempotency.NewInMemoryRemoteStandIn(true)
+		}
+	}
+
 	idempotencyStore, err := firebaseidempotency.New(baseStore)
 	if err != nil {
+		if firestoreClient != nil {
+			_ = firestoreClient.Close()
+		}
 		_ = baseStore.Close()
 		return nil, err
 	}
@@ -137,12 +184,21 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
+	// Declare/register The handlers for the cellar worker. The handlers are responsible for processing the cells in the cellar store.
 	registry := cellar.NewMemoryRegistry()
 	if err := runtime.RegisterJSON(registry, handlers.HandlerExampleIncrement, handlers.IncrementHandler{Counter: counterStore, Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := runtime.RegisterJSON(registry, handlers.HandlerExampleFanout, handlers.FanoutHandler{Logger: cfg.Logger}); err != nil {
+		_ = baseStore.Close()
+		return nil, err
+	}
+	if err := runtime.RegisterJSON(registry, handlers.HandlerNewPoll, handlers.NewPollHandler{Logger: cfg.Logger}); err != nil {
+		_ = baseStore.Close()
+		return nil, err
+	}
+	if err := runtime.RegisterJSON(registry, handlers.HandlerCompletedPoll, handlers.CompletedPollHandler{Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
@@ -155,8 +211,23 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	if err := runtime.RegisterJSON(registry, firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, RetryDelay: 80 * time.Millisecond, Logger: cfg.Logger}); err != nil {
+		if firestoreClient != nil {
+			_ = firestoreClient.Close()
+		}
 		_ = baseStore.Close()
 		return nil, err
+	}
+	if recurrenceService != nil {
+		if err := runtime.RegisterJSON(registry, handlers.HandlerStaleEvent, handlers.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+		if err := runtime.RegisterJSON(registry, handlers.HandlerCreateEventPoll, handlers.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
 	}
 	registry.Freeze()
 
@@ -176,16 +247,60 @@ func New(cfg Config) (*App, error) {
 		listener = nil
 	}
 
+	var eventVenueListener *eventvenuelistener.Listener
+	var newPollListener *newpolllistener.Listener
+	var completedPollListener *completedpolllistener.Listener
+	if recurrenceService != nil {
+		eventVenueListener, err = eventvenuelistener.New(eventvenuelistener.Config{
+			Store:              cellarStore,
+			Service:            recurrenceService,
+			ReevaluateInterval: cfg.EventReevaluateEvery,
+			Logger:             cfg.Logger,
+		})
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+
+		newPollListener, err = newpolllistener.New(newpolllistener.Config{
+			Client: firestoreClient,
+			Store:  cellarStore,
+			Logger: cfg.Logger,
+		})
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+
+		completedPollListener, err = completedpolllistener.New(completedpolllistener.Config{
+			Client: firestoreClient,
+			Store:  cellarStore,
+			Logger: cfg.Logger,
+		})
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+	}
+
 	return &App{
-		logger:           cfg.Logger,
-		baseStore:        baseStore,
-		cellarStore:      cellarStore,
-		counterStore:     counterStore,
-		idempotencyStore: idempotencyStore,
-		registry:         registry,
-		worker:           worker,
-		scheduler:        scheduler,
-		exampleListener:  listener,
+		logger:                cfg.Logger,
+		baseStore:             baseStore,
+		cellarStore:           cellarStore,
+		counterStore:          counterStore,
+		idempotencyStore:      idempotencyStore,
+		recurrenceService:     recurrenceService,
+		firestoreClient:       firestoreClient,
+		registry:              registry,
+		worker:                worker,
+		scheduler:             scheduler,
+		exampleListener:       listener,
+		eventVenueListener:    eventVenueListener,
+		newPollListener:       newPollListener,
+		completedPollListener: completedPollListener,
 	}, nil
 }
 
@@ -223,6 +338,27 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 
+	if a.eventVenueListener != nil {
+		if err := a.eventVenueListener.Start(runCtx); err != nil {
+			cancel()
+			return fmt.Errorf("start event venue listener: %w", err)
+		}
+	}
+
+	if a.newPollListener != nil {
+		if err := a.newPollListener.Start(runCtx); err != nil {
+			cancel()
+			return fmt.Errorf("start new poll listener: %w", err)
+		}
+	}
+
+	if a.completedPollListener != nil {
+		if err := a.completedPollListener.Start(runCtx); err != nil {
+			cancel()
+			return fmt.Errorf("start completed poll listener: %w", err)
+		}
+	}
+
 	select {
 	case <-ctx.Done():
 	case <-runCtx.Done():
@@ -240,6 +376,9 @@ func (a *App) Close() error {
 	}
 	if a.baseStore == nil {
 		return nil
+	}
+	if a.firestoreClient != nil {
+		_ = a.firestoreClient.Close()
 	}
 	return a.baseStore.Close()
 }

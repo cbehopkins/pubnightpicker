@@ -5,6 +5,20 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "last: tmp",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/last-orders/main.go",
+            "env": {
+                "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+                "GOOGLE_CLOUD_PROJECT": "pubnightpicker",
+            },
+            "args": [
+                "-run-for=0",
+            ],
+        },
+        {
             "name": "Proto: Phase 1",
             "type": "go",
             "request": "launch",

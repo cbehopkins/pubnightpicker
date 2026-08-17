@@ -73,7 +73,8 @@ def next_occurrence(
     if frequency == "once":
         return parse_iso_date(recurrence.get("date"))
 
-    anchor_date = parse_iso_date(recurrence.get("start_date")) or reference_date
+    # Interval-based frequencies always anchor to the reference date (today).
+    anchor_date = reference_date
     interval = max(int(recurrence.get("interval", 1)), 1)
 
     if frequency == "weekly":

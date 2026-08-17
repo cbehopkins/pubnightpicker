@@ -30,7 +30,7 @@ func NewStore(db *sql.DB, allocator cellar.CellIDAllocator) (*Store, error) {
 		return nil, errors.New("db is required")
 	}
 	if allocator == nil {
-		allocator = cellar.NewSequentialAllocator("cell-", 1)
+		allocator = cellar.NewUUIDAllocator()
 	}
 
 	s := &Store{

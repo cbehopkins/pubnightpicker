@@ -20,6 +20,9 @@ type FanoutTarget struct {
 	Payload     json.RawMessage    `json:"payload"`
 }
 
+// The PendingHandler, PushHandler, and CheckHandler are responsible for managing
+// the idempotency state of events in a distributed system.
+// See docs/cdd/0001-idempotency.md for a detailed explanation of the design and flow of these handlers.
 type PendingPayload struct {
 	Listener string         `json:"listener"`
 	EventKey string         `json:"event_key"`
@@ -130,10 +133,10 @@ func (h PushHandler) Handle(ctx context.Context, payload PushPayload) cellar.Res
 }
 
 type CheckHandler struct {
-	Store       *Store
-	Remote      Remote
-	RetryDelay  time.Duration
-	Logger      *slog.Logger
+	Store      *Store
+	Remote     Remote
+	RetryDelay time.Duration
+	Logger     *slog.Logger
 }
 
 func (h CheckHandler) Handle(ctx context.Context, payload CheckPayload) cellar.Result {

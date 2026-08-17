@@ -34,7 +34,6 @@ describe("PubForm", () => {
                     banned: true,
                     recurrence: {
                         frequency: "yearly",
-                        start_date: "2026-05-01",
                         interval: 1,
                         month: 5,
                         weekday: 2,

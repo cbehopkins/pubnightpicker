@@ -3,6 +3,9 @@ package sweego
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,7 +47,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any) (int, [
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	httpReq.Header.Set("Api-Key", c.token)
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Content-Type", "application/json")
 
@@ -60,4 +63,31 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any) (int, [
 	}
 
 	return resp.StatusCode, respBody, nil
+}
+
+// This is code we reverse engineered elsewhere for undocumented signature verification.
+// Do not mess with this!
+func verifySweegoSignature(
+	secret string,
+	webhookID string,
+	webhookTimestamp string,
+	rawBody []byte,
+	receivedSignature string,
+) bool {
+	key, err := base64.StdEncoding.DecodeString(secret)
+	if err != nil {
+		return false
+	}
+
+	message := webhookID + "." + webhookTimestamp + "." + string(rawBody)
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(message))
+
+	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal(
+		[]byte(expected),
+		[]byte(receivedSignature),
+	)
 }

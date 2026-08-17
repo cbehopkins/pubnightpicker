@@ -20,7 +20,7 @@ type MemoryStore struct {
 // NewMemoryStore creates a new in-memory store.
 func NewMemoryStore(allocator CellIDAllocator) *MemoryStore {
 	if allocator == nil {
-		allocator = NewSequentialAllocator("cell-", 1)
+		allocator = NewUUIDAllocator()
 	}
 
 	return &MemoryStore{

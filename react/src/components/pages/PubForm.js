@@ -135,7 +135,6 @@ function getRecurrenceDefaults(pub_object) {
   const isYearlyByWeekday = recurrence.frequency === "yearly" && hasWeekday;
   return {
     frequency: recurrence.frequency || "none",
-    start_date: recurrence.start_date || "",
     date: recurrence.date || "",
     interval: recurrence.interval || "1",
     weekday: hasWeekday ? String(recurrence.weekday) : "0",

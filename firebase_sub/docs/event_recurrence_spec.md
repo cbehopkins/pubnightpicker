@@ -37,7 +37,6 @@ Managed by this feature:
 
 Observed/typed recurrence fields:
 - frequency: once | weekly | monthly | yearly
-- start_date: ISO date (anchor)
 - date: ISO date (used by once)
 - interval: integer >= 1 (default 1)
 - weekdays: list of weekday ints (0..6, Monday=0)
@@ -115,7 +114,7 @@ Core function:
 ## 5.1 Shared rules
 
 - frequency defaults to once if absent.
-- anchor_date = parse(start_date) if valid else reference_date.
+- anchor_date = reference_date (interval-based frequencies always anchor to the reference date).
 - interval = max(int(interval or 1), 1).
 - invalid date strings parse to None.
 - unknown frequency raises ValueError.
@@ -230,8 +229,7 @@ References:
 During maintain_event_recurrence_polls, _resolve_event_occurrence_date does:
 - read recurrence and next_occurrence_date
 - if next_occurrence_date missing and recurrence exists:
-- reference_date = parsed recurrence.start_date else today
-- compute occurrence with next_occurrence(recurrence, reference_date)
+- compute occurrence with next_occurrence(recurrence, today)
 - if result exists, write next_occurrence_date immediately
 
 This write is merge on venue doc.
@@ -309,7 +307,7 @@ Monthly last Wednesday:
 - next from 2026-05-14 => 2026-05-27
 
 Weekly Wednesday:
-- recurrence: {frequency: weekly, weekdays: [2], start_date: 2026-05-04}
+- recurrence: {frequency: weekly, weekdays: [2]}
 - next from 2026-05-14 => 2026-05-20
 
 References:

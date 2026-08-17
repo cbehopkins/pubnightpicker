@@ -313,72 +313,30 @@ The complete venue schema is outside the scope of this specification.
 
 ---
 
-# 13. Phase 2 — Opportunistic Transaction Integration
+# 13. Phase 2 — Pending Wites
 
-Phase 2 is an optimisation rather than a change to the cache's external behaviour.
+During phase 1 the application will write to the Venue Cache rather than directly to Firebase.
+The Venue cache will forward these writes directly and delete the associated document from the internal SQLite backed cache.
 
-The current database layer already permits application transactions to be included in a Cell's database commit.
+Phase 2 of the development will introduce a write cache. This will update the associated document preserved in the SQLite backed cache.
+The SQLite backed cache will have this document marked as Dirty (pending writeback).
+A Cell will be queued whose responsibility it is to perform the writeback to Firebase.
 
-Phase 2 may allow pending cache writes to be accumulated in memory and opportunistically included in the next application database transaction.
-
-Conceptually:
-
-```text
-Firebase change
-      ↓
-pending cache operation
-      │
-      │ wait
-      ▼
-next normal SQLite commit
-      │
-      ├── application transaction
-      │
-      └── pending cache operations
-              │
-              ▼
-        single SQLite commit
-```
-
-The purpose is to avoid performing a separate SQLite transaction/fsync for every cache update.
-
-The cache interface should not expose this optimisation to consumers.
 
 ---
 
-# 14. Phase 2 Pending-Write Semantics
+# 14. Phase 2 Removed
 
-Pending cache operations are in-memory work, not authoritative state.
-
-A pending operation is removed from the pending queue only after the SQLite transaction containing it has successfully committed.
-
-If the transaction fails:
-
-* the application transaction is rolled back;
-* the cache operation remains eligible for a later commit;
-* the Cell follows normal retry behaviour.
-
-If the process terminates before a pending cache operation is committed, losing that operation is acceptable.
-
-Firebase remains authoritative and a subsequent cache miss will retrieve the current document.
+This section is removed
 
 ---
 
-# 15. Phase 2 Background Flush
+# 15. Phase 3 Memory Cache
 
-Phase 2 should also provide a mechanism for committing pending cache operations when the application is otherwise idle.
+We considered a memory cache that set before the SQLite write layer. This would accept transactions into memory immediatly.
+These Pending writes would eventally be written to SQLite bundled into the next COMMIT transaction. The BaseStore would be responsible for querying us before a COMMIT to see if we had pendiong writes.
 
-The system must not rely on application traffic occurring frequently enough to flush the cache.
-
-Possible triggers include:
-
-* maximum pending-operation count;
-* maximum operation age;
-* periodic low-priority flush.
-
-The exact policy is an implementation decision.
-
-The flush itself must use the same SQLite transaction mechanism as normal application commits.
+This feature will not be implemented because it impacts our consistency guarantees.
 
 ---
 
@@ -399,9 +357,12 @@ The system relies on two properties:
 1. Firebase is authoritative.
 2. Consumers can always bypass the cache on a miss.
 
-The cache must therefore never be used as evidence that an entity exists when absence from the cache would materially affect correctness.
+The Cache is responsible for querying Firebase on a Miss to confirm if the document is indeed present.
+The principle is that all transactions to the venue list (the pubs collection) go through the cache entity. 
+The Cache initially takes the approach that if local modifications are made then it is simpler to delete the internal
+copy and wait for the listener to push a new version of the document. 
+If while waiting for that push, the application needs that document, then we can always fetch it as part of the application request.
 
-Where correctness depends on the latest authoritative state, the consumer must query Firebase directly or use another explicitly authoritative mechanism.
 
 ---
 
@@ -461,13 +422,10 @@ otherwise:
     return authoritative Firebase document
 ```
 
-Consumers must not depend upon:
+Consumers must not query the internal cache state
 
-* cache completeness;
-* cache synchronisation state;
-* cache durability;
-* cache population order;
-* cache internal SQLite representation.
+The cache acts a layer in front of firebase therefore it is the cache's responsibility to provide
+a transparent experience.
 
 ---
 
@@ -515,7 +473,7 @@ Implement:
 * Firebase fallback on cache miss;
 * optional cache population after Firebase reads;
 * explicit cache deletion;
-* background startup warming;
+* background startup warming; <- This should come for free as part of the listener behaviour
 * ordinary SQLite transactions.
 
 Do not implement:
@@ -529,9 +487,6 @@ Do not implement:
 ## Phase 2 — Transaction-aware optimisation
 
 Consider implementing:
-
-* in-memory pending cache writes;
-* piggybacking cache writes onto existing SQLite commits;
 * background flushing of pending writes;
 * batching of cache writes;
 * appropriate metrics around queue depth and write latency.
@@ -557,3 +512,127 @@ If the cache is lost, rebuild it.
 If a known change makes a cached entry suspect, delete it.
 
 There is no requirement to prove that the cache is globally synchronised before the rest of the backend can operate.
+
+# 22. Schema
+
+The current schema for the pubs/venue collection is included below:
+```
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/pubs",
+    "title": "pubs/{venueId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "required": [
+        "name"
+    ],
+    "properties": {
+        "name": {
+            "type": "string",
+            "minLength": 1
+        },
+        "venueType": {
+            "type": "string",
+            "enum": [
+                "pub",
+                "restaurant",
+                "event"
+            ]
+        },
+        "web_site": {
+            "type": "string"
+        },
+        "map": {
+            "type": "string"
+        },
+        "address": {
+            "type": "string"
+        },
+        "notes": {
+            "type": "string"
+        },
+        "pubImage": {
+            "type": "string"
+        },
+        "recurrence": {
+            "type": "object",
+            "properties": {
+                "frequency": {
+                    "type": "string",
+                    "enum": [
+                        "once",
+                        "weekly",
+                        "monthly",
+                        "yearly"
+                    ]
+                },
+                "date": {
+                    "type": "string",
+                    "format": "date"
+                },
+                "interval": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "weekdays": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 6
+                    }
+                },
+                "weekday": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                },
+                "nth": {
+                    "type": "integer",
+                    "enum": [
+                        -1,
+                        1,
+                        2,
+                        3,
+                        4
+                    ]
+                },
+                "month": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                },
+                "month_day": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                }
+            },
+            "additionalProperties": false
+        },
+        "next_occurrence_date": {
+            "type": "string",
+            "format": "date"
+        },
+        "parking": {
+            "type": "boolean"
+        },
+        "food": {
+            "type": "boolean"
+        },
+        "dog_friend": {
+            "type": "boolean"
+        },
+        "beer_gerden": {
+            "type": "boolean"
+        },
+        "out_of_town": {
+            "type": "boolean"
+        },
+        "banned": {
+            "type": "boolean"
+        }
+    },
+    "additionalProperties": true
+}
+```

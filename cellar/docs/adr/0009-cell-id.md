@@ -100,11 +100,24 @@ Such validation is an implementation detail of Cellar and does not affect the Al
 
 The Allocator remains independent of persistence concerns.
 
+Allocators must therefore be self-allocating: an allocator must not depend on state that is
+held only in process memory and would be lost on restart. A counter held solely in memory is
+not a valid production allocator, because a restart rewinds it and reissues identifiers that
+are already in use.
+
+The default allocator emits UUIDv7 identifiers. UUIDv7 requires no persisted state, remains
+unique across restarts and crashes, and is time-ordered so that identifier order approximates
+creation order for debugging and inspection.
+
+Deterministic counter-based allocators remain available for tests and simulations, where a
+fresh allocator accompanies a fresh store.
+
 ## Consequences
 
 ### Positive
 
 - Identity allocation remains independent of persistence.
+- Allocation survives process restarts without a recovery step or shutdown hook.
 - Allocation strategies may change without affecting handlers or the Store.
 - Cell identifiers remain suitable for debugging and observability.
 - Business logic remains decoupled from operational concerns.
@@ -115,6 +128,7 @@ The Allocator remains independent of persistence concerns.
 - Cell creation requires an additional runtime component.
 - Cell identifiers cannot safely encode business semantics.
 - Collision handling is the responsibility of Cellar.
+- Default identifiers are long and not human-memorable.
 
 ## Non-goals
 

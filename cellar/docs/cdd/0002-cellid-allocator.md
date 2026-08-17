@@ -105,21 +105,19 @@ Possible implementations include:
 
 The Allocator interface must remain unchanged when changing strategies.
 
-Example:
-
-```go
-type CounterAllocator struct {
-    next uint64
-}
-```
-
-may later be replaced by:
+The default implementation is `UUIDAllocator`, which emits UUIDv7 identifiers.
 
 ```go
 type UUIDAllocator struct{}
 ```
 
-without affecting Cellar behaviour.
+UUIDv7 is chosen because it needs no persisted state, so identifiers remain unique across
+process restarts and crashes, and because it is time-ordered, so identifier order approximates
+creation order.
+
+Counter-based allocators such as `SequentialAllocator` hold their position in memory only.
+A restart rewinds the counter and reissues identifiers that are already in use, so they are
+suitable for tests and simulations rather than production.
 
 ---
 

@@ -12,9 +12,6 @@ import (
 
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/counter"
-	"last_orders/internal/lastorders/components/firebaseidempotency"
-
-	"cloud.google.com/go/firestore"
 )
 
 func main() {
@@ -23,6 +20,7 @@ func main() {
 		runFor                = flag.Duration("run-for", 20*time.Second, "how long to run before graceful stop (0 means until signal)")
 		pollDelay             = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
 		enableExampleListener = flag.Bool("example-listener", true, "start the trivial example listener")
+		reevaluateEvery       = flag.Duration("event-reevaluate-every", 24*time.Hour, "how often the event venue listener re-checks eligibility against the current date")
 	)
 	flag.Parse()
 
@@ -36,33 +34,23 @@ func main() {
 		defer timeoutCancel()
 	}
 
-	idempotencyRemote := firebaseidempotency.Remote(firebaseidempotency.NewInMemoryRemoteStandIn(true))
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
-		projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-		if projectID == "" {
-			projectID = "last-orders-emulator"
-		}
-
-		firestoreClient, err := firestore.NewClient(ctx, projectID)
-		if err != nil {
-			fatalf("initialise firestore emulator client: %v", err)
-		}
-		defer firestoreClient.Close()
-
-		idempotencyRemote, err = firebaseidempotency.NewFirestoreRemote(firestoreClient, "listener_state", "last_orders")
-		if err != nil {
-			fatalf("initialise firestore idempotency remote: %v", err)
-		}
-
-		logger.Info("using Firestore emulator for idempotency remote", "firestore_emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"), "project_id", projectID)
+	enableFirestore := os.Getenv("FIRESTORE_EMULATOR_HOST") != ""
+	firestoreProjectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if firestoreProjectID == "" {
+		firestoreProjectID = "last-orders-emulator"
+	}
+	if enableFirestore {
+		logger.Info("firestore emulator enabled", "firestore_emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"), "project_id", firestoreProjectID)
 	}
 
 	application, err := app.New(app.Config{
 		DBPath:                *dbPath,
 		PollDelay:             *pollDelay,
 		Logger:                logger,
-		IdempotencyRemote:     idempotencyRemote,
+		EnableFirestore:       enableFirestore,
+		FirestoreProjectID:    firestoreProjectID,
 		EnableExampleListener: *enableExampleListener,
+		EventReevaluateEvery:  *reevaluateEvery,
 	})
 	if err != nil {
 		fatalf("initialise app: %v", err)

@@ -52,7 +52,6 @@ class PollDocument(TypedDict):
 
 class EventRecurrenceRule(TypedDict, total=False):
     frequency: Literal["once", "weekly", "monthly", "yearly"]
-    start_date: str
     date: str
     interval: int
     weekdays: list[Weekday]
@@ -70,7 +69,6 @@ class VenueDocument(TypedDict):
     map: NotRequired[str]
     recurrence: NotRequired[EventRecurrenceRule]
     next_occurrence_date: NotRequired[str]
-    recurrence_last_materialized_date: NotRequired[str]
 
 
 Callback = Callable[[], None] | None

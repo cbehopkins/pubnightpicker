@@ -1,5 +1,9 @@
 # CDD: Event Recurrence Maintenance
 
+> **DEPRECATED.** Superseded by the listener-driven design in `000x.md`. This
+> document describes the scheduled housekeeping sweep, which no longer exists.
+> Retained for reference only.
+
 ## 1. Purpose
 
 The Event Recurrence service maintains recurring event venues and materialises their upcoming occurrences as polls.
@@ -119,7 +123,6 @@ frequency:
 Common fields include:
 
 ```text
-start_date
 interval
 ```
 
@@ -315,12 +318,11 @@ Weekly recurrence supports one or more weekdays.
 
 A single `weekday` may be used as the fallback representation.
 
-The recurrence is evaluated relative to its `start_date` and `interval`.
+The recurrence is evaluated relative to the reference (today's) date and its `interval`.
 
 For example:
 
 ```text
-start_date = 2026-05-04
 interval   = 1
 weekdays   = [2]
 ```
@@ -551,19 +553,29 @@ Therefore an occurrence becomes eligible for materialisation seven London calend
 
 # 19. Existing Polls
 
-If the deterministic poll document already exists:
+Poll document identifiers are assigned by Firestore, exactly as they are for a
+normal user-initiated poll creation. The service must not construct a poll
+identifier of its own.
+
+Materialisation is therefore detected by state rather than by identifier. A poll
+is considered already materialised for a venue occurrence when a poll exists
+with:
 
 ```text
-polls/event-{venueId}-{occurrenceDate}
+date == occurrenceDate
+pubs contains venueId
 ```
 
-the service must **not recreate it**.
+If such a poll exists, the service must **not recreate it**.
 
 An existing poll is considered evidence that materialisation has already occurred.
 
 The service should not overwrite or reset the existing poll merely because recurrence maintenance is being replayed.
 
 This is an explicit idempotency requirement.
+
+The existence check and the creation must occur within the same Firestore
+transaction so that concurrent replays cannot both materialise the occurrence.
 
 Conceptually:
 
@@ -586,12 +598,13 @@ A newly materialised poll contains at least:
 ```text
 date              = occurrenceDate
 completed         = false
-pubs              = { venueId: ... }
-eventVenueId      = venueId
+pubs              = { venueId: { name: venueName } }
 eventOccurrenceDate = occurrenceDate
 ```
 
-The precise representation of the `pubs` entry remains an application schema concern, but the venue must be represented as the poll's event venue.
+The `pubs` entry uses the venue identifier as its key and carries the venue's
+`name` as read from the venue document, matching the representation produced by
+normal poll creation.
 
 The creation operation must not overwrite an existing poll.
 
