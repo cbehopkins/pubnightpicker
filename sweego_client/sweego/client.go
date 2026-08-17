@@ -66,6 +66,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any) (int, [
 }
 
 // This is code we reverse engineered elsewhere for undocumented signature verification.
+// This is for a later to be implemented webhook handler. It is not used in the current client code, but is included here for completeness and future use.
 // Do not mess with this!
 func verifySweegoSignature(
 	secret string,
