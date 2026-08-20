@@ -3,7 +3,7 @@ package cellar
 
 import "time"
 
-// CellID is an opaque runtime-owned identifier for a cell.
+// CellID is an opaque identifier for a cell.
 type CellID string
 
 // HandlerName identifies the registered handler for a persisted cell.
@@ -34,4 +34,10 @@ type CellRequest struct {
 	HandlerName HandlerName
 	Payload     []byte
 	NotBefore   *time.Time
+}
+
+// IdentifiedCellRequest describes new work with a caller-selected identifier.
+type IdentifiedCellRequest struct {
+	ID CellID
+	CellRequest
 }

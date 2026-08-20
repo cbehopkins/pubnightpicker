@@ -7,3 +7,4 @@ firebase_sub/firestore.rules
 firebase_sub/firestore.indexes.json
 .env
 .vscode
+*.exe

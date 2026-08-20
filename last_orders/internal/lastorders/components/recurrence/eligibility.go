@@ -1,6 +1,11 @@
 package recurrence
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+)
 
 const (
 	// LeadDays is the poll creation window ahead of an occurrence.
@@ -11,21 +16,53 @@ const (
 	NextOccurrenceField = "next_occurrence_date"
 )
 
-// IdempotencyKey builds the natural key shared by the stale_events and event_due listeners.
-func IdempotencyKey(eventID, nextOccurrenceDate string) string {
+// EventDueKey builds the event_due idempotency key. Poll materialisation only
+// depends on the occurrence date, not the recurrence definition that produced it.
+func EventDueKey(eventID, nextOccurrenceDate string) string {
 	if nextOccurrenceDate == "" {
 		nextOccurrenceDate = MissingDateKey
 	}
 	return eventID + "_" + nextOccurrenceDate
 }
 
-// IsStale reports whether the stored occurrence is missing, unparseable or in the past.
-func IsStale(nextOccurrenceDate string, today time.Time, loc *time.Location) bool {
-	occurrence, ok := parseDate(nextOccurrenceDate, loc)
-	if !ok {
-		return true
+// StaleEventKey builds the stale_events idempotency key. It also depends on the
+// recurrence definition so that editing the recurrence produces a new key even
+// though next_occurrence_date has not been recalculated yet.
+func StaleEventKey(eventID, nextOccurrenceDate string, recurrenceRaw map[string]any) string {
+	return EventDueKey(eventID, nextOccurrenceDate) + "_" + RecurrenceHash(recurrenceRaw)
+}
+
+// RecurrenceHash is a deterministic content hash of a recurrence definition.
+// encoding/json sorts map keys, so equal definitions hash equally regardless of
+// construction order.
+func RecurrenceHash(recurrenceRaw map[string]any) string {
+	canonical, err := json.Marshal(recurrenceRaw)
+	if err != nil {
+		canonical = []byte(err.Error())
 	}
-	return occurrence.Before(beginningOfDay(today.In(loc)))
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// NeedsRecalculation reports whether the stored occurrence no longer matches what
+// the current recurrence definition produces relative to today. This subsumes a
+// purely date-based staleness check: a missing or past stored date will also
+// mismatch a freshly computed occurrence, and so does an edited recurrence rule
+// whose stored date happens to still be in the future.
+func NeedsRecalculation(recurrenceRaw map[string]any, storedDate string, today time.Time, loc *time.Location) bool {
+	return computeOccurrence(recurrenceRaw, today, loc) != storedDate
+}
+
+func computeOccurrence(recurrenceRaw map[string]any, today time.Time, loc *time.Location) string {
+	rule, ok := ParseRule(recurrenceRaw)
+	if !ok {
+		return ""
+	}
+	occurrence, ok := NextOccurrence(rule, beginningOfDay(today.In(loc)), loc)
+	if !ok {
+		return ""
+	}
+	return occurrence.String()
 }
 
 // IsDue reports whether the stored occurrence sits inside the poll creation window.

@@ -14,6 +14,7 @@ var (
 // Store exposes lifecycle-safe persistence operations.
 type Store interface {
 	Add(requests []CellRequest) ([]CellID, error)
+	AddWithIDs(requests []IdentifiedCellRequest) error
 	ClaimNext(now time.Time) (Cell, bool, error)
 	Complete(cellID CellID, additions []CellRequest, applicationWork ...ApplicationWork) error
 	Retry(cellID CellID, notBefore *time.Time) error

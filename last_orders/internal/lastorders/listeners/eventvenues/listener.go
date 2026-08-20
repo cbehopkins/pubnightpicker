@@ -128,9 +128,8 @@ func (l *Listener) reevaluate(ctx context.Context) {
 func (l *Listener) evaluate(ctx context.Context, venue recurrence.EventVenue) {
 	today := l.service.Today()
 	loc := l.service.Location()
-	key := recurrence.IdempotencyKey(venue.ID, venue.NextOccurrenceDate)
 
-	if recurrence.IsStale(venue.NextOccurrenceDate, today, loc) {
+	if recurrence.NeedsRecalculation(venue.Recurrence, venue.NextOccurrenceDate, today, loc) {
 		payload, err := cellar.JSONCodec[handlers.StaleEventPayload]().Marshal(handlers.StaleEventPayload{
 			EventID:      venue.ID,
 			ObservedDate: venue.NextOccurrenceDate,
@@ -139,6 +138,7 @@ func (l *Listener) evaluate(ctx context.Context, venue recurrence.EventVenue) {
 			l.logger.Error("marshal stale event payload", "event_id", venue.ID, "err", err)
 			return
 		}
+		key := recurrence.StaleEventKey(venue.ID, venue.NextOccurrenceDate, venue.Recurrence)
 		l.createFact(ctx, ListenerStaleEvents, key, handlers.HandlerStaleEvent, payload)
 		return
 	}
@@ -152,6 +152,7 @@ func (l *Listener) evaluate(ctx context.Context, venue recurrence.EventVenue) {
 			l.logger.Error("marshal create event poll payload", "event_id", venue.ID, "err", err)
 			return
 		}
+		key := recurrence.EventDueKey(venue.ID, venue.NextOccurrenceDate)
 		l.createFact(ctx, ListenerEventDue, key, handlers.HandlerCreateEventPoll, payload)
 	}
 }

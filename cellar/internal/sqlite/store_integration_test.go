@@ -13,6 +13,68 @@ import (
 	"cellar/pkg/cellar"
 )
 
+func TestStoreAddWithIDs(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+	request := cellar.IdentifiedCellRequest{
+		ID: "background-worker",
+		CellRequest: cellar.CellRequest{
+			HandlerName: "worker",
+			Payload:     []byte("payload"),
+		},
+	}
+
+	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); err != nil {
+		t.Fatalf("AddWithIDs() error = %v", err)
+	}
+
+	got, err := store.Get(request.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ID != request.ID {
+		t.Fatalf("Get().ID = %q, want %q", got.ID, request.ID)
+	}
+	if got.HandlerName != request.HandlerName {
+		t.Fatalf("Get().HandlerName = %q, want %q", got.HandlerName, request.HandlerName)
+	}
+}
+
+func TestStoreAddWithIDsRejectsExistingID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+	request := cellar.IdentifiedCellRequest{
+		ID:          "background-worker",
+		CellRequest: cellar.CellRequest{HandlerName: "worker"},
+	}
+
+	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); err != nil {
+		t.Fatalf("first AddWithIDs() error = %v", err)
+	}
+	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); !errors.Is(err, cellar.ErrCellAlreadyExists) {
+		t.Fatalf("second AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	}
+}
+
+func TestStoreAddWithIDsDuplicateBatchIsAtomic(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+	requests := []cellar.IdentifiedCellRequest{
+		{ID: "worker", CellRequest: cellar.CellRequest{HandlerName: "first"}},
+		{ID: "worker", CellRequest: cellar.CellRequest{HandlerName: "second"}},
+	}
+
+	if err := store.AddWithIDs(requests); !errors.Is(err, cellar.ErrCellAlreadyExists) {
+		t.Fatalf("AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	}
+	if _, err := store.Get("worker"); !errors.Is(err, cellar.ErrCellNotFound) {
+		t.Fatalf("Get() error = %v, want ErrCellNotFound", err)
+	}
+}
+
 func TestStoreDBAccessorReturnsUnderlyingConnection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)

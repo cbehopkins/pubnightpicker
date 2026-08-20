@@ -79,8 +79,10 @@ func EventVenueFrom(doc *firestore.DocumentSnapshot) EventVenue {
 
 // AdvanceStaleEvent recalculates and persists the venue's next occurrence.
 //
-// It re-reads current Firestore state and no-ops when the venue is no longer stale,
-// so replay after a successful advance converges rather than advancing again.
+// It re-reads current Firestore state and recomputes the occurrence from today
+// under the current recurrence definition, writing only when that differs from
+// what is stored. This converges after a successful advance, and also picks up
+// a recurrence definition that was edited without the stored date changing.
 func (s *Service) AdvanceStaleEvent(ctx context.Context, eventID string) error {
 	venueRef := s.client.Collection(venueCollection).Doc(eventID)
 
@@ -93,19 +95,19 @@ func (s *Service) AdvanceStaleEvent(ctx context.Context, eventID string) error {
 			return nil
 		}
 
+		raw, _ := doc.Data()["recurrence"].(map[string]any)
 		current, _ := doc.Data()[NextOccurrenceField].(string)
-		if !IsStale(current, s.Today(), s.loc) {
+		if !NeedsRecalculation(raw, current, s.Today(), s.loc) {
 			return nil
 		}
 
-		raw, _ := doc.Data()["recurrence"].(map[string]any)
 		rule, ok := ParseRule(raw)
 		if !ok {
 			s.logger.Warn("event venue has no usable recurrence", "event_id", eventID)
 			return clearOccurrence(tx, venueRef, doc)
 		}
 
-		occurrence, ok := NextOccurrence(rule, s.staleReference(current), s.loc)
+		occurrence, ok := NextOccurrence(rule, beginningOfDay(s.Today()), s.loc)
 		if !ok {
 			s.logger.Warn("recurrence produced no future occurrence", "event_id", eventID, "frequency", rule.Frequency)
 			return clearOccurrence(tx, venueRef, doc)
@@ -113,20 +115,6 @@ func (s *Service) AdvanceStaleEvent(ctx context.Context, eventID string) error {
 
 		return tx.Set(venueRef, map[string]any{NextOccurrenceField: occurrence.String()}, firestore.MergeAll)
 	})
-}
-
-// staleReference resolves the point the recurrence is calculated from. A stored
-// occurrence advances strictly past itself; a long-dormant venue skips forward to today.
-func (s *Service) staleReference(current string) time.Time {
-	today := beginningOfDay(s.Today())
-	stored, ok := parseDate(current, s.loc)
-	if !ok {
-		return today
-	}
-	if next := stored.AddDate(0, 0, 1); next.After(today) {
-		return next
-	}
-	return today
 }
 
 func clearOccurrence(tx *firestore.Transaction, ref *firestore.DocumentRef, doc *firestore.DocumentSnapshot) error {

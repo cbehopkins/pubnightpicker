@@ -18,33 +18,53 @@ func londonTime(t *testing.T, date string) time.Time {
 	return parsed
 }
 
-func TestIdempotencyKey(t *testing.T) {
-	if got := IdempotencyKey("event-123", "2026-08-19"); got != "event-123_2026-08-19" {
+func TestEventDueKey(t *testing.T) {
+	if got := EventDueKey("event-123", "2026-08-19"); got != "event-123_2026-08-19" {
 		t.Fatalf("unexpected key: %s", got)
 	}
-	if got := IdempotencyKey("event-123", ""); got != "event-123_none" {
+	if got := EventDueKey("event-123", ""); got != "event-123_none" {
 		t.Fatalf("unexpected missing-date key: %s", got)
 	}
 }
 
-func TestIsStale(t *testing.T) {
+func TestStaleEventKeyChangesWithRecurrenceContent(t *testing.T) {
+	ruleA := map[string]any{"frequency": "once", "date": "2026-08-19"}
+	ruleB := map[string]any{"frequency": "once", "date": "2026-08-20"}
+
+	keyA := StaleEventKey("event-123", "2026-08-19", ruleA)
+	keyAAgain := StaleEventKey("event-123", "2026-08-19", map[string]any{"date": "2026-08-19", "frequency": "once"})
+	keyB := StaleEventKey("event-123", "2026-08-19", ruleB)
+
+	if keyA != keyAAgain {
+		t.Fatalf("hash should be insensitive to map construction order: %s != %s", keyA, keyAAgain)
+	}
+	if keyA == keyB {
+		t.Fatal("editing the recurrence definition should change the stale_events key")
+	}
+}
+
+func TestNeedsRecalculation(t *testing.T) {
 	loc, err := time.LoadLocation("Europe/London")
 	if err != nil {
 		t.Fatal(err)
 	}
 	today := londonTime(t, "2026-08-13")
+	rule := map[string]any{"frequency": "once", "date": "2026-08-20"}
 
-	cases := map[string]bool{
-		"":           true,
-		"nonsense":   true,
-		"2026-08-12": true,
-		"2026-08-13": false,
-		"2026-08-14": false,
+	if !NeedsRecalculation(rule, "", today, loc) {
+		t.Fatal("missing stored date should need recalculation")
 	}
-	for date, want := range cases {
-		if got := IsStale(date, today, loc); got != want {
-			t.Fatalf("IsStale(%q) = %v, want %v", date, got, want)
-		}
+	if !NeedsRecalculation(rule, "2026-08-01", today, loc) {
+		t.Fatal("stale stored date should need recalculation")
+	}
+	if NeedsRecalculation(rule, "2026-08-20", today, loc) {
+		t.Fatal("stored date matching the current rule should not need recalculation")
+	}
+
+	// Editing the rule so the stored (still future) date is no longer what it produces.
+	edited := map[string]any{"frequency": "once", "date": "2026-08-25"}
+	if !NeedsRecalculation(edited, "2026-08-20", today, loc) {
+		t.Fatal("stored date inconsistent with an edited rule should need recalculation")
 	}
 }
 
@@ -65,21 +85,6 @@ func TestIsDue(t *testing.T) {
 	for date, want := range cases {
 		if got := IsDue(date, today, loc); got != want {
 			t.Fatalf("IsDue(%q) = %v, want %v", date, got, want)
-		}
-	}
-}
-
-func TestStaleAndDueAreMutuallyExclusive(t *testing.T) {
-	loc, err := time.LoadLocation("Europe/London")
-	if err != nil {
-		t.Fatal(err)
-	}
-	today := londonTime(t, "2026-08-13")
-
-	for offset := -10; offset <= 10; offset++ {
-		date := today.AddDate(0, 0, offset).Format("2006-01-02")
-		if IsStale(date, today, loc) && IsDue(date, today, loc) {
-			t.Fatalf("%s is both stale and due", date)
 		}
 	}
 }

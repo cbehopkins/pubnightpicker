@@ -35,8 +35,49 @@ func emulatorService(t *testing.T, ctx context.Context) (*Service, *firestore.Cl
 	return svc, client
 }
 
+func TestAdvanceStaleEventPicksUpEditedRecurrenceAgainstEmulator(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	svc, client := emulatorService(t, ctx)
+	original := beginningOfDay(svc.Today()).AddDate(0, 0, 5).Format("2006-01-02")
+	edited := beginningOfDay(svc.Today()).AddDate(0, 0, 9).Format("2006-01-02")
+
+	eventID := fmt.Sprintf("venue-edited-recurrence-%d", time.Now().UnixNano())
+	venueRef := client.Collection("pubs").Doc(eventID)
+	if _, err := venueRef.Set(ctx, map[string]any{
+		"venueType":         "event",
+		"name":              "The Rescheduled Arms",
+		"recurrence":        map[string]any{"frequency": "once", "date": original},
+		NextOccurrenceField: original,
+	}); err != nil {
+		t.Fatalf("seed venue: %v", err)
+	}
+
+	// The frontend edits the recurrence definition; next_occurrence_date is untouched
+	// and is still a valid future date, so the venue is not stale by date alone.
+	if _, err := venueRef.Update(ctx, []firestore.Update{{Path: "recurrence", Value: map[string]any{"frequency": "once", "date": edited}}}); err != nil {
+		t.Fatalf("edit recurrence: %v", err)
+	}
+
+	if err := svc.AdvanceStaleEvent(ctx, eventID); err != nil {
+		t.Fatalf("advance stale event: %v", err)
+	}
+
+	doc, err := venueRef.Get(ctx)
+	if err != nil {
+		t.Fatalf("read venue: %v", err)
+	}
+	if got := doc.Data()[NextOccurrenceField]; got != edited {
+		t.Fatalf("recurrence edit was not picked up: next_occurrence_date = %v, want %s", got, edited)
+	}
+}
+
 func TestAdvanceStaleEventFromMissingDateAgainstEmulator(t *testing.T) {
 	t.Parallel()
+
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -47,10 +88,11 @@ func TestAdvanceStaleEventFromMissingDateAgainstEmulator(t *testing.T) {
 
 	eventID := fmt.Sprintf("venue-stale-missing-%d", time.Now().UnixNano())
 	venueRef := client.Collection("pubs").Doc(eventID)
+	rule := map[string]any{"frequency": "once", "date": occurrence}
 	if _, err := venueRef.Set(ctx, map[string]any{
 		"venueType":  "event",
 		"name":       "The Recurring Arms",
-		"recurrence": map[string]any{"frequency": "once", "date": occurrence},
+		"recurrence": rule,
 	}); err != nil {
 		t.Fatalf("seed venue: %v", err)
 	}
@@ -79,8 +121,8 @@ func TestAdvanceStaleEventFromMissingDateAgainstEmulator(t *testing.T) {
 		t.Fatalf("replay changed next_occurrence_date: %v", got)
 	}
 
-	if IsStale(occurrence, svc.Today(), loc) {
-		t.Fatal("advanced occurrence should no longer be stale")
+	if NeedsRecalculation(rule, occurrence, svc.Today(), loc) {
+		t.Fatal("advanced occurrence should no longer need recalculation")
 	}
 }
 
@@ -97,10 +139,11 @@ func TestAdvanceStaleEventFromPastDateAgainstEmulator(t *testing.T) {
 
 	eventID := fmt.Sprintf("venue-stale-past-%d", time.Now().UnixNano())
 	venueRef := client.Collection("pubs").Doc(eventID)
+	rule := map[string]any{"frequency": "weekly", "weekday": weekday, "interval": 1}
 	if _, err := venueRef.Set(ctx, map[string]any{
 		"venueType":         "event",
 		"name":              "The Weekly Arms",
-		"recurrence":        map[string]any{"frequency": "weekly", "weekday": weekday, "interval": 1},
+		"recurrence":        rule,
 		NextOccurrenceField: past,
 	}); err != nil {
 		t.Fatalf("seed venue: %v", err)
@@ -118,8 +161,8 @@ func TestAdvanceStaleEventFromPastDateAgainstEmulator(t *testing.T) {
 	if got == past {
 		t.Fatal("stale occurrence was not advanced")
 	}
-	if IsStale(got, svc.Today(), svc.Location()) {
-		t.Fatalf("advanced occurrence is still stale: %s", got)
+	if NeedsRecalculation(rule, got, svc.Today(), svc.Location()) {
+		t.Fatalf("advanced occurrence still needs recalculation: %s", got)
 	}
 }
 

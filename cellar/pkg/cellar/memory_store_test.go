@@ -7,6 +7,62 @@ import (
 	"time"
 )
 
+func TestMemoryStoreAddWithIDs(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	request := IdentifiedCellRequest{
+		ID: "background-worker",
+		CellRequest: CellRequest{
+			HandlerName: "worker",
+			Payload:     []byte("payload"),
+		},
+	}
+
+	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); err != nil {
+		t.Fatalf("AddWithIDs() error = %v", err)
+	}
+
+	got, err := store.Get(request.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ID != request.ID {
+		t.Fatalf("Get().ID = %q, want %q", got.ID, request.ID)
+	}
+	if got.HandlerName != request.HandlerName {
+		t.Fatalf("Get().HandlerName = %q, want %q", got.HandlerName, request.HandlerName)
+	}
+}
+
+func TestMemoryStoreAddWithIDsRejectsExistingID(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	request := IdentifiedCellRequest{
+		ID:          "background-worker",
+		CellRequest: CellRequest{HandlerName: "worker"},
+	}
+
+	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); err != nil {
+		t.Fatalf("first AddWithIDs() error = %v", err)
+	}
+	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); !errors.Is(err, ErrCellAlreadyExists) {
+		t.Fatalf("second AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	}
+}
+
+func TestMemoryStoreAddWithIDsDuplicateBatchIsAtomic(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	requests := []IdentifiedCellRequest{
+		{ID: "worker", CellRequest: CellRequest{HandlerName: "first"}},
+		{ID: "worker", CellRequest: CellRequest{HandlerName: "second"}},
+	}
+
+	if err := store.AddWithIDs(requests); !errors.Is(err, ErrCellAlreadyExists) {
+		t.Fatalf("AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	}
+	if _, err := store.Get("worker"); !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("Get() error = %v, want ErrCellNotFound", err)
+	}
+}
+
 func TestMemoryStoreClaimNextClaimsReadyCell(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	_, err := store.Add([]CellRequest{{HandlerName: "email", Payload: []byte("hello")}})

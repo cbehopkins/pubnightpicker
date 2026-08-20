@@ -48,6 +48,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "verify error:", err)
 			os.Exit(1)
 		}
+	case "bulk-send":
+		if err := runBulkSend(os.Args[2:], client, cfg.Provider); err != nil {
+			fmt.Fprintln(os.Stderr, "bulk-send error:", err)
+			os.Exit(1)
+		}
 	default:
 		printUsage(os.Stderr)
 		os.Exit(2)
@@ -93,6 +98,7 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 	var text string
 	var messageID string
 	var tolerance time.Duration
+	var dryRun bool
 
 	fs.StringVar(&from, "from", "", "from email address (optionally with display name)")
 	fs.StringVar(&to, "to", "", "recipient email address")
@@ -100,6 +106,7 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 	fs.StringVar(&text, "text", "", "plain text email body")
 	fs.StringVar(&messageID, "message-id", "", "override the generated X-Pubnight-Message-ID correlation value")
 	fs.DurationVar(&tolerance, "verify-tolerance", defaultVerifyTolerance, "time window (+/-) around the send attempt to search Sweego logs")
+	fs.BoolVar(&dryRun, "dry-run", false, "ask Sweego to accept the request without actually sending the email")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -134,6 +141,7 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 		Recipients:   []sweego.EmailAddress{toAddr},
 		MessageTxt:   text,
 		CampaignType: "transac",
+		DryRun:       dryRun,
 		Headers:      map[string]string{sweego.PubnightMessageIDHeader: correlationID},
 	}
 
@@ -141,11 +149,11 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 
 	ctx := context.Background()
 	sentAt := time.Now()
-	status, body, sendErr := client.SendEmail(ctx, req)
+	response, sendErr := client.SendEmail(ctx, req)
 	if sendErr != nil {
 		fmt.Fprintln(os.Stderr, "send error:", sendErr)
 	} else {
-		printHTTPResult(status, body)
+		printHTTPResult(response.Status, response.Body)
 	}
 
 	// Verify independently of the outcome above: the response is never a
@@ -157,8 +165,8 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 	if sendErr != nil {
 		return sendErr
 	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("non-2xx response: %d", status)
+	if response.Status < 200 || response.Status >= 300 {
+		return fmt.Errorf("non-2xx response: %d", response.Status)
 	}
 
 	return nil
@@ -301,9 +309,10 @@ func prettyJSON(raw []byte) string {
 
 func printUsage(out *os.File) {
 	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  sweego_client send --from <email> --to <email> --subject <text> --text <text> [--message-id <id>] [--verify-tolerance <duration>]")
+	fmt.Fprintln(out, "  sweego_client send --from <email> --to <email> --subject <text> --text <text> [--message-id <id>] [--verify-tolerance <duration>] [--dry-run]")
 	fmt.Fprintln(out, "  sweego_client logs [--uid <value>] [--to <email>] [--date <YYYY-MM-DD>]")
 	fmt.Fprintln(out, "  sweego_client verify --to <email> --message-id <id> [--sent-at <RFC3339>] [--tolerance <duration>]")
+	fmt.Fprintln(out, "  sweego_client bulk-send --from <email> --to <email,email,...> [--subject <text>] [--text <text>] [--discard-response] [--dry-run]")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Environment:")
 	fmt.Fprintln(out, "  SWEEGO_TOKEN (required)")

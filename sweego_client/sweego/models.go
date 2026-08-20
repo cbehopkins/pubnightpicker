@@ -13,6 +13,25 @@ type SendEmailRequest struct {
 	Recipients   []EmailAddress    `json:"recipients"`
 	MessageTxt   string            `json:"message-txt"`
 	CampaignType string            `json:"campaign-type"`
+	DryRun       bool              `json:"dry_run,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+}
+
+// BulkEmailRequest is the request body used by Sweego's bulk email endpoint.
+// The optional template fields are intentionally loose because this prototype
+// is used to inspect the provider contract rather than hide it behind a schema.
+type BulkEmailRequest struct {
+	Channel      string            `json:"channel"`
+	From         EmailAddress      `json:"from"`
+	Provider     string            `json:"provider"`
+	Subject      string            `json:"subject,omitempty"`
+	Recipients   []EmailAddress    `json:"recipients"`
+	MessageTxt   string            `json:"message-txt,omitempty"`
+	CampaignType string            `json:"campaign-type,omitempty"`
+	TemplateID   string            `json:"template_id,omitempty"`
+	TemplateName string            `json:"template_name,omitempty"`
+	TemplateVars map[string]any    `json:"template_vars,omitempty"`
+	DryRun       bool              `json:"dry_run,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 }
 

@@ -30,9 +30,9 @@ Cell identifiers are required for:
 - administration;
 - observability.
 
-Cell identifiers are not part of application business logic.
+Cell identifiers are normally not part of application business logic.
 
-Applications may observe Cell identifiers, but must not depend on their representation or derive meaning from them.
+Applications may observe Cell identifiers, but must not depend on the representation of runtime-allocated identifiers. Some applications need a stable identifier for singleton work, such as ensuring that a timer or background worker exists after every start.
 
 The runtime requires a mechanism for allocating new identifiers while preserving the separation between execution and persistence.
 
@@ -60,7 +60,7 @@ Applications and handlers must treat Cell identifiers as opaque.
 
 Cell identifiers carry no business meaning.
 
-Cellar owns the allocation of Cell identifiers.
+Cellar owns the default allocation of Cell identifiers.
 
 Conceptually:
 
@@ -94,6 +94,12 @@ Handlers request the creation of work.
 
 Handlers do not construct Cell identifiers directly.
 
+External application code may instead provide a Cell identifier when creating work. Caller-selected identifiers support stable, idempotent application patterns without changing the identity of an existing Cell. The Store rejects an identifier that is already present with `ErrCellAlreadyExists`; callers may treat that result as confirmation that the required work already exists.
+
+Caller-selected identifiers must be non-empty. They remain opaque to Cellar: Cellar stores and compares them but does not interpret their contents.
+
+The normal creation operation allocates identifiers and delegates persistence to the same atomic operation used for caller-selected identifiers. This keeps validation, collision handling and lifecycle initialisation consistent between both paths.
+
 Cellar may validate newly allocated identifiers against the Store before persisting a Cell.
 
 Such validation is an implementation detail of Cellar and does not affect the Allocator interface.
@@ -119,6 +125,7 @@ fresh allocator accompanies a fresh store.
 - Identity allocation remains independent of persistence.
 - Allocation survives process restarts without a recovery step or shutdown hook.
 - Allocation strategies may change without affecting handlers or the Store.
+- Applications can assign stable identifiers to singleton work.
 - Cell identifiers remain suitable for debugging and observability.
 - Business logic remains decoupled from operational concerns.
 - Test implementations may provide deterministic allocators.
@@ -126,7 +133,8 @@ fresh allocator accompanies a fresh store.
 ### Negative
 
 - Cell creation requires an additional runtime component.
-- Cell identifiers cannot safely encode business semantics.
+- Runtime-allocated Cell identifiers cannot safely encode business semantics.
+- Applications that select identifiers become responsible for their naming scheme and collision handling.
 - Collision handling is the responsibility of Cellar.
 - Default identifiers are long and not human-memorable.
 

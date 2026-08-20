@@ -78,13 +78,8 @@ func (s *Store) DB() *sql.DB {
 
 // Add persists one or more READY cells atomically.
 func (s *Store) Add(requests []cellar.CellRequest) ([]cellar.CellID, error) {
+	identified := make([]cellar.IdentifiedCellRequest, 0, len(requests))
 	ids := make([]cellar.CellID, 0, len(requests))
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer rollback(tx)
-
 	for _, req := range requests {
 		if req.HandlerName == "" {
 			return nil, errors.New("handler name is required")
@@ -94,11 +89,47 @@ func (s *Store) Add(requests []cellar.CellRequest) ([]cellar.CellID, error) {
 		if err != nil {
 			return nil, fmt.Errorf("allocate cell id: %w", err)
 		}
+		identified = append(identified, cellar.IdentifiedCellRequest{ID: id, CellRequest: req})
+		ids = append(ids, id)
+	}
 
-		_, err = tx.Exec(
+	if err := s.AddWithIDs(identified); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// AddWithIDs persists one or more READY cells with caller-selected identifiers atomically.
+func (s *Store) AddWithIDs(requests []cellar.IdentifiedCellRequest) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	if err := insertIdentifiedRequests(tx, requests); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func insertIdentifiedRequests(tx *sql.Tx, requests []cellar.IdentifiedCellRequest) error {
+	for _, req := range requests {
+		if req.ID == "" {
+			return errors.New("cell id is required")
+		}
+		if req.HandlerName == "" {
+			return errors.New("handler name is required")
+		}
+
+		_, err := tx.Exec(
 			`INSERT INTO cells (id, handler_name, payload, state, not_before)
 			 VALUES (?, ?, ?, ?, ?)`,
-			string(id),
+			string(req.ID),
 			string(req.HandlerName),
 			payloadOrEmpty(req.Payload),
 			string(cellar.CellStateReady),
@@ -106,18 +137,13 @@ func (s *Store) Add(requests []cellar.CellRequest) ([]cellar.CellID, error) {
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
-				return nil, fmt.Errorf("%w: %s", cellar.ErrCellAlreadyExists, id)
+				return fmt.Errorf("%w: %s", cellar.ErrCellAlreadyExists, req.ID)
 			}
-			return nil, err
+			return err
 		}
-
-		ids = append(ids, id)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return ids, nil
+	return nil
 }
 
 // ClaimNext atomically claims one runnable cell.
@@ -202,6 +228,7 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 		}
 	}
 
+	identified := make([]cellar.IdentifiedCellRequest, 0, len(additions))
 	for _, req := range additions {
 		if req.HandlerName == "" {
 			return errors.New("handler name is required")
@@ -212,21 +239,10 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 			return fmt.Errorf("allocate cell id: %w", err)
 		}
 
-		_, err = tx.Exec(
-			`INSERT INTO cells (id, handler_name, payload, state, not_before)
-			 VALUES (?, ?, ?, ?, ?)`,
-			string(newID),
-			string(req.HandlerName),
-			payloadOrEmpty(req.Payload),
-			string(cellar.CellStateReady),
-			timeOrNil(req.NotBefore),
-		)
-		if err != nil {
-			if isUniqueViolation(err) {
-				return fmt.Errorf("%w: %s", cellar.ErrCellAlreadyExists, newID)
-			}
-			return err
-		}
+		identified = append(identified, cellar.IdentifiedCellRequest{ID: newID, CellRequest: req})
+	}
+	if err := insertIdentifiedRequests(tx, identified); err != nil {
+		return err
 	}
 
 	_, err = tx.Exec(`DELETE FROM cells WHERE id = ?`, string(cellID))

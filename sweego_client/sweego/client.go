@@ -19,6 +19,12 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type HTTPResult struct {
+	Status  int
+	Headers http.Header
+	Body    []byte
+}
+
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: baseURL,
@@ -29,8 +35,12 @@ func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	}
 }
 
-func (c *Client) SendEmail(ctx context.Context, req SendEmailRequest) (int, []byte, error) {
-	return c.postJSON(ctx, "/send", req)
+func (c *Client) SendEmail(ctx context.Context, req SendEmailRequest) (HTTPResult, error) {
+	return c.postJSONWithHeaders(ctx, "/send", req)
+}
+
+func (c *Client) SendBulkEmail(ctx context.Context, req BulkEmailRequest) (HTTPResult, error) {
+	return c.postJSONWithHeaders(ctx, "/send/bulk/email", req)
 }
 
 func (c *Client) QueryLogs(ctx context.Context, req LogsRequest) (int, []byte, error) {
@@ -38,14 +48,19 @@ func (c *Client) QueryLogs(ctx context.Context, req LogsRequest) (int, []byte, e
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload any) (int, []byte, error) {
+	result, err := c.postJSONWithHeaders(ctx, path, payload)
+	return result.Status, result.Body, err
+}
+
+func (c *Client) postJSONWithHeaders(ctx context.Context, path string, payload any) (HTTPResult, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, nil, fmt.Errorf("marshal request: %w", err)
+		return HTTPResult{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, fmt.Errorf("build request: %w", err)
+		return HTTPResult{}, fmt.Errorf("build request: %w", err)
 	}
 	httpReq.Header.Set("Api-Key", c.token)
 	httpReq.Header.Set("Accept", "application/json")
@@ -53,16 +68,16 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any) (int, [
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return 0, nil, fmt.Errorf("request failed: %w", err)
+		return HTTPResult{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, nil, fmt.Errorf("read response body: %w", err)
+		return HTTPResult{Status: resp.StatusCode, Headers: resp.Header.Clone()}, fmt.Errorf("read response body: %w", err)
 	}
 
-	return resp.StatusCode, respBody, nil
+	return HTTPResult{Status: resp.StatusCode, Headers: resp.Header.Clone(), Body: respBody}, nil
 }
 
 // This is code we reverse engineered elsewhere for undocumented signature verification.
