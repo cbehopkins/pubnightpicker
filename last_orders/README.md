@@ -133,7 +133,7 @@ Timed work includes scheduled and observed execution timestamps/skew.
 1. Duplicate Firebase delivery before idempotency (duplicate downstream work expected).
 2. Duplicate Firebase delivery with idempotency (duplicate filtered).
 3. Handler retry semantics (`FailOnceHandler` returns `Retry` first, then `Complete`).
-4. Restart around scheduled work (re-run process against same in-memory store instance).
+4. Restart around scheduled work (construct a new runtime over the same in-memory store instance).
 
 ## What this prototype proved
 

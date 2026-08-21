@@ -249,23 +249,47 @@ func TestFailureHandlerRetriesThenCompletes(t *testing.T) {
 func TestRestartAroundScheduledWork(t *testing.T) {
 	t.Parallel()
 
-	proto := mustPrototype(t, app.Config{
+	store := cellar.NewMemoryStore(nil)
+	cfg := app.Config{
 		Phase:                    app.PhaseHousekeepingScheduling,
 		PollDelay:                5 * time.Millisecond,
 		HousekeepingEvery:        time.Hour,
 		HousekeepingScheduleLead: 400 * time.Millisecond,
 		ChainDelay:               time.Second,
 		EnableFirebase:           false,
+		Store:                    store,
 		Deduper:                  idempotency.NoopDeduper{},
 		Logger:                   testLogger(),
-	})
+	}
 
-	runFor(t, proto, 120*time.Millisecond)
-	runFor(t, proto, 650*time.Millisecond)
+	beforeRestart := mustPrototype(t, cfg)
+	runFor(t, beforeRestart, 120*time.Millisecond)
 
-	snapshot := proto.RecorderSnapshot()
+	activeBeforeRestart, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("list active cells before restart: %v", err)
+	}
+	if len(activeBeforeRestart) != 1 {
+		t.Fatalf("expected one scheduled housekeeping cell before restart, got %d", len(activeBeforeRestart))
+	}
+	scheduledCellID := activeBeforeRestart[0].ID
+
+	afterRestart := mustPrototype(t, cfg)
+	runFor(t, afterRestart, 650*time.Millisecond)
+
+	snapshot := afterRestart.RecorderSnapshot()
 	if snapshot.HousekeepingRuns == 0 {
 		t.Fatal("expected scheduled housekeeping cell to execute after restart")
+	}
+
+	activeAfterRestart, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("list active cells after restart: %v", err)
+	}
+	for _, cell := range activeAfterRestart {
+		if cell.ID == scheduledCellID {
+			t.Fatalf("expected pre-restart cell %q to complete", scheduledCellID)
+		}
 	}
 }
 
