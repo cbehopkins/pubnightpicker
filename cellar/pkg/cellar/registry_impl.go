@@ -21,8 +21,14 @@ func (r *MemoryRegistry) Register(name HandlerName, registration Registration) e
 	if r.frozen {
 		return ErrRegistryFrozen
 	}
+	if name == "" {
+		return ErrHandlerNameRequired
+	}
 	if registration == nil {
 		return ErrRegistrationNil
+	}
+	if _, exists := r.registrations[name]; exists {
+		return ErrHandlerAlreadyRegistered
 	}
 	r.registrations[name] = registration
 	return nil
@@ -40,6 +46,8 @@ func (r *MemoryRegistry) Freeze() {
 }
 
 var (
-	ErrRegistryFrozen  = errors.New("registry is frozen")
-	ErrRegistrationNil = errors.New("registration is nil")
+	ErrRegistryFrozen           = errors.New("registry is frozen")
+	ErrRegistrationNil          = errors.New("registration is nil")
+	ErrHandlerNameRequired      = errors.New("handler name is required")
+	ErrHandlerAlreadyRegistered = errors.New("handler is already registered")
 )

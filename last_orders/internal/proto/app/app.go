@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/proto/cellarruntime"
 	"last_orders/internal/proto/firebase"
 	"last_orders/internal/proto/handlers"
 	"last_orders/internal/proto/idempotency"
@@ -38,32 +37,9 @@ type Config struct {
 type Prototype struct {
 	cfg         Config
 	store       cellar.Store
-	registry    *cellar.MemoryRegistry
+	cellar      *cellar.Cellar
 	recorder    *handlers.Recorder
-	worker      *cellar.Worker
-	scheduler   *cellar.Scheduler
 	bridgeQueue chan firebase.Event
-}
-
-type runtimeDispatcher struct {
-	worker *cellar.Worker
-	logger *slog.Logger
-}
-
-func (d runtimeDispatcher) Dispatch(ctx context.Context, cell cellar.Cell) error {
-	if d.worker == nil {
-		return nil
-	}
-
-	result := d.worker.Run(ctx, cell)
-	if d.logger != nil {
-		d.logger.Info("cell executed",
-			"cell_id", cell.ID,
-			"handler", cell.HandlerName,
-			"result", resultKind(result),
-		)
-	}
-	return nil
 }
 
 func New(cfg Config) (*Prototype, error) {
@@ -81,46 +57,34 @@ func New(cfg Config) (*Prototype, error) {
 	if store == nil {
 		store = cellar.NewMemoryStore(nil)
 	}
-	registry := cellar.NewMemoryRegistry()
+	cellarRuntime := cellar.New(store, cellar.Config{PollDelay: cfg.PollDelay})
 	recorder := handlers.NewRecorder()
 
-	if err := cellarruntime.RegisterJSON(registry, handlers.HandlerHousekeeping, handlers.HousekeepingHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerHousekeeping, handlers.HousekeepingHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
 		return nil, err
 	}
-	if err := cellarruntime.RegisterJSON(registry, handlers.HandlerFuture, handlers.FutureHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerFuture, handlers.FutureHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
 		return nil, err
 	}
-	if err := cellarruntime.RegisterJSON(registry, handlers.HandlerFirebase, handlers.FirebaseEventHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerFirebase, handlers.FirebaseEventHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
 		return nil, err
 	}
-	if err := cellarruntime.RegisterJSON(registry, handlers.HandlerFailOnce, handlers.FailOnceHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerFailOnce, handlers.FailOnceHandler{Logger: cfg.Logger, Recorder: recorder}); err != nil {
 		return nil, err
 	}
-	registry.Freeze()
-
-	worker := cellar.NewWorker(registry, cellar.NewStoreResultApplier(store))
-	dispatcher := runtimeDispatcher{worker: worker, logger: cfg.Logger}
-	scheduler := cellar.NewScheduler(store, dispatcher, 1, cfg.PollDelay)
-
 	return &Prototype{
 		cfg:         cfg,
 		store:       store,
-		registry:    registry,
+		cellar:      cellarRuntime,
 		recorder:    recorder,
-		worker:      worker,
-		scheduler:   scheduler,
 		bridgeQueue: make(chan firebase.Event, 128),
 	}, nil
 }
 
 func (p *Prototype) Run(ctx context.Context) error {
-	if err := p.store.Recover(); err != nil {
-		return err
-	}
-
 	errCh := make(chan error, 4)
-
-	go p.scheduler.Run(ctx)
+	cellarErr := make(chan error, 1)
+	go func() { cellarErr <- p.cellar.Start(ctx) }()
 
 	if p.cfg.Phase == PhaseHousekeepingScheduling || p.cfg.Phase == PhaseChainedFutureWork {
 		go p.runHousekeepingLoop(ctx)
@@ -148,7 +112,12 @@ func (p *Prototype) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			_ = p.cellar.Stop()
 			return nil
+		case err := <-cellarErr:
+			if err != nil {
+				return err
+			}
 		case err := <-errCh:
 			if err != nil {
 				return err

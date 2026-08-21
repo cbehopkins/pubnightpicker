@@ -2,6 +2,14 @@ package cellar
 
 import "encoding/json"
 
+func marshalJSON(value any) ([]byte, error) {
+	return json.Marshal(value)
+}
+
+func unmarshalJSON(raw []byte, value any) error {
+	return json.Unmarshal(raw, value)
+}
+
 // JSONCodec returns a JSON codec for payload type T.
 func JSONCodec[T any]() Codec[T] {
 	return jsonCodec[T]{}

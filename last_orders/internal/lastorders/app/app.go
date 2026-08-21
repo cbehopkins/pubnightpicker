@@ -3,10 +3,8 @@ package app
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +19,6 @@ import (
 	eventvenuelistener "last_orders/internal/lastorders/listeners/eventvenues"
 	examplelistener "last_orders/internal/lastorders/listeners/example"
 	newpolllistener "last_orders/internal/lastorders/listeners/newpolls"
-	"last_orders/internal/lastorders/runtime"
 
 	"cloud.google.com/go/firestore"
 
@@ -48,54 +45,14 @@ type App struct {
 	idempotencyStore      *firebaseidempotency.Store
 	recurrenceService     *recurrence.Service
 	firestoreClient       *firestore.Client
-	registry              *cellar.MemoryRegistry
-	worker                *cellar.Worker
-	scheduler             *cellar.Scheduler
+	cellarRuntime         *cellar.Cellar
 	exampleListener       *examplelistener.Producer
 	eventVenueListener    *eventvenuelistener.Listener
 	newPollListener       *newpolllistener.Listener
 	completedPollListener *completedpolllistener.Listener
 	runCancel             context.CancelFunc
-	runCancelMu           sync.Mutex
-	schedulerWG           sync.WaitGroup
-}
-
-type runtimeDispatcher struct {
-	worker *cellar.Worker
-	store  cellar.Store
-}
-
-func (d runtimeDispatcher) Dispatch(ctx context.Context, cell cellar.Cell) error {
-	if d.worker == nil {
-		return nil
-	}
-
-	result := d.worker.Run(ctx, cell)
-	if errResult, ok := result.(cellar.ErrorResult); ok && errors.Is(errResult.Err, firebaseidempotency.ErrTransitionRejected) {
-		if d.store == nil {
-			return nil
-		}
-		err := d.store.Complete(cell.ID, nil)
-		if errors.Is(err, cellar.ErrCellNotFound) || errors.Is(err, cellar.ErrCellNotClaimed) {
-			return nil
-		}
-		return err
-	}
-	if errResult, ok := result.(cellar.ErrorResult); ok && isSQLiteBusyError(errResult.Err) {
-		if d.store == nil {
-			return errResult.Err
-		}
-		return d.store.Retry(cell.ID, nil)
-	}
-	return nil
-}
-
-func isSQLiteBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
+	runDone               chan struct{}
+	runMu                 sync.Mutex
 }
 
 func New(cfg Config) (*App, error) {
@@ -184,33 +141,32 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
-	// Declare/register The handlers for the cellar worker. The handlers are responsible for processing the cells in the cellar store.
-	registry := cellar.NewMemoryRegistry()
-	if err := runtime.RegisterJSON(registry, handlers.HandlerExampleIncrement, handlers.IncrementHandler{Counter: counterStore, Logger: cfg.Logger}); err != nil {
+	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay})
+	if err := cellarRuntime.Register(handlers.HandlerExampleIncrement, handlers.IncrementHandler{Counter: counterStore, Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, handlers.HandlerExampleFanout, handlers.FanoutHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerExampleFanout, handlers.FanoutHandler{Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, handlers.HandlerNewPoll, handlers.NewPollHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerNewPoll, handlers.NewPollHandler{Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, handlers.HandlerCompletedPoll, handlers.CompletedPollHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(handlers.HandlerCompletedPoll, handlers.CompletedPollHandler{Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, firebaseidempotency.HandlerPending, firebaseidempotency.PendingHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPending, firebaseidempotency.PendingHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, firebaseidempotency.HandlerPush, firebaseidempotency.PushHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPush, firebaseidempotency.PushHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		_ = baseStore.Close()
 		return nil, err
 	}
-	if err := runtime.RegisterJSON(registry, firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, RetryDelay: 80 * time.Millisecond, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, RetryDelay: 80 * time.Millisecond, Logger: cfg.Logger}); err != nil {
 		if firestoreClient != nil {
 			_ = firestoreClient.Close()
 		}
@@ -218,22 +174,17 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	if recurrenceService != nil {
-		if err := runtime.RegisterJSON(registry, handlers.HandlerStaleEvent, handlers.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+		if err := cellarRuntime.Register(handlers.HandlerStaleEvent, handlers.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
 			_ = firestoreClient.Close()
 			_ = baseStore.Close()
 			return nil, err
 		}
-		if err := runtime.RegisterJSON(registry, handlers.HandlerCreateEventPoll, handlers.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+		if err := cellarRuntime.Register(handlers.HandlerCreateEventPoll, handlers.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
 			_ = firestoreClient.Close()
 			_ = baseStore.Close()
 			return nil, err
 		}
 	}
-	registry.Freeze()
-
-	worker := cellar.NewWorker(registry, cellar.NewStoreResultApplier(cellarStore))
-	scheduler := cellar.NewScheduler(cellarStore, runtimeDispatcher{worker: worker, store: cellarStore}, 1, cfg.PollDelay)
-
 	incrementPayload, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{
 		Counter: counter.DefaultCounter,
 		Delta:   1,
@@ -294,9 +245,7 @@ func New(cfg Config) (*App, error) {
 		idempotencyStore:      idempotencyStore,
 		recurrenceService:     recurrenceService,
 		firestoreClient:       firestoreClient,
-		registry:              registry,
-		worker:                worker,
-		scheduler:             scheduler,
+		cellarRuntime:         cellarRuntime,
 		exampleListener:       listener,
 		eventVenueListener:    eventVenueListener,
 		newPollListener:       newPollListener,
@@ -309,26 +258,26 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("app is not initialised")
 	}
 
-	if err := a.cellarStore.Recover(); err != nil {
-		return fmt.Errorf("cellar recover: %w", err)
-	}
-
 	runCtx, cancel := context.WithCancel(ctx)
-	a.runCancelMu.Lock()
+	a.runMu.Lock()
 	a.runCancel = cancel
-	a.runCancelMu.Unlock()
+	a.runDone = make(chan struct{})
+	runDone := a.runDone
+	a.runMu.Unlock()
 	defer func() {
 		cancel()
-		a.schedulerWG.Wait()
-		a.runCancelMu.Lock()
+		_ = a.cellarRuntime.Stop()
+		<-runDone
+		a.runMu.Lock()
 		a.runCancel = nil
-		a.runCancelMu.Unlock()
+		a.runDone = nil
+		a.runMu.Unlock()
 	}()
 
-	a.schedulerWG.Add(1)
+	cellarErr := make(chan error, 1)
 	go func() {
-		defer a.schedulerWG.Done()
-		a.scheduler.Run(runCtx)
+		defer close(runDone)
+		cellarErr <- a.cellarRuntime.Start(runCtx)
 	}()
 
 	if a.exampleListener != nil {
@@ -361,18 +310,26 @@ func (a *App) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-	case <-runCtx.Done():
+		return nil
+	case err := <-cellarErr:
+		if err != nil {
+			return fmt.Errorf("run cellar: %w", err)
+		}
 	}
 	return nil
 }
 
 func (a *App) Close() error {
-	a.runCancelMu.Lock()
+	a.runMu.Lock()
 	runCancel := a.runCancel
-	a.runCancelMu.Unlock()
+	runDone := a.runDone
+	a.runMu.Unlock()
 	if runCancel != nil {
 		runCancel()
-		a.schedulerWG.Wait()
+		_ = a.cellarRuntime.Stop()
+		if runDone != nil {
+			<-runDone
+		}
 	}
 	if a.baseStore == nil {
 		return nil
@@ -398,10 +355,6 @@ func (a *App) IdempotencyState(ctx context.Context, listener, eventKey string) (
 
 func (a *App) CellarStore() cellar.Store {
 	return a.cellarStore
-}
-
-func (a *App) Worker() *cellar.Worker {
-	return a.worker
 }
 
 func sqliteDSN(path string) string {

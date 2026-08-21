@@ -23,6 +23,8 @@ It does not execute application logic.
 The Runtime is responsible for:
 
 * constructing and connecting Cellar components;
+* registering typed application Handlers by stable HandlerName;
+* adapting typed Handler payloads to and from JSON;
 * controlling startup ordering;
 * controlling shutdown ordering;
 * providing execution context;
@@ -34,7 +36,6 @@ The Runtime is not responsible for:
 
 * scheduling Cells;
 * executing Handlers;
-* decoding payloads;
 * persistence implementation;
 * business retry decisions.
 
@@ -89,12 +90,6 @@ Runtime.Start()
 
     v
 
-Store.Open()
-
-    |
-
-    v
-
 Validate Registry
 
     |
@@ -143,6 +138,20 @@ For each active Cell:
 Payload validation is not performed during startup.
 
 Payload validity is determined during execution.
+
+Registration becomes immutable when startup succeeds. Attempts to register another
+Handler after that transition fail through the Runtime API; applications never freeze
+the Registry directly.
+
+---
+
+# Payload Encoding
+
+The Runtime JSON-encodes typed values passed to `Add` and persists the bytes in
+`Cell.Payload`. During execution, the Handler registration JSON-decodes those bytes
+into the Handler's declared payload type before invocation.
+
+JSON is the fixed payload contract. Codec selection is not an application concern.
 
 ---
 

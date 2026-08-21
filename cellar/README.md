@@ -85,19 +85,56 @@ A Cell does not own other Cells.
 
 Each Cell has a corresponding Handler.
 
-Handlers contain business logic.
-
-Conceptually:
+Handlers contain business logic and receive a typed payload. Cellar binds the handler to a
+stable, human-readable name and handles JSON encoding and decoding internally.
 
 ```go
-type Handler interface {
-    Handle(ctx context.Context, cell Cell) Result
+type SendEmail struct {
+    Recipient string `json:"recipient"`
+}
+
+type SendEmailHandler struct{}
+
+func (SendEmailHandler) Handle(ctx context.Context, payload SendEmail) cellar.Result {
+    // Application business logic.
+    return cellar.Complete{}
 }
 ```
 
 Handlers do not directly manage persistence.
 
 Handlers return instructions to the runtime.
+
+---
+
+## Usage
+
+Cellar is the composition root for registration, scheduling, execution, and result
+application. Applications provide a store, configuration, and typed handlers:
+
+```go
+store := cellar.NewMemoryStore(nil)
+
+c := cellar.New(store, cellar.Config{
+    PollDelay: 100 * time.Millisecond,
+})
+
+if err := c.Register("email.send", SendEmailHandler{}); err != nil {
+    return err
+}
+
+if _, err := c.Add("email.send", SendEmail{Recipient: "person@example.com"}); err != nil {
+    return err
+}
+
+if err := c.Start(ctx); err != nil {
+    return err
+}
+```
+
+`Start` closes registration, recovers claimed Cells, and runs until its context is
+cancelled or `Stop` is called. Applications do not construct or freeze a registry and
+do not construct workers, dispatchers, result appliers, or schedulers.
 
 ---
 

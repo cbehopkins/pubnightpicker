@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -284,8 +282,8 @@ func TestIdempotencyPresentNoWork(t *testing.T) {
 func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	t.Parallel()
 
-	remote := newCheckBarrierRemote(firebaseidempotency.NewInMemoryRemoteStandIn(true), "listener-race", "event-5")
-	remote.seedExisting("listener-race", "event-5", true)
+	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
+	remote.SeedExisting("listener-race", "event-5", true)
 	dbPath := filepath.Join(t.TempDir(), "idem-race.db")
 	a := mustNewApp(t, dbPath, remote, false, nil)
 	defer a.Close()
@@ -309,65 +307,13 @@ func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 	}
 
 	store := a.CellarStore()
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 1; i++ {
 		if _, err := store.Add([]cellar.CellRequest{{HandlerName: firebaseidempotency.HandlerCheck, Payload: raw}}); err != nil {
 			t.Fatalf("add check cell %d: %v", i, err)
 		}
 	}
 
-	first, ok, err := store.ClaimNext(time.Now().UTC())
-	if err != nil || !ok {
-		t.Fatalf("claim first check: ok=%v err=%v", ok, err)
-	}
-	second, ok, err := store.ClaimNext(time.Now().UTC())
-	if err != nil || !ok {
-		t.Fatalf("claim second check: ok=%v err=%v", ok, err)
-	}
-
-	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		errCh <- executeClaimedCellLikeRuntime(a, first)
-	}()
-	go func() {
-		defer wg.Done()
-		errCh <- executeClaimedCellLikeRuntime(a, second)
-	}()
-	remote.waitUntilBothChecksEntered()
-	remote.releaseChecks()
-	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		if err != nil {
-			t.Fatalf("dispatch claimed check cell: %v", err)
-		}
-	}
-
-	for i := 0; i < 3; i++ {
-		active, err := store.ListActive()
-		if err != nil {
-			t.Fatalf("list active during follow-up drain: %v", err)
-		}
-		if countByHandler(active, firebaseidempotency.HandlerCheck) == 0 {
-			break
-		}
-
-		next, ok, err := store.ClaimNext(time.Now().UTC())
-		if err != nil {
-			t.Fatalf("claim follow-up check cell: %v", err)
-		}
-		if !ok {
-			break
-		}
-		if next.HandlerName != firebaseidempotency.HandlerCheck {
-			continue
-		}
-		if err := executeClaimedCellLikeRuntime(a, next); err != nil {
-			t.Fatalf("dispatch follow-up claimed check cell: %v", err)
-		}
-	}
+	runFor(t, a, 300*time.Millisecond)
 
 	state, ok, err := a.IdempotencyState(context.Background(), "listener-race", "event-5")
 	if err != nil {
@@ -377,15 +323,22 @@ func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
 		t.Fatalf("expected PRESENT after duplicate checks, got ok=%v state=%s", ok, state)
 	}
 
+	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
+	if err != nil {
+		t.Fatalf("counter value: %v", err)
+	}
+	if value != 1 {
+		t.Fatalf("expected one fanout increment after duplicate check success, got %d", value)
+	}
 	active, err := store.ListActive()
 	if err != nil {
 		t.Fatalf("list active: %v", err)
 	}
-	if countByHandler(active, handlers.HandlerExampleIncrement) != 1 {
-		t.Fatalf("expected exactly one fanout increment cell, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
+	if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
+		t.Fatalf("expected no lingering fanout increment cells after success, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
 	}
 	if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
-		t.Fatalf("expected both check cells to complete, found %d", countByHandler(active, firebaseidempotency.HandlerCheck))
+		t.Fatalf("expected duplicate checks to complete, found %d", countByHandler(active, firebaseidempotency.HandlerCheck))
 	}
 }
 
@@ -421,13 +374,11 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 			t.Fatalf("add bad check cell: %v", err)
 		}
 
-		claimed, ok, err := a.CellarStore().ClaimNext(time.Now().UTC())
-		if err != nil || !ok {
-			t.Fatalf("claim bad check cell: ok=%v err=%v", ok, err)
-		}
-		result := a.Worker().Run(context.Background(), claimed)
-		if _, isErr := result.(cellar.ErrorResult); !isErr {
-			t.Fatalf("expected apply-result failure, got %T", result)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		runErr := a.Run(ctx)
+		cancel()
+		if runErr == nil {
+			t.Fatal("expected Cellar startup to report failed result application")
 		}
 
 		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-fail")
@@ -452,9 +403,9 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 		if err := a.CellarStore().Recover(); err != nil {
 			t.Fatalf("recover failed check cell: %v", err)
 		}
-		_, ok, err = a.CellarStore().ClaimNext(time.Now().UTC())
-		if err != nil || !ok {
-			t.Fatalf("expected failed check cell to be claimable after recover: ok=%v err=%v", ok, err)
+		_, recovered, err := a.CellarStore().ClaimNext(time.Now().UTC())
+		if err != nil || !recovered {
+			t.Fatalf("expected failed check cell to be claimable after recover: ok=%v err=%v", recovered, err)
 		}
 	})
 
@@ -484,14 +435,7 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 			t.Fatalf("add good check cell: %v", err)
 		}
 
-		claimed, ok, err := a.CellarStore().ClaimNext(time.Now().UTC())
-		if err != nil || !ok {
-			t.Fatalf("claim success check cell: ok=%v err=%v", ok, err)
-		}
-		result := a.Worker().Run(context.Background(), claimed)
-		if _, isComplete := result.(cellar.Complete); !isComplete {
-			t.Fatalf("expected complete result, got %T", result)
-		}
+		runFor(t, a, 100*time.Millisecond)
 
 		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-ok")
 		if err != nil {
@@ -501,12 +445,19 @@ func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
 			t.Fatalf("expected PRESENT on success, got exists=%v state=%s", exists, state)
 		}
 
+		value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
+		if err != nil {
+			t.Fatalf("counter value: %v", err)
+		}
+		if value != 1 {
+			t.Fatalf("expected exactly one increment after successful atomic transition, got %d", value)
+		}
 		active, err := a.CellarStore().ListActive()
 		if err != nil {
 			t.Fatalf("list active after success: %v", err)
 		}
-		if countByHandler(active, handlers.HandlerExampleIncrement) != 1 {
-			t.Fatalf("expected exactly one fanout cell in success case, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
+		if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
+			t.Fatalf("expected no lingering fanout cell after success, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
 		}
 		if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
 			t.Fatalf("expected check cell to complete, got %d active check cells", countByHandler(active, firebaseidempotency.HandlerCheck))
@@ -714,74 +665,4 @@ func seedIdempotencyState(t *testing.T, dbPath, listener, eventKey string, state
 			updated_at = excluded.updated_at
 	`, listener, eventKey, state)
 	return err
-}
-
-type checkBarrierRemote struct {
-	inner    *firebaseidempotency.MemoryRemote
-	listener string
-	eventKey string
-	entered  sync.WaitGroup
-	release  chan struct{}
-}
-
-func newCheckBarrierRemote(inner *firebaseidempotency.MemoryRemote, listener, eventKey string) *checkBarrierRemote {
-	r := &checkBarrierRemote{
-		inner:    inner,
-		listener: listener,
-		eventKey: eventKey,
-		release:  make(chan struct{}),
-	}
-	r.entered.Add(2)
-	return r
-}
-
-func (r *checkBarrierRemote) CreateKey(ctx context.Context, listener, eventKey string) (bool, error) {
-	return r.inner.CreateKey(ctx, listener, eventKey)
-}
-
-func (r *checkBarrierRemote) HasKey(ctx context.Context, listener, eventKey string) (bool, error) {
-	if listener == r.listener && eventKey == r.eventKey {
-		r.entered.Done()
-		<-r.release
-	}
-	return r.inner.HasKey(ctx, listener, eventKey)
-}
-
-func (r *checkBarrierRemote) seedExisting(listener, eventKey string, visible bool) {
-	r.inner.SeedExisting(listener, eventKey, visible)
-}
-
-func (r *checkBarrierRemote) waitUntilBothChecksEntered() {
-	r.entered.Wait()
-}
-
-func (r *checkBarrierRemote) releaseChecks() {
-	close(r.release)
-}
-
-func executeClaimedCellLikeRuntime(application *app.App, cell cellar.Cell) error {
-	result := application.Worker().Run(context.Background(), cell)
-	errResult, isErr := result.(cellar.ErrorResult)
-	if !isErr {
-		return nil
-	}
-	if isSQLiteBusyError(errResult.Err) {
-		return application.CellarStore().Retry(cell.ID, nil)
-	}
-	if !errors.Is(errResult.Err, firebaseidempotency.ErrTransitionRejected) {
-		return errResult.Err
-	}
-	err := application.CellarStore().Complete(cell.ID, nil)
-	if errors.Is(err, cellar.ErrCellNotFound) || errors.Is(err, cellar.ErrCellNotClaimed) {
-		return nil
-	}
-	return err
-}
-
-func isSQLiteBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
 }

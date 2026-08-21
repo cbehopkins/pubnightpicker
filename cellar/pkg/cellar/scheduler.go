@@ -2,6 +2,8 @@ package cellar
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -36,28 +38,43 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 	}
 }
 
-// Run repeatedly claims and dispatches work until the context is cancelled.
-func (s *Scheduler) Run(ctx context.Context) {
+// Run repeatedly claims and dispatches work until the context is cancelled or execution fails.
+func (s *Scheduler) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
 		if s.store == nil || s.dispatcher == nil {
-			time.Sleep(s.pollDelay)
-			continue
+			return errors.New("scheduler dependencies are nil")
 		}
 
 		cell, ok, err := s.store.ClaimNext(time.Now())
-		if err != nil || !ok {
-			time.Sleep(s.pollDelay)
+		if err != nil {
+			return fmt.Errorf("claim next cell: %w", err)
+		}
+		if !ok {
+			if !waitForPoll(ctx, s.pollDelay) {
+				return nil
+			}
 			continue
 		}
 
 		if err := s.dispatcher.Dispatch(ctx, cell); err != nil {
-			continue
+			return fmt.Errorf("dispatch cell %s: %w", cell.ID, err)
 		}
+	}
+}
+
+func waitForPoll(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
