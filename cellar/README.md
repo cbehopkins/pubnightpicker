@@ -136,6 +136,34 @@ if err := c.Start(ctx); err != nil {
 cancelled or `Stop` is called. Applications do not construct or freeze a registry and
 do not construct workers, dispatchers, result appliers, or schedulers.
 
+### Durable timers
+
+A named timer runs recurring application work and persists its next deadline:
+
+```go
+timer, err := cellar.NewTimer("reports.refresh", cellar.TimerConfig{
+    Interval: 5 * time.Minute,
+    Mode:     cellar.TimerFixedDelay,
+}, func(ctx context.Context) error {
+    return refreshReports(ctx)
+})
+if err != nil {
+    return err
+}
+if err := timer.Register(c); err != nil {
+    return err
+}
+if _, err := timer.Schedule(c); err != nil {
+    return err
+}
+```
+
+Register the same timer name and callback on every process startup. Call `Schedule`
+only when creating it initially; scheduling an active name returns
+`ErrTimerAlreadyExists`. `TimerFixedDelay` schedules from callback completion, while
+`TimerFixedRate` maintains cadence and coalesces missed ticks. A callback that returns
+an error cancels and deletes the timer.
+
 ---
 
 ### Scheduler
