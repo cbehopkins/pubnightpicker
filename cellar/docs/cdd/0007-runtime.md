@@ -75,6 +75,10 @@ The high-level architecture is:
 
 The Runtime owns the connections between components.
 
+The configured worker count bounds concurrent Handler execution. Values less than one
+default to a single worker, preserving serial execution unless the application opts in
+to concurrency.
+
 ---
 
 # Startup Lifecycle

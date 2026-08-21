@@ -235,7 +235,10 @@ INSERT replacement cells;
 COMMIT;
 ```
 
-The additions list may be empty.
+The additions list may be empty. For each request, an empty `CellRequest.ID` asks the
+Store to allocate an ID, while a non-empty ID is preserved. Validation, allocation,
+application work, insertion, and deletion of the parent must either all succeed or
+leave the original state unchanged.
 
 Therefore:
 

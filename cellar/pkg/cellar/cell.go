@@ -30,14 +30,10 @@ type Cell struct {
 }
 
 // CellRequest describes new work to be persisted by the store.
+// An empty ID asks the store to allocate one.
 type CellRequest struct {
+	ID          CellID
 	HandlerName HandlerName
 	Payload     []byte
 	NotBefore   *time.Time
-}
-
-// IdentifiedCellRequest describes new work with a caller-selected identifier.
-type IdentifiedCellRequest struct {
-	ID CellID
-	CellRequest
 }

@@ -36,27 +36,19 @@ func (s *MemoryStore) Add(requests []CellRequest) ([]CellID, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.AddWithIDs(identified); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
-// AddWithIDs persists one or more new cells with caller-selected identifiers atomically.
-func (s *MemoryStore) AddWithIDs(requests []IdentifiedCellRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cells, err := s.buildNewCellsLocked(requests)
+	cells, err := s.buildNewCellsLocked(identified)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, cell := range cells {
 		s.cells[cell.ID] = cell
 		s.order = append(s.order, cell.ID)
 	}
-	return nil
+	return ids, nil
 }
 
 // ClaimNext atomically finds and claims one runnable cell.
@@ -219,8 +211,8 @@ func (s *MemoryStore) ForceDelete(id CellID) error {
 	return nil
 }
 
-func (s *MemoryStore) identifyRequests(requests []CellRequest) ([]IdentifiedCellRequest, []CellID, error) {
-	identified := make([]IdentifiedCellRequest, 0, len(requests))
+func (s *MemoryStore) identifyRequests(requests []CellRequest) ([]CellRequest, []CellID, error) {
+	identified := make([]CellRequest, 0, len(requests))
 	ids := make([]CellID, 0, len(requests))
 
 	for _, req := range requests {
@@ -228,18 +220,21 @@ func (s *MemoryStore) identifyRequests(requests []CellRequest) ([]IdentifiedCell
 			return nil, nil, err
 		}
 
-		id, err := s.allocator.Next()
-		if err != nil {
-			return nil, nil, fmt.Errorf("allocate cell id: %w", err)
+		if req.ID == "" {
+			id, err := s.allocator.Next()
+			if err != nil {
+				return nil, nil, fmt.Errorf("allocate cell id: %w", err)
+			}
+			req.ID = id
 		}
-		identified = append(identified, IdentifiedCellRequest{ID: id, CellRequest: req})
-		ids = append(ids, id)
+		identified = append(identified, req)
+		ids = append(ids, req.ID)
 	}
 
 	return identified, ids, nil
 }
 
-func (s *MemoryStore) buildNewCellsLocked(requests []IdentifiedCellRequest) ([]Cell, error) {
+func (s *MemoryStore) buildNewCellsLocked(requests []CellRequest) ([]Cell, error) {
 	cells := make([]Cell, 0, len(requests))
 	batchIDs := make(map[CellID]struct{}, len(requests))
 
@@ -247,7 +242,7 @@ func (s *MemoryStore) buildNewCellsLocked(requests []IdentifiedCellRequest) ([]C
 		if req.ID == "" {
 			return nil, errors.New("cell id is required")
 		}
-		if err := validateCellRequest(req.CellRequest); err != nil {
+		if err := validateCellRequest(req); err != nil {
 			return nil, err
 		}
 

@@ -92,13 +92,11 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 	}
 	id := timerCellID(t.name)
 	due := time.Now().Add(t.config.Interval)
-	err = c.store.AddWithIDs([]IdentifiedCellRequest{{
-		ID: id,
-		CellRequest: CellRequest{
-			HandlerName: t.name,
-			Payload:     payload,
-			NotBefore:   &due,
-		},
+	_, err = c.store.Add([]CellRequest{{
+		ID:          id,
+		HandlerName: t.name,
+		Payload:     payload,
+		NotBefore:   &due,
 	}})
 	if errors.Is(err, ErrCellAlreadyExists) {
 		return "", fmt.Errorf("%w: %s", ErrTimerAlreadyExists, t.name)

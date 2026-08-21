@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,9 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 	if pollDelay <= 0 {
 		pollDelay = time.Second
 	}
+	if workers <= 0 {
+		workers = 1
+	}
 	return &Scheduler{
 		store:      store,
 		dispatcher: dispatcher,
@@ -40,41 +44,81 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 
 // Run repeatedly claims and dispatches work until the context is cancelled or execution fails.
 func (s *Scheduler) Run(ctx context.Context) error {
+	if s.store == nil || s.dispatcher == nil {
+		return errors.New("scheduler dependencies are nil")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	capacity := make(chan struct{}, s.workers)
+	for range s.workers {
+		capacity <- struct{}{}
+	}
+	dispatchErrors := make(chan error, 1)
+	var dispatches sync.WaitGroup
+	stop := func(err error) error {
+		cancel()
+		dispatches.Wait()
+		if err != nil {
+			return err
+		}
+		select {
+		case err := <-dispatchErrors:
+			return err
+		default:
+			return nil
+		}
+	}
+
 	for {
 		select {
-		case <-ctx.Done():
-			return nil
-		default:
+		case <-runCtx.Done():
+			return stop(nil)
+		case err := <-dispatchErrors:
+			return stop(err)
+		case <-capacity:
 		}
 
-		if s.store == nil || s.dispatcher == nil {
-			return errors.New("scheduler dependencies are nil")
+		select {
+		case <-runCtx.Done():
+			capacity <- struct{}{}
+			return stop(nil)
+		case err := <-dispatchErrors:
+			capacity <- struct{}{}
+			return stop(err)
+		default:
 		}
 
 		cell, ok, err := s.store.ClaimNext(time.Now())
 		if err != nil {
-			return fmt.Errorf("claim next cell: %w", err)
+			capacity <- struct{}{}
+			return stop(fmt.Errorf("claim next cell: %w", err))
 		}
 		if !ok {
-			if !waitForPoll(ctx, s.pollDelay) {
-				return nil
+			capacity <- struct{}{}
+			timer := time.NewTimer(s.pollDelay)
+			select {
+			case <-runCtx.Done():
+				timer.Stop()
+				return stop(nil)
+			case err := <-dispatchErrors:
+				timer.Stop()
+				return stop(err)
+			case <-timer.C:
 			}
 			continue
 		}
 
-		if err := s.dispatcher.Dispatch(ctx, cell); err != nil {
-			return fmt.Errorf("dispatch cell %s: %w", cell.ID, err)
-		}
-	}
-}
-
-func waitForPoll(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
+		dispatches.Add(1)
+		go func() {
+			defer dispatches.Done()
+			defer func() { capacity <- struct{}{} }()
+			if err := s.dispatcher.Dispatch(runCtx, cell); err != nil {
+				select {
+				case dispatchErrors <- fmt.Errorf("dispatch cell %s: %w", cell.ID, err):
+				default:
+				}
+			}
+		}()
 	}
 }

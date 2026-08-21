@@ -78,46 +78,27 @@ func (s *Store) DB() *sql.DB {
 
 // Add persists one or more READY cells atomically.
 func (s *Store) Add(requests []cellar.CellRequest) ([]cellar.CellID, error) {
-	identified := make([]cellar.IdentifiedCellRequest, 0, len(requests))
-	ids := make([]cellar.CellID, 0, len(requests))
-	for _, req := range requests {
-		if req.HandlerName == "" {
-			return nil, errors.New("handler name is required")
-		}
+	identified, ids, err := s.identifyRequests(requests)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
 
-		id, err := s.allocator.Next()
-		if err != nil {
-			return nil, fmt.Errorf("allocate cell id: %w", err)
-		}
-		identified = append(identified, cellar.IdentifiedCellRequest{ID: id, CellRequest: req})
-		ids = append(ids, id)
+	if err := insertRequests(tx, identified); err != nil {
+		return nil, err
 	}
 
-	if err := s.AddWithIDs(identified); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
-// AddWithIDs persists one or more READY cells with caller-selected identifiers atomically.
-func (s *Store) AddWithIDs(requests []cellar.IdentifiedCellRequest) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer rollback(tx)
-
-	if err := insertIdentifiedRequests(tx, requests); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func insertIdentifiedRequests(tx *sql.Tx, requests []cellar.IdentifiedCellRequest) error {
+func insertRequests(tx *sql.Tx, requests []cellar.CellRequest) error {
 	for _, req := range requests {
 		if req.ID == "" {
 			return errors.New("cell id is required")
@@ -228,20 +209,11 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 		}
 	}
 
-	identified := make([]cellar.IdentifiedCellRequest, 0, len(additions))
-	for _, req := range additions {
-		if req.HandlerName == "" {
-			return errors.New("handler name is required")
-		}
-
-		newID, err := s.allocator.Next()
-		if err != nil {
-			return fmt.Errorf("allocate cell id: %w", err)
-		}
-
-		identified = append(identified, cellar.IdentifiedCellRequest{ID: newID, CellRequest: req})
+	identified, _, err := s.identifyRequests(additions)
+	if err != nil {
+		return err
 	}
-	if err := insertIdentifiedRequests(tx, identified); err != nil {
+	if err := insertRequests(tx, identified); err != nil {
 		return err
 	}
 
@@ -251,6 +223,26 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 	}
 
 	return tx.Commit()
+}
+
+func (s *Store) identifyRequests(requests []cellar.CellRequest) ([]cellar.CellRequest, []cellar.CellID, error) {
+	identified := make([]cellar.CellRequest, 0, len(requests))
+	ids := make([]cellar.CellID, 0, len(requests))
+	for _, req := range requests {
+		if req.HandlerName == "" {
+			return nil, nil, errors.New("handler name is required")
+		}
+		if req.ID == "" {
+			id, err := s.allocator.Next()
+			if err != nil {
+				return nil, nil, fmt.Errorf("allocate cell id: %w", err)
+			}
+			req.ID = id
+		}
+		identified = append(identified, req)
+		ids = append(ids, req.ID)
+	}
+	return identified, ids, nil
 }
 
 // Retry transitions a claimed cell back to READY.

@@ -117,6 +117,7 @@ store := cellar.NewMemoryStore(nil)
 
 c := cellar.New(store, cellar.Config{
     PollDelay: 100 * time.Millisecond,
+	Workers:   4,
 })
 
 if err := c.Register("email.send", SendEmailHandler{}); err != nil {
@@ -135,6 +136,43 @@ if err := c.Start(ctx); err != nil {
 `Start` closes registration, recovers claimed Cells, and runs until its context is
 cancelled or `Stop` is called. Applications do not construct or freeze a registry and
 do not construct workers, dispatchers, result appliers, or schedulers.
+
+### Fanout
+
+A Fanout expands one durable Cell into zero or more ordinary child Cells. Each target
+has a key that is stable for that parent. Cellar uses the parent ID and target key to
+derive the child's opaque ID, so retrying the same expansion cannot silently create a
+second copy of a target.
+
+```go
+fanout, err := cellar.NewFanout(
+    "order.completed",
+    cellar.FanoutExpanderFunc[OrderCompleted](
+        func(ctx context.Context, parentID cellar.CellID, order OrderCompleted) ([]cellar.FanoutTarget, error) {
+            return []cellar.FanoutTarget{
+                {
+                    Key:         "email",
+                    HandlerName: "email.send",
+                    Payload:     SendEmail{OrderID: order.ID},
+                },
+            }, nil
+        },
+    ),
+)
+if err != nil {
+    return err
+}
+if err := fanout.Register(c); err != nil {
+    return err
+}
+if _, err := fanout.Add(c, OrderCompleted{ID: "order-42"}); err != nil {
+    return err
+}
+```
+
+All targets are persisted atomically with completion of the parent. Once persisted,
+they follow the normal `READY`, `NotBefore`, claim, retry, and recovery rules. See the
+tested example in [pkg/cellar/example_test.go](pkg/cellar/example_test.go).
 
 ### Durable timers
 

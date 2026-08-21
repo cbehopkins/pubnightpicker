@@ -21,7 +21,7 @@ The Store is responsible for:
 * persisting newly created Cells;
 * retrieving runnable Cells;
 * atomically claiming Cells for execution;
-* deleting completed Cells;
+* atomically replacing completed Cells with zero or more child Cells;
 * recovering claimed Cells after restart;
 * providing access to persisted Cell data for inspection and administration;
 * enabling the application to create and manage its own schema and transactions within the shared Base DB.
@@ -104,11 +104,17 @@ Conceptually, the Store provides:
 ```go
 type Store interface {
 
-    Add(Cell) error
+  Add([]CellRequest) ([]CellID, error)
 
     ClaimNext(now time.Time) (Cell, bool, error)
 
-    Delete(CellID) error
+  Complete(
+    CellID,
+    []CellRequest,
+    ...ApplicationWork,
+  ) error
+
+  Retry(CellID, *time.Time) error
 
     Recover() error
 }
@@ -166,19 +172,22 @@ AND
 
 ---
 
-## Deleting Cells
+## Completing Cells
 
-Deletion is terminal.
+Completion atomically removes the claimed parent and creates zero or more child Cells.
+An empty `CellRequest.ID` requests allocation; a non-empty ID is preserved. Both forms
+participate in the same operation.
 
 When a Handler result requires completion:
 
 ```text
-CLAIMED -> DELETED
+CLAIMED parent
+  +
+zero or more READY children
 ```
 
-Cellar requests deletion from the Store.
-
-Deleted Cells no longer participate in execution.
+If validation, ID allocation, application work, insertion, or deletion fails, the
+operation must leave the claimed parent and all pre-existing Cells unchanged.
 
 ---
 
@@ -222,6 +231,27 @@ RETURN Cell
 ```
 
 Multiple competing claims for the same Cell must not occur.
+
+---
+
+### Complete
+
+The following must behave as one operation:
+
+```text
+Validate all child requests
+
+Allocate IDs for ordinary child requests
+
+Execute application transaction work
+
+Insert every allocated and identified child
+
+Delete the claimed parent
+```
+
+Caller-selected IDs remain opaque to the Store. An existing or repeated ID causes
+`ErrCellAlreadyExists` and rolls back the entire completion.
 
 ---
 
@@ -269,6 +299,8 @@ The Store should support tests for:
 * retrieving runnable Cells;
 * claiming Cells atomically;
 * deleting Cells;
+* atomically replacing a parent with mixed allocated and pre-identified children;
+* rolling back the whole completion when a child ID collides;
 * recovering claimed Cells;
 * handling duplicate IDs;
 * handling concurrent access.

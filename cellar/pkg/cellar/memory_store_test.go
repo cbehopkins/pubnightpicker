@@ -7,18 +7,16 @@ import (
 	"time"
 )
 
-func TestMemoryStoreAddWithIDs(t *testing.T) {
+func TestMemoryStoreAddPreservesID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	request := IdentifiedCellRequest{
-		ID: "background-worker",
-		CellRequest: CellRequest{
-			HandlerName: "worker",
-			Payload:     []byte("payload"),
-		},
+	request := CellRequest{
+		ID:          "background-worker",
+		HandlerName: "worker",
+		Payload:     []byte("payload"),
 	}
 
-	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); err != nil {
-		t.Fatalf("AddWithIDs() error = %v", err)
+	if _, err := store.Add([]CellRequest{request}); err != nil {
+		t.Fatalf("Add() error = %v", err)
 	}
 
 	got, err := store.Get(request.ID)
@@ -33,30 +31,27 @@ func TestMemoryStoreAddWithIDs(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreAddWithIDsRejectsExistingID(t *testing.T) {
+func TestMemoryStoreAddRejectsExistingID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	request := IdentifiedCellRequest{
-		ID:          "background-worker",
-		CellRequest: CellRequest{HandlerName: "worker"},
-	}
+	request := CellRequest{ID: "background-worker", HandlerName: "worker"}
 
-	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); err != nil {
-		t.Fatalf("first AddWithIDs() error = %v", err)
+	if _, err := store.Add([]CellRequest{request}); err != nil {
+		t.Fatalf("first Add() error = %v", err)
 	}
-	if err := store.AddWithIDs([]IdentifiedCellRequest{request}); !errors.Is(err, ErrCellAlreadyExists) {
-		t.Fatalf("second AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	if _, err := store.Add([]CellRequest{request}); !errors.Is(err, ErrCellAlreadyExists) {
+		t.Fatalf("second Add() error = %v, want ErrCellAlreadyExists", err)
 	}
 }
 
-func TestMemoryStoreAddWithIDsDuplicateBatchIsAtomic(t *testing.T) {
+func TestMemoryStoreAddDuplicateIDsIsAtomic(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	requests := []IdentifiedCellRequest{
-		{ID: "worker", CellRequest: CellRequest{HandlerName: "first"}},
-		{ID: "worker", CellRequest: CellRequest{HandlerName: "second"}},
+	requests := []CellRequest{
+		{ID: "worker", HandlerName: "first"},
+		{ID: "worker", HandlerName: "second"},
 	}
 
-	if err := store.AddWithIDs(requests); !errors.Is(err, ErrCellAlreadyExists) {
-		t.Fatalf("AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	if _, err := store.Add(requests); !errors.Is(err, ErrCellAlreadyExists) {
+		t.Fatalf("Add() error = %v, want ErrCellAlreadyExists", err)
 	}
 	if _, err := store.Get("worker"); !errors.Is(err, ErrCellNotFound) {
 		t.Fatalf("Get() error = %v, want ErrCellNotFound", err)
@@ -187,6 +182,73 @@ func TestMemoryStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 		if c.State != CellStateReady {
 			t.Fatalf("child state = %q, want %q", c.State, CellStateReady)
 		}
+	}
+}
+
+func TestMemoryStoreCompleteWithAllocatedAndIdentifiedChildrenIsAtomic(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
+	}
+
+	err = store.Complete(
+		parent.ID,
+		[]CellRequest{
+			{HandlerName: "allocated-child"},
+			{ID: "stable-child", HandlerName: "identified-child"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("ListActive() error = %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("len(ListActive()) = %d, want 2", len(active))
+	}
+	if active[0].ID != "test-2" {
+		t.Fatalf("allocated child ID = %q, want %q", active[0].ID, "test-2")
+	}
+	if active[1].ID != "stable-child" {
+		t.Fatalf("identified child ID = %q, want %q", active[1].ID, "stable-child")
+	}
+}
+
+func TestMemoryStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if _, err := store.Add([]CellRequest{{ID: "stable-child", HandlerName: "existing"}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
+	}
+
+	err = store.Complete(parent.ID, []CellRequest{{ID: "stable-child", HandlerName: "replacement"}})
+	if !errors.Is(err, ErrCellAlreadyExists) {
+		t.Fatalf("Complete() error = %v, want ErrCellAlreadyExists", err)
+	}
+
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.State != CellStateClaimed {
+		t.Fatalf("parent state = %q, want %q", persisted.State, CellStateClaimed)
 	}
 }
 

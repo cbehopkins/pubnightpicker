@@ -13,20 +13,18 @@ import (
 	"cellar/pkg/cellar"
 )
 
-func TestStoreAddWithIDs(t *testing.T) {
+func TestStoreAddPreservesID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
-	request := cellar.IdentifiedCellRequest{
-		ID: "background-worker",
-		CellRequest: cellar.CellRequest{
-			HandlerName: "worker",
-			Payload:     []byte("payload"),
-		},
+	request := cellar.CellRequest{
+		ID:          "background-worker",
+		HandlerName: "worker",
+		Payload:     []byte("payload"),
 	}
 
-	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); err != nil {
-		t.Fatalf("AddWithIDs() error = %v", err)
+	if _, err := store.Add([]cellar.CellRequest{request}); err != nil {
+		t.Fatalf("Add() error = %v", err)
 	}
 
 	got, err := store.Get(request.ID)
@@ -41,34 +39,31 @@ func TestStoreAddWithIDs(t *testing.T) {
 	}
 }
 
-func TestStoreAddWithIDsRejectsExistingID(t *testing.T) {
+func TestStoreAddRejectsExistingID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
-	request := cellar.IdentifiedCellRequest{
-		ID:          "background-worker",
-		CellRequest: cellar.CellRequest{HandlerName: "worker"},
-	}
+	request := cellar.CellRequest{ID: "background-worker", HandlerName: "worker"}
 
-	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); err != nil {
-		t.Fatalf("first AddWithIDs() error = %v", err)
+	if _, err := store.Add([]cellar.CellRequest{request}); err != nil {
+		t.Fatalf("first Add() error = %v", err)
 	}
-	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{request}); !errors.Is(err, cellar.ErrCellAlreadyExists) {
-		t.Fatalf("second AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	if _, err := store.Add([]cellar.CellRequest{request}); !errors.Is(err, cellar.ErrCellAlreadyExists) {
+		t.Fatalf("second Add() error = %v, want ErrCellAlreadyExists", err)
 	}
 }
 
-func TestStoreAddWithIDsDuplicateBatchIsAtomic(t *testing.T) {
+func TestStoreAddDuplicateIDsIsAtomic(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
-	requests := []cellar.IdentifiedCellRequest{
-		{ID: "worker", CellRequest: cellar.CellRequest{HandlerName: "first"}},
-		{ID: "worker", CellRequest: cellar.CellRequest{HandlerName: "second"}},
+	requests := []cellar.CellRequest{
+		{ID: "worker", HandlerName: "first"},
+		{ID: "worker", HandlerName: "second"},
 	}
 
-	if err := store.AddWithIDs(requests); !errors.Is(err, cellar.ErrCellAlreadyExists) {
-		t.Fatalf("AddWithIDs() error = %v, want ErrCellAlreadyExists", err)
+	if _, err := store.Add(requests); !errors.Is(err, cellar.ErrCellAlreadyExists) {
+		t.Fatalf("Add() error = %v, want ErrCellAlreadyExists", err)
 	}
 	if _, err := store.Get("worker"); !errors.Is(err, cellar.ErrCellNotFound) {
 		t.Fatalf("Get() error = %v, want ErrCellNotFound", err)
@@ -153,6 +148,38 @@ func TestStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 		if cell.State != cellar.CellStateReady {
 			t.Fatalf("child state = %q, want %q", cell.State, cellar.CellStateReady)
 		}
+	}
+}
+
+func TestStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if _, err := store.Add([]cellar.CellRequest{{ID: "stable-child", HandlerName: "existing"}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
+	}
+
+	err = store.Complete(parent.ID, []cellar.CellRequest{{ID: "stable-child", HandlerName: "replacement"}})
+	if !errors.Is(err, cellar.ErrCellAlreadyExists) {
+		t.Fatalf("Complete() error = %v, want ErrCellAlreadyExists", err)
+	}
+
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.State != cellar.CellStateClaimed {
+		t.Fatalf("parent state = %q, want %q", persisted.State, cellar.CellStateClaimed)
 	}
 }
 

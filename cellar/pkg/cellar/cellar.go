@@ -11,6 +11,7 @@ import (
 // Config controls Cellar's execution runtime.
 type Config struct {
 	PollDelay time.Duration
+	Workers   int
 }
 
 // Cellar owns handler registration and the complete cell execution runtime.
@@ -28,7 +29,7 @@ type Cellar struct {
 func New(store Store, config Config) *Cellar {
 	registry := NewMemoryRegistry()
 	worker := NewWorker(registry, NewStoreResultApplier(store))
-	scheduler := NewScheduler(store, workerDispatcher{worker: worker}, 1, config.PollDelay)
+	scheduler := NewScheduler(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay)
 	return &Cellar{
 		store:     store,
 		registry:  registry,

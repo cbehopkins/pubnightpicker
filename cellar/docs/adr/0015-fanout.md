@@ -1,7 +1,27 @@
 # ADR: Work Expansion, Persistence, and Capacity-Aware Admission
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-21
+
+## Implementation
+
+Fanout is exposed as a typed, process-local `Fanout[T]` registration. Its expander
+receives the parent `CellID` and typed payload and returns keyed `FanoutTarget` values.
+Target keys must be non-empty and unique within one expansion. A target carries an
+application payload as `any`; Cellar JSON-encodes it when constructing the durable
+child Cell.
+
+Cellar derives each target's opaque child ID from the parent ID and target key. All
+children use `Complete.NewCells`: an empty `CellRequest.ID` asks the Store to allocate
+one, while a non-empty ID is preserved. A collision rejects the whole operation and
+leaves the parent claimed.
+
+`Config.Workers` controls bounded concurrent execution and defaults to one. The
+scheduler reserves worker capacity before asking the Store to claim another Cell.
+Capacity is an admission hint; `ClaimNext` remains authoritative.
+
+The fast-path admission described in section 9 is deferred. Newly materialised work is
+discovered through the ordinary scheduler polling path.
 
 ## Context
 

@@ -76,6 +76,35 @@ func TestStoreResultApplierAppliesCompleteResults(t *testing.T) {
 	}
 }
 
+func TestStoreResultApplierPreservesNewCellIDs(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	applier := NewStoreResultApplier(store)
+	err = applier.ApplyResult(context.Background(), parent, Complete{
+		NewCells: []CellRequest{{ID: "stable-child", HandlerName: "child"}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+
+	child, err := store.Get("stable-child")
+	if err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+	if child.HandlerName != "child" {
+		t.Fatalf("child handler = %q, want %q", child.HandlerName, "child")
+	}
+}
+
 func TestStoreResultApplierAppliesRetryResults(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})

@@ -39,7 +39,7 @@ The high-level architecture is:
                       |
                       v
                  +---------+
-                 |  Queue  |
+                 |Capacity |
                  +---------+
                       |
                       |
@@ -124,23 +124,15 @@ Their responsibility is:
 
 Workers do not directly modify lifecycle state except through runtime operations.
 
-## Queueing model
+## Admission model
 
-The initial implementation uses a buffered in-memory queue.
-The queue is owned by the Scheduler and is an in-memory execution handoff mechanism.
-The queue exists to decouple:
+The Scheduler maintains one in-memory capacity token per configured worker. It reserves
+a token before calling `ClaimNext`, so it does not claim substantially more work than
+can execute. A token is returned when dispatch finishes.
 
-- Store access;
-- scheduling;
-- execution.
-
-The queue hides latency between claiming work and workers becoming available.
-
-For V0:
-
-- queue size: small configurable value;
-- workers: configurable count;
-- initial default: single worker.
+Capacity is a scheduling hint rather than persisted correctness state. The Store's
+atomic `READY -> CLAIMED` transition remains authoritative. The worker count is
+configurable and defaults to one.
 
 Future versions may introduce:
 
@@ -235,6 +227,10 @@ Cellar context cancelled
    |
    +--> Workers receive cancellation context
 ```
+
+On the first dispatch failure, the Scheduler cancels its child context, stops claiming,
+waits for active dispatches to return, and reports that failure to the Runtime. Any Cell
+left `CLAIMED` is returned to `READY` by normal startup recovery.
 ## Scheduler non-goals
 
 The Scheduler does not understand:

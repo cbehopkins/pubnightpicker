@@ -166,14 +166,12 @@ func TestCellarUsesPersistedHandlerNameAsResolutionKey(t *testing.T) {
 	if err := json.Unmarshal(raw, &reconstructed); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if err := store.AddWithIDs([]cellar.IdentifiedCellRequest{{
-		ID: reconstructed.ID,
-		CellRequest: cellar.CellRequest{
-			HandlerName: reconstructed.HandlerName,
-			Payload:     reconstructed.Payload,
-		},
+	if _, err := store.Add([]cellar.CellRequest{{
+		ID:          reconstructed.ID,
+		HandlerName: reconstructed.HandlerName,
+		Payload:     reconstructed.Payload,
 	}}); err != nil {
-		t.Fatalf("AddWithIDs() error = %v", err)
+		t.Fatalf("Add() error = %v", err)
 	}
 
 	startDone := startRuntime(runtime)

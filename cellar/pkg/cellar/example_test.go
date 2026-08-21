@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -53,6 +54,80 @@ func Example_helloworld() {
 
 	// Output:
 	// Hello, Cellar!
+}
+
+type orderCompleted struct {
+	OrderID string `json:"order_id"`
+	Email   string `json:"email"`
+}
+
+type sendEmail struct {
+	OrderID string `json:"order_id"`
+	Email   string `json:"email"`
+}
+
+type publishAnalytics struct {
+	OrderID string `json:"order_id"`
+}
+
+type fanoutHandler[T any] struct {
+	name     string
+	messages chan<- string
+}
+
+func (h fanoutHandler[T]) Handle(ctx context.Context, payload T) cellar.Result {
+	h.messages <- fmt.Sprintf("%s: %+v", h.name, payload)
+	return cellar.Complete{}
+}
+
+func ExampleFanout() {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond, Workers: 2})
+	messages := make(chan string, 2)
+
+	if err := runtime.Register("email.send", fanoutHandler[sendEmail]{name: "email", messages: messages}); err != nil {
+		panic(err)
+	}
+	if err := runtime.Register("analytics.publish", fanoutHandler[publishAnalytics]{name: "analytics", messages: messages}); err != nil {
+		panic(err)
+	}
+
+	fanout, err := cellar.NewFanout("order.completed", cellar.FanoutExpanderFunc[orderCompleted](
+		func(ctx context.Context, parentID cellar.CellID, order orderCompleted) ([]cellar.FanoutTarget, error) {
+			return []cellar.FanoutTarget{
+				{Key: "email", HandlerName: "email.send", Payload: sendEmail{OrderID: order.OrderID, Email: order.Email}},
+				{Key: "analytics", HandlerName: "analytics.publish", Payload: publishAnalytics{OrderID: order.OrderID}},
+			}, nil
+		},
+	))
+	if err != nil {
+		panic(err)
+	}
+	if err := fanout.Register(runtime); err != nil {
+		panic(err)
+	}
+	if _, err := fanout.Add(runtime, orderCompleted{OrderID: "order-42", Email: "person@example.com"}); err != nil {
+		panic(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- runtime.Start(context.Background()) }()
+	output := []string{<-messages, <-messages}
+	if err := runtime.Stop(); err != nil {
+		panic(err)
+	}
+	if err := <-done; err != nil {
+		panic(err)
+	}
+
+	sort.Strings(output)
+	for _, message := range output {
+		fmt.Println(message)
+	}
+
+	// Output:
+	// analytics: {OrderID:order-42}
+	// email: {OrderID:order-42 Email:person@example.com}
 }
 
 const timerHandlerName cellar.HandlerName = "timer.tick"
