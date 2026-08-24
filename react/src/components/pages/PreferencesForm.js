@@ -67,6 +67,78 @@ function normalizePushPreferences(pushPreferences) {
   };
 }
 
+function PushPreferenceChecks({ pushPreferences, heading }) {
+  const [formPreferences, setFormPreferences] = useState(
+    normalizePushPreferences(pushPreferences)
+  );
+
+  useEffect(() => {
+    setFormPreferences(normalizePushPreferences(pushPreferences));
+  }, [pushPreferences]);
+
+  return (
+    <div className="d-flex flex-column gap-1 mt-1">
+      <input type="hidden" name="push_prefs_visible" value="1" />
+      <p className="mb-1 small fw-semibold">{heading}</p>
+      <Form.Check
+        id="push_poll_opens"
+        type="checkbox"
+        name="push_poll_opens"
+        checked={formPreferences.pollOpens}
+        onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollOpens: event.target.checked }))}
+        label="A poll opens"
+      />
+      <Form.Check
+        id="push_poll_completes"
+        type="checkbox"
+        name="push_poll_completes"
+        checked={formPreferences.pollCompletes}
+        onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollCompletes: event.target.checked }))}
+        label="A poll completes"
+      />
+      <Form.Check
+        id="push_global_chat"
+        type="checkbox"
+        name="push_global_chat"
+        checked={formPreferences.globalChat}
+        onChange={(event) => setFormPreferences((prev) => ({ ...prev, globalChat: event.target.checked }))}
+        label="A message is sent in global chat"
+      />
+      <Form.Check
+        id="push_event_chat"
+        type="checkbox"
+        name="push_event_chat"
+        checked={formPreferences.eventChat}
+        onChange={(event) => setFormPreferences((prev) => ({ ...prev, eventChat: event.target.checked }))}
+        label="A message is sent in an event chat I am attending"
+      />
+    </div>
+  );
+}
+
+// Admin editing another user: their subscription lives on their own device, so only the
+// per-event choices are editable here.
+export function AdminPushPreferences({ initialEnabled, pushPreferences }) {
+  return (
+    <Col xs={12}>
+      <Card>
+        <Card.Body>
+          <div className="d-flex flex-column gap-2">
+            <div>
+              <h3 className="h5 mb-1">Web Push Notifications</h3>
+              <p className="mb-0 text-body-secondary">
+                Push is {initialEnabled ? "enabled" : "not enabled"} for this user. Enabling or
+                disabling push can only be done by them, on their own device.
+              </p>
+            </div>
+            <PushPreferenceChecks pushPreferences={pushPreferences} heading="Notify this user when:" />
+          </div>
+        </Card.Body>
+      </Card>
+    </Col>
+  );
+}
+
 export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
   const {
     busy,
@@ -78,13 +150,6 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
     permission,
     supported,
   } = useWebPushSettings(uid, initialEnabled);
-  const [formPreferences, setFormPreferences] = useState(
-    normalizePushPreferences(pushPreferences)
-  );
-
-  useEffect(() => {
-    setFormPreferences(normalizePushPreferences(pushPreferences));
-  }, [pushPreferences]);
 
   if (!featureEnabled) {
     return null;
@@ -141,42 +206,7 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
               </Button>
             </div>
             {enabled && (
-              <div className="d-flex flex-column gap-1 mt-1">
-                <input type="hidden" name="push_prefs_visible" value="1" />
-                <p className="mb-1 small fw-semibold">Notify me when:</p>
-                <Form.Check
-                  id="push_poll_opens"
-                  type="checkbox"
-                  name="push_poll_opens"
-                  checked={formPreferences.pollOpens}
-                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollOpens: event.target.checked }))}
-                  label="A poll opens"
-                />
-                <Form.Check
-                  id="push_poll_completes"
-                  type="checkbox"
-                  name="push_poll_completes"
-                  checked={formPreferences.pollCompletes}
-                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, pollCompletes: event.target.checked }))}
-                  label="A poll completes"
-                />
-                <Form.Check
-                  id="push_global_chat"
-                  type="checkbox"
-                  name="push_global_chat"
-                  checked={formPreferences.globalChat}
-                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, globalChat: event.target.checked }))}
-                  label="A message is sent in global chat"
-                />
-                <Form.Check
-                  id="push_event_chat"
-                  type="checkbox"
-                  name="push_event_chat"
-                  checked={formPreferences.eventChat}
-                  onChange={(event) => setFormPreferences((prev) => ({ ...prev, eventChat: event.target.checked }))}
-                  label="A message is sent in an event chat I am attending"
-                />
-              </div>
+              <PushPreferenceChecks pushPreferences={pushPreferences} heading="Notify me when:" />
             )}
           </div>
         </Card.Body>
@@ -360,7 +390,9 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
               </Form.Group>
             </Col>
 
-            {!isAdminEditing && (
+            {isAdminEditing ? (
+              <AdminPushPreferences initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />
+            ) : (
               <PushPreferences uid={uid} initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />
             )}
 
