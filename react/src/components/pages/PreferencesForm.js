@@ -1,5 +1,5 @@
 import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
-import { doc as firestoreDoc, getDoc } from "firebase/firestore";
+import { doc as firestoreDoc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useSelector } from "react-redux";
 import { useEffect, useState } from "react";
@@ -7,6 +7,56 @@ import { Card, Col, Form, Row } from "react-bootstrap";
 import Button from "../UI/Button";
 import useWebPushSettings from "../../hooks/useWebPushSettings";
 import { normalizeArrivalTime } from "../../utils/arrivalTime";
+import { notifyError } from "../../utils/notify";
+
+// Shared by the self-service preferences route action and the admin "edit for another user" modal.
+export async function savePreferences({ uid, formData, currentPhotoUrl }) {
+  const avatarUrl = formData.get("avatar");
+  const defaultAvatar = avatarUrl === "" || avatarUrl === currentPhotoUrl;
+
+  const privateData = {
+    notificationEmail: formData.get("email"),
+    notificationEmailEnabled: Boolean(formData.get("emailme")),
+    openPollEmailEnabled: Boolean(formData.get("open_poll_email")),
+    defaultArrivalTime: normalizeArrivalTime(formData.get("default_arrival_time")),
+    customPhotoUrl: !defaultAvatar,
+    pushPreferences: formData.get("push_prefs_visible")
+      ? {
+        pollOpens: Boolean(formData.get("push_poll_opens")),
+        pollCompletes: Boolean(formData.get("push_poll_completes")),
+        globalChat: Boolean(formData.get("push_global_chat")),
+        eventChat: Boolean(formData.get("push_event_chat")),
+      }
+      : undefined,
+  };
+
+  const publicData = {
+    uid,
+    name: formData.get("name"),
+    photoUrl: defaultAvatar ? currentPhotoUrl : avatarUrl,
+    votesVisible: Boolean(formData.get("votes_visible")),
+  };
+
+  const dropUndefined = (obj) =>
+    Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
+
+  try {
+    const cleanedPrivate = dropUndefined(privateData);
+    if (Object.keys(cleanedPrivate).length > 0) {
+      await updateDoc(firestoreDoc(db, "users", uid), cleanedPrivate);
+    }
+
+    const cleanedPublic = dropUndefined(publicData);
+    if (Object.keys(cleanedPublic).length > 0) {
+      await setDoc(firestoreDoc(db, "user-public", uid), cleanedPublic, { merge: true });
+    }
+    return true;
+  } catch (err) {
+    console.error("[Preferences save error]", err?.code, err?.message, err);
+    notifyError(`[${err?.code ?? "unknown"}] ${err?.message}`);
+    return false;
+  }
+}
 
 function normalizePushPreferences(pushPreferences) {
   return {
@@ -135,14 +185,16 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
   );
 }
 
-function PreferencesForm({ method }) {
-  const uid = useSelector((state) => state.auth.uid);
+function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCancel }) {
+  const authUid = useSelector((state) => state.auth.uid);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
+  const uid = targetUid || authUid;
   const [currUserDoc, setCurrUserDoc] = useState({});
   const [publicUserDoc, setPublicUserDoc] = useState({});
+  const [isSavingForUser, setIsSavingForUser] = useState(false);
 
   useEffect(() => {
-    if (!loggedIn) {
+    if (!loggedIn || !uid) {
       setCurrUserDoc({});
       setPublicUserDoc({});
       return;
@@ -178,18 +230,37 @@ function PreferencesForm({ method }) {
   const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
   const pushPreferences = loggedIn ? currUserDoc?.pushPreferences ?? null : null;
   const defaultArrivalTime = normalizeArrivalTime(loggedIn ? currUserDoc?.defaultArrivalTime : undefined);
-  const photoUrl = useSelector((state) => state.auth.photoUrl);
+  const authPhotoUrl = useSelector((state) => state.auth.photoUrl);
+  const photoUrl = isAdminEditing ? publicUserDoc?.photoUrl || "" : authPhotoUrl;
   const navigate = useNavigate();
   const navigation = useNavigation();
 
-  const isSubmitting = navigation.state === "submitting";
+  const isSubmitting = navigation.state === "submitting" || isSavingForUser;
 
   function cancelHandler() {
+    if (onCancel) {
+      onCancel();
+      return;
+    }
     navigate("..");
   }
 
+  async function adminSubmitHandler(event) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setIsSavingForUser(true);
+    const saved = await savePreferences({ uid, formData, currentPhotoUrl: photoUrl });
+    setIsSavingForUser(false);
+    if (saved && onCancel) {
+      onCancel();
+    }
+  }
+
+  const FormElement = isAdminEditing ? "form" : RouterForm;
+  const formProps = isAdminEditing ? { onSubmit: adminSubmitHandler } : { method };
+
   return (
-    <RouterForm method={method}>
+    <FormElement {...formProps}>
       <Card>
         <Card.Body className="text-body">
           <Row className="g-3">
@@ -289,7 +360,9 @@ function PreferencesForm({ method }) {
               </Form.Group>
             </Col>
 
-            <PushPreferences uid={uid} initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />
+            {!isAdminEditing && (
+              <PushPreferences uid={uid} initialEnabled={webPushEnabled} pushPreferences={pushPreferences} />
+            )}
 
             <Col xs={12} className="d-flex gap-2">
               <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
@@ -302,7 +375,7 @@ function PreferencesForm({ method }) {
           </Row>
         </Card.Body>
       </Card>
-    </RouterForm>
+    </FormElement>
   );
 }
 
