@@ -47,6 +47,7 @@ vi.mock("../../utils/notify", () => {
 });
 
 import { action } from "./Preferences";
+import { savePreferences } from "./PreferencesForm";
 
 function createRequest(formValues) {
     return new Request("http://localhost/preferences", {
@@ -133,5 +134,37 @@ describe("Preferences action push preferences writes", () => {
 
         expect(updateDocMock).toHaveBeenCalledTimes(1);
         expect(updateDocMock.mock.calls[0][1].defaultArrivalTime).toBe("19:30");
+    });
+});
+
+describe("savePreferences", () => {
+    beforeEach(() => {
+        updateDocMock.mockReset();
+        setDocMock.mockReset();
+        firestoreDocMock.mockClear();
+        notifyErrorMock.mockReset();
+    });
+
+    it("writes to the supplied uid rather than the signed-in user", async () => {
+        const formData = new FormData();
+        formData.set("name", "Bob");
+        formData.set("email", "bob@example.com");
+        formData.set("avatar", "");
+        formData.set("default_arrival_time", "20:00");
+
+        await savePreferences({
+            uid: "other-user",
+            formData,
+            currentPhotoUrl: "https://example.com/bob.png",
+        });
+
+        expect(firestoreDocMock).toHaveBeenCalledWith({}, "users", "other-user");
+        expect(firestoreDocMock).toHaveBeenCalledWith({}, "user-public", "other-user");
+        expect(setDocMock.mock.calls[0][1]).toMatchObject({
+            uid: "other-user",
+            name: "Bob",
+            photoUrl: "https://example.com/bob.png",
+        });
+        expect(updateDocMock.mock.calls[0][1].notificationEmail).toBe("bob@example.com");
     });
 });

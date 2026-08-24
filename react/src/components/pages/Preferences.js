@@ -1,15 +1,9 @@
-import PreferencesForm from "./PreferencesForm";
+import PreferencesForm, { savePreferences } from "./PreferencesForm";
 import { NavLink, redirect, useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react"
 import { useSelector } from "react-redux";
 import { store } from "../../store";
 import {
-  setDoc,
-  updateDoc,
-  doc as firestoreDoc,
-} from "firebase/firestore";
-import {
-  db,
   reauthenticatePasswordUser,
   requestLoginEmailChange,
 } from "../../firebase";
@@ -21,7 +15,7 @@ import {
 } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
 import styles from "./Preferences.module.css";
-import { notifyError, notifyInfo } from "../../utils/notify";
+import { notifyInfo } from "../../utils/notify";
 import { Alert, Card, Form } from "react-bootstrap";
 import {
   applyThemeMode,
@@ -29,7 +23,6 @@ import {
   setStoredThemeMode,
   subscribeToSystemThemeChanges,
 } from "../../utils/themeMode";
-import { normalizeArrivalTime } from "../../utils/arrivalTime";
 import useDeleteMyAccount from "../../hooks/useDeleteMyAccount";
 
 function formatRoleName(roleName) {
@@ -431,85 +424,20 @@ export default Preferences;
 
 
 
-export async function action({ request, params }) {
+export async function action({ request }) {
   const authObj = store.getState()?.auth;
   if (!authObj || !authObj?.loggedIn) {
     console.error("Not logged in, can't update notification settings")
     return redirect("/");
   }
-  const uid = authObj.uid;
 
-  const method = request.method;
-  const data = await request.formData();
-  const avatarUrl = data.get("avatar")
-  const photoUrl = authObj.photoUrl
-  const defaultAvatar = avatarUrl === "" || avatarUrl === photoUrl
-  const customPhotoUrl = !defaultAvatar
-
-  const notificationParams = {
-    name: data.get("name"),
-    notificationEmail: data.get("email"),
-    notificationEmailEnabled: Boolean(data.get("emailme")),
-    votesVisible: Boolean(data.get("votes_visible")),
-    openPollEmailEnabled: Boolean(data.get("open_poll_email")),
-    defaultArrivalTime: normalizeArrivalTime(data.get("default_arrival_time")),
-    customPhotoUrl,
-    photoUrl: defaultAvatar ? photoUrl : avatarUrl,
-    pushPreferences: data.get("push_prefs_visible")
-      ? {
-        pollOpens: Boolean(data.get("push_poll_opens")),
-        pollCompletes: Boolean(data.get("push_poll_completes")),
-        globalChat: Boolean(data.get("push_global_chat")),
-        eventChat: Boolean(data.get("push_event_chat")),
-      }
-      : undefined,
-  };
-  if (method === "POST") {
-    try {
-      // Firestore rejects fields with value `undefined`. Remove any undefined values
-      const cleaned = Object.fromEntries(
-        Object.entries(notificationParams).filter(([, v]) => v !== undefined)
-      );
-
-      // Write private data to users collection
-      const privateData = {
-        notificationEmail: cleaned.notificationEmail,
-        notificationEmailEnabled: cleaned.notificationEmailEnabled,
-        openPollEmailEnabled: cleaned.openPollEmailEnabled,
-        defaultArrivalTime: cleaned.defaultArrivalTime,
-        customPhotoUrl: cleaned.customPhotoUrl,
-        pushPreferences: cleaned.pushPreferences,
-      };
-
-      // Remove undefined private fields
-      const cleanedPrivate = Object.fromEntries(
-        Object.entries(privateData).filter(([, v]) => v !== undefined)
-      );
-
-      if (Object.keys(cleanedPrivate).length > 0) {
-        await updateDoc(firestoreDoc(db, "users", uid), cleanedPrivate);
-      }
-
-      // Write public data to user-public collection
-      const publicData = {
-        uid,
-        name: cleaned.name,
-        photoUrl: cleaned.photoUrl,
-        votesVisible: cleaned.votesVisible,
-      };
-
-      // Remove undefined public fields
-      const cleanedPublic = Object.fromEntries(
-        Object.entries(publicData).filter(([, v]) => v !== undefined)
-      );
-
-      if (Object.keys(cleanedPublic).length > 0) {
-        await setDoc(firestoreDoc(db, "user-public", uid), cleanedPublic, { merge: true });
-      }
-    } catch (err) {
-      console.error("[Preferences save error]", err?.code, err?.message, err);
-      notifyError(`[${err?.code ?? "unknown"}] ${err?.message}`);
-    }
+  if (request.method === "POST") {
+    const formData = await request.formData();
+    await savePreferences({
+      uid: authObj.uid,
+      formData,
+      currentPhotoUrl: authObj.photoUrl,
+    });
   }
   return redirect("/");
 }
