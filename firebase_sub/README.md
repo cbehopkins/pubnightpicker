@@ -218,6 +218,22 @@ For debug:
 Persist:
 `sudo docker run -d --restart unless-stopped --name pubnight_sub -e MAILTRAP_TOKEN="$MAILTRAP_TOKEN" -e FIREBASE_CRED_PATH=/usr/src/app/cred.json -v "$PWD/cred.json:/usr/src/app/cred.json:ro" sub_events`
 
+# CI image publishing (GHCR)
+
+`.github/workflows/sub-events-image.yml` builds this Dockerfile and pushes to
+`ghcr.io/<owner>/<repo>/sub_events` for `linux/arm64` (Raspberry Pi 64-bit).
+
+Triggers and tags:
+1. Push to `main` touching `firebase_sub/**`: tags `main` and `sha-<full-commit-sha>`
+2. Push of a Git tag (`v*` or `sub_events-v*`): tags `<git-tag>` and `sha-<full-commit-sha>`
+
+Pull requests and feature branches build nothing. Deployments should pin the
+immutable `sha-<commit>` tag:
+
+```bash
+sudo docker pull ghcr.io/cbehopkins/pubnightpicker/sub_events:sha-<commit-sha>
+```
+
 # Restarting the deployed service (compose repo)
 If you deploy with the separate compose repo, this is the low-downtime flow we used:
 

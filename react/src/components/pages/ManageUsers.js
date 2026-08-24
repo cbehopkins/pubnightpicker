@@ -230,7 +230,7 @@ function ManageUsersTable({
     handleRoleClick,
     onViewUid,
 }) {
-    const [editingUid, setEditingUid] = useState(null);
+    const [editingUser, setEditingUser] = useState(null);
     return (
         <>
             <div className="table-responsive">
@@ -299,7 +299,7 @@ function ManageUsersTable({
                                             type="button"
                                             variant="primary"
                                             size="sm"
-                                            onClick={() => setEditingUid(key)}
+                                            onClick={() => setEditingUser({ uid: key, label: value?.name || value?.email || key })}
                                         >
                                             Edit Preferences
                                         </Button>
@@ -310,15 +310,15 @@ function ManageUsersTable({
                     </tbody>
                 </Table>
             </div>
-            {editingUid && (
-                <Modal onBackdropClick={() => setEditingUid(null)}>
+            {editingUser && (
+                <Modal onBackdropClick={() => setEditingUser(null)}>
                     <div className="p-2">
-                        <h3 className="h5 mb-3">Edit Preferences for {editingUid}</h3>
+                        <h3 className="h5 mb-3">Edit Preferences for {editingUser.label}</h3>
                         <PreferencesForm
                             method="post"
-                            uid={editingUid}
+                            uid={editingUser.uid}
                             isAdminEditing={true}
-                            onCancel={() => setEditingUid(null)}
+                            onCancel={() => setEditingUser(null)}
                         />
                     </div>
                 </Modal>
