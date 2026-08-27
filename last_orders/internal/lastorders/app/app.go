@@ -108,12 +108,6 @@ func New(cfg Config) (*App, error) {
 			return nil, fmt.Errorf("init firestore client: %w", err)
 		}
 
-		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger)
-		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
-			return nil, err
-		}
 		venueCacheStore, err = venuecache.New(baseStore)
 		if err != nil {
 			_ = firestoreClient.Close()
@@ -127,6 +121,12 @@ func New(cfg Config) (*App, error) {
 			return nil, err
 		}
 		venueCacheService, err = venuecache.NewService(venueCacheStore, venueSource, cfg.Logger)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
 		if err != nil {
 			_ = firestoreClient.Close()
 			_ = baseStore.Close()

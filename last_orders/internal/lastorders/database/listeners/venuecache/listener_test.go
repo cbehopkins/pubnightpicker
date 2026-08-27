@@ -17,6 +17,10 @@ func (fakeSource) Get(context.Context, string) (component.Document, error) {
 	return component.Document{}, component.ErrNotFound
 }
 
+func (fakeSource) ListEventVenues(context.Context) ([]component.Document, error) {
+	return nil, nil
+}
+
 func (fakeSource) Watch(context.Context) (component.ChangeStream, error) {
 	return nil, nil
 }

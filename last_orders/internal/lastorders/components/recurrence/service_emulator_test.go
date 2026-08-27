@@ -28,7 +28,7 @@ func emulatorService(t *testing.T, ctx context.Context) (*Service, *firestore.Cl
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	svc, err := NewService(client, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	svc, err := NewService(client, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil)
 	if err != nil {
 		t.Fatalf("new recurrence service: %v", err)
 	}
@@ -77,7 +77,6 @@ func TestAdvanceStaleEventPicksUpEditedRecurrenceAgainstEmulator(t *testing.T) {
 
 func TestAdvanceStaleEventFromMissingDateAgainstEmulator(t *testing.T) {
 	t.Parallel()
-
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

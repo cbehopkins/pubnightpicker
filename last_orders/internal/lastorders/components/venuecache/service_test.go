@@ -18,6 +18,13 @@ func (s *fakeSource) Get(context.Context, string) (Document, error) {
 	return s.doc, s.err
 }
 
+func (s *fakeSource) ListEventVenues(context.Context) ([]Document, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return []Document{s.doc}, nil
+}
+
 func (s *fakeSource) Watch(context.Context) (ChangeStream, error) {
 	return s.watch, nil
 }
@@ -53,5 +60,25 @@ func TestServiceReturnsAuthoritativeNotFound(t *testing.T) {
 	}
 	if _, err := service.Get(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v; want not found", err)
+	}
+}
+
+func TestServiceListsEventVenuesThroughSource(t *testing.T) {
+	store := newTestStore(t)
+	source := &fakeSource{doc: Document{ID: "event-1", Data: map[string]any{
+		"name":       "The Event Arms",
+		"venueType":  "event",
+		"recurrence": map[string]any{"frequency": "weekly"},
+	}}}
+	service, err := NewService(store, source, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	venues, err := service.ListEventVenues(context.Background())
+	if err != nil {
+		t.Fatalf("list event venues: %v", err)
+	}
+	if len(venues) != 1 || venues[0].ID != "event-1" || venues[0].Name != "The Event Arms" {
+		t.Fatalf("venues = %#v", venues)
 	}
 }

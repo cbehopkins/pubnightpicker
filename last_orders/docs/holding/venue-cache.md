@@ -356,9 +356,11 @@ The system relies on two properties:
 2. Consumers can always bypass the cache on a miss.
 
 The Cache is responsible for querying Firebase on a Miss to confirm if the document is indeed present.
-The current implementation does not route existing recurrence reads or writes
-through the cache. A future consumer-routing change may explicitly delete a
-local entry before changing the authoritative Firebase document.
+Recurrence's read-oriented venue paths use the cache when it is configured.
+The cache-backed service still queries Firebase to discover the IDs for an event
+venue list, then obtains each projection through the cache. Existing recurrence
+writes and the transactional `AdvanceStaleEvent` operation remain direct
+Firebase operations because Phase 1 has no transactional cache-write API.
 
 
 ---
@@ -494,7 +496,7 @@ Phase 2 must not alter the Phase 1 consumer contract.
 
 The Phase 1 implementation uses the following concrete choices:
 
-* The public API is venue-specific and typed rather than exposing arbitrary cache table or collection names.
+* The public API is venue-specific and typed rather than exposing arbitrary cache table or collection names. Its event-venue listing currently calls through to Firebase; replacing that implementation with a local-cache-backed listing is deferred.
 * Firebase field names are mapped to normalised Go-facing fields: `web_site` to `Website` and `pubImage` to `PhotoURL`.
 * The retained fields are the venue ID, `name`, `venueType`, website, map, address, photo URL, `recurrence`, and `next_occurrence_date`.
 * Nested `recurrence` data is stored as JSON text in SQLite.
@@ -503,7 +505,7 @@ The Phase 1 implementation uses the following concrete choices:
 * A present local entry may be eventually stale. A cache miss always performs an authoritative Firebase lookup when Firestore is enabled.
 * Cache population after a Firebase read is best effort. A local cache-write failure must not hide a successful authoritative result.
 * When Firestore is disabled, the application does not construct or expose the Venue cache.
-* Existing recurrence venue reads and writes remain direct Firebase operations until a separate consumer-routing change is designed.
+* Recurrence's read-oriented venue paths use the cache when configured. Existing recurrence writes and transactional stale-event updates remain direct Firebase operations.
 
 ---
 

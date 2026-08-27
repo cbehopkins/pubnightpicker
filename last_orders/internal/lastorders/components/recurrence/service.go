@@ -2,9 +2,12 @@ package recurrence
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
+
+	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -22,9 +25,10 @@ type Service struct {
 	client *firestore.Client
 	loc    *time.Location
 	logger *slog.Logger
+	cache  *venuecache.Service
 }
 
-func NewService(client *firestore.Client, logger *slog.Logger) (*Service, error) {
+func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service) (*Service, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is nil")
 	}
@@ -35,7 +39,7 @@ func NewService(client *firestore.Client, logger *slog.Logger) (*Service, error)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{client: client, loc: loc, logger: logger}, nil
+	return &Service{client: client, loc: loc, logger: logger, cache: cache}, nil
 }
 
 func (s *Service) Location() *time.Location {
@@ -52,6 +56,22 @@ func (s *Service) EventVenueQuery() firestore.Query {
 }
 
 func (s *Service) ListEventVenues(ctx context.Context) ([]EventVenue, error) {
+	if s.cache != nil {
+		projections, err := s.cache.ListEventVenues(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list event venues through cache: %w", err)
+		}
+		venues := make([]EventVenue, 0, len(projections))
+		for _, projection := range projections {
+			eventVenue, err := eventVenueFromProjection(projection)
+			if err != nil {
+				return nil, fmt.Errorf("decode venue %q from cache: %w", projection.ID, err)
+			}
+			venues = append(venues, eventVenue)
+		}
+		return venues, nil
+	}
+
 	iter := s.EventVenueQuery().Documents(ctx)
 	defer iter.Stop()
 
@@ -67,6 +87,21 @@ func (s *Service) ListEventVenues(ctx context.Context) ([]EventVenue, error) {
 		venues = append(venues, EventVenueFrom(doc))
 	}
 	return venues, nil
+}
+
+func eventVenueFromProjection(projection venuecache.VenueProjection) (EventVenue, error) {
+	var recurrence map[string]any
+	if projection.RecurrenceJSON != "" {
+		if err := json.Unmarshal([]byte(projection.RecurrenceJSON), &recurrence); err != nil {
+			return EventVenue{}, err
+		}
+	}
+	return EventVenue{
+		ID:                 projection.ID,
+		Name:               projection.Name,
+		Recurrence:         recurrence,
+		NextOccurrenceDate: projection.NextOccurrenceDate,
+	}, nil
 }
 
 func EventVenueFrom(doc *firestore.DocumentSnapshot) EventVenue {
@@ -127,18 +162,32 @@ func clearOccurrence(tx *firestore.Transaction, ref *firestore.DocumentRef, doc 
 // CreateEventPoll materialises the poll for a due occurrence, or completes silently
 // when a poll for (eventVenueId, occurrenceDate) already exists.
 func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
-	venueDoc, err := s.client.Collection(venueCollection).Doc(eventID).Get(ctx)
-	if err != nil {
-		return err
+	var venueType, current, venueName string
+	var err error
+	if s.cache != nil {
+		projection, err := s.cache.Get(ctx, eventID)
+		if err != nil {
+			return err
+		}
+		venueType = projection.VenueType
+		current = projection.NextOccurrenceDate
+		venueName = projection.Name
+	} else {
+		venueDoc, err := s.client.Collection(venueCollection).Doc(eventID).Get(ctx)
+		if err != nil {
+			return err
+		}
+		venueType, _ = venueDoc.Data()["venueType"].(string)
+		current, _ = venueDoc.Data()[NextOccurrenceField].(string)
+		venueName, _ = venueDoc.Data()["name"].(string)
 	}
-	if venueType, _ := venueDoc.Data()["venueType"].(string); venueType != "event" {
+	if venueType != "event" {
 		return nil
 	}
-	if current, _ := venueDoc.Data()[NextOccurrenceField].(string); current != occurrenceDate {
+	if current != occurrenceDate {
 		s.logger.Info("event occurrence superseded before poll creation", "event_id", eventID, "observed", occurrenceDate, "current", current)
 		return nil
 	}
-	venueName, _ := venueDoc.Data()["name"].(string)
 
 	polls := s.client.Collection(pollCollection)
 	existing := polls.Where("eventVenueId", "==", eventID).Where("date", "==", occurrenceDate)

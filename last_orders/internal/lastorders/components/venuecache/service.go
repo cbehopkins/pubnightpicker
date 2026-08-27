@@ -49,6 +49,25 @@ func (s *Service) Get(ctx context.Context, venueID string) (VenueProjection, err
 	return projection, nil
 }
 
+// ListEventVenues currently forwards to the authoritative source. The API is
+// intentionally owned by the cache so local listing can be added later without
+// changing recurrence consumers.
+func (s *Service) ListEventVenues(ctx context.Context) ([]VenueProjection, error) {
+	docs, err := s.source.ListEventVenues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	venues := make([]VenueProjection, 0, len(docs))
+	for _, doc := range docs {
+		projection, err := ProjectionFromDocument(doc)
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, projection)
+	}
+	return venues, nil
+}
+
 func (s *Service) SourceWatch(ctx context.Context) (ChangeStream, error) {
 	return s.source.Watch(ctx)
 }

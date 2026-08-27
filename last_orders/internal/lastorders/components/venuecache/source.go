@@ -35,6 +35,7 @@ type ChangeStream interface {
 
 type Source interface {
 	Get(context.Context, string) (Document, error)
+	ListEventVenues(context.Context) ([]Document, error)
 	Watch(context.Context) (ChangeStream, error)
 }
 
@@ -58,6 +59,18 @@ func (s *FirestoreSource) Get(ctx context.Context, venueID string) (Document, er
 		return Document{}, err
 	}
 	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+}
+
+func (s *FirestoreSource) ListEventVenues(ctx context.Context) ([]Document, error) {
+	docs, err := s.client.Collection(collection).Where("venueType", "==", "event").Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	venues := make([]Document, 0, len(docs))
+	for _, doc := range docs {
+		venues = append(venues, Document{ID: doc.Ref.ID, Data: doc.Data()})
+	}
+	return venues, nil
 }
 
 func (s *FirestoreSource) Watch(ctx context.Context) (ChangeStream, error) {
