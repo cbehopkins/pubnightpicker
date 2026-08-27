@@ -122,7 +122,9 @@ The Cell keeps a durable `CurrentStep` cursor and retains the same ID across the
 sequence. A successful `Complete` advances to the next step; an ordinary `Retry`
 repeats the current step; `RetrySequence` resets execution to the first step after
 its delay. Child Cells and `ApplicationWork` are committed atomically with the step
-transition. A final `Complete` removes the Cell.
+transition. A `Kill` removes the current Cell without running later steps, but may
+also carry cleanup Cells and `ApplicationWork`; those side effects commit atomically
+with the termination. A final `Complete` also removes the Cell.
 
 ---
 

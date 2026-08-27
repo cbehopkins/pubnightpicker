@@ -10,14 +10,11 @@ import (
 	"last_orders/internal/lastorders/basestore"
 )
 
-type State string
-
-const (
-	StatePending State = "PENDING"
-	StatePushed  State = "PUSHED"
-	StatePresent State = "PRESENT"
-)
-
+// Store is the local durable cache of Firebase idempotency identities.
+//
+// The Cell Sequence's own step cursor is the processing state machine (see
+// docs/cdd/0001-idempotency.md §5/§16); this table only records whether an identity
+// has already been claimed.
 type Store struct {
 	base *basestore.Store
 }
@@ -31,7 +28,6 @@ func New(base *basestore.Store) (*Store, error) {
 		CREATE TABLE IF NOT EXISTS firebase_idempotency_records (
 			listener TEXT NOT NULL,
 			event_key TEXT NOT NULL,
-			state TEXT NOT NULL,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(listener, event_key)
 		);
@@ -42,83 +38,33 @@ func New(base *basestore.Store) (*Store, error) {
 	return &Store{base: base}, nil
 }
 
-func (s *Store) CurrentState(ctx context.Context, listener, eventKey string) (State, bool, error) {
-	var state string
+// Exists reports whether the identity has already been claimed.
+func (s *Store) Exists(ctx context.Context, listener, eventKey string) (bool, error) {
+	var found int
 	err := s.base.DB().QueryRowContext(ctx, `
-		SELECT state
+		SELECT 1
 		FROM firebase_idempotency_records
 		WHERE listener = ? AND event_key = ?
-	`, listener, eventKey).Scan(&state)
+	`, listener, eventKey).Scan(&found)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", false, nil
+			return false, nil
 		}
-		return "", false, err
-	}
-	return State(state), true, nil
-}
-
-func (s *Store) CreateOrRefreshPending(ctx context.Context, listener, eventKey string) (State, error) {
-	_, err := s.base.DB().ExecContext(ctx, `
-		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
-		VALUES(?, ?, ?, ?)
-		ON CONFLICT(listener, event_key) DO UPDATE SET
-			updated_at = excluded.updated_at
-	`, listener, eventKey, StatePending, time.Now().UTC())
-	if err != nil {
-		return "", err
-	}
-	state, _, err := s.CurrentState(ctx, listener, eventKey)
-	if err != nil {
-		return "", err
-	}
-	return state, nil
-}
-
-func (s *Store) MarkPushedUnlessPresent(ctx context.Context, listener, eventKey string) (State, error) {
-	_, err := s.base.DB().ExecContext(ctx, `
-		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
-		VALUES(?, ?, ?, ?)
-		ON CONFLICT(listener, event_key) DO UPDATE SET
-			state = CASE
-				WHEN firebase_idempotency_records.state = ? THEN firebase_idempotency_records.state
-				ELSE excluded.state
-			END,
-			updated_at = excluded.updated_at
-	`, listener, eventKey, StatePushed, time.Now().UTC(), StatePresent)
-	if err != nil {
-		return "", err
-	}
-	state, _, err := s.CurrentState(ctx, listener, eventKey)
-	if err != nil {
-		return "", err
-	}
-	return state, nil
-}
-
-func (s *Store) TransitionPendingToPresent(ctx context.Context, listener, eventKey string) (bool, error) {
-	res, err := s.base.DB().ExecContext(ctx, `
-		UPDATE firebase_idempotency_records
-		SET state = ?, updated_at = ?
-		WHERE listener = ? AND event_key = ? AND state = ?
-	`, StatePresent, time.Now().UTC(), listener, eventKey, StatePending)
-	if err != nil {
 		return false, err
 	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows == 1, nil
+	return true, nil
 }
 
-func (s *Store) TransitionPushedToPresentWork(listener, eventKey string) cellar.ApplicationWork {
+// InsertUnlessExistsWork claims the identity as part of the Check step's transaction.
+// It rejects the transition if a concurrent claim already won, so the loser retries
+// and observes the identity as already-claimed.
+func (s *Store) InsertUnlessExistsWork(listener, eventKey string) cellar.ApplicationWork {
 	return func(tx cellar.ApplicationTx) error {
 		if err := tx.Exec(`
-			UPDATE firebase_idempotency_records
-			SET state = ?, updated_at = ?
-			WHERE listener = ? AND event_key = ? AND state = ?
-		`, StatePresent, time.Now().UTC(), listener, eventKey, StatePushed); err != nil {
+			INSERT INTO firebase_idempotency_records(listener, event_key, updated_at)
+			VALUES(?, ?, ?)
+			ON CONFLICT(listener, event_key) DO NOTHING
+		`, listener, eventKey, time.Now().UTC()); err != nil {
 			return err
 		}
 
@@ -127,11 +73,10 @@ func (s *Store) TransitionPushedToPresentWork(listener, eventKey string) cellar.
 			return err
 		}
 		if changed != 1 {
-			return ErrTransitionRejected
+			return ErrClaimRejected
 		}
-
 		return nil
 	}
 }
 
-var ErrTransitionRejected = fmt.Errorf("idempotency transition rejected")
+var ErrClaimRejected = fmt.Errorf("idempotency claim rejected")

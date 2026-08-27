@@ -1,21 +1,24 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/basestore"
-	"last_orders/internal/lastorders/components/counter"
+	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
-	"last_orders/internal/lastorders/handlers"
+	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/plugins/polls"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,15 +27,11 @@ func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "backend.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 	defer a.Close()
 
-	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 1})
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	if err := a.AddCell(cellar.CellRequest{HandlerName: handlers.HandlerExampleIncrement, Payload: raw}); err != nil {
-		t.Fatalf("add cell: %v", err)
+	if err := enqueueNewPoll(t, a, "poll-1"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -42,7 +41,6 @@ func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
 	defer db.Close()
 
 	mustTable(t, db, "cells")
-	mustTable(t, db, "app_counters")
 	mustTable(t, db, "firebase_idempotency_records")
 
 	var cells int
@@ -58,15 +56,11 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "atomic.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 	defer a.Close()
 
-	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 5})
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	if err := a.AddCell(cellar.CellRequest{HandlerName: handlers.HandlerExampleIncrement, Payload: raw}); err != nil {
-		t.Fatalf("add cell: %v", err)
+	if err := enqueueNewPoll(t, a, "poll-atomic"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
 	}
 
 	store := a.CellarStore()
@@ -75,19 +69,19 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 		t.Fatalf("claim next failed: ok=%v err=%v", ok, err)
 	}
 
-	err = store.Complete(claimed.ID, []cellar.CellRequest{{HandlerName: ""}}, func(tx cellar.ApplicationTx) error {
-		return tx.Exec(`UPDATE app_counters SET value = value + 5 WHERE name = ?`, counter.DefaultCounter)
+	err = store.Complete(claimed.ID, []cellar.CellRequest{{}}, func(tx cellar.ApplicationTx) error {
+		return tx.Exec(`INSERT INTO firebase_idempotency_records(listener, event_key) VALUES(?, ?)`, "rollback-listener", "rollback-key")
 	})
 	if err == nil {
 		t.Fatal("expected complete to fail")
 	}
 
-	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
+	exists, err := a.IdempotencyClaimed(context.Background(), "rollback-listener", "rollback-key")
 	if err != nil {
-		t.Fatalf("counter value: %v", err)
+		t.Fatalf("idempotency state: %v", err)
 	}
-	if value != 0 {
-		t.Fatalf("application work must roll back with failed completion, got %d", value)
+	if exists {
+		t.Fatal("application work must roll back with failed completion")
 	}
 
 	active, err := store.ListActive()
@@ -99,33 +93,23 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 	}
 }
 
-func TestCellFanoutCreatesMultipleReplacementCellsAtomically(t *testing.T) {
+func TestFactFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 	t.Parallel()
 
+	var output bytes.Buffer
 	dbPath := filepath.Join(t.TempDir(), "fanout.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
+	a := mustNewAppWithLogger(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil, &output)
 	defer a.Close()
 
-	raw, err := cellar.JSONCodec[handlers.FanoutPayload]().Marshal(handlers.FanoutPayload{
-		Counter:  counter.DefaultCounter,
-		Children: 2,
-		Delta:    1,
-	})
-	if err != nil {
-		t.Fatalf("marshal fanout payload: %v", err)
-	}
-	if err := a.AddCell(cellar.CellRequest{HandlerName: handlers.HandlerExampleFanout, Payload: raw}); err != nil {
-		t.Fatalf("add fanout cell: %v", err)
+	if err := enqueueNewPoll(t, a, "poll-fanout"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
 	}
 
 	runFor(t, a, 300*time.Millisecond)
 
-	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
-	if err != nil {
-		t.Fatalf("counter value: %v", err)
-	}
-	if value != 2 {
-		t.Fatalf("expected two fanout children to increment counter, got %d", value)
+	logged := output.String()
+	if !strings.Contains(logged, "new poll processed") || !strings.Contains(logged, "poll-fanout") {
+		t.Fatalf("expected fact to be delivered to the registered poll handler, got log: %s", logged)
 	}
 
 	active, err := a.CellarStore().ListActive()
@@ -133,348 +117,92 @@ func TestCellFanoutCreatesMultipleReplacementCellsAtomically(t *testing.T) {
 		t.Fatalf("list active: %v", err)
 	}
 	if len(active) != 0 {
-		t.Fatalf("expected no active cells after fanout slice, got %d", len(active))
+		t.Fatalf("expected no active cells after fact delivery, got %d", len(active))
 	}
 }
 
-func TestIdempotencyPendingToPresent(t *testing.T) {
+func TestIdempotencyDuplicateObservationSuppressed(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-	remote.SeedExisting("listener-a", "event-1", true)
-	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-pending-present.db"), remote, false, nil)
+	var output bytes.Buffer
+	dbPath := filepath.Join(t.TempDir(), "idem-duplicate.db")
+	a := mustNewAppWithLogger(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil, &output)
 	defer a.Close()
 
-	if err := enqueuePending(t, a, "listener-a", "event-1", true); err != nil {
-		t.Fatalf("enqueue pending: %v", err)
+	if err := enqueueNewPoll(t, a, "poll-dup"); err != nil {
+		t.Fatalf("enqueue new poll (1st): %v", err)
 	}
-
-	runFor(t, a, 250*time.Millisecond)
-
-	state, ok, err := a.IdempotencyState(context.Background(), "listener-a", "event-1")
-	if err != nil {
-		t.Fatalf("idempotency state: %v", err)
-	}
-	if !ok || state != firebaseidempotency.StatePresent {
-		t.Fatalf("expected PRESENT state, got ok=%v state=%s", ok, state)
-	}
-
-	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
-	if err != nil {
-		t.Fatalf("counter value: %v", err)
-	}
-	if value != 0 {
-		t.Fatalf("pending->present should not fanout handler work, got counter=%d", value)
-	}
-}
-
-func TestIdempotencyPendingPushCheckPresentWithFanout(t *testing.T) {
-	t.Parallel()
-
-	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-	a := mustNewApp(t, filepath.Join(t.TempDir(), "idem-flow.db"), remote, false, nil)
-	defer a.Close()
-
-	if err := enqueuePending(t, a, "listener-b", "event-2", true); err != nil {
-		t.Fatalf("enqueue pending: %v", err)
-	}
-
-	runFor(t, a, 500*time.Millisecond)
-
-	state, ok, err := a.IdempotencyState(context.Background(), "listener-b", "event-2")
-	if err != nil {
-		t.Fatalf("idempotency state: %v", err)
-	}
-	if !ok || state != firebaseidempotency.StatePresent {
-		t.Fatalf("expected PRESENT state, got ok=%v state=%s", ok, state)
-	}
-
-	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
-	if err != nil {
-		t.Fatalf("counter value: %v", err)
-	}
-	if value != 1 {
-		t.Fatalf("expected exactly one fanout increment, got %d", value)
-	}
-}
-
-func TestIdempotencyPushedPushCheckPath(t *testing.T) {
-	t.Parallel()
-
-	remote := firebaseidempotency.NewInMemoryRemoteStandIn(false)
-	dbPath := filepath.Join(t.TempDir(), "idem-pushed.db")
-	a := mustNewApp(t, dbPath, remote, false, nil)
-	defer a.Close()
-
-	if err := seedIdempotencyState(t, dbPath, "listener-c", "event-3", firebaseidempotency.StatePushed); err != nil {
-		t.Fatalf("seed pushed state: %v", err)
-	}
-
-	checkTarget, err := incrementFanoutTarget()
-	if err != nil {
-		t.Fatalf("fanout target: %v", err)
-	}
-	raw, err := cellar.JSONCodec[firebaseidempotency.PushPayload]().Marshal(firebaseidempotency.PushPayload{
-		Listener: "listener-c",
-		EventKey: "event-3",
-		Fanout:   []firebaseidempotency.FanoutTarget{checkTarget},
-	})
-	if err != nil {
-		t.Fatalf("marshal push payload: %v", err)
-	}
-	if err := a.AddCell(cellar.CellRequest{HandlerName: firebaseidempotency.HandlerPush, Payload: raw}); err != nil {
-		t.Fatalf("add push cell: %v", err)
+	if err := enqueueNewPoll(t, a, "poll-dup"); err != nil {
+		t.Fatalf("enqueue new poll (2nd): %v", err)
 	}
 
 	runFor(t, a, 300*time.Millisecond)
 
-	if remote.CreateCallCount("listener-c", "event-3") == 0 {
-		t.Fatal("expected pushed->push path to attempt remote create")
+	logged := output.String()
+	if count := strings.Count(logged, "new poll processed"); count != 1 {
+		t.Fatalf("expected the duplicate observation to be suppressed, got %d deliveries: %s", count, logged)
+	}
+}
+
+func TestIdempotencyObservedRemoteDoesNotEmitFact(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	remote := firebaseidempotencytest.NewInMemoryRemoteStandIn(true)
+	remote.SeedExisting("NewPoll", "poll-observed", true)
+	dbPath := filepath.Join(t.TempDir(), "idem-observed.db")
+	a := mustNewAppWithLogger(t, dbPath, remote, nil, &output)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-observed"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
 	}
 
-	state, ok, err := a.IdempotencyState(context.Background(), "listener-c", "event-3")
+	runFor(t, a, 300*time.Millisecond)
+
+	if strings.Contains(output.String(), "new poll processed") {
+		t.Fatal("a Fact already established remotely must not be re-emitted")
+	}
+
+	exists, err := a.IdempotencyClaimed(context.Background(), "NewPoll", "poll-observed")
 	if err != nil {
 		t.Fatalf("idempotency state: %v", err)
 	}
-	if !ok || state != firebaseidempotency.StatePushed {
-		t.Fatalf("expected state to remain PUSHED until visible, got ok=%v state=%s", ok, state)
+	if !exists {
+		t.Fatalf("expected identity cached after observing remote establishment, got exists=%v", exists)
 	}
 
 	active, err := a.CellarStore().ListActive()
 	if err != nil {
 		t.Fatalf("list active: %v", err)
 	}
-	if countByHandler(active, firebaseidempotency.HandlerCheck) == 0 {
-		t.Fatal("expected a check cell to remain scheduled/retrying")
+	if len(active) != 0 {
+		t.Fatalf("expected the sequence to terminate immediately at Step 1, got %d active cells", len(active))
 	}
 }
 
-func TestIdempotencyPresentNoWork(t *testing.T) {
+func TestNewRequiresIdempotencyRemoteWhenFirestoreDisabled(t *testing.T) {
 	t.Parallel()
 
-	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-	dbPath := filepath.Join(t.TempDir(), "idem-present.db")
-	a := mustNewApp(t, dbPath, remote, false, nil)
-	defer a.Close()
-
-	if err := seedIdempotencyState(t, dbPath, "listener-d", "event-4", firebaseidempotency.StatePresent); err != nil {
-		t.Fatalf("seed present state: %v", err)
-	}
-
-	raw, err := cellar.JSONCodec[firebaseidempotency.PushPayload]().Marshal(firebaseidempotency.PushPayload{
-		Listener: "listener-d",
-		EventKey: "event-4",
+	dbPath := filepath.Join(t.TempDir(), "no-remote.db")
+	_, err := app.New(app.Config{
+		DBPath:    dbPath,
+		PollDelay: 5 * time.Millisecond,
+		Logger:    testLogger(),
 	})
-	if err != nil {
-		t.Fatalf("marshal push payload: %v", err)
+	if err == nil {
+		t.Fatal("expected app.New to fail fast without a durable idempotency remote")
 	}
-	if err := a.AddCell(cellar.CellRequest{HandlerName: firebaseidempotency.HandlerPush, Payload: raw}); err != nil {
-		t.Fatalf("add push cell: %v", err)
-	}
-
-	runFor(t, a, 200*time.Millisecond)
-
-	if remote.CreateCallCount("listener-d", "event-4") != 0 {
-		t.Fatal("present state should not issue remote push")
-	}
-}
-
-func TestDuplicateCheckCreatesExactlyOneFanoutCell(t *testing.T) {
-	t.Parallel()
-
-	remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-	remote.SeedExisting("listener-race", "event-5", true)
-	dbPath := filepath.Join(t.TempDir(), "idem-race.db")
-	a := mustNewApp(t, dbPath, remote, false, nil)
-	defer a.Close()
-
-	if err := seedIdempotencyState(t, dbPath, "listener-race", "event-5", firebaseidempotency.StatePushed); err != nil {
-		t.Fatalf("seed pushed state: %v", err)
-	}
-
-	fanoutTarget, err := incrementFanoutTarget()
-	if err != nil {
-		t.Fatalf("fanout target: %v", err)
-	}
-	payload := firebaseidempotency.CheckPayload{
-		Listener: "listener-race",
-		EventKey: "event-5",
-		Fanout:   []firebaseidempotency.FanoutTarget{fanoutTarget},
-	}
-	raw, err := cellar.JSONCodec[firebaseidempotency.CheckPayload]().Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal check payload: %v", err)
-	}
-
-	store := a.CellarStore()
-	for i := 0; i < 1; i++ {
-		if _, err := store.Add([]cellar.CellRequest{{HandlerName: firebaseidempotency.HandlerCheck, Payload: raw}}); err != nil {
-			t.Fatalf("add check cell %d: %v", i, err)
-		}
-	}
-
-	runFor(t, a, 300*time.Millisecond)
-
-	state, ok, err := a.IdempotencyState(context.Background(), "listener-race", "event-5")
-	if err != nil {
-		t.Fatalf("idempotency state: %v", err)
-	}
-	if !ok || state != firebaseidempotency.StatePresent {
-		t.Fatalf("expected PRESENT after duplicate checks, got ok=%v state=%s", ok, state)
-	}
-
-	value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
-	if err != nil {
-		t.Fatalf("counter value: %v", err)
-	}
-	if value != 1 {
-		t.Fatalf("expected one fanout increment after duplicate check success, got %d", value)
-	}
-	active, err := store.ListActive()
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
-	if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
-		t.Fatalf("expected no lingering fanout increment cells after success, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
-	}
-	if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
-		t.Fatalf("expected duplicate checks to complete, found %d", countByHandler(active, firebaseidempotency.HandlerCheck))
-	}
-}
-
-func TestCheckFanoutAtomicRollbackAndSuccess(t *testing.T) {
-	t.Parallel()
-
-	t.Run("rollback_keeps_pushed_and_retryable", func(t *testing.T) {
-		remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-		dbPath := filepath.Join(t.TempDir(), "idem-atomic-fail.db")
-		a := mustNewApp(t, dbPath, remote, false, nil)
-		defer a.Close()
-
-		if err := seedIdempotencyState(t, dbPath, "listener-atomic", "event-fail", firebaseidempotency.StatePushed); err != nil {
-			t.Fatalf("seed pushed state: %v", err)
-		}
-		remote.SeedExisting("listener-atomic", "event-fail", true)
-
-		badRaw, err := cellar.JSONCodec[firebaseidempotency.CheckPayload]().Marshal(firebaseidempotency.CheckPayload{
-			Listener: "listener-atomic",
-			EventKey: "event-fail",
-			Fanout: []firebaseidempotency.FanoutTarget{{
-				HandlerName: "",
-				Payload:     []byte(`{"invalid":true}`),
-			}},
-		})
-		if err != nil {
-			t.Fatalf("marshal bad check payload: %v", err)
-		}
-		if _, err := a.CellarStore().Add([]cellar.CellRequest{{
-			HandlerName: firebaseidempotency.HandlerCheck,
-			Payload:     badRaw,
-		}}); err != nil {
-			t.Fatalf("add bad check cell: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		runErr := a.Run(ctx)
-		cancel()
-		if runErr == nil {
-			t.Fatal("expected Cellar startup to report failed result application")
-		}
-
-		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-fail")
-		if err != nil {
-			t.Fatalf("idempotency state after failed complete: %v", err)
-		}
-		if !exists || state != firebaseidempotency.StatePushed {
-			t.Fatalf("expected rollback to keep PUSHED, got exists=%v state=%s", exists, state)
-		}
-
-		active, err := a.CellarStore().ListActive()
-		if err != nil {
-			t.Fatalf("list active: %v", err)
-		}
-		if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
-			t.Fatalf("expected no fanout cells on rollback, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
-		}
-		if countByHandler(active, firebaseidempotency.HandlerCheck) != 1 {
-			t.Fatalf("expected failed check cell to remain active for recovery, got %d", countByHandler(active, firebaseidempotency.HandlerCheck))
-		}
-
-		if err := a.CellarStore().Recover(); err != nil {
-			t.Fatalf("recover failed check cell: %v", err)
-		}
-		_, recovered, err := a.CellarStore().ClaimNext(time.Now().UTC())
-		if err != nil || !recovered {
-			t.Fatalf("expected failed check cell to be claimable after recover: ok=%v err=%v", recovered, err)
-		}
-	})
-
-	t.Run("success_commits_present_and_single_fanout", func(t *testing.T) {
-		remote := firebaseidempotency.NewInMemoryRemoteStandIn(true)
-		dbPath := filepath.Join(t.TempDir(), "idem-atomic-success.db")
-		a := mustNewApp(t, dbPath, remote, false, nil)
-		defer a.Close()
-
-		if err := seedIdempotencyState(t, dbPath, "listener-atomic", "event-ok", firebaseidempotency.StatePushed); err != nil {
-			t.Fatalf("seed pushed success case: %v", err)
-		}
-		remote.SeedExisting("listener-atomic", "event-ok", true)
-		target, err := incrementFanoutTarget()
-		if err != nil {
-			t.Fatalf("increment fanout target: %v", err)
-		}
-		goodRaw, err := cellar.JSONCodec[firebaseidempotency.CheckPayload]().Marshal(firebaseidempotency.CheckPayload{
-			Listener: "listener-atomic",
-			EventKey: "event-ok",
-			Fanout:   []firebaseidempotency.FanoutTarget{target},
-		})
-		if err != nil {
-			t.Fatalf("marshal good check payload: %v", err)
-		}
-		if err := a.AddCell(cellar.CellRequest{HandlerName: firebaseidempotency.HandlerCheck, Payload: goodRaw}); err != nil {
-			t.Fatalf("add good check cell: %v", err)
-		}
-
-		runFor(t, a, 100*time.Millisecond)
-
-		state, exists, err := a.IdempotencyState(context.Background(), "listener-atomic", "event-ok")
-		if err != nil {
-			t.Fatalf("idempotency state after success: %v", err)
-		}
-		if !exists || state != firebaseidempotency.StatePresent {
-			t.Fatalf("expected PRESENT on success, got exists=%v state=%s", exists, state)
-		}
-
-		value, err := a.CounterValue(context.Background(), counter.DefaultCounter)
-		if err != nil {
-			t.Fatalf("counter value: %v", err)
-		}
-		if value != 1 {
-			t.Fatalf("expected exactly one increment after successful atomic transition, got %d", value)
-		}
-		active, err := a.CellarStore().ListActive()
-		if err != nil {
-			t.Fatalf("list active after success: %v", err)
-		}
-		if countByHandler(active, handlers.HandlerExampleIncrement) != 0 {
-			t.Fatalf("expected no lingering fanout cell after success, got %d", countByHandler(active, handlers.HandlerExampleIncrement))
-		}
-		if countByHandler(active, firebaseidempotency.HandlerCheck) != 0 {
-			t.Fatalf("expected check cell to complete, got %d active check cells", countByHandler(active, firebaseidempotency.HandlerCheck))
-		}
-	})
 }
 
 func TestStartupFailureBlocksListeners(t *testing.T) {
 	t.Parallel()
-
 	dbPath := filepath.Join(t.TempDir(), "startup-fail.db")
 	_, err := app.New(app.Config{
-		DBPath:                dbPath,
-		PollDelay:             5 * time.Millisecond,
-		Logger:                testLogger(),
-		IdempotencyRemote:     firebaseidempotency.NewInMemoryRemoteStandIn(true),
-		EnableExampleListener: true,
+		DBPath:            dbPath,
+		PollDelay:         5 * time.Millisecond,
+		Logger:            testLogger(),
+		IdempotencyRemote: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
 		StartupComponentChecks: []func(*basestore.Store) error{
 			func(*basestore.Store) error { return errors.New("synthetic startup failure") },
 		},
@@ -503,14 +231,10 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "restart.db")
-	a1 := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
+	a1 := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 
-	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{Counter: counter.DefaultCounter, Delta: 1})
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	if err := a1.AddCell(cellar.CellRequest{HandlerName: handlers.HandlerExampleIncrement, Payload: raw}); err != nil {
-		t.Fatalf("add cell: %v", err)
+	if err := enqueueNewPoll(t, a1, "poll-restart"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
 	}
 
 	claimed, ok, err := a1.CellarStore().ClaimNext(time.Now().UTC())
@@ -524,17 +248,17 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 		t.Fatalf("close first app: %v", err)
 	}
 
-	a2 := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), false, nil)
+	a2 := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 	defer a2.Close()
 
 	runFor(t, a2, 300*time.Millisecond)
 
-	value, err := a2.CounterValue(context.Background(), counter.DefaultCounter)
+	active, err := a2.CellarStore().ListActive()
 	if err != nil {
-		t.Fatalf("counter value: %v", err)
+		t.Fatalf("list active: %v", err)
 	}
-	if value != 1 {
-		t.Fatalf("expected recovered claimed cell to execute once, got %d", value)
+	if len(active) != 0 {
+		t.Fatalf("expected recovered claimed cell to be fully processed, got %d active cells", len(active))
 	}
 }
 
@@ -542,7 +266,7 @@ func TestCloseStopsSchedulerBeforeClosingSQLite(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "shutdown.db")
-	a := mustNewApp(t, dbPath, firebaseidempotency.NewInMemoryRemoteStandIn(true), true, nil)
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -570,17 +294,31 @@ func mustNewApp(
 	t *testing.T,
 	dbPath string,
 	remote firebaseidempotency.Remote,
-	enableExampleListener bool,
 	startupChecks []func(*basestore.Store) error,
 ) *app.App {
 	t.Helper()
+	return mustNewAppWithLogger(t, dbPath, remote, startupChecks, nil)
+}
+
+func mustNewAppWithLogger(
+	t *testing.T,
+	dbPath string,
+	remote firebaseidempotency.Remote,
+	startupChecks []func(*basestore.Store) error,
+	logOutput io.Writer,
+) *app.App {
+	t.Helper()
+
+	logger := testLogger()
+	if logOutput != nil {
+		logger = slog.New(slog.NewJSONHandler(logOutput, nil))
+	}
 
 	a, err := app.New(app.Config{
 		DBPath:                 dbPath,
 		PollDelay:              5 * time.Millisecond,
-		Logger:                 testLogger(),
+		Logger:                 logger,
 		IdempotencyRemote:      remote,
-		EnableExampleListener:  enableExampleListener,
 		StartupComponentChecks: startupChecks,
 	})
 	if err != nil {
@@ -598,43 +336,17 @@ func runFor(t *testing.T, application *app.App, dur time.Duration) {
 	}
 }
 
-func enqueuePending(t *testing.T, application *app.App, listener, eventKey string, withIncrementFanout bool) error {
+func enqueueNewPoll(t *testing.T, application *app.App, pollID string) error {
 	t.Helper()
-	targets := make([]firebaseidempotency.FanoutTarget, 0)
-	if withIncrementFanout {
-		target, err := incrementFanoutTarget()
-		if err != nil {
-			return err
-		}
-		targets = append(targets, target)
-	}
-	payload := firebaseidempotency.PendingPayload{Listener: listener, EventKey: eventKey, Fanout: targets}
-	raw, err := cellar.JSONCodec[firebaseidempotency.PendingPayload]().Marshal(payload)
+	payload, err := cellar.JSONCodec[polls.PollObservedPayload]().Marshal(polls.PollObservedPayload{PollID: pollID})
 	if err != nil {
 		return err
 	}
-	return application.AddCell(cellar.CellRequest{HandlerName: firebaseidempotency.HandlerPending, Payload: raw})
-}
-
-func incrementFanoutTarget() (firebaseidempotency.FanoutTarget, error) {
-	raw, err := cellar.JSONCodec[handlers.IncrementPayload]().Marshal(handlers.IncrementPayload{
-		Counter: counter.DefaultCounter,
-		Delta:   1,
-	})
+	request, err := firebaseidempotency.NewCellRequest("NewPoll", pollID, facts.Fact{Name: polls.FactNewPoll, Payload: payload})
 	if err != nil {
-		return firebaseidempotency.FanoutTarget{}, err
+		return err
 	}
-	return firebaseidempotency.FanoutTarget{HandlerName: handlers.HandlerExampleIncrement, Payload: raw}, nil
-}
-
-func countByHandler(cells []cellar.Cell, name cellar.HandlerName) int {
-	count := 0
-	for _, cell := range cells {
-		if cell.HandlerName == name {
-			count++
-		}
-	}
-	return count
+	return application.AddCell(request)
 }
 
 func mustTable(t *testing.T, db *sql.DB, tableName string) {
@@ -648,21 +360,4 @@ func mustTable(t *testing.T, db *sql.DB, tableName string) {
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
-}
-
-func seedIdempotencyState(t *testing.T, dbPath, listener, eventKey string, state firebaseidempotency.State) error {
-	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	_, err = db.Exec(`
-		INSERT INTO firebase_idempotency_records(listener, event_key, state, updated_at)
-		VALUES(?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(listener, event_key) DO UPDATE SET
-			state = excluded.state,
-			updated_at = excluded.updated_at
-	`, listener, eventKey, state)
-	return err
 }

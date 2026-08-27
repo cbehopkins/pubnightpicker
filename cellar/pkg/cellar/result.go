@@ -49,21 +49,31 @@ type Complete struct {
 func (Complete) isResult() {}
 
 // Retry returns a claimed cell to READY with an optional not-before time.
+// NewCells and ApplicationWork are applied atomically before requeueing.
 type Retry struct {
-	NotBefore *time.Time
+	NotBefore       *time.Time
+	NewCells        []CellRequest
+	ApplicationWork []ApplicationWork
 }
 
 func (Retry) isResult() {}
 
 // RetrySequence restarts a Cell from its first step after Delay.
+// NewCells and ApplicationWork are applied atomically before requeueing.
 type RetrySequence struct {
-	Delay time.Duration
+	Delay           time.Duration
+	NewCells        []CellRequest
+	ApplicationWork []ApplicationWork
 }
 
 func (RetrySequence) isResult() {}
 
 // Kill terminates the claimed Cell without running later steps.
-type Kill struct{}
+// NewCells and ApplicationWork are applied atomically before termination.
+type Kill struct {
+	NewCells        []CellRequest
+	ApplicationWork []ApplicationWork
+}
 
 func (Kill) isResult() {}
 
@@ -123,6 +133,9 @@ func (a *StoreResultApplier) ApplyResult(ctx context.Context, cell Cell, result 
 		if resultStore, ok := a.store.(ResultStore); ok {
 			return resultStore.ApplyResult(cell, result)
 		}
+		if len(result.NewCells) > 0 || len(result.ApplicationWork) > 0 {
+			return errors.New("store does not support atomic retry side effects")
+		}
 		return a.store.Retry(cell.ID, result.NotBefore)
 	case RetrySequence:
 		if result.Delay < 0 {
@@ -131,13 +144,16 @@ func (a *StoreResultApplier) ApplyResult(ctx context.Context, cell Cell, result 
 		if resultStore, ok := a.store.(ResultStore); ok {
 			return resultStore.ApplyResult(cell, result)
 		}
+		if len(result.NewCells) > 0 || len(result.ApplicationWork) > 0 {
+			return errors.New("store does not support atomic sequence retry side effects")
+		}
 		notBefore := time.Now().Add(result.Delay)
 		return a.store.Retry(cell.ID, &notBefore)
 	case Kill:
 		if resultStore, ok := a.store.(ResultStore); ok {
 			return resultStore.ApplyResult(cell, result)
 		}
-		return a.store.Complete(cell.ID, nil)
+		return a.store.Complete(cell.ID, result.NewCells, result.ApplicationWork...)
 	default:
 		return nil
 	}

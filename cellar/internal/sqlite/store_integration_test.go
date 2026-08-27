@@ -395,6 +395,79 @@ func TestStoreCompleteRollsBackOnApplicationWorkError(t *testing.T) {
 	}
 }
 
+func TestStoreKillAppliesChildrenAndApplicationWorkAtomically(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	ids, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE app_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatalf("CREATE TABLE app_state error = %v", err)
+	}
+
+	err = store.ApplyResult(parent, cellar.Kill{
+		NewCells: []cellar.CellRequest{{ID: "cleanup", Steps: []cellar.CellStep{{HandlerName: "cleanup"}}}},
+		ApplicationWork: []cellar.ApplicationWork{func(tx cellar.ApplicationTx) error {
+			return tx.Exec(`INSERT INTO app_state (id, value) VALUES (?, ?)`, "killed", "yes")
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	if _, err := store.Get(ids[0]); !errors.Is(err, cellar.ErrCellNotFound) {
+		t.Fatalf("Get(parent) error = %v, want ErrCellNotFound", err)
+	}
+	if _, err := store.Get("cleanup"); err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM app_state`).Scan(&count); err != nil {
+		t.Fatalf("query app_state error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("app_state rows = %d, want 1", count)
+	}
+}
+
+func TestStoreRetryAppliesChildrenBeforeRequeue(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	err = store.ApplyResult(parent, cellar.Retry{
+		NewCells: []cellar.CellRequest{{ID: "audit", Steps: []cellar.CellStep{{HandlerName: "audit"}}}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.State != cellar.CellStateReady {
+		t.Fatalf("parent state = %q, want %q", persisted.State, cellar.CellStateReady)
+	}
+	if _, err := store.Get("audit"); err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+}
+
 func TestInspectorIntegrationWithSQLiteStore(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)

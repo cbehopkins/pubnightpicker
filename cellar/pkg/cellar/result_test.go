@@ -135,3 +135,124 @@ func TestStoreResultApplierAppliesRetryResults(t *testing.T) {
 		t.Fatalf("cell not_before = %v, want %v", cell.NotBefore, nextTime)
 	}
 }
+
+func TestStoreResultApplierRetryAppliesChildrenBeforeRequeue(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	if _, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	err = NewStoreResultApplier(store).ApplyResult(context.Background(), parent, Retry{
+		NewCells: []CellRequest{{Steps: []CellStep{{HandlerName: "audit"}}}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.State != CellStateReady || persisted.CurrentStep != parent.CurrentStep {
+		t.Fatalf("parent after retry = state %q, step %d", persisted.State, persisted.CurrentStep)
+	}
+	if _, err := store.Get("test-2"); err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+}
+
+func TestStoreResultApplierRetrySequenceAppliesChildrenBeforeReset(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	if _, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "first"}, {HandlerName: "second"}}}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+	if err := store.ApplyResult(parent, Complete{}); err != nil {
+		t.Fatalf("ApplyResult(Complete) error = %v", err)
+	}
+	claimed, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext(second) = (%v, %v, %v), want claimed cell", claimed, ok, err)
+	}
+
+	err = store.ApplyResult(claimed, RetrySequence{
+		NewCells: []CellRequest{{Steps: []CellStep{{HandlerName: "audit"}}}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult(RetrySequence) error = %v", err)
+	}
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.CurrentStep != 0 || persisted.State != CellStateReady {
+		t.Fatalf("parent after sequence retry = state %q, step %d", persisted.State, persisted.CurrentStep)
+	}
+	if _, err := store.Get("test-2"); err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+}
+
+func TestStoreResultApplierKillAppliesChildrenBeforeDeletingCell(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	if _, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	applier := NewStoreResultApplier(store)
+	err = applier.ApplyResult(context.Background(), parent, Kill{
+		NewCells: []CellRequest{{Steps: []CellStep{{HandlerName: "cleanup"}}}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	if _, err := store.Get(parent.ID); !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("Get(parent) error = %v, want ErrCellNotFound", err)
+	}
+	if _, err := store.Get("test-2"); err != nil {
+		t.Fatalf("Get(child) error = %v", err)
+	}
+}
+
+func TestStoreResultApplierKillRollsBackChildrenOnApplicationFailure(t *testing.T) {
+	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
+	if _, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	parent, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", parent, ok, err)
+	}
+
+	wantErr := errors.New("application failure")
+	err = NewStoreResultApplier(store).ApplyResult(context.Background(), parent, Kill{
+		NewCells: []CellRequest{{Steps: []CellStep{{HandlerName: "cleanup"}}}},
+		ApplicationWork: []ApplicationWork{func(ApplicationTx) error {
+			return wantErr
+		}},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ApplyResult() error = %v, want %v", err, wantErr)
+	}
+	persisted, err := store.Get(parent.ID)
+	if err != nil {
+		t.Fatalf("Get(parent) error = %v", err)
+	}
+	if persisted.State != CellStateClaimed {
+		t.Fatalf("parent state = %q, want %q", persisted.State, CellStateClaimed)
+	}
+	if _, err := store.Get("test-2"); !errors.Is(err, ErrCellNotFound) {
+		t.Fatalf("Get(child) error = %v, want ErrCellNotFound", err)
+	}
+}

@@ -1,186 +1,115 @@
+// Package firebaseidempotency implements the Firebase-backed idempotency variant
+// described in docs/cdd/0001-idempotency.md. Processing is a 3-step Cell Sequence:
+// Check -> Populate Remote -> Emit Fact. The Cell's own step cursor is the durable
+// processing state machine; the local Store only caches the claimed identity.
 package firebaseidempotency
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"time"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/components/facts"
 )
 
 const (
-	HandlerPending cellar.HandlerName = "firebase.idempotency.pending"
-	HandlerPush    cellar.HandlerName = "firebase.idempotency.push"
-	HandlerCheck   cellar.HandlerName = "firebase.idempotency.check"
+	HandlerCheck          cellar.HandlerName = "firebase.idempotency.check"
+	HandlerPopulateRemote cellar.HandlerName = "firebase.idempotency.populate_remote"
+	HandlerEmitFact       cellar.HandlerName = "firebase.idempotency.emit_fact"
 )
 
-type FanoutTarget struct {
-	HandlerName cellar.HandlerName `json:"handler_name"`
-	Payload     json.RawMessage    `json:"payload"`
+// StepPayload is carried by every step of the Sequence; the identity and Fact are
+// fixed when the Sequence is created and do not change as it progresses.
+type StepPayload struct {
+	Listener string     `json:"listener"`
+	EventKey string     `json:"event_key"`
+	Fact     facts.Fact `json:"fact"`
 }
 
-// The PendingHandler, PushHandler, and CheckHandler are responsible for managing
-// the idempotency state of events in a distributed system.
-// See docs/cdd/0001-idempotency.md for a detailed explanation of the design and flow of these handlers.
-type PendingPayload struct {
-	Listener string         `json:"listener"`
-	EventKey string         `json:"event_key"`
-	Fanout   []FanoutTarget `json:"fanout"`
+// NewCellRequest builds the 3-step Sequence which establishes idempotency for the
+// given identity and, once established, emits the Fact.
+func NewCellRequest(listener, eventKey string, fact facts.Fact) (cellar.CellRequest, error) {
+	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Fact: fact})
+	if err != nil {
+		return cellar.CellRequest{}, err
+	}
+	return cellar.CellRequest{
+		Steps: []cellar.CellStep{
+			{HandlerName: HandlerCheck, Payload: payload},
+			{HandlerName: HandlerPopulateRemote, Payload: payload},
+			{HandlerName: HandlerEmitFact, Payload: payload},
+		},
+	}, nil
 }
 
-type PushPayload struct {
-	Listener string         `json:"listener"`
-	EventKey string         `json:"event_key"`
-	Fanout   []FanoutTarget `json:"fanout"`
-}
-
-type CheckPayload struct {
-	Listener string         `json:"listener"`
-	EventKey string         `json:"event_key"`
-	Fanout   []FanoutTarget `json:"fanout"`
-}
-
-type PendingHandler struct {
+// CheckHandler is Step 1: it claims the identity locally, consulting the remote
+// authority only to distinguish a genuinely new claim from one already established
+// elsewhere. See docs/cdd/0001-idempotency.md §9.
+type CheckHandler struct {
 	Store  *Store
 	Remote Remote
 	Logger *slog.Logger
 }
 
-func (h PendingHandler) Handle(ctx context.Context, payload PendingPayload) cellar.Result {
-	state, err := h.Store.CreateOrRefreshPending(ctx, payload.Listener, payload.EventKey)
+func (h CheckHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
+	exists, err := h.Store.Exists(ctx, payload.Listener, payload.EventKey)
 	if err != nil {
-		return cellar.ErrorResult{Message: "ensure pending", Err: err}
-	}
-	if state == StatePresent {
-		return cellar.Complete{}
-	}
-
-	exists, err := h.Remote.HasKey(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "pending has key", Err: err}
+		return cellar.ErrorResult{Message: "load idempotency state", Err: err}
 	}
 	if exists {
-		transitioned, err := h.Store.TransitionPendingToPresent(ctx, payload.Listener, payload.EventKey)
-		if err != nil {
-			return cellar.ErrorResult{Message: "transition pending to present", Err: err}
-		}
-		if !transitioned {
-			latest, ok, stateErr := h.Store.CurrentState(ctx, payload.Listener, payload.EventKey)
-			if stateErr != nil {
-				return cellar.ErrorResult{Message: "load state after pending->present", Err: stateErr}
-			}
-			if !ok || latest != StatePresent {
-				return cellar.ErrorResult{Message: "pending direct present rejected by current state"}
-			}
-		}
+		return cellar.Kill{}
+	}
+
+	remoteExists, err := h.Remote.HasKey(ctx, payload.Listener, payload.EventKey)
+	if err != nil {
+		return cellar.ErrorResult{Message: "check remote key", Err: err}
+	}
+
+	claimWork := h.Store.InsertUnlessExistsWork(payload.Listener, payload.EventKey)
+	if remoteExists {
+		// Already established elsewhere: cache the identity and stop, without emitting the Fact again.
 		if h.Logger != nil {
-			h.Logger.Info("idempotency pending direct present", "listener", payload.Listener, "event_key", payload.EventKey)
+			h.Logger.Info("idempotency observed remote establishment, terminating", "listener", payload.Listener, "event_key", payload.EventKey)
 		}
-		return cellar.Complete{}
-	}
-
-	raw, err := cellar.JSONCodec[PushPayload]().Marshal(PushPayload(payload))
-	if err != nil {
-		return cellar.ErrorResult{Message: "marshal push payload", Err: err}
-	}
-	now := time.Now().UTC()
-	return cellar.Complete{NewCells: []cellar.CellRequest{{
-		HandlerName: HandlerPush,
-		Payload:     raw,
-		NotBefore:   &now,
-	}}}
-}
-
-type PushHandler struct {
-	Store  *Store
-	Remote Remote
-	Logger *slog.Logger
-}
-
-func (h PushHandler) Handle(ctx context.Context, payload PushPayload) cellar.Result {
-	state, ok, err := h.Store.CurrentState(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "load local state", Err: err}
-	}
-	if ok && state == StatePresent {
-		return cellar.Complete{}
-	}
-
-	_, err = h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "push create key", Err: err}
-	}
-
-	state, err = h.Store.MarkPushedUnlessPresent(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "mark pushed", Err: err}
-	}
-	if state == StatePresent {
-		return cellar.Complete{}
-	}
-
-	raw, err := cellar.JSONCodec[CheckPayload]().Marshal(CheckPayload(payload))
-	if err != nil {
-		return cellar.ErrorResult{Message: "marshal check payload", Err: err}
-	}
-	now := time.Now().UTC()
-	return cellar.Complete{NewCells: []cellar.CellRequest{{
-		HandlerName: HandlerCheck,
-		Payload:     raw,
-		NotBefore:   &now,
-	}}}
-}
-
-type CheckHandler struct {
-	Store      *Store
-	Remote     Remote
-	RetryDelay time.Duration
-	Logger     *slog.Logger
-}
-
-func (h CheckHandler) Handle(ctx context.Context, payload CheckPayload) cellar.Result {
-	state, ok, err := h.Store.CurrentState(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "load local state", Err: err}
-	}
-	if ok && state == StatePresent {
-		return cellar.Complete{}
-	}
-
-	exists, err := h.Remote.HasKey(ctx, payload.Listener, payload.EventKey)
-	if err != nil {
-		return cellar.ErrorResult{Message: "check has key", Err: err}
-	}
-	if !exists {
-		retryDelay := h.RetryDelay
-		if retryDelay <= 0 {
-			retryDelay = 100 * time.Millisecond
-		}
-		retryAt := time.Now().UTC().Add(retryDelay)
-		return cellar.Retry{NotBefore: &retryAt}
+		return cellar.Kill{ApplicationWork: []cellar.ApplicationWork{claimWork}}
 	}
 
 	if h.Logger != nil {
-		h.Logger.Info("idempotency check scheduling atomic transition+fanout", "listener", payload.Listener, "event_key", payload.EventKey)
+		h.Logger.Info("idempotency check claiming identity", "listener", payload.Listener, "event_key", payload.EventKey)
 	}
-	return cellar.Complete{
-		NewCells: fanoutCellRequests(payload.Fanout),
-		ApplicationWork: []cellar.ApplicationWork{
-			h.Store.TransitionPushedToPresentWork(payload.Listener, payload.EventKey),
-		},
-	}
+	return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{claimWork}}
 }
 
-func fanoutCellRequests(targets []FanoutTarget) []cellar.CellRequest {
-	requests := make([]cellar.CellRequest, 0, len(targets))
-	now := time.Now().UTC()
-	for _, target := range targets {
-		requests = append(requests, cellar.CellRequest{
-			HandlerName: target.HandlerName,
-			Payload:     []byte(target.Payload),
-			NotBefore:   &now,
-		})
+// PopulateRemoteHandler is Step 2: it establishes the remote key. Reaching this step
+// means Step 1 determined the identity was genuinely new, so this always runs.
+type PopulateRemoteHandler struct {
+	Remote Remote
+	Logger *slog.Logger
+}
+
+func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
+	if _, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey); err != nil {
+		return cellar.ErrorResult{Message: "populate remote idempotency key", Err: err}
 	}
-	return requests
+	if h.Logger != nil {
+		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey)
+	}
+	return cellar.Complete{}
+}
+
+// EmitFactHandler is Step 3: it emits the Fact. Reaching this step means Step 1
+// determined the identity was genuinely new, so this always runs.
+type EmitFactHandler struct {
+	Logger *slog.Logger
+}
+
+func (h EmitFactHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
+	factCell, err := facts.CellRequest(payload.Fact.Name, payload.Fact.Payload)
+	if err != nil {
+		return cellar.ErrorResult{Message: "build fact cell", Err: err}
+	}
+	if h.Logger != nil {
+		h.Logger.Info("idempotency emitting fact", "listener", payload.Listener, "event_key", payload.EventKey, "fact", payload.Fact.Name)
+	}
+	return cellar.Complete{NewCells: []cellar.CellRequest{factCell}}
 }

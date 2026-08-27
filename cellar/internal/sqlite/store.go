@@ -210,20 +210,7 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 		return err
 	}
 
-	for _, work := range applicationWork {
-		if work == nil {
-			continue
-		}
-		if err := work(sqlTxAdapter{tx: tx}); err != nil {
-			return err
-		}
-	}
-
-	identified, _, err := s.identifyRequests(additions)
-	if err != nil {
-		return err
-	}
-	if err := insertRequests(tx, identified); err != nil {
+	if err := s.applyResultWorkTx(tx, additions, applicationWork); err != nil {
 		return err
 	}
 
@@ -260,18 +247,7 @@ func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 
 	complete, isComplete := result.(cellar.Complete)
 	if isComplete {
-		for _, work := range complete.ApplicationWork {
-			if work != nil {
-				if err := work(sqlTxAdapter{tx: tx}); err != nil {
-					return err
-				}
-			}
-		}
-		identified, _, err := s.identifyRequests(complete.NewCells)
-		if err != nil {
-			return err
-		}
-		if err := insertRequests(tx, identified); err != nil {
+		if err := s.applyResultWorkTx(tx, complete.NewCells, complete.ApplicationWork); err != nil {
 			return err
 		}
 		currentStep++
@@ -287,14 +263,23 @@ func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 
 	switch typed := result.(type) {
 	case cellar.Retry:
+		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
+			return err
+		}
 		_, err = tx.Exec(`UPDATE cells SET state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(typed.NotBefore), string(claimed.ID), string(cellar.CellStateClaimed))
 	case cellar.RetrySequence:
 		if typed.Delay < 0 {
 			return errors.New("retry sequence delay must not be negative")
 		}
+		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
+			return err
+		}
 		notBefore := time.Now().Add(typed.Delay)
 		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(&notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
 	case cellar.Kill:
+		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
+			return err
+		}
 		_, err = tx.Exec(`DELETE FROM cells WHERE id = ? AND state = ?`, string(claimed.ID), string(cellar.CellStateClaimed))
 	default:
 		return errors.New("unsupported result")
@@ -303,6 +288,21 @@ func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) applyResultWorkTx(tx *sql.Tx, additions []cellar.CellRequest, applicationWork []cellar.ApplicationWork) error {
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(sqlTxAdapter{tx: tx}); err != nil {
+				return err
+			}
+		}
+	}
+	identified, _, err := s.identifyRequests(additions)
+	if err != nil {
+		return err
+	}
+	return insertRequests(tx, identified)
 }
 
 func (s *Store) identifyRequests(requests []cellar.CellRequest) ([]cellar.CellRequest, []cellar.CellID, error) {

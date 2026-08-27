@@ -89,20 +89,7 @@ func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest, applicati
 		return ErrCellNotClaimed
 	}
 
-	for _, work := range applicationWork {
-		if work == nil {
-			continue
-		}
-		if err := work(noopApplicationTx{}); err != nil {
-			return err
-		}
-	}
-
-	identified, _, err := s.identifyRequests(additions)
-	if err != nil {
-		return err
-	}
-	newCells, err := s.buildNewCellsLocked(identified)
+	newCells, err := s.applyResultWorkLocked(additions, applicationWork)
 	if err != nil {
 		return err
 	}
@@ -134,18 +121,7 @@ func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
 
 	complete, isComplete := result.(Complete)
 	if isComplete {
-		for _, work := range complete.ApplicationWork {
-			if work != nil {
-				if err := work(noopApplicationTx{}); err != nil {
-					return err
-				}
-			}
-		}
-		identified, _, err := s.identifyRequests(complete.NewCells)
-		if err != nil {
-			return err
-		}
-		newCells, err := s.buildNewCellsLocked(identified)
+		newCells, err := s.applyResultWorkLocked(complete.NewCells, complete.ApplicationWork)
 		if err != nil {
 			return err
 		}
@@ -166,18 +142,42 @@ func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
 
 	switch typed := result.(type) {
 	case Retry:
+		newCells, err := s.applyResultWorkLocked(typed.NewCells, typed.ApplicationWork)
+		if err != nil {
+			return err
+		}
 		cell.State = CellStateReady
 		cell.NotBefore = cloneTimePtr(typed.NotBefore)
+		for _, newCell := range newCells {
+			s.cells[newCell.ID] = newCell
+			s.order = append(s.order, newCell.ID)
+		}
 	case RetrySequence:
 		if typed.Delay < 0 {
 			return errors.New("retry sequence delay must not be negative")
 		}
+		newCells, err := s.applyResultWorkLocked(typed.NewCells, typed.ApplicationWork)
+		if err != nil {
+			return err
+		}
 		cell.CurrentStep = 0
 		cell.State = CellStateReady
 		cell.NotBefore = timePtr(time.Now().Add(typed.Delay))
+		for _, newCell := range newCells {
+			s.cells[newCell.ID] = newCell
+			s.order = append(s.order, newCell.ID)
+		}
 	case Kill:
+		newCells, err := s.applyResultWorkLocked(typed.NewCells, typed.ApplicationWork)
+		if err != nil {
+			return err
+		}
 		delete(s.cells, cell.ID)
 		s.removeFromOrderLocked(cell.ID)
+		for _, newCell := range newCells {
+			s.cells[newCell.ID] = newCell
+			s.order = append(s.order, newCell.ID)
+		}
 		return nil
 	default:
 		return errors.New("unsupported result")
@@ -336,6 +336,21 @@ func (s *MemoryStore) buildNewCellsLocked(requests []CellRequest) ([]Cell, error
 	}
 
 	return cells, nil
+}
+
+func (s *MemoryStore) applyResultWorkLocked(additions []CellRequest, applicationWork []ApplicationWork) ([]Cell, error) {
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(noopApplicationTx{}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	identified, _, err := s.identifyRequests(additions)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildNewCellsLocked(identified)
 }
 
 func (s *MemoryStore) removeFromOrderLocked(id CellID) {

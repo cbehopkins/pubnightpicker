@@ -48,7 +48,8 @@ A handler returns one of the runtime-supported results:
 - `cellar.Complete{...}` to replace the current cell with zero or more child cells
 - `cellar.Retry{...}` to return the current cell to `READY` for later execution
 - `cellar.RetrySequence{...}` to restart the Cell from its first step after a delay
-- `cellar.Kill{}` to terminate the Cell without executing later steps
+- `cellar.Kill{...}` to terminate the Cell without executing later steps; it may
+    carry `NewCells` and `ApplicationWork` for atomic cleanup and state recording
 - `cellar.ErrorResult{...}` to surface a handler or runtime failure
 
 ## Initialising a Cellar instance
