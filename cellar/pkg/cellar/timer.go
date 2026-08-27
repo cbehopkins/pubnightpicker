@@ -93,10 +93,9 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 	id := timerCellID(t.name)
 	due := time.Now().Add(t.config.Interval)
 	_, err = c.store.Add([]CellRequest{{
-		ID:          id,
-		HandlerName: t.name,
-		Payload:     payload,
-		NotBefore:   &due,
+		ID:        id,
+		Steps:     []CellStep{{HandlerName: t.name, Payload: payload}},
+		NotBefore: &due,
 	}})
 	if errors.Is(err, ErrCellAlreadyExists) {
 		return "", fmt.Errorf("%w: %s", ErrTimerAlreadyExists, t.name)
@@ -115,7 +114,7 @@ type timerRegistration struct {
 
 func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 	var payload timerPayload
-	if err := unmarshalJSON(cell.Payload, &payload); err != nil {
+	if err := unmarshalJSON(currentStepPayload(cell), &payload); err != nil {
 		return ErrorResult{Message: "decode timer payload", Err: err}
 	}
 	if r.callback == nil {
@@ -135,7 +134,7 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 
 func (r timerRegistration) Inspect(cell Cell) Inspection {
 	var payload timerPayload
-	err := unmarshalJSON(cell.Payload, &payload)
+	err := unmarshalJSON(currentStepPayload(cell), &payload)
 	return Inspection{
 		Cell:          cloneCell(cell),
 		Payload:       TimerConfig(payload),

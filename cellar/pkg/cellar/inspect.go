@@ -59,8 +59,9 @@ func (i *CellInspector) RegisterDecoder(name HandlerName, decoder PayloadDecoder
 
 // InspectCell inspects one persisted cell.
 func (i *CellInspector) InspectCell(cell Cell) Inspection {
-	if decoder, ok := i.decoders[cell.HandlerName]; ok {
-		payload, err := decoder.Decode(cell.Payload)
+	step := currentStep(cell)
+	if decoder, ok := i.decoders[step.HandlerName]; ok {
+		payload, err := decoder.Decode(step.Payload)
 		return Inspection{
 			Cell:          cloneCell(cell),
 			Payload:       payload,
@@ -69,19 +70,26 @@ func (i *CellInspector) InspectCell(cell Cell) Inspection {
 		}
 	}
 
-	if utf8.Valid(cell.Payload) {
+	if utf8.Valid(step.Payload) {
 		return Inspection{
 			Cell:          cloneCell(cell),
-			Payload:       string(cell.Payload),
+			Payload:       string(step.Payload),
 			PayloadFormat: "utf8",
 		}
 	}
 
 	return Inspection{
 		Cell:          cloneCell(cell),
-		Payload:       base64.StdEncoding.EncodeToString(cell.Payload),
+		Payload:       base64.StdEncoding.EncodeToString(step.Payload),
 		PayloadFormat: "base64",
 	}
+}
+
+func currentStep(cell Cell) CellStep {
+	if cell.CurrentStep >= 0 && cell.CurrentStep < len(cell.Steps) {
+		return cell.Steps[cell.CurrentStep]
+	}
+	return CellStep{}
 }
 
 // InspectAll inspects all active cells from the provided store.

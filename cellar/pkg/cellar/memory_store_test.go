@@ -11,8 +11,7 @@ func TestMemoryStoreAddPreservesID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	request := CellRequest{
 		ID:          "background-worker",
-		HandlerName: "worker",
-		Payload:     []byte("payload"),
+		Steps:       []CellStep{{HandlerName: "worker", Payload: []byte("payload")}},
 	}
 
 	if _, err := store.Add([]CellRequest{request}); err != nil {
@@ -26,14 +25,14 @@ func TestMemoryStoreAddPreservesID(t *testing.T) {
 	if got.ID != request.ID {
 		t.Fatalf("Get().ID = %q, want %q", got.ID, request.ID)
 	}
-	if got.HandlerName != request.HandlerName {
-		t.Fatalf("Get().HandlerName = %q, want %q", got.HandlerName, request.HandlerName)
+	if got.Steps[0].HandlerName != request.Steps[0].HandlerName {
+		t.Fatalf("Get().Steps[0].HandlerName = %q, want %q", got.Steps[0].HandlerName, request.Steps[0].HandlerName)
 	}
 }
 
 func TestMemoryStoreAddRejectsExistingID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	request := CellRequest{ID: "background-worker", HandlerName: "worker"}
+	request := CellRequest{ID: "background-worker", Steps: []CellStep{{HandlerName: "worker"}}}
 
 	if _, err := store.Add([]CellRequest{request}); err != nil {
 		t.Fatalf("first Add() error = %v", err)
@@ -46,8 +45,8 @@ func TestMemoryStoreAddRejectsExistingID(t *testing.T) {
 func TestMemoryStoreAddDuplicateIDsIsAtomic(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	requests := []CellRequest{
-		{ID: "worker", HandlerName: "first"},
-		{ID: "worker", HandlerName: "second"},
+		{ID: "worker", Steps: []CellStep{{HandlerName: "first"}}},
+		{ID: "worker", Steps: []CellStep{{HandlerName: "second"}}},
 	}
 
 	if _, err := store.Add(requests); !errors.Is(err, ErrCellAlreadyExists) {
@@ -60,7 +59,7 @@ func TestMemoryStoreAddDuplicateIDsIsAtomic(t *testing.T) {
 
 func TestMemoryStoreClaimNextClaimsReadyCell(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "email", Payload: []byte("hello")}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "email", Payload: []byte("hello")}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -79,7 +78,7 @@ func TestMemoryStoreClaimNextClaimsReadyCell(t *testing.T) {
 
 func TestMemoryStoreClaimNextDoesNotReclaimClaimedCell(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "email", Payload: []byte("hello")}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "email", Payload: []byte("hello")}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -104,7 +103,7 @@ func TestMemoryStoreClaimNextDoesNotReclaimClaimedCell(t *testing.T) {
 func TestMemoryStoreClaimNextRespectsNotBefore(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	future := time.Now().Add(10 * time.Minute)
-	_, err := store.Add([]CellRequest{{HandlerName: "email", NotBefore: &future}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "email"}}, NotBefore: &future}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -128,7 +127,7 @@ func TestMemoryStoreClaimNextRespectsNotBefore(t *testing.T) {
 
 func TestMemoryStoreCompleteDeletesOriginalCell(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	ids, err := store.Add([]CellRequest{{HandlerName: "email"}})
+	ids, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "email"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -149,7 +148,7 @@ func TestMemoryStoreCompleteDeletesOriginalCell(t *testing.T) {
 
 func TestMemoryStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -160,8 +159,8 @@ func TestMemoryStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 	}
 
 	children := []CellRequest{
-		{HandlerName: "child-a", Payload: []byte("a")},
-		{HandlerName: "child-b", Payload: []byte("b")},
+		{Steps: []CellStep{{HandlerName: "child-a", Payload: []byte("a")}}},
+		{Steps: []CellStep{{HandlerName: "child-b", Payload: []byte("b")}}},
 	}
 	if err := store.Complete(parent.ID, children); err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -187,7 +186,7 @@ func TestMemoryStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 
 func TestMemoryStoreCompleteWithAllocatedAndIdentifiedChildrenIsAtomic(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -200,8 +199,8 @@ func TestMemoryStoreCompleteWithAllocatedAndIdentifiedChildrenIsAtomic(t *testin
 	err = store.Complete(
 		parent.ID,
 		[]CellRequest{
-			{HandlerName: "allocated-child"},
-			{ID: "stable-child", HandlerName: "identified-child"},
+			{Steps: []CellStep{{HandlerName: "allocated-child"}}},
+			{ID: "stable-child", Steps: []CellStep{{HandlerName: "identified-child"}}},
 		},
 	)
 	if err != nil {
@@ -225,11 +224,11 @@ func TestMemoryStoreCompleteWithAllocatedAndIdentifiedChildrenIsAtomic(t *testin
 
 func TestMemoryStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if _, err := store.Add([]CellRequest{{ID: "stable-child", HandlerName: "existing"}}); err != nil {
+	if _, err := store.Add([]CellRequest{{ID: "stable-child", Steps: []CellStep{{HandlerName: "existing"}}}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
@@ -238,7 +237,7 @@ func TestMemoryStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *test
 		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
 	}
 
-	err = store.Complete(parent.ID, []CellRequest{{ID: "stable-child", HandlerName: "replacement"}})
+	err = store.Complete(parent.ID, []CellRequest{{ID: "stable-child", Steps: []CellStep{{HandlerName: "replacement"}}}})
 	if !errors.Is(err, ErrCellAlreadyExists) {
 		t.Fatalf("Complete() error = %v, want ErrCellAlreadyExists", err)
 	}
@@ -256,7 +255,7 @@ func TestMemoryStoreCompleteFailureLeavesStateUnchanged(t *testing.T) {
 	allocator := &scriptedAllocator{ids: []CellID{"p-1", "child-1"}, errAtCall: 2}
 	store := NewMemoryStore(allocator)
 
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -266,7 +265,7 @@ func TestMemoryStoreCompleteFailureLeavesStateUnchanged(t *testing.T) {
 		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
 	}
 
-	err = store.Complete(parent.ID, []CellRequest{{HandlerName: "child"}})
+	err = store.Complete(parent.ID, []CellRequest{{Steps: []CellStep{{HandlerName: "child"}}}})
 	if err == nil {
 		t.Fatalf("Complete() error = nil, want failure")
 	}
@@ -290,7 +289,7 @@ func TestMemoryStoreCompleteFailureLeavesStateUnchanged(t *testing.T) {
 
 func TestMemoryStoreRetryReturnsClaimedCellToReadyAndPreservesID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	ids, err := store.Add([]CellRequest{{HandlerName: "email"}})
+	ids, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "email"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -323,8 +322,8 @@ func TestMemoryStoreRetryReturnsClaimedCellToReadyAndPreservesID(t *testing.T) {
 func TestMemoryStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	_, err := store.Add([]CellRequest{
-		{HandlerName: "a"},
-		{HandlerName: "b"},
+		{Steps: []CellStep{{HandlerName: "a"}}},
+		{Steps: []CellStep{{HandlerName: "b"}}},
 	})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -356,7 +355,7 @@ func TestMemoryStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
 
 func TestMemoryStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "one"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "one"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -393,7 +392,7 @@ func TestMemoryStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 
 func TestMemoryStoreClaimNextReturnsPayloadCopy(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "a", Payload: []byte("abc")}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "a", Payload: []byte("abc")}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -403,13 +402,13 @@ func TestMemoryStoreClaimNextReturnsPayloadCopy(t *testing.T) {
 		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed cell", cell, ok, err)
 	}
 
-	cell.Payload[0] = 'z'
+	cell.Steps[0].Payload[0] = 'z'
 	persisted, err := store.Get(cell.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if string(persisted.Payload) != "abc" {
-		t.Fatalf("persisted payload = %q, want %q", string(persisted.Payload), "abc")
+	if string(persisted.Steps[0].Payload) != "abc" {
+		t.Fatalf("persisted payload = %q, want %q", string(persisted.Steps[0].Payload), "abc")
 	}
 }
 

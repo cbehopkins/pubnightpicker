@@ -116,6 +116,76 @@ func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest, applicati
 	return nil
 }
 
+// ApplyResult atomically applies a result to a claimed cell.
+func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cell, ok := s.cells[claimed.ID]
+	if !ok {
+		return ErrCellNotFound
+	}
+	if cell.State != CellStateClaimed {
+		return ErrCellNotClaimed
+	}
+	if cell.CurrentStep != claimed.CurrentStep {
+		return errors.New("cell current step changed")
+	}
+
+	complete, isComplete := result.(Complete)
+	if isComplete {
+		for _, work := range complete.ApplicationWork {
+			if work != nil {
+				if err := work(noopApplicationTx{}); err != nil {
+					return err
+				}
+			}
+		}
+		identified, _, err := s.identifyRequests(complete.NewCells)
+		if err != nil {
+			return err
+		}
+		newCells, err := s.buildNewCellsLocked(identified)
+		if err != nil {
+			return err
+		}
+		cell.CurrentStep++
+		if cell.CurrentStep == len(cell.Steps) {
+			delete(s.cells, cell.ID)
+			s.removeFromOrderLocked(cell.ID)
+		} else {
+			cell.State = CellStateReady
+			s.cells[cell.ID] = cell
+		}
+		for _, newCell := range newCells {
+			s.cells[newCell.ID] = newCell
+			s.order = append(s.order, newCell.ID)
+		}
+		return nil
+	}
+
+	switch typed := result.(type) {
+	case Retry:
+		cell.State = CellStateReady
+		cell.NotBefore = cloneTimePtr(typed.NotBefore)
+	case RetrySequence:
+		if typed.Delay < 0 {
+			return errors.New("retry sequence delay must not be negative")
+		}
+		cell.CurrentStep = 0
+		cell.State = CellStateReady
+		cell.NotBefore = timePtr(time.Now().Add(typed.Delay))
+	case Kill:
+		delete(s.cells, cell.ID)
+		s.removeFromOrderLocked(cell.ID)
+		return nil
+	default:
+		return errors.New("unsupported result")
+	}
+	s.cells[cell.ID] = cell
+	return nil
+}
+
 // Retry transitions a claimed cell back to READY.
 func (s *MemoryStore) Retry(cellID CellID, notBefore *time.Time) error {
 	s.mu.Lock()
@@ -245,6 +315,7 @@ func (s *MemoryStore) buildNewCellsLocked(requests []CellRequest) ([]Cell, error
 		if err := validateCellRequest(req); err != nil {
 			return nil, err
 		}
+		steps := requestSteps(req)
 
 		if _, exists := s.cells[req.ID]; exists {
 			return nil, fmt.Errorf("%w: %s", ErrCellAlreadyExists, req.ID)
@@ -256,12 +327,11 @@ func (s *MemoryStore) buildNewCellsLocked(requests []CellRequest) ([]Cell, error
 
 		cell := Cell{
 			ID:          req.ID,
-			HandlerName: req.HandlerName,
-			Payload:     cloneBytes(req.Payload),
+			Steps:       cloneSteps(steps),
+			CurrentStep: 0,
 			State:       CellStateReady,
 			NotBefore:   cloneTimePtr(req.NotBefore),
 		}
-
 		cells = append(cells, cell)
 	}
 
@@ -277,9 +347,20 @@ func (s *MemoryStore) removeFromOrderLocked(id CellID) {
 }
 
 func cloneCell(cell Cell) Cell {
-	cell.Payload = cloneBytes(cell.Payload)
+	cell.Steps = cloneSteps(cell.Steps)
 	cell.NotBefore = cloneTimePtr(cell.NotBefore)
 	return cell
+}
+
+func cloneSteps(steps []CellStep) []CellStep {
+	if steps == nil {
+		return nil
+	}
+	out := make([]CellStep, len(steps))
+	for index, step := range steps {
+		out[index] = CellStep{HandlerName: step.HandlerName, Payload: cloneBytes(step.Payload)}
+	}
+	return out
 }
 
 func cloneBytes(in []byte) []byte {
@@ -299,9 +380,19 @@ func cloneTimePtr(t *time.Time) *time.Time {
 	return &clone
 }
 
+func timePtr(t time.Time) *time.Time {
+	return &t
+}
+
 func validateCellRequest(req CellRequest) error {
-	if req.HandlerName == "" {
+	steps := requestSteps(req)
+	if len(steps) == 0 {
 		return errors.New("handler name is required")
+	}
+	for _, step := range steps {
+		if step.HandlerName == "" {
+			return errors.New("handler name is required")
+		}
 	}
 	return nil
 }
@@ -310,13 +401,26 @@ func validateCellForPersistence(cell Cell) error {
 	if cell.ID == "" {
 		return errors.New("cell id is required")
 	}
-	if cell.HandlerName == "" {
+	steps := cell.Steps
+	if len(steps) == 0 {
 		return errors.New("handler name is required")
+	}
+	if cell.CurrentStep < 0 || cell.CurrentStep > len(steps) {
+		return fmt.Errorf("invalid current step: %d", cell.CurrentStep)
+	}
+	for _, step := range steps {
+		if step.HandlerName == "" {
+			return errors.New("handler name is required")
+		}
 	}
 	if cell.State != CellStateReady && cell.State != CellStateClaimed {
 		return fmt.Errorf("invalid cell state: %q", cell.State)
 	}
 	return nil
+}
+
+func requestSteps(req CellRequest) []CellStep {
+	return req.Steps
 }
 
 type noopApplicationTx struct{}

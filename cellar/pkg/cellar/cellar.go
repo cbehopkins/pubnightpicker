@@ -54,14 +54,37 @@ func (c *Cellar) Register[T any](name HandlerName, handler Handler[T]) error {
 // Add JSON-encodes payload and persists a cell for the named handler.
 // i.e. add a cell that will run the named handler with the given payload.
 func (c *Cellar) Add[T any](name HandlerName, payload T) (CellID, error) {
+	return c.AddSequence(Step{HandlerName: name, Payload: payload})
+}
+
+// Step describes one typed handler invocation in a sequence.
+type Step struct {
+	HandlerName HandlerName
+	Payload     any
+}
+
+// AddSequence JSON-encodes and persists an ordered sequence of steps.
+func (c *Cellar) AddSequence(steps ...Step) (CellID, error) {
 	if c.store == nil {
 		return "", ErrStoreNil
 	}
-	raw, err := marshalJSON(payload)
-	if err != nil {
-		return "", fmt.Errorf("encode cell payload: %w", err)
+	if len(steps) == 0 {
+		return "", errors.New("sequence must contain at least one step")
 	}
-	ids, err := c.store.Add([]CellRequest{{HandlerName: name, Payload: raw}})
+
+	requests := make([]CellStep, 0, len(steps))
+	for _, step := range steps {
+		if step.HandlerName == "" {
+			return "", errors.New("handler name is required")
+		}
+		raw, err := marshalJSON(step.Payload)
+		if err != nil {
+			return "", fmt.Errorf("encode cell payload: %w", err)
+		}
+		requests = append(requests, CellStep{HandlerName: step.HandlerName, Payload: raw})
+	}
+
+	ids, err := c.store.Add([]CellRequest{{Steps: requests}})
 	if err != nil {
 		return "", err
 	}
@@ -109,8 +132,10 @@ func (c *Cellar) validateHandlers() error {
 		return fmt.Errorf("list active cells: %w", err)
 	}
 	for _, cell := range cells {
-		if registration, ok := c.registry.Lookup(cell.HandlerName); !ok || registration == nil {
-			return fmt.Errorf("%w: %s", ErrHandlerNotRegistered, cell.HandlerName)
+		for _, step := range cell.Steps {
+			if registration, ok := c.registry.Lookup(step.HandlerName); !ok || registration == nil {
+				return fmt.Errorf("%w: %s", ErrHandlerNotRegistered, step.HandlerName)
+			}
 		}
 	}
 	return nil
@@ -159,7 +184,7 @@ type typedJSONRegistration[T any] struct {
 
 func (r typedJSONRegistration[T]) Execute(ctx context.Context, cell Cell) Result {
 	var payload T
-	if err := unmarshalJSON(cell.Payload, &payload); err != nil {
+	if err := unmarshalJSON(currentStepPayload(cell), &payload); err != nil {
 		return ErrorResult{Message: "decode handler payload", Err: err}
 	}
 	return r.handler.Handle(ctx, payload)
@@ -167,7 +192,7 @@ func (r typedJSONRegistration[T]) Execute(ctx context.Context, cell Cell) Result
 
 func (r typedJSONRegistration[T]) Inspect(cell Cell) Inspection {
 	var payload T
-	err := unmarshalJSON(cell.Payload, &payload)
+	err := unmarshalJSON(currentStepPayload(cell), &payload)
 	return Inspection{
 		Cell:          cloneCell(cell),
 		Payload:       payload,
@@ -177,3 +202,10 @@ func (r typedJSONRegistration[T]) Inspect(cell Cell) Inspection {
 }
 
 var ErrHandlerNil = errors.New("handler is nil")
+
+func currentStepPayload(cell Cell) []byte {
+	if len(cell.Steps) > 0 && cell.CurrentStep >= 0 && cell.CurrentStep < len(cell.Steps) {
+		return cell.Steps[cell.CurrentStep].Payload
+	}
+	return nil
+}

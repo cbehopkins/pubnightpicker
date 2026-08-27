@@ -44,7 +44,7 @@ func TestFanoutRegistrationExpandsTypedPayloadToIdentifiedChildren(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshalJSON() error = %v", err)
 	}
-	cell := Cell{ID: "parent-1", HandlerName: "order.completed", Payload: raw, State: CellStateClaimed}
+	cell := Cell{ID: "parent-1", Steps: []CellStep{{HandlerName: "order.completed", Payload: raw}}, State: CellStateClaimed}
 	result := registration.Execute(t.Context(), cell)
 	complete, ok := result.(Complete)
 	if !ok {
@@ -56,11 +56,11 @@ func TestFanoutRegistrationExpandsTypedPayloadToIdentifiedChildren(t *testing.T)
 	if complete.NewCells[0].ID == complete.NewCells[1].ID {
 		t.Fatal("different target keys produced the same child ID")
 	}
-	if complete.NewCells[0].HandlerName != "email.send" {
-		t.Fatalf("first child handler = %q, want %q", complete.NewCells[0].HandlerName, "email.send")
+	if complete.NewCells[0].Steps[0].HandlerName != "email.send" {
+		t.Fatalf("first child handler = %q, want %q", complete.NewCells[0].Steps[0].HandlerName, "email.send")
 	}
-	if string(complete.NewCells[0].Payload) != `{"order_id":"order-42"}` {
-		t.Fatalf("first child payload = %s, want encoded JSON", complete.NewCells[0].Payload)
+	if string(complete.NewCells[0].Steps[0].Payload) != `{"order_id":"order-42"}` {
+		t.Fatalf("first child payload = %s, want encoded JSON", complete.NewCells[0].Steps[0].Payload)
 	}
 	if complete.NewCells[1].NotBefore == nil || !complete.NewCells[1].NotBefore.Equal(due) {
 		t.Fatalf("second child NotBefore = %v, want %v", complete.NewCells[1].NotBefore, due)
@@ -102,7 +102,7 @@ func TestFanoutRegistrationRejectsInvalidTargetKeys(t *testing.T) {
 				t.Fatalf("Register() error = %v", err)
 			}
 			registration, _ := runtime.registry.Lookup("fanout")
-			result := registration.Execute(t.Context(), Cell{ID: "parent", Payload: []byte(`{"order_id":"one"}`)})
+			result := registration.Execute(t.Context(), Cell{ID: "parent", Steps: []CellStep{{HandlerName: "fanout", Payload: []byte(`{"order_id":"one"}`)}}})
 			failure, ok := result.(ErrorResult)
 			if !ok {
 				t.Fatalf("result = %T, want ErrorResult", result)
@@ -129,7 +129,7 @@ func TestFanoutExpansionErrorReturnsErrorResult(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	registration, _ := runtime.registry.Lookup("fanout")
-	result := registration.Execute(t.Context(), Cell{ID: "parent", Payload: []byte(`{"order_id":"one"}`)})
+	result := registration.Execute(t.Context(), Cell{ID: "parent", Steps: []CellStep{{HandlerName: "fanout", Payload: []byte(`{"order_id":"one"}`)}}})
 	failure, ok := result.(ErrorResult)
 	if !ok {
 		t.Fatalf("result = %T, want ErrorResult", result)
@@ -153,7 +153,7 @@ func TestFanoutTargetPayloadEncodingErrorReturnsErrorResult(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	registration, _ := runtime.registry.Lookup("fanout")
-	result := registration.Execute(t.Context(), Cell{ID: "parent", Payload: []byte(`{"order_id":"one"}`)})
+	result := registration.Execute(t.Context(), Cell{ID: "parent", Steps: []CellStep{{HandlerName: "fanout", Payload: []byte(`{"order_id":"one"}`)}}})
 	failure, ok := result.(ErrorResult)
 	if !ok {
 		t.Fatalf("result = %T, want ErrorResult", result)

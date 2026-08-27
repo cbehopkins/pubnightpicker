@@ -18,9 +18,8 @@ func TestStoreAddPreservesID(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 	request := cellar.CellRequest{
-		ID:          "background-worker",
-		HandlerName: "worker",
-		Payload:     []byte("payload"),
+		ID:    "background-worker",
+		Steps: []cellar.CellStep{{HandlerName: "worker", Payload: []byte("payload")}},
 	}
 
 	if _, err := store.Add([]cellar.CellRequest{request}); err != nil {
@@ -34,8 +33,8 @@ func TestStoreAddPreservesID(t *testing.T) {
 	if got.ID != request.ID {
 		t.Fatalf("Get().ID = %q, want %q", got.ID, request.ID)
 	}
-	if got.HandlerName != request.HandlerName {
-		t.Fatalf("Get().HandlerName = %q, want %q", got.HandlerName, request.HandlerName)
+	if got.Steps[0].HandlerName != request.Steps[0].HandlerName {
+		t.Fatalf("Get().Steps[0].HandlerName = %q, want %q", got.Steps[0].HandlerName, request.Steps[0].HandlerName)
 	}
 }
 
@@ -43,7 +42,7 @@ func TestStoreAddRejectsExistingID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
-	request := cellar.CellRequest{ID: "background-worker", HandlerName: "worker"}
+	request := cellar.CellRequest{ID: "background-worker", Steps: []cellar.CellStep{{HandlerName: "worker"}}}
 
 	if _, err := store.Add([]cellar.CellRequest{request}); err != nil {
 		t.Fatalf("first Add() error = %v", err)
@@ -58,8 +57,8 @@ func TestStoreAddDuplicateIDsIsAtomic(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 	requests := []cellar.CellRequest{
-		{ID: "worker", HandlerName: "first"},
-		{ID: "worker", HandlerName: "second"},
+		{ID: "worker", Steps: []cellar.CellStep{{HandlerName: "first"}}},
+		{ID: "worker", Steps: []cellar.CellStep{{HandlerName: "second"}}},
 	}
 
 	if _, err := store.Add(requests); !errors.Is(err, cellar.ErrCellAlreadyExists) {
@@ -85,8 +84,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 
 	store := mustOpenStore(t, dbPath)
 	ids, err := store.Add([]cellar.CellRequest{{
-		HandlerName: "send-email",
-		Payload:     []byte("hello"),
+		Steps: []cellar.CellStep{{HandlerName: "send-email", Payload: []byte("hello")}},
 	}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -115,7 +113,7 @@ func TestStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -126,8 +124,8 @@ func TestStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 	}
 
 	err = store.Complete(parent.ID, []cellar.CellRequest{
-		{HandlerName: "child-a", Payload: []byte("a")},
-		{HandlerName: "child-b", Payload: []byte("b")},
+		{Steps: []cellar.CellStep{{HandlerName: "child-a", Payload: []byte("a")}}},
+		{Steps: []cellar.CellStep{{HandlerName: "child-b", Payload: []byte("b")}}},
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -156,11 +154,11 @@ func TestStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *testing.T)
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if _, err := store.Add([]cellar.CellRequest{{ID: "stable-child", HandlerName: "existing"}}); err != nil {
+	if _, err := store.Add([]cellar.CellRequest{{ID: "stable-child", Steps: []cellar.CellStep{{HandlerName: "existing"}}}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
@@ -169,7 +167,7 @@ func TestStoreCompleteIdentifiedChildCollisionLeavesStateUnchanged(t *testing.T)
 		t.Fatalf("ClaimNext() = (%v, %v, %v), want claimed parent", parent, ok, err)
 	}
 
-	err = store.Complete(parent.ID, []cellar.CellRequest{{ID: "stable-child", HandlerName: "replacement"}})
+	err = store.Complete(parent.ID, []cellar.CellRequest{{ID: "stable-child", Steps: []cellar.CellStep{{HandlerName: "replacement"}}}})
 	if !errors.Is(err, cellar.ErrCellAlreadyExists) {
 		t.Fatalf("Complete() error = %v, want ErrCellAlreadyExists", err)
 	}
@@ -188,7 +186,7 @@ func TestStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "one"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "one"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -228,7 +226,7 @@ func TestStoreCompleteAppliesApplicationWorkAtomically(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -245,7 +243,7 @@ func TestStoreCompleteAppliesApplicationWorkAtomically(t *testing.T) {
 
 	err = store.Complete(
 		parent.ID,
-		[]cellar.CellRequest{{HandlerName: "child"}},
+		[]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "child"}}}},
 		cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
 			return tx.Exec(`INSERT INTO app_state (id, value) VALUES (?, ?)`, "one", "ok")
 		}),
@@ -276,7 +274,7 @@ func TestStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	ids, err := store.Add([]cellar.CellRequest{{HandlerName: "ready"}, {HandlerName: "claimed"}})
+	ids, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "ready"}}}, {Steps: []cellar.CellStep{{HandlerName: "claimed"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -312,7 +310,7 @@ func TestStoreCompleteSupportsContextAwareApplicationWork(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -329,7 +327,7 @@ func TestStoreCompleteSupportsContextAwareApplicationWork(t *testing.T) {
 
 	err = store.Complete(
 		parent.ID,
-		[]cellar.CellRequest{{HandlerName: "child"}},
+		[]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "child"}}}},
 		cellar.ApplicationWork(func(tx cellar.ApplicationTx) error {
 			return tx.ExecContext(context.Background(), `INSERT INTO app_state (id, value) VALUES (?, ?)`, "one", "ok")
 		}),
@@ -353,7 +351,7 @@ func TestStoreCompleteRollsBackOnApplicationWorkError(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 
-	_, err := store.Add([]cellar.CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -408,8 +406,7 @@ func TestInspectorIntegrationWithSQLiteStore(t *testing.T) {
 	}
 
 	_, err = store.Add([]cellar.CellRequest{{
-		HandlerName: "send-email",
-		Payload:     payload,
+		Steps: []cellar.CellStep{{HandlerName: "send-email", Payload: payload}},
 	}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)

@@ -2,6 +2,7 @@ package cellar
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -54,6 +55,18 @@ type Retry struct {
 
 func (Retry) isResult() {}
 
+// RetrySequence restarts a Cell from its first step after Delay.
+type RetrySequence struct {
+	Delay time.Duration
+}
+
+func (RetrySequence) isResult() {}
+
+// Kill terminates the claimed Cell without running later steps.
+type Kill struct{}
+
+func (Kill) isResult() {}
+
 // ErrorResult represents a handler or runtime failure that should be surfaced.
 type ErrorResult struct {
 	Message string
@@ -102,9 +115,29 @@ func (a *StoreResultApplier) ApplyResult(ctx context.Context, cell Cell, result 
 
 	switch result := result.(type) {
 	case Complete:
+		if resultStore, ok := a.store.(ResultStore); ok {
+			return resultStore.ApplyResult(cell, result)
+		}
 		return a.store.Complete(cell.ID, result.NewCells, result.ApplicationWork...)
 	case Retry:
+		if resultStore, ok := a.store.(ResultStore); ok {
+			return resultStore.ApplyResult(cell, result)
+		}
 		return a.store.Retry(cell.ID, result.NotBefore)
+	case RetrySequence:
+		if result.Delay < 0 {
+			return errors.New("retry sequence delay must not be negative")
+		}
+		if resultStore, ok := a.store.(ResultStore); ok {
+			return resultStore.ApplyResult(cell, result)
+		}
+		notBefore := time.Now().Add(result.Delay)
+		return a.store.Retry(cell.ID, &notBefore)
+	case Kill:
+		if resultStore, ok := a.store.(ResultStore); ok {
+			return resultStore.ApplyResult(cell, result)
+		}
+		return a.store.Complete(cell.ID, nil)
 	default:
 		return nil
 	}

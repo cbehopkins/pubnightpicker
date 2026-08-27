@@ -19,21 +19,25 @@ const (
 	CellStateClaimed CellState = "CLAIMED"
 )
 
-// Cell is the persisted execution primitive managed by Cellar.
-type Cell struct {
-	ID          CellID
+// CellStep is one ordered handler invocation in a Cell.
+type CellStep struct {
 	HandlerName HandlerName
 	Payload     []byte
+}
 
-	State     CellState
-	NotBefore *time.Time
+// Cell is the persisted execution primitive managed by Cellar.
+type Cell struct {
+	Steps       []CellStep
+	CurrentStep int
+	ID          CellID
+	State       CellState
+	NotBefore   *time.Time
 }
 
 // CellRequest describes new work to be persisted by the store.
 // An empty ID asks the store to allocate one.
 type CellRequest struct {
-	ID          CellID
-	HandlerName HandlerName
-	Payload     []byte
-	NotBefore   *time.Time
+	Steps     []CellStep
+	ID        CellID
+	NotBefore *time.Time
 }

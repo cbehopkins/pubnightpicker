@@ -44,8 +44,8 @@ func TestTimerSchedulePersistsOneNamedTimer(t *testing.T) {
 	if cells[0].ID != firstID {
 		t.Fatalf("persisted timer ID = %q, want %q", cells[0].ID, firstID)
 	}
-	if cells[0].HandlerName != "reports.refresh" {
-		t.Fatalf("persisted handler name = %q, want reports.refresh", cells[0].HandlerName)
+	if cells[0].Steps[0].HandlerName != "reports.refresh" {
+		t.Fatalf("persisted handler name = %q, want reports.refresh", cells[0].Steps[0].HandlerName)
 	}
 	if cells[0].NotBefore == nil || !cells[0].NotBefore.After(time.Now()) {
 		t.Fatalf("persisted not-before = %v, want future time", cells[0].NotBefore)
@@ -170,10 +170,9 @@ func testTimerCell(t *testing.T, mode TimerMode, interval time.Duration, due tim
 		t.Fatalf("marshalJSON() error = %v", err)
 	}
 	return Cell{
-		ID:          "timer:timer.test",
-		HandlerName: "timer.test",
-		Payload:     raw,
-		State:       CellStateClaimed,
-		NotBefore:   &due,
+		ID:        "timer:timer.test",
+		Steps:     []CellStep{{HandlerName: "timer.test", Payload: raw}},
+		State:     CellStateClaimed,
+		NotBefore: &due,
 	}
 }

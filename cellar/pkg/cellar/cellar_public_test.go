@@ -143,6 +143,74 @@ func TestCellarResolvesMultipleHandlersByName(t *testing.T) {
 	stopRuntime(t, runtime, startDone)
 }
 
+func TestCellarAddSequencePersistsOrderedHeterogeneousSteps(t *testing.T) {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{})
+
+	id, err := runtime.AddSequence(
+		cellar.Step{HandlerName: "example.first", Payload: incrementPayload{Value: 1}},
+		cellar.Step{HandlerName: "example.second", Payload: routedPayload{Source: "two"}},
+	)
+	if err != nil {
+		t.Fatalf("AddSequence() error = %v", err)
+	}
+
+	cell, err := store.Get(id)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(cell.Steps) != 2 {
+		t.Fatalf("step count = %d, want 2", len(cell.Steps))
+	}
+	if cell.CurrentStep != 0 {
+		t.Fatalf("CurrentStep = %d, want 0", cell.CurrentStep)
+	}
+	if cell.Steps[0].HandlerName != "example.first" || string(cell.Steps[0].Payload) != `{"value":1}` {
+		t.Fatalf("first step = %#v", cell.Steps[0])
+	}
+	if cell.Steps[1].HandlerName != "example.second" || string(cell.Steps[1].Payload) != `{"source":"two"}` {
+		t.Fatalf("second step = %#v", cell.Steps[1])
+	}
+}
+
+func TestCellarAddSequenceRejectsEmptySteps(t *testing.T) {
+	runtime := cellar.New(cellar.NewMemoryStore(nil), cellar.Config{})
+
+	if _, err := runtime.AddSequence(); err == nil {
+		t.Fatal("AddSequence() error = nil, want empty sequence error")
+	}
+}
+
+func TestCellarExecutesSequenceStepsInOrder(t *testing.T) {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
+	received := make(chan string, 2)
+	for _, name := range []cellar.HandlerName{"example.first", "example.second"} {
+		if err := runtime.Register(name, routedHandler{name: string(name), received: received}); err != nil {
+			t.Fatalf("Register(%q) error = %v", name, err)
+		}
+	}
+	if _, err := runtime.AddSequence(
+		cellar.Step{HandlerName: "example.first", Payload: routedPayload{Source: "one"}},
+		cellar.Step{HandlerName: "example.second", Payload: routedPayload{Source: "two"}},
+	); err != nil {
+		t.Fatalf("AddSequence() error = %v", err)
+	}
+
+	startDone := startRuntime(runtime)
+	for index, want := range []string{"example.first:one", "example.second:two"} {
+		select {
+		case got := <-received:
+			if got != want {
+				t.Fatalf("handler invocation %d = %q, want %q", index, got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("handler invocation %d did not occur", index)
+		}
+	}
+	stopRuntime(t, runtime, startDone)
+}
+
 func TestCellarUsesPersistedHandlerNameAsResolutionKey(t *testing.T) {
 	store := cellar.NewMemoryStore(nil)
 	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
@@ -153,10 +221,9 @@ func TestCellarUsesPersistedHandlerNameAsResolutionKey(t *testing.T) {
 	}
 
 	original := cellar.Cell{
-		ID:          "persisted-cell",
-		HandlerName: handlerName,
-		Payload:     []byte(`{"source":"reconstructed"}`),
-		State:       cellar.CellStateReady,
+		ID:    "persisted-cell",
+		Steps: []cellar.CellStep{{HandlerName: handlerName, Payload: []byte(`{"source":"reconstructed"}`)}},
+		State: cellar.CellStateReady,
 	}
 	raw, err := json.Marshal(original)
 	if err != nil {
@@ -167,9 +234,7 @@ func TestCellarUsesPersistedHandlerNameAsResolutionKey(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 	if _, err := store.Add([]cellar.CellRequest{{
-		ID:          reconstructed.ID,
-		HandlerName: reconstructed.HandlerName,
-		Payload:     reconstructed.Payload,
+		Steps: reconstructed.Steps,
 	}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -252,7 +317,7 @@ func TestCellarRejectsInvalidRegistrations(t *testing.T) {
 
 func TestCellarRejectsUnknownPersistedHandlerAtStart(t *testing.T) {
 	store := cellar.NewMemoryStore(nil)
-	if _, err := store.Add([]cellar.CellRequest{{HandlerName: "example.missing", Payload: []byte(`{}`)}}); err != nil {
+	if _, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "example.missing", Payload: []byte(`{}`)}}}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
@@ -268,7 +333,7 @@ func TestCellarReturnsMalformedJSONExecutionError(t *testing.T) {
 	if err := runtime.Register("example.increment", incrementHandler{received: make(chan incrementPayload, 1)}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if _, err := store.Add([]cellar.CellRequest{{HandlerName: "example.increment", Payload: []byte(`{"value":`)}}); err != nil {
+	if _, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "example.increment", Payload: []byte(`{"value":`)}}}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
@@ -285,7 +350,7 @@ func TestCellarReturnsHandlerExecutionError(t *testing.T) {
 	if err := runtime.Register("example.failure", failingHandler{err: want}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if _, err := store.Add([]cellar.CellRequest{{HandlerName: "example.failure", Payload: []byte(`{"value":1}`)}}); err != nil {
+	if _, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "example.failure", Payload: []byte(`{"value":1}`)}}}}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 

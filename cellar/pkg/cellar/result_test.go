@@ -44,7 +44,7 @@ func TestMultiResultApplierSkipsNilAndStopsOnFirstError(t *testing.T) {
 
 func TestStoreResultApplierAppliesCompleteResults(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -55,7 +55,7 @@ func TestStoreResultApplierAppliesCompleteResults(t *testing.T) {
 	}
 
 	applier := NewStoreResultApplier(store)
-	err = applier.ApplyResult(context.Background(), parent, Complete{NewCells: []CellRequest{{HandlerName: "child"}}})
+	err = applier.ApplyResult(context.Background(), parent, Complete{NewCells: []CellRequest{{Steps: []CellStep{{HandlerName: "child"}}}}})
 	if err != nil {
 		t.Fatalf("ApplyResult() error = %v", err)
 	}
@@ -71,14 +71,14 @@ func TestStoreResultApplierAppliesCompleteResults(t *testing.T) {
 	if len(active) != 1 {
 		t.Fatalf("len(ListActive()) = %d, want 1", len(active))
 	}
-	if active[0].HandlerName != "child" {
-		t.Fatalf("child handler = %q, want %q", active[0].HandlerName, "child")
+	if active[0].Steps[0].HandlerName != "child" {
+		t.Fatalf("child handler = %q, want %q", active[0].Steps[0].HandlerName, "child")
 	}
 }
 
 func TestStoreResultApplierPreservesNewCellIDs(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -90,7 +90,7 @@ func TestStoreResultApplierPreservesNewCellIDs(t *testing.T) {
 
 	applier := NewStoreResultApplier(store)
 	err = applier.ApplyResult(context.Background(), parent, Complete{
-		NewCells: []CellRequest{{ID: "stable-child", HandlerName: "child"}},
+		NewCells: []CellRequest{{ID: "stable-child", Steps: []CellStep{{HandlerName: "child"}}}},
 	})
 	if err != nil {
 		t.Fatalf("ApplyResult() error = %v", err)
@@ -100,14 +100,14 @@ func TestStoreResultApplierPreservesNewCellIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(child) error = %v", err)
 	}
-	if child.HandlerName != "child" {
-		t.Fatalf("child handler = %q, want %q", child.HandlerName, "child")
+	if child.Steps[0].HandlerName != "child" {
+		t.Fatalf("child handler = %q, want %q", child.Steps[0].HandlerName, "child")
 	}
 }
 
 func TestStoreResultApplierAppliesRetryResults(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
-	_, err := store.Add([]CellRequest{{HandlerName: "parent"}})
+	_, err := store.Add([]CellRequest{{Steps: []CellStep{{HandlerName: "parent"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}

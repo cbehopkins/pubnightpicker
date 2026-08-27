@@ -22,7 +22,7 @@ func TestStoreClaimNextMarksCellClaimedAndPreventsReclaim(t *testing.T) {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 
-	ids, err := store.Add([]cellar.CellRequest{{HandlerName: "demo"}})
+	ids, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "demo"}}}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}

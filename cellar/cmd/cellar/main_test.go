@@ -33,8 +33,7 @@ func TestRunInspectFromSQLite(t *testing.T) {
 	}
 
 	_, err = store.Add([]cellar.CellRequest{{
-		HandlerName: "send-email",
-		Payload:     payload,
+		Steps: []cellar.CellStep{{HandlerName: "send-email", Payload: payload}},
 	}})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -83,13 +82,11 @@ func TestRunInspectFromSQLiteFixtureExactShape(t *testing.T) {
 
 	_, err = store.Add([]cellar.CellRequest{
 		{
-			HandlerName: "json-handler",
-			Payload:     jsonPayload,
+			Steps: []cellar.CellStep{{HandlerName: "json-handler", Payload: jsonPayload}},
 		},
 		{
-			HandlerName: "raw-handler",
-			Payload:     []byte{0xff, 0x00, 0x41},
-			NotBefore:   &notBefore,
+			Steps:     []cellar.CellStep{{HandlerName: "raw-handler", Payload: []byte{0xff, 0x00, 0x41}}},
+			NotBefore: &notBefore,
 		},
 	})
 	if err != nil {
@@ -164,8 +161,8 @@ func TestRunInspectFromSQLiteByIDFixtureExactShape(t *testing.T) {
 	}
 
 	_, err = store.Add([]cellar.CellRequest{
-		{HandlerName: "json-handler", Payload: payload},
-		{HandlerName: "other-handler", Payload: []byte("ignore-me")},
+		{Steps: []cellar.CellStep{{HandlerName: "json-handler", Payload: payload}}},
+		{Steps: []cellar.CellStep{{HandlerName: "other-handler", Payload: []byte("ignore-me")}}},
 	})
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)

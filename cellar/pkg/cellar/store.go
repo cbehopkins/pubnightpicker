@@ -21,6 +21,14 @@ type Store interface {
 	ListActive() ([]Cell, error)
 }
 
+// ResultStore applies a claimed handler result and its lifecycle transition atomically.
+// Stores may implement this in addition to Store; the legacy Store methods remain
+// available for ordinary one-step integrations.
+type ResultStore interface {
+	Store
+	ApplyResult(cell Cell, result Result) error
+}
+
 // DebuggableStore extends Store with privileged offline administrative overrides.
 type DebuggableStore interface {
 	Store

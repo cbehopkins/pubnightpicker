@@ -26,7 +26,11 @@ func (w *Worker) Run(ctx context.Context, cell cellar.Cell) cellar.Result {
 		return cellar.ErrorResult{Message: "registry is nil"}
 	}
 
-	registration, ok := w.registry.Lookup(cell.HandlerName)
+	if cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
+		return cellar.ErrorResult{Message: "invalid current step"}
+	}
+	handlerName := cell.Steps[cell.CurrentStep].HandlerName
+	registration, ok := w.registry.Lookup(handlerName)
 	if !ok || registration == nil {
 		return cellar.ErrorResult{Message: "handler not registered"}
 	}

@@ -152,19 +152,19 @@ func loadCellsSnapshot(path string) ([]cellar.Cell, error) {
 }
 
 type snapshotCell struct {
-	ID          string  `json:"id"`
-	HandlerName string  `json:"handlerName"`
-	Payload     []byte  `json:"payload"`
-	State       string  `json:"state"`
-	NotBefore   *string `json:"notBefore"`
+	ID          string            `json:"id"`
+	Steps       []cellar.CellStep `json:"steps"`
+	CurrentStep int               `json:"currentStep"`
+	State       string            `json:"state"`
+	NotBefore   *string           `json:"notBefore"`
 }
 
 func (s snapshotCell) toCell() (cellar.Cell, error) {
 	if s.ID == "" {
 		return cellar.Cell{}, errors.New("id is required")
 	}
-	if s.HandlerName == "" {
-		return cellar.Cell{}, errors.New("handlerName is required")
+	if len(s.Steps) == 0 {
+		return cellar.Cell{}, errors.New("steps are required")
 	}
 
 	var notBefore *time.Time
@@ -178,8 +178,8 @@ func (s snapshotCell) toCell() (cellar.Cell, error) {
 
 	return cellar.Cell{
 		ID:          cellar.CellID(s.ID),
-		HandlerName: cellar.HandlerName(s.HandlerName),
-		Payload:     s.Payload,
+		Steps:       s.Steps,
+		CurrentStep: s.CurrentStep,
 		State:       cellar.CellState(s.State),
 		NotBefore:   notBefore,
 	}, nil
@@ -203,13 +203,20 @@ func inspectionView(inspection cellar.Inspection) inspectionOutput {
 
 	return inspectionOutput{
 		ID:            inspection.Cell.ID,
-		HandlerName:   inspection.Cell.HandlerName,
+		HandlerName:   currentCellHandler(inspection.Cell),
 		State:         inspection.Cell.State,
 		NotBefore:     inspection.Cell.NotBefore,
 		PayloadFormat: inspection.PayloadFormat,
 		Payload:       inspection.Payload,
 		DecodeError:   decodeError,
 	}
+}
+
+func currentCellHandler(cell cellar.Cell) cellar.HandlerName {
+	if cell.CurrentStep >= 0 && cell.CurrentStep < len(cell.Steps) {
+		return cell.Steps[cell.CurrentStep].HandlerName
+	}
+	return ""
 }
 
 func writeJSON(out *os.File, value any) error {

@@ -38,7 +38,7 @@ func TestRunnerRunsRegisteredRegistration(t *testing.T) {
 	}
 
 	runner := NewWorker(registry)
-	cell := cellar.Cell{ID: "cell-1", HandlerName: "demo"}
+	cell := cellar.Cell{ID: "cell-1", Steps: []cellar.CellStep{{HandlerName: "demo"}}}
 
 	result := runner.Run(context.Background(), cell)
 	if len(registration.executed) != 1 {
@@ -54,7 +54,7 @@ func TestRunnerRunsRegisteredRegistration(t *testing.T) {
 
 func TestRunnerReturnsErrorResultForUnknownHandler(t *testing.T) {
 	runner := NewWorker(cellar.NewMemoryRegistry())
-	result := runner.Run(context.Background(), cellar.Cell{HandlerName: "missing"})
+	result := runner.Run(context.Background(), cellar.Cell{Steps: []cellar.CellStep{{HandlerName: "missing"}}})
 
 	if _, ok := result.(cellar.ErrorResult); !ok {
 		t.Fatalf("Run() result type = %T, want cellar.ErrorResult", result)
@@ -64,7 +64,7 @@ func TestRunnerReturnsErrorResultForUnknownHandler(t *testing.T) {
 func TestRunnerAppliesResultThroughConfiguredApplier(t *testing.T) {
 	applier := &stubApplier{}
 	runner := NewWorker(cellar.NewMemoryRegistry(), applier)
-	result := runner.Run(context.Background(), cellar.Cell{HandlerName: "missing"})
+	result := runner.Run(context.Background(), cellar.Cell{Steps: []cellar.CellStep{{HandlerName: "missing"}}})
 	if _, ok := result.(cellar.ErrorResult); !ok {
 		t.Fatalf("Run() result type = %T, want cellar.ErrorResult", result)
 	}
@@ -83,7 +83,7 @@ func TestRunnerAppliesResultToAllConfiguredAppliers(t *testing.T) {
 	}
 
 	runner := NewWorker(registry, first, second)
-	result := runner.Run(context.Background(), cellar.Cell{ID: "cell-1", HandlerName: "demo"})
+	result := runner.Run(context.Background(), cellar.Cell{ID: "cell-1", Steps: []cellar.CellStep{{HandlerName: "demo"}}})
 	if _, ok := result.(cellar.Complete); !ok {
 		t.Fatalf("Run() result type = %T, want cellar.Complete", result)
 	}

@@ -4,6 +4,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -103,16 +104,25 @@ func insertRequests(tx *sql.Tx, requests []cellar.CellRequest) error {
 		if req.ID == "" {
 			return errors.New("cell id is required")
 		}
-		if req.HandlerName == "" {
+		steps := requestSteps(req)
+		if len(steps) == 0 {
 			return errors.New("handler name is required")
 		}
-
-		_, err := tx.Exec(
-			`INSERT INTO cells (id, handler_name, payload, state, not_before)
+		for _, step := range steps {
+			if step.HandlerName == "" {
+				return errors.New("handler name is required")
+			}
+		}
+		encodedSteps, err := json.Marshal(steps)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			`INSERT INTO cells (id, steps, current_step, state, not_before)
 			 VALUES (?, ?, ?, ?, ?)`,
 			string(req.ID),
-			string(req.HandlerName),
-			payloadOrEmpty(req.Payload),
+			encodedSteps,
+			0,
 			string(cellar.CellStateReady),
 			timeOrNil(req.NotBefore),
 		)
@@ -136,7 +146,7 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 	defer rollback(tx)
 
 	row := tx.QueryRow(
-		`SELECT id, handler_name, payload, state, not_before
+		`SELECT id, steps, current_step, state, not_before
 		 FROM cells
 		 WHERE state = ?
 		   AND (not_before IS NULL OR not_before <= ?)
@@ -225,11 +235,81 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 	return tx.Commit()
 }
 
+// ApplyResult atomically applies a result to a claimed cell and its children.
+func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	var state string
+	var currentStep int
+	if err := tx.QueryRow(`SELECT state, current_step FROM cells WHERE id = ?`, string(claimed.ID)).Scan(&state, &currentStep); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return cellar.ErrCellNotFound
+		}
+		return err
+	}
+	if cellar.CellState(state) != cellar.CellStateClaimed {
+		return cellar.ErrCellNotClaimed
+	}
+	if currentStep != claimed.CurrentStep {
+		return errors.New("cell current step changed")
+	}
+
+	complete, isComplete := result.(cellar.Complete)
+	if isComplete {
+		for _, work := range complete.ApplicationWork {
+			if work != nil {
+				if err := work(sqlTxAdapter{tx: tx}); err != nil {
+					return err
+				}
+			}
+		}
+		identified, _, err := s.identifyRequests(complete.NewCells)
+		if err != nil {
+			return err
+		}
+		if err := insertRequests(tx, identified); err != nil {
+			return err
+		}
+		currentStep++
+		if currentStep >= len(claimed.Steps) {
+			if _, err := tx.Exec(`DELETE FROM cells WHERE id = ? AND state = ?`, string(claimed.ID), string(cellar.CellStateClaimed)); err != nil {
+				return err
+			}
+		} else if _, err := tx.Exec(`UPDATE cells SET current_step = ?, state = ? WHERE id = ? AND state = ?`, currentStep, string(cellar.CellStateReady), string(claimed.ID), string(cellar.CellStateClaimed)); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
+	switch typed := result.(type) {
+	case cellar.Retry:
+		_, err = tx.Exec(`UPDATE cells SET state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(typed.NotBefore), string(claimed.ID), string(cellar.CellStateClaimed))
+	case cellar.RetrySequence:
+		if typed.Delay < 0 {
+			return errors.New("retry sequence delay must not be negative")
+		}
+		notBefore := time.Now().Add(typed.Delay)
+		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(&notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
+	case cellar.Kill:
+		_, err = tx.Exec(`DELETE FROM cells WHERE id = ? AND state = ?`, string(claimed.ID), string(cellar.CellStateClaimed))
+	default:
+		return errors.New("unsupported result")
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) identifyRequests(requests []cellar.CellRequest) ([]cellar.CellRequest, []cellar.CellID, error) {
 	identified := make([]cellar.CellRequest, 0, len(requests))
 	ids := make([]cellar.CellID, 0, len(requests))
 	for _, req := range requests {
-		if req.HandlerName == "" {
+		if len(requestSteps(req)) == 0 {
 			return nil, nil, errors.New("handler name is required")
 		}
 		if req.ID == "" {
@@ -285,7 +365,7 @@ func (s *Store) Recover() error {
 // ListActive returns all currently existing cells.
 func (s *Store) ListActive() ([]cellar.Cell, error) {
 	rows, err := s.db.Query(
-		`SELECT id, handler_name, payload, state, not_before
+		`SELECT id, steps, current_step, state, not_before
 		 FROM cells
 		 ORDER BY created_at, id`,
 	)
@@ -305,7 +385,7 @@ func (s *Store) ListAll() ([]cellar.Cell, error) {
 // Get returns a cell by ID.
 func (s *Store) Get(id cellar.CellID) (cellar.Cell, error) {
 	row := s.db.QueryRow(
-		`SELECT id, handler_name, payload, state, not_before
+		`SELECT id, steps, current_step, state, not_before
 		 FROM cells
 		 WHERE id = ?`,
 		string(id),
@@ -326,21 +406,25 @@ func (s *Store) ForceUpdate(cell cellar.Cell) error {
 	if cell.ID == "" {
 		return errors.New("cell id is required")
 	}
-	if cell.HandlerName == "" {
+	steps := cell.Steps
+	if len(steps) == 0 {
 		return errors.New("handler name is required")
 	}
-
-	_, err := s.db.Exec(
-		`INSERT INTO cells (id, handler_name, payload, state, not_before)
+	encodedSteps, err := json.Marshal(steps)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO cells (id, steps, current_step, state, not_before)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
-		   handler_name = excluded.handler_name,
-		   payload = excluded.payload,
+		   steps = excluded.steps,
+		   current_step = excluded.current_step,
 		   state = excluded.state,
 		   not_before = excluded.not_before`,
 		string(cell.ID),
-		string(cell.HandlerName),
-		payloadOrEmpty(cell.Payload),
+		encodedSteps,
+		cell.CurrentStep,
 		string(cell.State),
 		timeOrNil(cell.NotBefore),
 	)
@@ -369,8 +453,8 @@ func (s *Store) initSchema() error {
 		PRAGMA journal_mode = WAL;
 		CREATE TABLE IF NOT EXISTS cells (
 			id TEXT PRIMARY KEY,
-			handler_name TEXT NOT NULL,
-			payload BLOB NOT NULL,
+			steps BLOB NOT NULL,
+			current_step INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL,
 			not_before DATETIME NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -429,15 +513,19 @@ type scanner interface {
 
 func scanCell(row scanner) (cellar.Cell, error) {
 	var (
-		id          string
-		handlerName string
-		payload     []byte
-		state       string
-		notBefore   sql.NullTime
+		id           string
+		encodedSteps []byte
+		currentStep  int
+		state        string
+		notBefore    sql.NullTime
 	)
 
-	if err := row.Scan(&id, &handlerName, &payload, &state, &notBefore); err != nil {
+	if err := row.Scan(&id, &encodedSteps, &currentStep, &state, &notBefore); err != nil {
 		return cellar.Cell{}, err
+	}
+	var steps []cellar.CellStep
+	if err := json.Unmarshal(encodedSteps, &steps); err != nil {
+		return cellar.Cell{}, fmt.Errorf("decode cell steps: %w", err)
 	}
 
 	var notBeforePtr *time.Time
@@ -448,11 +536,15 @@ func scanCell(row scanner) (cellar.Cell, error) {
 
 	return cellar.Cell{
 		ID:          cellar.CellID(id),
-		HandlerName: cellar.HandlerName(handlerName),
-		Payload:     payload,
+		Steps:       steps,
+		CurrentStep: currentStep,
 		State:       cellar.CellState(state),
 		NotBefore:   notBeforePtr,
 	}, nil
+}
+
+func requestSteps(req cellar.CellRequest) []cellar.CellStep {
+	return req.Steps
 }
 
 func isUniqueViolation(err error) bool {

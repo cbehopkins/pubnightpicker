@@ -87,7 +87,7 @@ type fanoutRegistration[T any] struct {
 
 func (r fanoutRegistration[T]) Execute(ctx context.Context, cell Cell) Result {
 	var payload T
-	if err := unmarshalJSON(cell.Payload, &payload); err != nil {
+	if err := unmarshalJSON(currentStepPayload(cell), &payload); err != nil {
 		return ErrorResult{Message: "decode fanout payload", Err: err}
 	}
 	if r.expander == nil {
@@ -107,7 +107,7 @@ func (r fanoutRegistration[T]) Execute(ctx context.Context, cell Cell) Result {
 
 func (r fanoutRegistration[T]) Inspect(cell Cell) Inspection {
 	var payload T
-	err := unmarshalJSON(cell.Payload, &payload)
+	err := unmarshalJSON(currentStepPayload(cell), &payload)
 	return Inspection{
 		Cell:          cloneCell(cell),
 		Payload:       payload,
@@ -132,10 +132,9 @@ func identifyFanoutTargets(parentID CellID, targets []FanoutTarget) ([]CellReque
 			return nil, fmt.Errorf("encode fanout target %q payload: %w", target.Key, err)
 		}
 		children = append(children, CellRequest{
-			ID:          deriveFanoutChildID(parentID, target.Key),
-			HandlerName: target.HandlerName,
-			Payload:     payload,
-			NotBefore:   target.NotBefore,
+			ID:        deriveFanoutChildID(parentID, target.Key),
+			Steps:     []CellStep{{HandlerName: target.HandlerName, Payload: payload}},
+			NotBefore: target.NotBefore,
 		})
 	}
 	return children, nil
