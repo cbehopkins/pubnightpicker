@@ -17,9 +17,11 @@ import (
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/recurrence"
+	venuecache "last_orders/internal/lastorders/components/venuecache"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
+	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	"last_orders/internal/lastorders/plugins/polls"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
@@ -49,11 +51,14 @@ type App struct {
 	cellarStore           cellar.Store
 	idempotencyStore      *firebaseidempotency.Store
 	recurrenceService     *recurrence.Service
+	venueCacheStore       *venuecache.Store
+	venueCacheService     *venuecache.Service
 	firestoreClient       *firestore.Client
 	cellarRuntime         *cellar.Cellar
 	eventVenueListener    *eventvenuelistener.Listener
 	newPollListener       *newpolllistener.Listener
 	completedPollListener *completedpolllistener.Listener
+	venueCacheListener    *venuecachelistener.Listener
 	httpServer            *http.Server
 	httpListener          net.Listener
 	runCancel             context.CancelFunc
@@ -94,6 +99,8 @@ func New(cfg Config) (*App, error) {
 
 	var firestoreClient *firestore.Client
 	var recurrenceService *recurrence.Service
+	var venueCacheStore *venuecache.Store
+	var venueCacheService *venuecache.Service
 	if cfg.EnableFirestore {
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID)
 		if err != nil {
@@ -102,6 +109,24 @@ func New(cfg Config) (*App, error) {
 		}
 
 		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+		venueCacheStore, err = venuecache.New(baseStore)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, fmt.Errorf("init venue cache store: %w", err)
+		}
+		venueSource, err := venuecache.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
+		venueCacheService, err = venuecache.NewService(venueCacheStore, venueSource, cfg.Logger)
 		if err != nil {
 			_ = firestoreClient.Close()
 			_ = baseStore.Close()
@@ -205,6 +230,7 @@ func New(cfg Config) (*App, error) {
 	var eventVenueListener *eventvenuelistener.Listener
 	var newPollListener *newpolllistener.Listener
 	var completedPollListener *completedpolllistener.Listener
+	var venueCacheListener *venuecachelistener.Listener
 	if recurrenceService != nil {
 		eventVenueListener, err = eventvenuelistener.New(eventvenuelistener.Config{
 			Store:              cellarStore,
@@ -259,6 +285,13 @@ func New(cfg Config) (*App, error) {
 			_ = baseStore.Close()
 			return nil, err
 		}
+
+		venueCacheListener, err = venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger)
+		if err != nil {
+			_ = firestoreClient.Close()
+			_ = baseStore.Close()
+			return nil, err
+		}
 	}
 
 	application := &App{
@@ -267,11 +300,14 @@ func New(cfg Config) (*App, error) {
 		cellarStore:           cellarStore,
 		idempotencyStore:      idempotencyStore,
 		recurrenceService:     recurrenceService,
+		venueCacheStore:       venueCacheStore,
+		venueCacheService:     venueCacheService,
 		firestoreClient:       firestoreClient,
 		cellarRuntime:         cellarRuntime,
 		eventVenueListener:    eventVenueListener,
 		newPollListener:       newPollListener,
 		completedPollListener: completedPollListener,
+		venueCacheListener:    venueCacheListener,
 	}
 
 	if cfg.HTTPAddr != "" {
@@ -338,6 +374,13 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.completedPollListener.Start(runCtx); err != nil {
 			cancel()
 			return fmt.Errorf("start completed poll listener: %w", err)
+		}
+	}
+
+	if a.venueCacheListener != nil {
+		if err := a.venueCacheListener.Start(runCtx); err != nil {
+			cancel()
+			return fmt.Errorf("start venue cache listener: %w", err)
 		}
 	}
 

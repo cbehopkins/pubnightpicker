@@ -19,10 +19,10 @@ A cache failure, cache miss, stale cache population, or loss of the local cache 
 ---
 
 # 2. Design Principles
-
+The Venue cache will forward these writes directly and delete the associated document from the internal SQLite-backed cache.
 The cache follows these principles:
 
-1. Firebase is the source of truth.
+A Cell will be queued whose responsibility it is to perform the writeback to Firebase.
 2. The local cache contains only fields required by backend consumers.
 3. A cache miss falls back to Firebase.
 4. Cache entries may be deleted without recording an explicit invalid state.
@@ -217,25 +217,25 @@ Phase 1 does not require the cache to be fully populated before the application 
 
 The application may start with an empty or partially populated cache.
 
-A background process may progressively populate the cache after startup.
+A background listener may progressively populate the cache after startup by
+processing Firestore's initial snapshot.
 
 For example:
 
 ```text
 startup
-   ↓
-background warmer
-   ↓
-fetch N documents
-   ↓
-cache N documents
-   ↓
-fetch next N
-   ↓
+    ↓
+background listener
+    ↓
+process initial snapshot
+    ↓
+cache projections
+    ↓
 ...
 ```
 
-This process should operate at a deliberately controlled rate so that cache warming does not create unnecessary load on Firebase or interfere with normal application activity.
+Startup does not wait for this population to complete, and no separate rate-limited
+warmer is required in Phase 1.
 
 The application must remain fully functional while the cache is warming.
 
@@ -280,7 +280,6 @@ Retained fields:
     type
     name
     address
-    photoUrl
     website
     recurrence information
 ```
@@ -317,19 +316,16 @@ The complete venue schema is outside the scope of this specification.
 
 # 13. Phase 2 — Pending Writes
 
-During phase 1 the application will write to the Venue Cache rather than directly to Firebase.
-The Venue cache will forward these writes directly and delete the associated document from the internal SQLite backed cache.
+Phase 1 does not provide a write cache or route authoritative venue writes through
+the local cache. Existing services continue to write to Firebase directly.
 
-Phase 2 of the development will introduce a write cache. This will update the associated document preserved in the SQLite backed cache.
-The SQLite backed cache will have this document marked as Dirty (pending writeback).
+Pending writes, dirty state, writeback Cells, and transaction-aware batching are
+deferred to a future design. They must not be introduced as part of the Phase 1
+read-through cache.
 A Cell will be queued whose responsibility it is to perform the writeback to Firebase.
 
 
 ---
-
-# 14. Phase 2 Removed
-
-This section is removed
 
 ---
 
@@ -360,10 +356,9 @@ The system relies on two properties:
 2. Consumers can always bypass the cache on a miss.
 
 The Cache is responsible for querying Firebase on a Miss to confirm if the document is indeed present.
-The principle is that all transactions to the venue list (the pubs collection) go through the cache entity. 
-The Cache initially takes the approach that if local modifications are made then it is simpler to delete the internal
-copy and wait for the listener to push a new version of the document. 
-If while waiting for that push, the application needs that document, then we can always fetch it as part of the application request.
+The current implementation does not route existing recurrence reads or writes
+through the cache. A future consumer-routing change may explicitly delete a
+local entry before changing the authoritative Firebase document.
 
 
 ---
@@ -475,7 +470,7 @@ Implement:
 * Firebase fallback on cache miss;
 * optional cache population after Firebase reads;
 * explicit cache deletion;
-* background startup warming; <- This should come for free as part of the listener behaviour
+* background population from the listener's initial snapshot;
 * ordinary SQLite transactions.
 
 Do not implement:
@@ -486,14 +481,29 @@ Do not implement:
 * transaction piggybacking;
 * cache durability guarantees.
 
-## Phase 2 — Transaction-aware optimisation
+## Phase 2 — Transaction-aware optimisation (Deferred)
 
-Consider implementing:
+Consider implementing in a separate design:
 * background flushing of pending writes;
 * batching of cache writes;
 * appropriate metrics around queue depth and write latency.
 
 Phase 2 must not alter the Phase 1 consumer contract.
+
+# 23. Phase 1 Decisions
+
+The Phase 1 implementation uses the following concrete choices:
+
+* The public API is venue-specific and typed rather than exposing arbitrary cache table or collection names.
+* Firebase field names are mapped to normalised Go-facing fields: `web_site` to `Website` and `pubImage` to `PhotoURL`.
+* The retained fields are the venue ID, `name`, `venueType`, website, map, address, photo URL, `recurrence`, and `next_occurrence_date`.
+* Nested `recurrence` data is stored as JSON text in SQLite.
+* The Firestore source collection is `pubs`; the document ID is the cache key.
+* The listener's initial snapshot provides background population. Startup does not wait for the cache to become populated, and there is no separate rate-limited warmer in Phase 1.
+* A present local entry may be eventually stale. A cache miss always performs an authoritative Firebase lookup when Firestore is enabled.
+* Cache population after a Firebase read is best effort. A local cache-write failure must not hide a successful authoritative result.
+* When Firestore is disabled, the application does not construct or expose the Venue cache.
+* Existing recurrence venue reads and writes remain direct Firebase operations until a separate consumer-routing change is designed.
 
 ---
 
@@ -531,7 +541,7 @@ The current schema for the pubs/venue collection is included below:
     "properties": {
         "name": {
             "type": "string",
-            "minLength": 1
+    If, while waiting for that push, the application needs that document, then we can always fetch it as part of the application request.
         },
         "venueType": {
             "type": "string",
@@ -543,7 +553,7 @@ The current schema for the pubs/venue collection is included below:
         },
         "web_site": {
             "type": "string"
-        },
+        * global cache health tracking;
         "map": {
             "type": "string"
         },
