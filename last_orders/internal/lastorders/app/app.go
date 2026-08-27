@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -18,8 +20,10 @@ import (
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
+	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	"last_orders/internal/lastorders/plugins/polls"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
+	logsvc "last_orders/internal/lastorders/services/log"
 
 	"cloud.google.com/go/firestore"
 
@@ -35,6 +39,8 @@ type Config struct {
 	IdempotencyRemote      firebaseidempotency.Remote
 	EventReevaluateEvery   time.Duration
 	StartupComponentChecks []func(*basestore.Store) error
+	// HTTPAddr is the address to serve HTTP endpoints on. An empty value disables HTTP entirely.
+	HTTPAddr string
 }
 
 type App struct {
@@ -48,6 +54,8 @@ type App struct {
 	eventVenueListener    *eventvenuelistener.Listener
 	newPollListener       *newpolllistener.Listener
 	completedPollListener *completedpolllistener.Listener
+	httpServer            *http.Server
+	httpListener          net.Listener
 	runCancel             context.CancelFunc
 	runDone               chan struct{}
 	runMu                 sync.Mutex
@@ -138,6 +146,7 @@ func New(cfg Config) (*App, error) {
 	factRegistry.Register(polls.FactCompletedPoll, polls.HandlerCompletedPoll)
 	factRegistry.Register(recurrenceplugin.FactStaleEvent, recurrenceplugin.HandlerStaleEvent)
 	factRegistry.Register(recurrenceplugin.FactCreateEventPoll, recurrenceplugin.HandlerCreateEventPoll)
+	factRegistry.Register(logsvc.FactLogMessage, logsvc.HandlerLogMessage)
 
 	factFanout, err := facts.Fanout(factRegistry)
 	if err != nil {
@@ -167,6 +176,13 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitFact, firebaseidempotency.EmitFactHandler{Logger: cfg.Logger}); err != nil {
+		if firestoreClient != nil {
+			_ = firestoreClient.Close()
+		}
+		_ = baseStore.Close()
+		return nil, err
+	}
+	if err := cellarRuntime.Register(logsvc.HandlerLogMessage, logsvc.Handler{Logger: cfg.Logger}); err != nil {
 		if firestoreClient != nil {
 			_ = firestoreClient.Close()
 		}
@@ -245,7 +261,7 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
-	return &App{
+	application := &App{
 		logger:                cfg.Logger,
 		baseStore:             baseStore,
 		cellarStore:           cellarStore,
@@ -256,7 +272,24 @@ func New(cfg Config) (*App, error) {
 		eventVenueListener:    eventVenueListener,
 		newPollListener:       newPollListener,
 		completedPollListener: completedPollListener,
-	}, nil
+	}
+
+	if cfg.HTTPAddr != "" {
+		listener, err := net.Listen("tcp", cfg.HTTPAddr)
+		if err != nil {
+			if firestoreClient != nil {
+				_ = firestoreClient.Close()
+			}
+			_ = baseStore.Close()
+			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
+		}
+		mux := http.NewServeMux()
+		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
+		application.httpListener = listener
+		application.httpServer = &http.Server{Handler: mux}
+	}
+
+	return application, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -271,6 +304,7 @@ func (a *App) Run(ctx context.Context) error {
 	runDone := a.runDone
 	a.runMu.Unlock()
 	defer func() {
+		a.shutdownHTTP()
 		cancel()
 		_ = a.cellarRuntime.Stop()
 		<-runDone
@@ -307,6 +341,14 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 
+	if a.httpServer != nil {
+		go func() {
+			if err := a.httpServer.Serve(a.httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				a.logger.Error("http server stopped unexpectedly", "err", err)
+			}
+		}()
+	}
+
 	select {
 	case <-ctx.Done():
 		return nil
@@ -319,6 +361,7 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) Close() error {
+	a.shutdownHTTP()
 	a.runMu.Lock()
 	runCancel := a.runCancel
 	runDone := a.runDone
@@ -337,6 +380,26 @@ func (a *App) Close() error {
 		_ = a.firestoreClient.Close()
 	}
 	return a.baseStore.Close()
+}
+
+// shutdownHTTP stops accepting new HTTP requests before Cellar is drained and
+// stopped, per docs/adr/0007-lifecycle.md. It is safe to call more than once and
+// when HTTP is disabled.
+func (a *App) shutdownHTTP() {
+	if a.httpServer == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = a.httpServer.Shutdown(ctx)
+}
+
+// HTTPAddr returns the bound address of the HTTP server, or "" if HTTP is disabled.
+func (a *App) HTTPAddr() string {
+	if a.httpListener == nil {
+		return ""
+	}
+	return a.httpListener.Addr().String()
 }
 
 func (a *App) AddCell(request cellar.CellRequest) error {

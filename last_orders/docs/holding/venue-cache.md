@@ -6,6 +6,8 @@ Provide a local SQLite-backed cache of selected fields from Firebase collections
 
 The primary initial use case is the **venue cache**, where backend services frequently need venue information while rendering large numbers of notifications or emails.
 
+Note, the collection with venues in them is currently calles "pubs" for historical reasons.
+
 The cache exists to reduce repeated Firebase reads.
 
 The cache is an optimisation only.
@@ -313,7 +315,7 @@ The complete venue schema is outside the scope of this specification.
 
 ---
 
-# 13. Phase 2 — Pending Wites
+# 13. Phase 2 — Pending Writes
 
 During phase 1 the application will write to the Venue Cache rather than directly to Firebase.
 The Venue cache will forward these writes directly and delete the associated document from the internal SQLite backed cache.
