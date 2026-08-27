@@ -10,6 +10,7 @@ import (
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/recurrence"
+	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 
 	"cloud.google.com/go/firestore"
@@ -52,6 +53,7 @@ type Listener struct {
 	service  *recurrence.Service
 	interval time.Duration
 	logger   *slog.Logger
+	lifecycle.Controller
 }
 
 func New(cfg Config) (*Listener, error) {
@@ -76,8 +78,7 @@ func (l *Listener) Interval() time.Duration {
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	go l.watch(ctx)
-	return nil
+	return l.Controller.Start(ctx, l.watch)
 }
 
 func (l *Listener) watch(ctx context.Context) {

@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"time"
 
+	"last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/database/listeners/lifecycle"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"last_orders/internal/lastorders/components/venuecache"
 )
 
 const retryDelay = 5 * time.Second
@@ -17,6 +19,7 @@ type Listener struct {
 	service *venuecache.Service
 	store   *venuecache.Store
 	logger  *slog.Logger
+	lifecycle.Controller
 }
 
 func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logger) (*Listener, error) {
@@ -33,8 +36,7 @@ func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logg
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	go l.watch(ctx)
-	return nil
+	return l.Controller.Start(ctx, l.watch)
 }
 
 func (l *Listener) watch(ctx context.Context) {

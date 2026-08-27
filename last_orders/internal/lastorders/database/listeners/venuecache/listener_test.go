@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 	component "last_orders/internal/lastorders/components/venuecache"
@@ -19,6 +20,27 @@ func (fakeSource) Get(context.Context, string) (component.Document, error) {
 
 func (fakeSource) ListEventVenues(context.Context) ([]component.Document, error) {
 	return nil, nil
+}
+
+type blockingStream struct {
+	ctx context.Context
+}
+
+func (s *blockingStream) Next() ([]component.Change, error) {
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+func (s *blockingStream) Stop() {}
+
+type blockingSource struct {
+	*fakeSource
+	stream *blockingStream
+}
+
+func (s *blockingSource) Watch(ctx context.Context) (component.ChangeStream, error) {
+	s.stream.ctx = ctx
+	return s.stream, nil
 }
 
 func (fakeSource) Watch(context.Context) (component.ChangeStream, error) {
@@ -54,6 +76,34 @@ func TestApplyAddedModifiedAndRemovedChanges(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "venue-1"); err != component.ErrCacheMiss {
 		t.Fatalf("after removal error = %v; want cache miss", err)
+	}
+}
+
+func TestCloseWaitsForListenerGoroutine(t *testing.T) {
+	store := newTestStore(t)
+	service, err := component.NewService(store, &blockingSource{
+		fakeSource: &fakeSource{},
+		stream:     &blockingStream{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	listener, err := New(service, store, nil)
+	if err != nil {
+		t.Fatalf("new listener: %v", err)
+	}
+	if err := listener.Start(context.Background()); err != nil {
+		t.Fatalf("start listener: %v", err)
+	}
+	closed := make(chan struct{})
+	go func() {
+		_ = listener.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("listener close did not complete")
 	}
 }
 

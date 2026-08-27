@@ -66,7 +66,7 @@ type App struct {
 	runMu                 sync.Mutex
 }
 
-func New(cfg Config) (*App, error) {
+func New(cfg Config) (application *App, err error) {
 	if cfg.DBPath == "" {
 		return nil, fmt.Errorf("db path is required")
 	}
@@ -84,16 +84,24 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
 	}
+	cleanup := newCleanupStack()
+	cleanup.Add(db.Close)
+	defer func() {
+		if application == nil {
+			cleanup.Run()
+		}
+	}()
 
 	baseStore, err := basestore.New(db)
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
+	// Replace the previous cleanup stack with a new one for the baseStore and subsequent resources.
+	cleanup = newCleanupStack()
+	cleanup.Add(baseStore.Close)
 
 	cellarStore, err := publicsqlite.NewStore(baseStore.DB(), nil)
 	if err != nil {
-		_ = baseStore.Close()
 		return nil, fmt.Errorf("init cellar store: %w", err)
 	}
 
@@ -104,55 +112,40 @@ func New(cfg Config) (*App, error) {
 	if cfg.EnableFirestore {
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID)
 		if err != nil {
-			_ = baseStore.Close()
 			return nil, fmt.Errorf("init firestore client: %w", err)
 		}
+		cleanup.Add(firestoreClient.Close)
 
 		venueCacheStore, err = venuecache.New(baseStore)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, fmt.Errorf("init venue cache store: %w", err)
 		}
 		venueSource, err := venuecache.NewFirestoreSource(firestoreClient)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 		venueCacheService, err = venuecache.NewService(venueCacheStore, venueSource, cfg.Logger)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 	}
 
 	if cfg.IdempotencyRemote == nil {
 		if firestoreClient == nil {
-			_ = baseStore.Close()
 			return nil, fmt.Errorf("idempotency remote is required: enable firestore or supply Config.IdempotencyRemote")
 		}
 		cfg.IdempotencyRemote, err = firebaseidempotency.NewFirestoreRemote(firestoreClient, "listener_state", "last_orders")
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 	}
 
 	idempotencyStore, err := firebaseidempotency.New(baseStore)
 	if err != nil {
-		if firestoreClient != nil {
-			_ = firestoreClient.Close()
-		}
-		_ = baseStore.Close()
 		return nil, err
 	}
 
@@ -161,7 +154,6 @@ func New(cfg Config) (*App, error) {
 			continue
 		}
 		if err := check(baseStore); err != nil {
-			_ = baseStore.Close()
 			return nil, fmt.Errorf("startup component check failed: %w", err)
 		}
 	}
@@ -175,54 +167,36 @@ func New(cfg Config) (*App, error) {
 
 	factFanout, err := facts.Fanout(factRegistry)
 	if err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay})
 	if err := factFanout.Register(cellarRuntime); err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(polls.HandlerNewPoll, polls.NewPollHandler{Logger: cfg.Logger}); err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(polls.HandlerCompletedPoll, polls.CompletedPollHandler{Logger: cfg.Logger}); err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitFact, firebaseidempotency.EmitFactHandler{Logger: cfg.Logger}); err != nil {
-		if firestoreClient != nil {
-			_ = firestoreClient.Close()
-		}
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if err := cellarRuntime.Register(logsvc.HandlerLogMessage, logsvc.Handler{Logger: cfg.Logger}); err != nil {
-		if firestoreClient != nil {
-			_ = firestoreClient.Close()
-		}
-		_ = baseStore.Close()
 		return nil, err
 	}
 	if recurrenceService != nil {
 		if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 		if err := cellarRuntime.Register(recurrenceplugin.HandlerCreateEventPoll, recurrenceplugin.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 	}
@@ -239,8 +213,6 @@ func New(cfg Config) (*App, error) {
 			Logger:             cfg.Logger,
 		})
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 
@@ -249,18 +221,12 @@ func New(cfg Config) (*App, error) {
 			Mode:     cellar.TimerFixedRate,
 		}, eventVenueListener.ReevaluateOnce)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 		if err := reevaluateTimer.Register(cellarRuntime); err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 		if _, err := reevaluateTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 
@@ -270,8 +236,6 @@ func New(cfg Config) (*App, error) {
 			Logger: cfg.Logger,
 		})
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 
@@ -281,20 +245,16 @@ func New(cfg Config) (*App, error) {
 			Logger: cfg.Logger,
 		})
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 
 		venueCacheListener, err = venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger)
 		if err != nil {
-			_ = firestoreClient.Close()
-			_ = baseStore.Close()
 			return nil, err
 		}
 	}
 
-	application := &App{
+	application = &App{
 		logger:                cfg.Logger,
 		baseStore:             baseStore,
 		cellarStore:           cellarStore,
@@ -313,18 +273,16 @@ func New(cfg Config) (*App, error) {
 	if cfg.HTTPAddr != "" {
 		listener, err := net.Listen("tcp", cfg.HTTPAddr)
 		if err != nil {
-			if firestoreClient != nil {
-				_ = firestoreClient.Close()
-			}
-			_ = baseStore.Close()
 			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
 		}
 		mux := http.NewServeMux()
 		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
 		application.httpListener = listener
 		application.httpServer = &http.Server{Handler: mux}
+		cleanup.Add(listener.Close)
 	}
 
+	cleanup = nil
 	return application, nil
 }
 
@@ -342,6 +300,7 @@ func (a *App) Run(ctx context.Context) error {
 	defer func() {
 		a.shutdownHTTP()
 		cancel()
+		a.closeListeners()
 		_ = a.cellarRuntime.Stop()
 		<-runDone
 		a.runMu.Lock()
@@ -415,14 +374,35 @@ func (a *App) Close() error {
 		if runDone != nil {
 			<-runDone
 		}
+	} else {
+		a.closeListeners()
 	}
 	if a.baseStore == nil {
 		return nil
 	}
+	var closeErrs []error
 	if a.firestoreClient != nil {
-		_ = a.firestoreClient.Close()
+		closeErrs = append(closeErrs, a.firestoreClient.Close())
 	}
-	return a.baseStore.Close()
+	closeErrs = append(closeErrs, a.baseStore.Close())
+	return errors.Join(closeErrs...)
+}
+
+func (a *App) closeListeners() error {
+	var closeErrs []error
+	if a.eventVenueListener != nil {
+		closeErrs = append(closeErrs, a.eventVenueListener.Close())
+	}
+	if a.newPollListener != nil {
+		closeErrs = append(closeErrs, a.newPollListener.Close())
+	}
+	if a.completedPollListener != nil {
+		closeErrs = append(closeErrs, a.completedPollListener.Close())
+	}
+	if a.venueCacheListener != nil {
+		closeErrs = append(closeErrs, a.venueCacheListener.Close())
+	}
+	return errors.Join(closeErrs...)
 }
 
 // shutdownHTTP stops accepting new HTTP requests before Cellar is drained and
@@ -461,4 +441,20 @@ func (a *App) CellarStore() cellar.Store {
 
 func sqliteDSN(path string) string {
 	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+}
+
+type cleanupStack []func() error
+
+func newCleanupStack() cleanupStack {
+	return make(cleanupStack, 0, 4)
+}
+
+func (s *cleanupStack) Add(cleanup func() error) {
+	*s = append(*s, cleanup)
+}
+
+func (s *cleanupStack) Run() {
+	for index := len(*s) - 1; index >= 0; index-- {
+		_ = (*s)[index]()
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/plugins/polls"
 
 	"cloud.google.com/go/firestore"
@@ -35,6 +36,7 @@ type Listener struct {
 	client *firestore.Client
 	store  cellar.Store
 	logger *slog.Logger
+	lifecycle.Controller
 }
 
 func New(cfg Config) (*Listener, error) {
@@ -51,8 +53,7 @@ func New(cfg Config) (*Listener, error) {
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	go l.watch(ctx)
-	return nil
+	return l.Controller.Start(ctx, l.watch)
 }
 
 func (l *Listener) watch(ctx context.Context) {
