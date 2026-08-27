@@ -83,7 +83,7 @@ A Cell does not own other Cells.
 
 ### Handler
 
-Each Cell has a corresponding Handler.
+Each Cell has one or more ordered steps, and each step has a corresponding Handler.
 
 Handlers contain business logic and receive a typed payload. Cellar binds the handler to a
 stable, human-readable name and handles JSON encoding and decoding internally.
@@ -104,6 +104,25 @@ func (SendEmailHandler) Handle(ctx context.Context, payload SendEmail) cellar.Re
 Handlers do not directly manage persistence.
 
 Handlers return instructions to the runtime.
+
+### Ordered sequences
+
+`Add` creates an ordinary one-step Cell. Use `AddSequence` when several handlers must
+run in order. Each step may have a different payload type:
+
+```go
+cellID, err := c.AddSequence(
+    cellar.Step{HandlerName: "order.validate", Payload: ValidateOrder{ID: orderID}},
+    cellar.Step{HandlerName: "order.reserve", Payload: ReserveOrder{ID: orderID}},
+    cellar.Step{HandlerName: "order.notify", Payload: NotifyOrder{ID: orderID}},
+)
+```
+
+The Cell keeps a durable `CurrentStep` cursor and retains the same ID across the
+sequence. A successful `Complete` advances to the next step; an ordinary `Retry`
+repeats the current step; `RetrySequence` resets execution to the first step after
+its delay. Child Cells and `ApplicationWork` are committed atomically with the step
+transition. A final `Complete` removes the Cell.
 
 ---
 

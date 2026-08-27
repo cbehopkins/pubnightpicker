@@ -56,6 +56,41 @@ func Example_helloworld() {
 	// Hello, Cellar!
 }
 
+func ExampleCellar_AddSequence() {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
+	messages := make(chan string, 2)
+
+	if err := runtime.Register("hello.greet", greetingHandler{messages: messages}); err != nil {
+		panic(err)
+	}
+	if err := runtime.Register("hello.speak", greetingHandler{messages: messages}); err != nil {
+		panic(err)
+	}
+	if _, err := runtime.AddSequence(
+		cellar.Step{HandlerName: "hello.greet", Payload: greeting{Name: "Cellar"}},
+		cellar.Step{HandlerName: "hello.speak", Payload: greeting{Name: "World"}},
+	); err != nil {
+		panic(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- runtime.Start(context.Background()) }()
+
+	fmt.Println(<-messages)
+	fmt.Println(<-messages)
+	if err := runtime.Stop(); err != nil {
+		panic(err)
+	}
+	if err := <-done; err != nil {
+		panic(err)
+	}
+
+	// Output:
+	// Hello, Cellar!
+	// Hello, World!
+}
+
 type orderCompleted struct {
 	OrderID string `json:"order_id"`
 	Email   string `json:"email"`

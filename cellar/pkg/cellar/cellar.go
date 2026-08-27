@@ -51,19 +51,22 @@ func (c *Cellar) Register[T any](name HandlerName, handler Handler[T]) error {
 	return c.registry.Register(name, typedJSONRegistration[T]{handler: handler})
 }
 
-// Add JSON-encodes payload and persists a cell for the named handler.
-// i.e. add a cell that will run the named handler with the given payload.
+// Add JSON-encodes payload and persists a one-step Cell for the named handler.
 func (c *Cellar) Add[T any](name HandlerName, payload T) (CellID, error) {
 	return c.AddSequence(Step{HandlerName: name, Payload: payload})
 }
 
 // Step describes one typed handler invocation in a sequence.
+// Payload may have a different Go type for each step.
 type Step struct {
 	HandlerName HandlerName
 	Payload     any
 }
 
 // AddSequence JSON-encodes and persists an ordered sequence of steps.
+// Steps execute strictly in order and retain the same CellID throughout.
+// Complete advances to the next step, Retry repeats the current step, and
+// RetrySequence starts again at the first step after its delay.
 func (c *Cellar) AddSequence(steps ...Step) (CellID, error) {
 	if c.store == nil {
 		return "", ErrStoreNil

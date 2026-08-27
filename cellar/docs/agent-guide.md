@@ -21,10 +21,15 @@ Cellar is intentionally simple. It does not try to solve distributed coordinatio
 A cell is the fundamental unit of execution. A cell has:
 
 - an identifier
-- a handler name
-- a payload
+- one or more ordered handler steps, each with its own payload
+- a durable current-step cursor
 - a lifecycle state
 - an optional not-before time
+
+A one-step Cell is the normal case. A multi-step Cell is an ordered sequence: steps
+run one at a time, in order, and keep the same Cell ID. Steps do not pass return
+values directly to one another; use durable application state when they need to
+communicate.
 
 ### Handler
 A handler is the business logic that executes for a cell. The public handler model is:
@@ -42,6 +47,8 @@ A handler returns one of the runtime-supported results:
 
 - `cellar.Complete{...}` to replace the current cell with zero or more child cells
 - `cellar.Retry{...}` to return the current cell to `READY` for later execution
+- `cellar.RetrySequence{...}` to restart the Cell from its first step after a delay
+- `cellar.Kill{}` to terminate the Cell without executing later steps
 - `cellar.ErrorResult{...}` to surface a handler or runtime failure
 
 ## Initialising a Cellar instance
@@ -144,20 +151,36 @@ A cell is a durable request for execution. It is not the business event itself; 
 
 ## How to create cells
 
-Use the store’s `Add` method:
+Use `Cellar.Add` for ordinary one-step work:
+
+```go
+id, err := runtime.Add("send-email", SendEmail{Recipient: "person@example.com"})
+```
+
+Use `Cellar.AddSequence` when handlers must run in order:
+
+```go
+id, err := runtime.AddSequence(
+    cellar.Step{HandlerName: "order.validate", Payload: ValidateOrder{ID: orderID}},
+    cellar.Step{HandlerName: "order.reserve", Payload: ReserveOrder{ID: orderID}},
+    cellar.Step{HandlerName: "order.notify", Payload: NotifyOrder{ID: orderID}},
+)
+```
+
+Use the store’s `Add` method only when supplying already JSON-encoded steps:
 
 ```go
 ids, err := store.Add([]cellar.CellRequest{{
-    HandlerName: "send-email",
-    Payload:     []byte("payload"),
-    NotBefore:   nil,
+    Steps: []cellar.CellStep{{
+        HandlerName: "send-email",
+        Payload:     []byte(`{"recipient":"person@example.com"}`),
+    }},
 }})
 ```
 
 Each `CellRequest` contains:
 
-- `HandlerName`: the registered handler for this cell
-- `Payload`: opaque bytes for the handler
+- `Steps`: one or more ordered handler invocations with opaque JSON bytes
 - `NotBefore`: optional scheduling time
 
 If the handler name is empty, the store will reject the request.
@@ -217,6 +240,9 @@ return cellar.Retry{NotBefore: &when}
 ```
 
 When a cell is retried, the runtime moves it back to `READY` and it becomes eligible for scheduling again.
+`Retry` preserves the current step. `RetrySequence` resets the cursor to zero and
+applies its delay. A persisted `NotBefore` value in the past is already eligible;
+it is not cleared merely because the Cell has become runnable.
 
 On process restart, claimed cells are automatically recovered to `READY` by the store’s recovery path. This provides a practical recovery model for crashes and restarts without requiring the handler to do anything special.
 
