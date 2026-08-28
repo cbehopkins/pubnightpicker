@@ -32,7 +32,7 @@ func TestMatchingBulkLogsRefusesAmbiguousCandidates(t *testing.T) {
 		SwgUID:        "U1",
 	}
 	operation := bulkOperation{SubmittedAt: submittedAt, Sender: sweego.EmailAddress{Email: "sender@example.com"}}
-	matches := matchingBulkLogs([]sweego.LogRecord{record, record}, operation, "alice@example.com", "pn-1", bulkOptions{tolerance: time.Minute})
+	matches := matchingBulkLogs([]sweego.LogRecord{record, record}, operation, "alice@example.com", "pn-1", recoveryOptions{tolerance: time.Minute})
 	if len(matches) != 2 {
 		t.Fatalf("expected ambiguity to retain both candidates, got %d", len(matches))
 	}

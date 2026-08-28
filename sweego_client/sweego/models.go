@@ -13,26 +13,49 @@ type SendEmailRequest struct {
 	Recipients   []EmailAddress    `json:"recipients"`
 	MessageTxt   string            `json:"message-txt"`
 	CampaignType string            `json:"campaign-type"`
-	DryRun       bool              `json:"dry_run,omitempty"`
+	DryRun       bool              `json:"dry-run,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 }
 
+// BulkRecipient is a single entry of the bulk endpoint's recipients array.
+// Variables carries the per-recipient template substitution data.
+type BulkRecipient struct {
+	Email     string         `json:"email"`
+	Name      string         `json:"name,omitempty"`
+	Variables map[string]any `json:"variables,omitempty"`
+}
+
 // BulkEmailRequest is the request body used by Sweego's bulk email endpoint.
-// The optional template fields are intentionally loose because this prototype
-// is used to inspect the provider contract rather than hide it behind a schema.
+// Field names follow Sweego's documented request sample, which hyphenates
+// template-id and dry-run rather than using snake case.
 type BulkEmailRequest struct {
 	Channel      string            `json:"channel"`
 	From         EmailAddress      `json:"from"`
 	Provider     string            `json:"provider"`
 	Subject      string            `json:"subject,omitempty"`
-	Recipients   []EmailAddress    `json:"recipients"`
+	Recipients   []BulkRecipient   `json:"recipients"`
 	MessageTxt   string            `json:"message-txt,omitempty"`
 	CampaignType string            `json:"campaign-type,omitempty"`
-	TemplateID   string            `json:"template_id,omitempty"`
-	TemplateName string            `json:"template_name,omitempty"`
-	TemplateVars map[string]any    `json:"template_vars,omitempty"`
-	DryRun       bool              `json:"dry_run,omitempty"`
+	TemplateID   string            `json:"template-id,omitempty"`
+	DryRun       bool              `json:"dry-run,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
+}
+
+// CreateTemplateRequest is the body for POST
+// /clients/{client}/channels/email/templates. Template holds the template
+// source verbatim; Sweego exposes no separate html and text fields.
+type CreateTemplateRequest struct {
+	Name     string `json:"name"`
+	Template string `json:"template"`
+}
+
+// UpdateTemplateRequest is the body for POST
+// /clients/{client}/channels/email/templates/{template}. Sweego's update
+// sample includes template_type where the create sample does not.
+type UpdateTemplateRequest struct {
+	Name         string `json:"name"`
+	Template     string `json:"template"`
+	TemplateType string `json:"template_type"`
 }
 
 // LogsRequest is the request body for POST /logs/ (channel=email variant).

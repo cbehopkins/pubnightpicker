@@ -79,8 +79,6 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 		MessageTxt:   options.text,
 		CampaignType: options.campaignType,
 		TemplateID:   options.templateID,
-		TemplateName: options.templateName,
-		TemplateVars: options.templateVars,
 		DryRun:       options.dryRun,
 		Headers:      map[string]string{sweego.PubnightMessageIDHeader: correlationID},
 	}
@@ -125,7 +123,7 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 		}
 	}
 
-	results, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options)
+	results, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options.recoveryOptions)
 	printBulkRecovery(results, actual, options.discardResponse)
 	if sendErr != nil {
 		return sendErr
@@ -139,14 +137,34 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 // osStderr is replaceable in tests without changing the command's output contract.
 var osStderr = os.Stderr
 
+// recoveryOptions is the subset of settings the log-recovery path needs, shared
+// by the flag-driven and template-driven bulk commands.
+type recoveryOptions struct {
+	discardResponse bool
+	tolerance       time.Duration
+	retryDelay      time.Duration
+	attempts        int
+}
+
 type bulkOptions struct {
-	from, recipients, subject, text                                    string
-	templateID, templateName, templateVarsRaw, campaignType, messageID string
-	discardResponse                                                    bool
-	dryRun                                                              bool
-	tolerance, retryDelay                                              time.Duration
-	attempts                                                           int
-	templateVars                                                       map[string]any
+	recoveryOptions
+	from, recipients, subject, text     string
+	templateID, campaignType, messageID string
+	dryRun                              bool
+}
+
+func registerRecoveryFlags(fs *flag.FlagSet, options *recoveryOptions) {
+	fs.BoolVar(&options.discardResponse, "discard-response", false, "hide response identifiers from the recovery path")
+	fs.DurationVar(&options.tolerance, "recovery-window", defaultVerifyTolerance, "timestamp tolerance around submission")
+	fs.DurationVar(&options.retryDelay, "retry-delay", 30*time.Second, "delay between log queries")
+	fs.IntVar(&options.attempts, "attempts", 10, "number of log-query attempts")
+}
+
+func (o recoveryOptions) validate() error {
+	if o.attempts < 1 || o.retryDelay < 0 || o.tolerance < 0 {
+		return errors.New("--attempts must be positive and timing values cannot be negative")
+	}
+	return nil
 }
 
 func parseBulkOptions(args []string) (bulkOptions, error) {
@@ -157,36 +175,26 @@ func parseBulkOptions(args []string) (bulkOptions, error) {
 	fs.StringVar(&options.recipients, "to", "", "comma-separated recipient email addresses")
 	fs.StringVar(&options.subject, "subject", "", "email subject")
 	fs.StringVar(&options.text, "text", "", "plain text email body")
-	fs.StringVar(&options.templateID, "template-id", "", "provider template identifier, if used")
-	fs.StringVar(&options.templateName, "template-name", "", "provider template name, if used")
-	fs.StringVar(&options.templateVarsRaw, "template-vars", "", "template variables as a JSON object")
+	fs.StringVar(&options.templateID, "template-id", "", "Sweego template UUID, if used")
 	fs.StringVar(&options.campaignType, "campaign-type", "transac", "Sweego campaign type")
 	fs.StringVar(&options.messageID, "message-id", "", "override the generated operation correlation value")
-	fs.BoolVar(&options.discardResponse, "discard-response", false, "hide response identifiers from the recovery path")
 	fs.BoolVar(&options.dryRun, "dry-run", false, "ask Sweego to accept the request without actually sending the email")
-	fs.DurationVar(&options.tolerance, "recovery-window", defaultVerifyTolerance, "timestamp tolerance around submission")
-	fs.DurationVar(&options.retryDelay, "retry-delay", 30*time.Second, "delay between log queries")
-	fs.IntVar(&options.attempts, "attempts", 10, "number of log-query attempts")
+	registerRecoveryFlags(fs, &options.recoveryOptions)
 	if err := fs.Parse(args); err != nil {
 		return bulkOptions{}, err
 	}
 	if strings.TrimSpace(options.from) == "" || strings.TrimSpace(options.recipients) == "" {
 		return bulkOptions{}, errors.New("--from and --to are required")
 	}
-	if options.attempts < 1 || options.retryDelay < 0 || options.tolerance < 0 {
-		return bulkOptions{}, errors.New("--attempts must be positive and timing values cannot be negative")
-	}
-	if options.templateVarsRaw != "" {
-		if err := json.Unmarshal([]byte(options.templateVarsRaw), &options.templateVars); err != nil {
-			return bulkOptions{}, fmt.Errorf("invalid --template-vars JSON: %w", err)
-		}
+	if err := options.validate(); err != nil {
+		return bulkOptions{}, err
 	}
 	return options, nil
 }
 
-func parseRecipients(raw string) ([]sweego.EmailAddress, error) {
-	var recipients []sweego.EmailAddress
-	for _, value := range strings.Split(raw, ",") {
+func parseRecipients(raw string) ([]sweego.BulkRecipient, error) {
+	var recipients []sweego.BulkRecipient
+	for value := range strings.SplitSeq(raw, ",") {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
@@ -195,10 +203,10 @@ func parseRecipients(raw string) ([]sweego.EmailAddress, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid recipient %q: %w", value, err)
 		}
-		recipients = append(recipients, address)
+		recipients = append(recipients, sweego.BulkRecipient{Email: address.Email, Name: address.Name})
 	}
-	if len(recipients) < 2 {
-		return nil, errors.New("--to must contain at least two recipients")
+	if len(recipients) == 0 {
+		return nil, errors.New("--to must contain at least one recipient")
 	}
 	return recipients, nil
 }
@@ -258,7 +266,7 @@ func collectBulkIdentifiers(value any, response *bulkResponse) {
 	}
 }
 
-func recoverBulkLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, correlationID string, options bulkOptions) ([]bulkRecipientResult, error) {
+func recoverBulkLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, correlationID string, options recoveryOptions) ([]bulkRecipientResult, error) {
 	results := make([]bulkRecipientResult, len(operation.Recipients))
 	for index, recipient := range operation.Recipients {
 		results[index] = bulkRecipientResult{Recipient: recipient.Email, Status: bulkUnresolved}
@@ -318,7 +326,7 @@ func queryBulkRecipientLogs(ctx context.Context, client *sweego.Client, operatio
 	return response.Result, nil
 }
 
-func matchingBulkLogs(records []sweego.LogRecord, operation bulkOperation, recipient, correlationID string, options bulkOptions) []sweego.LogRecord {
+func matchingBulkLogs(records []sweego.LogRecord, operation bulkOperation, recipient, correlationID string, options recoveryOptions) []sweego.LogRecord {
 	matches := make([]sweego.LogRecord, 0)
 	for _, record := range records {
 		if !sameEmail(record.EmailTo, recipient) || !sameEmail(record.EmailFrom, operation.Sender.Email) || record.Channel != "" && record.Channel != "email" {

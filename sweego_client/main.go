@@ -53,6 +53,38 @@ func main() {
 			fmt.Fprintln(os.Stderr, "bulk-send error:", err)
 			os.Exit(1)
 		}
+	case "bulk-send-json", "bulk-send-template":
+		if err := runBulkSendDocument(os.Args[2:], client, cfg.Provider); err != nil {
+			fmt.Fprintln(os.Stderr, "bulk-send-json error:", err)
+			os.Exit(1)
+		}
+	case "template-upload":
+		clientUUID, err := requireClientUUID(cfg)
+		if err == nil {
+			err = runTemplateUpload(os.Args[2:], client, clientUUID)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "template-upload error:", err)
+			os.Exit(1)
+		}
+	case "template-update":
+		clientUUID, err := requireClientUUID(cfg)
+		if err == nil {
+			err = runTemplateUpdate(os.Args[2:], client, clientUUID)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "template-update error:", err)
+			os.Exit(1)
+		}
+	case "template-delete":
+		clientUUID, err := requireClientUUID(cfg)
+		if err == nil {
+			err = runTemplateDelete(os.Args[2:], client, clientUUID)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "template-delete error:", err)
+			os.Exit(1)
+		}
 	default:
 		printUsage(os.Stderr)
 		os.Exit(2)
@@ -60,9 +92,19 @@ func main() {
 }
 
 type config struct {
-	Token    string
-	Provider string
-	BaseURL  string
+	Token      string
+	Provider   string
+	BaseURL    string
+	ClientUUID string
+}
+
+// requireClientUUID is checked per command because only the template endpoints
+// are scoped by client.
+func requireClientUUID(cfg config) (string, error) {
+	if cfg.ClientUUID == "" {
+		return "", errors.New("SWEEGO_CLIENT_UUID is required for template commands")
+	}
+	return cfg.ClientUUID, nil
 }
 
 func loadConfigFromEnv() (config, error) {
@@ -82,9 +124,10 @@ func loadConfigFromEnv() (config, error) {
 	}
 
 	return config{
-		Token:    token,
-		Provider: provider,
-		BaseURL:  strings.TrimRight(baseURL, "/"),
+		Token:      token,
+		Provider:   provider,
+		BaseURL:    strings.TrimRight(baseURL, "/"),
+		ClientUUID: strings.TrimSpace(os.Getenv("SWEEGO_CLIENT_UUID")),
 	}, nil
 }
 
@@ -277,6 +320,23 @@ func parseAddress(raw string) (sweego.EmailAddress, error) {
 	}, nil
 }
 
+// parseFlagsWithPositionals lets flags appear after positional arguments, which
+// flag.FlagSet does not support on its own.
+func parseFlagsWithPositionals(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positionals, nil
+		}
+		positionals = append(positionals, rest[0])
+		args = rest[1:]
+	}
+}
+
 func printHTTPResult(status int, body []byte) {
 	fmt.Printf("HTTP status: %d\n", status)
 	fmt.Println(prettyJSON(body))
@@ -313,9 +373,14 @@ func printUsage(out *os.File) {
 	fmt.Fprintln(out, "  sweego_client logs [--uid <value>] [--to <email>] [--date <YYYY-MM-DD>]")
 	fmt.Fprintln(out, "  sweego_client verify --to <email> --message-id <id> [--sent-at <RFC3339>] [--tolerance <duration>]")
 	fmt.Fprintln(out, "  sweego_client bulk-send --from <email> --to <email,email,...> [--subject <text>] [--text <text>] [--discard-response] [--dry-run]")
+	fmt.Fprintln(out, "  sweego_client bulk-send-json <targets.json> [--from <email>] [--message-id <id>] [--discard-response] [--dry-run]")
+	fmt.Fprintln(out, "  sweego_client template-upload <template-file> [--name <text>]")
+	fmt.Fprintln(out, "  sweego_client template-update <template-uuid> <template-file> [--name <text>]")
+	fmt.Fprintln(out, "  sweego_client template-delete <template-uuid>")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Environment:")
 	fmt.Fprintln(out, "  SWEEGO_TOKEN (required)")
 	fmt.Fprintln(out, "  SWEEGO_PROVIDER (required)")
+	fmt.Fprintln(out, "  SWEEGO_CLIENT_UUID (required by the template commands)")
 	fmt.Fprintln(out, "  SWEEGO_BASE_URL (optional, defaults to https://api.sweego.io)")
 }
