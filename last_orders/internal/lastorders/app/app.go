@@ -26,6 +26,7 @@ import (
 	"last_orders/internal/lastorders/plugins/polls"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 	logsvc "last_orders/internal/lastorders/services/log"
+	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
 
@@ -161,6 +162,7 @@ func New(cfg Config) (application *App, err error) {
 	factRegistry := facts.NewRegistry()
 	factRegistry.Register(polls.FactNewPoll, polls.HandlerNewPoll)
 	factRegistry.Register(polls.FactCompletedPoll, polls.HandlerCompletedPoll)
+	factRegistry.Register(truths.EventVenueObservedName, recurrenceplugin.HandlerEvaluateEventVenue)
 	factRegistry.Register(recurrenceplugin.FactStaleEvent, recurrenceplugin.HandlerStaleEvent)
 	factRegistry.Register(recurrenceplugin.FactCreateEventPoll, recurrenceplugin.HandlerCreateEventPoll)
 	factRegistry.Register(logsvc.FactLogMessage, logsvc.HandlerLogMessage)
@@ -193,6 +195,9 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	if recurrenceService != nil {
+		if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
+			return nil, err
+		}
 		if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
 			return nil, err
 		}
@@ -209,6 +214,8 @@ func New(cfg Config) (application *App, err error) {
 		eventVenueListener, err = eventvenuelistener.New(eventvenuelistener.Config{
 			Store:              cellarStore,
 			Service:            recurrenceService,
+			Client:             firestoreClient,
+			VenueCache:         venueCacheService,
 			ReevaluateInterval: cfg.EventReevaluateEvery,
 			Logger:             cfg.Logger,
 		})

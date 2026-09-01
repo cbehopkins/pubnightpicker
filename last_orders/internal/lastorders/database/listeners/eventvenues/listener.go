@@ -2,6 +2,7 @@ package eventvenues
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,8 +11,9 @@ import (
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/recurrence"
+	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
-	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
+	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -19,12 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Idempotency namespaces. The two listeners share a natural key format but are
-// deliberately independent identities.
-const (
-	ListenerStaleEvents = "stale_events"
-	ListenerEventDue    = "event_due"
-)
+const listenerEventVenueObserved = "event_venue_observed"
 
 // TimerName is the durable Cellar Timer which drives periodic re-evaluation. See
 // docs/cdd/0007-app-structure-migration.md §7.
@@ -36,8 +33,10 @@ const (
 )
 
 type Config struct {
-	Store   cellar.Store
-	Service *recurrence.Service
+	Store      cellar.Store
+	Service    *recurrence.Service
+	Client     *firestore.Client
+	VenueCache *venuecache.Service
 	// ReevaluateInterval is the initial schedule interval for the durable
 	// re-evaluation Timer. Once the Timer has been scheduled, Cellar's persisted
 	// configuration is authoritative (see docs/adr/0014); changing this value has
@@ -51,6 +50,8 @@ type Config struct {
 type Listener struct {
 	store    cellar.Store
 	service  *recurrence.Service
+	client   *firestore.Client
+	cache    *venuecache.Service
 	interval time.Duration
 	logger   *slog.Logger
 	lifecycle.Controller
@@ -63,13 +64,16 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Service == nil {
 		return nil, fmt.Errorf("recurrence service is required")
 	}
+	if cfg.Client == nil {
+		return nil, fmt.Errorf("firestore client is required")
+	}
 	if cfg.ReevaluateInterval <= 0 {
 		cfg.ReevaluateInterval = defaultReevaluateInterval
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Listener{store: cfg.Store, service: cfg.Service, interval: cfg.ReevaluateInterval, logger: cfg.Logger}, nil
+	return &Listener{store: cfg.Store, service: cfg.Service, client: cfg.Client, cache: cfg.VenueCache, interval: cfg.ReevaluateInterval, logger: cfg.Logger}, nil
 }
 
 // Interval returns the initial schedule interval for the durable re-evaluation Timer.
@@ -94,7 +98,7 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) watchOnce(ctx context.Context) error {
-	iter := l.service.EventVenueQuery().Snapshots(ctx)
+	iter := l.eventVenueQuery().Snapshots(ctx)
 	defer iter.Stop()
 
 	for {
@@ -110,7 +114,7 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 			if change.Kind == firestore.DocumentRemoved {
 				continue
 			}
-			l.evaluate(ctx, recurrence.EventVenueFrom(change.Doc))
+			l.createEventVenueObserved(ctx, recurrence.EventVenueFrom(change.Doc))
 		}
 	}
 }
@@ -120,47 +124,81 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 // document change. A returned error cancels and deletes the Timer (see ADR 0014),
 // so failures are logged and swallowed to keep the Timer recurring.
 func (l *Listener) ReevaluateOnce(ctx context.Context) error {
-	venues, err := l.service.ListEventVenues(ctx)
+	venues, err := l.listEventVenues(ctx)
 	if err != nil {
 		l.logger.Error("event venue re-evaluation failed", "err", err)
 		return nil
 	}
 	for _, venue := range venues {
-		l.evaluate(ctx, venue)
+		l.createEventVenueObserved(ctx, venue)
 	}
 	return nil
 }
 
-func (l *Listener) evaluate(ctx context.Context, venue recurrence.EventVenue) {
-	today := l.service.Today()
-	loc := l.service.Location()
+func (l *Listener) eventVenueQuery() firestore.Query {
+	return l.client.Collection("pubs").Where("venueType", "==", "event")
+}
 
-	if recurrence.NeedsRecalculation(venue.Recurrence, venue.NextOccurrenceDate, today, loc) {
-		payload, err := cellar.JSONCodec[recurrenceplugin.StaleEventPayload]().Marshal(recurrenceplugin.StaleEventPayload{
-			EventID:      venue.ID,
-			ObservedDate: venue.NextOccurrenceDate,
-		})
+func (l *Listener) listEventVenues(ctx context.Context) ([]recurrence.EventVenue, error) {
+	if l.cache != nil {
+		projections, err := l.cache.ListEventVenues(ctx)
 		if err != nil {
-			l.logger.Error("marshal stale event payload", "event_id", venue.ID, "err", err)
-			return
+			return nil, fmt.Errorf("list event venues through cache: %w", err)
 		}
-		key := recurrence.StaleEventKey(venue.ID, venue.NextOccurrenceDate, venue.Recurrence)
-		l.createFact(ctx, ListenerStaleEvents, key, recurrenceplugin.FactStaleEvent, payload)
+		venues := make([]recurrence.EventVenue, 0, len(projections))
+		for _, projection := range projections {
+			venue, err := eventVenueFromProjection(projection)
+			if err != nil {
+				return nil, fmt.Errorf("decode venue %q from cache: %w", projection.ID, err)
+			}
+			venues = append(venues, venue)
+		}
+		return venues, nil
+	}
+
+	iter := l.eventVenueQuery().Documents(ctx)
+	defer iter.Stop()
+
+	venues := make([]recurrence.EventVenue, 0, 32)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			return venues, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, recurrence.EventVenueFrom(doc))
+	}
+}
+
+func eventVenueFromProjection(projection venuecache.VenueProjection) (recurrence.EventVenue, error) {
+	var recurrenceRule map[string]any
+	if projection.RecurrenceJSON != "" {
+		if err := json.Unmarshal([]byte(projection.RecurrenceJSON), &recurrenceRule); err != nil {
+			return recurrence.EventVenue{}, err
+		}
+	}
+	return recurrence.EventVenue{
+		ID:                 projection.ID,
+		Name:               projection.Name,
+		Recurrence:         recurrenceRule,
+		NextOccurrenceDate: projection.NextOccurrenceDate,
+	}, nil
+}
+
+func (l *Listener) createEventVenueObserved(ctx context.Context, venue recurrence.EventVenue) {
+	observedOn := l.service.Today().Format(time.DateOnly)
+	event := truths.EventVenueObserved{
+		Venue:      venue,
+		ObservedOn: observedOn,
+	}
+	payload, err := cellar.JSONCodec[truths.EventVenueObserved]().Marshal(event)
+	if err != nil {
+		l.logger.Error("marshal event venue observation", "event_id", venue.ID, "err", err)
 		return
 	}
-
-	if recurrence.IsDue(venue.NextOccurrenceDate, today, loc) {
-		payload, err := cellar.JSONCodec[recurrenceplugin.CreateEventPollPayload]().Marshal(recurrenceplugin.CreateEventPollPayload{
-			EventID:        venue.ID,
-			OccurrenceDate: venue.NextOccurrenceDate,
-		})
-		if err != nil {
-			l.logger.Error("marshal create event poll payload", "event_id", venue.ID, "err", err)
-			return
-		}
-		key := recurrence.EventDueKey(venue.ID, venue.NextOccurrenceDate)
-		l.createFact(ctx, ListenerEventDue, key, recurrenceplugin.FactCreateEventPoll, payload)
-	}
+	l.createFact(ctx, listenerEventVenueObserved, event.Identity(), truths.EventVenueObservedName, payload)
 }
 
 // createFact hands the observation to the idempotency component, which is the sole

@@ -2,7 +2,6 @@ package recurrence
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
 )
 
 const (
@@ -48,60 +46,6 @@ func (s *Service) Location() *time.Location {
 
 func (s *Service) Today() time.Time {
 	return time.Now().In(s.loc)
-}
-
-// EventVenueQuery selects the venues both recurrence listeners observe.
-func (s *Service) EventVenueQuery() firestore.Query {
-	return s.client.Collection(venueCollection).Where("venueType", "==", "event")
-}
-
-func (s *Service) ListEventVenues(ctx context.Context) ([]EventVenue, error) {
-	if s.cache != nil {
-		projections, err := s.cache.ListEventVenues(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list event venues through cache: %w", err)
-		}
-		venues := make([]EventVenue, 0, len(projections))
-		for _, projection := range projections {
-			eventVenue, err := eventVenueFromProjection(projection)
-			if err != nil {
-				return nil, fmt.Errorf("decode venue %q from cache: %w", projection.ID, err)
-			}
-			venues = append(venues, eventVenue)
-		}
-		return venues, nil
-	}
-
-	iter := s.EventVenueQuery().Documents(ctx)
-	defer iter.Stop()
-
-	venues := make([]EventVenue, 0, 32)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		venues = append(venues, EventVenueFrom(doc))
-	}
-	return venues, nil
-}
-
-func eventVenueFromProjection(projection venuecache.VenueProjection) (EventVenue, error) {
-	var recurrence map[string]any
-	if projection.RecurrenceJSON != "" {
-		if err := json.Unmarshal([]byte(projection.RecurrenceJSON), &recurrence); err != nil {
-			return EventVenue{}, err
-		}
-	}
-	return EventVenue{
-		ID:                 projection.ID,
-		Name:               projection.Name,
-		Recurrence:         recurrence,
-		NextOccurrenceDate: projection.NextOccurrenceDate,
-	}, nil
 }
 
 func EventVenueFrom(doc *firestore.DocumentSnapshot) EventVenue {

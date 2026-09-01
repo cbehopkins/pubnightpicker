@@ -1,4 +1,4 @@
-package recurrence
+package eventvenues
 
 import (
 	"context"
@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
@@ -52,22 +54,26 @@ func TestListEventVenuesReadsProjectionThroughVenueCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new venue cache service: %v", err)
 	}
-	svc, err := NewService(client, slog.Default(), cache)
+	service, err := recurrence.NewService(client, slog.Default(), cache)
 	if err != nil {
 		t.Fatalf("new recurrence service: %v", err)
+	}
+	listener, err := New(Config{Store: cellar.NewMemoryStore(nil), Service: service, Client: client, VenueCache: cache})
+	if err != nil {
+		t.Fatalf("new event venue listener: %v", err)
 	}
 
 	eventID := "venue-cache-recurrence-" + time.Now().UTC().Format("20060102150405.000000000")
 	if _, err := client.Collection("pubs").Doc(eventID).Set(ctx, map[string]any{
-		"venueType":         "event",
-		"name":              "The Cached Arms",
-		"recurrence":        map[string]any{"frequency": "once", "date": "2030-01-02"},
-		NextOccurrenceField: "2030-01-02",
+		"venueType":                    "event",
+		"name":                         "The Cached Arms",
+		"recurrence":                   map[string]any{"frequency": "once", "date": "2030-01-02"},
+		recurrence.NextOccurrenceField: "2030-01-02",
 	}); err != nil {
 		t.Fatalf("seed venue: %v", err)
 	}
 
-	venues, err := svc.ListEventVenues(ctx)
+	venues, err := listener.listEventVenues(ctx)
 	if err != nil {
 		t.Fatalf("list event venues: %v", err)
 	}

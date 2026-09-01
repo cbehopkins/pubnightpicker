@@ -485,6 +485,17 @@ A notification ping has occurred.
 Initially discovered through a Firebase listener.
 
 ## Other Domain Truths
+### EventVenueObserved
+
+An event venue has been observed in a particular recurrence state on a London
+calendar date.
+
+It contains an application-owned event-venue snapshot and the observed date.
+Its identity includes the venue ID, persisted occurrence date, recurrence
+definition, and observed date. It may be produced by either a Firebase listener
+or periodic re-evaluation. Recurrence plugins determine which maintenance or
+poll-materialisation work follows.
+
 ### RecurrenceCalculation
 
 Recurrence calculation work is required.
