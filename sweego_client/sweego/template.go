@@ -34,35 +34,14 @@ func templatesPath(clientUUID string) string {
 }
 
 func TemplateUUID(body []byte) (string, error) {
-	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
+	var response struct {
+		UUID string `json:"uuid"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
 		return "", fmt.Errorf("decode template response JSON: %w", err)
 	}
-	if uuid := findTemplateUUID(root); uuid != "" {
-		return uuid, nil
+	if response.UUID == "" {
+		return "", errors.New("no template uuid found in response")
 	}
-	return "", errors.New("no template uuid found in response")
-}
-
-func findTemplateUUID(value any) string {
-	switch current := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"uuid", "uuid_template", "template_uuid", "id"} {
-			if text, ok := current[key].(string); ok && text != "" {
-				return text
-			}
-		}
-		for _, child := range current {
-			if uuid := findTemplateUUID(child); uuid != "" {
-				return uuid
-			}
-		}
-	case []any:
-		for _, child := range current {
-			if uuid := findTemplateUUID(child); uuid != "" {
-				return uuid
-			}
-		}
-	}
-	return ""
+	return response.UUID, nil
 }

@@ -3,6 +3,7 @@ package logs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -53,7 +54,7 @@ func Recover(ctx context.Context, client *Client, operation RecoveryOperation, c
 	}
 
 	var observations []QueryObservation
-	var queryErr error
+	queryErrors := make([]error, len(operation.Recipients))
 	for attempt := 1; attempt <= options.Attempts; attempt++ {
 		for index, recipient := range operation.Recipients {
 			if results[index].Status == Recovered || results[index].Status == Ambiguous {
@@ -63,9 +64,10 @@ func Recover(ctx context.Context, client *Client, operation RecoveryOperation, c
 			observation.Attempt = attempt
 			observations = append(observations, observation)
 			if err != nil {
-				queryErr = err
+				queryErrors[index] = err
 				continue
 			}
+			queryErrors[index] = nil
 			matches := matchingRecords(candidates, operation, recipient, correlationID, options.Tolerance)
 			results[index].Candidates = matches
 			switch len(matches) {
@@ -91,7 +93,7 @@ func Recover(ctx context.Context, client *Client, operation RecoveryOperation, c
 			}
 		}
 	}
-	return results, observations, queryErr
+	return results, observations, errors.Join(queryErrors...)
 }
 
 func queryRecipient(ctx context.Context, client *Client, operation RecoveryOperation, recipient string) ([]Record, QueryObservation, error) {

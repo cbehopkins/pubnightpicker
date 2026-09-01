@@ -89,25 +89,6 @@ func TestTemplateUploadHonoursExplicitName(t *testing.T) {
 	}
 }
 
-func TestTemplateUUIDReadsNestedIdentifiers(t *testing.T) {
-	for _, body := range []string{
-		`{"uuid":"tpl-123"}`,
-		`{"data":{"uuid_template":"tpl-123"}}`,
-		`{"result":[{"id":"tpl-123"}]}`,
-	} {
-		uuid, err := sweego.TemplateUUID([]byte(body))
-		if err != nil {
-			t.Fatalf("%s: %v", body, err)
-		}
-		if uuid != "tpl-123" {
-			t.Fatalf("%s: got %q", body, uuid)
-		}
-	}
-	if _, err := sweego.TemplateUUID([]byte(`{"state":true}`)); err == nil {
-		t.Fatal("expected an error when no uuid is present")
-	}
-}
-
 func TestTemplateUploadReportsAPIFailure(t *testing.T) {
 	client, _ := templateServer(t, http.StatusUnprocessableEntity, `{"error":["bad template"]}`)
 	path := writeTempFile(t, "template.txt", rawTemplateSource)
