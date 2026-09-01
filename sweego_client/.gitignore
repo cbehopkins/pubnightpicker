@@ -1,3 +1,7 @@
 *.json
 *.html
 *.txt
+
+!examples/*.json
+!examples/*.html
+!examples/*.txt

@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -157,7 +157,8 @@ func runBulkSendDocument(args []string, client *sweego.Client, provider string) 
 		}
 	}
 
-	results, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options.recoveryOptions)
+	results, observations, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options.recoveryOptions)
+	printLogObservations(observations, options.attempts)
 	printBulkRecovery(results, actual, options.discardResponse)
 
 	if sendErr != nil {

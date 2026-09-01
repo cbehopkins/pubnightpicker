@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -6,12 +6,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/mail"
 	"os"
 	"strings"
 	"time"
 
 	"sweego_client/sweego"
+	"sweego_client/sweego/logs"
 )
 
 type bulkOperation struct {
@@ -29,23 +29,6 @@ type bulkRecipient struct {
 type bulkResponse struct {
 	TransactionID string
 	SwgUIDs       map[string]string
-}
-
-type bulkRecoveryResult string
-
-const (
-	bulkRecovered  bulkRecoveryResult = "RECOVERED"
-	bulkUnresolved bulkRecoveryResult = "UNRESOLVED"
-	bulkAmbiguous  bulkRecoveryResult = "AMBIGUOUS"
-)
-
-type bulkRecipientResult struct {
-	Recipient  string
-	Status     bulkRecoveryResult
-	SwgUID     string
-	Record     *sweego.LogRecord
-	Candidates []sweego.LogRecord
-	Reason     string
 }
 
 func runBulkSend(args []string, client *sweego.Client, provider string) error {
@@ -123,7 +106,8 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 		}
 	}
 
-	results, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options.recoveryOptions)
+	results, observations, recoveryErr := recoverBulkLogs(context.Background(), client, recoveryOperation, correlationID, options.recoveryOptions)
+	printLogObservations(observations, options.attempts)
 	printBulkRecovery(results, actual, options.discardResponse)
 	if sendErr != nil {
 		return sendErr
@@ -266,99 +250,33 @@ func collectBulkIdentifiers(value any, response *bulkResponse) {
 	}
 }
 
-func recoverBulkLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, correlationID string, options recoveryOptions) ([]bulkRecipientResult, error) {
-	results := make([]bulkRecipientResult, len(operation.Recipients))
+func recoverBulkLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, correlationID string, options recoveryOptions) ([]logs.RecoveryResult, []logs.QueryObservation, error) {
+	recipients := make([]string, len(operation.Recipients))
 	for index, recipient := range operation.Recipients {
-		results[index] = bulkRecipientResult{Recipient: recipient.Email, Status: bulkUnresolved}
+		recipients[index] = recipient.Email
 	}
-	var queryErr error
-	for attempt := 1; attempt <= options.attempts; attempt++ {
-		fmt.Printf("\nLog recovery attempt %d/%d\n", attempt, options.attempts)
-		for index, recipient := range operation.Recipients {
-			if results[index].Status == bulkRecovered || results[index].Status == bulkAmbiguous {
-				continue
-			}
-			candidates, err := queryBulkRecipientLogs(ctx, client, operation, recipient.Email)
-			if err != nil {
-				queryErr = err
-				continue
-			}
-			matches := matchingBulkLogs(candidates, operation, recipient.Email, correlationID, options)
-			results[index].Candidates = matches
-			switch len(matches) {
-			case 0:
-				results[index].Reason = "no matching Sweego log found within the recovery window"
-			case 1:
-				results[index].Status = bulkRecovered
-				results[index].SwgUID = matches[0].SwgUID
-				results[index].Record = &matches[0]
-			default:
-				results[index].Status = bulkAmbiguous
-				results[index].Reason = "multiple log records satisfy the correlation criteria"
-			}
-		}
-		if allBulkRecipientsResolved(results) || attempt == options.attempts {
-			break
-		}
-		if options.retryDelay > 0 {
-			time.Sleep(options.retryDelay)
-		}
-	}
-	return results, queryErr
-}
-
-func queryBulkRecipientLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, recipient string) ([]sweego.LogRecord, error) {
-	status, body, err := client.QueryLogs(ctx, sweego.LogsRequest{
-		Channel: "email", StartDate: operation.SubmittedAt.Add(-24 * time.Hour).Format("2006-01-02"),
-		EndDate: operation.SubmittedAt.Add(24 * time.Hour).Format("2006-01-02"), SearchWord: recipient, Size: 500,
+	return logs.Recover(ctx, logs.NewClient(client), logs.RecoveryOperation{
+		TransactionID: operation.TransactionID,
+		SubmittedAt:   operation.SubmittedAt,
+		Sender:        operation.Sender.Email,
+		Recipients:    recipients,
+	}, correlationID, logs.RecoveryOptions{
+		Tolerance: options.tolerance, RetryDelay: options.retryDelay, Attempts: options.attempts,
 	})
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("Raw relevant log response for %s: %s\n", recipient, body)
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("logs query returned non-2xx status: %d", status)
-	}
-	var response sweego.LogsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("decode logs response: %w", err)
-	}
-	return response.Result, nil
 }
 
-func matchingBulkLogs(records []sweego.LogRecord, operation bulkOperation, recipient, correlationID string, options recoveryOptions) []sweego.LogRecord {
-	matches := make([]sweego.LogRecord, 0)
-	for _, record := range records {
-		if !sameEmail(record.EmailTo, recipient) || !sameEmail(record.EmailFrom, operation.Sender.Email) || record.Channel != "" && record.Channel != "email" {
-			continue
+func printLogObservations(observations []logs.QueryObservation, attempts int) {
+	lastAttempt := 0
+	for _, observation := range observations {
+		if observation.Attempt != lastAttempt {
+			fmt.Printf("\nLog recovery attempt %d/%d\n", observation.Attempt, attempts)
+			lastAttempt = observation.Attempt
 		}
-		created, err := parseSweegoTime(record.EmailCreation)
-		if err != nil || created.Before(operation.SubmittedAt.Add(-options.tolerance)) || created.After(operation.SubmittedAt.Add(options.tolerance)) {
-			continue
-		}
-		if operation.TransactionID != "" && record.TransactionID != "" && operation.TransactionID != record.TransactionID {
-			continue
-		}
-		if value, ok := bulkHeaderValue(record.Headers, sweego.PubnightMessageIDHeader); ok && value != correlationID {
-			continue
-		}
-		matches = append(matches, record)
+		fmt.Printf("Raw relevant log response for %s: %s\n", observation.Recipient, observation.Response.Body)
 	}
-	return matches
 }
 
-func bulkHeaderValue(headers map[string]any, name string) (string, bool) {
-	for key, raw := range headers {
-		if !strings.EqualFold(key, name) {
-			continue
-		}
-		value, ok := raw.(string)
-		return value, ok
-	}
-	return "", false
-}
-
-func printBulkRecovery(results []bulkRecipientResult, actual bulkResponse, hidden bool) {
+func printBulkRecovery(results []logs.RecoveryResult, actual bulkResponse, hidden bool) {
 	fmt.Println("\nBulk recovery report")
 	for _, result := range results {
 		fmt.Printf("  %s: %s", result.Recipient, result.Status)
@@ -373,7 +291,7 @@ func printBulkRecovery(results []bulkRecipientResult, actual bulkResponse, hidde
 	if hidden {
 		complete := len(results) > 0
 		for _, result := range results {
-			if result.Status != bulkRecovered || actual.SwgUIDs[result.Recipient] != result.SwgUID {
+			if result.Status != logs.Recovered || actual.SwgUIDs[result.Recipient] != result.SwgUID {
 				complete = false
 			}
 		}
@@ -381,33 +299,6 @@ func printBulkRecovery(results []bulkRecipientResult, actual bulkResponse, hidde
 			fmt.Println("Result: COMPLETE RECOVERY")
 		}
 	}
-}
-
-func allBulkRecipientsResolved(results []bulkRecipientResult) bool {
-	for _, result := range results {
-		if result.Status == bulkUnresolved {
-			return false
-		}
-	}
-	return true
-}
-
-func parseSweegoTime(raw string) (time.Time, error) {
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
-		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("unsupported Sweego timestamp %q", raw)
-}
-
-func sameEmail(left, right string) bool {
-	leftAddress, leftErr := mail.ParseAddress(left)
-	rightAddress, rightErr := mail.ParseAddress(right)
-	if leftErr != nil || rightErr != nil {
-		return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
-	}
-	return strings.EqualFold(leftAddress.Address, rightAddress.Address)
 }
 
 func valueOrUnknown(value string) string {

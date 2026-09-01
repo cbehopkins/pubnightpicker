@@ -4,20 +4,30 @@ This is a small Go CLI for inspecting Sweego email sending and log behaviour.
 It is an experiment, not a production sending library. Raw provider responses
 and relevant log responses are intentionally printed.
 
+## Package layout
+
+- `cmd/sweego-client` is the executable entry point.
+- `internal/cli` owns command parsing, configuration, and terminal output.
+- `sweego` is the importable API client for email sending and template
+  administration.
+- `sweego/logs` owns the raw logs API, verification, matching, and bulk log
+  recovery.
+- `examples` contains runnable request documents and template sources.
+
 ## Commands
 
 Existing single-message experiments remain available:
 
 ```text
-go run . send --from "Sender <sender@example.com>" --to recipient@example.com --subject Test --text "Hello"
-go run . logs --to recipient@example.com --date 2026-08-17
-go run . verify --to recipient@example.com --message-id pn-example
+go run ./cmd/sweego-client send --from "Sender <sender@example.com>" --to recipient@example.com --subject Test --text "Hello"
+go run ./cmd/sweego-client logs --to recipient@example.com --date 2026-08-17
+go run ./cmd/sweego-client verify --to recipient@example.com --message-id pn-example
 ```
 
 The independent bulk experiment is:
 
 ```text
-go run . bulk-send \
+go run ./cmd/sweego-client bulk-send \
   --from "Sender <sender@example.com>" \
   --to alice@example.com,bob@example.com,carol@example.com \
   --subject "Bulk experiment" \
@@ -41,20 +51,20 @@ template endpoint path.
 Upload a template from a plain-text file and record the printed UUID:
 
 ```text
-go run . template-upload template.txt
-go run . template-upload template.txt --name pubnight-invite
+go run ./cmd/sweego-client template-upload examples/template.txt
+go run ./cmd/sweego-client template-upload examples/template.txt --name pubnight-invite
 ```
 
 Replace the content of an existing template:
 
 ```text
-go run . template-update <template-uuid> template.txt
+go run ./cmd/sweego-client template-update <template-uuid> examples/template.txt
 ```
 
 Delete one:
 
 ```text
-go run . template-delete <template-uuid>
+go run ./cmd/sweego-client template-delete <template-uuid>
 ```
 
 Deletion matters: Sweego caps stored templates per plan (observed: **5**, with
@@ -67,8 +77,8 @@ field. Nothing is converted to HTML, escaped, trimmed, or cached locally.
 Send to a list of targets described by a JSON document:
 
 ```text
-go run . bulk-send-json bulk_text_request.json --dry-run
-go run . bulk-send-json bulk_text_request.json --attempts 10 --retry-delay 30s
+go run ./cmd/sweego-client bulk-send-json examples/bulk_text_request.json --dry-run
+go run ./cmd/sweego-client bulk-send-json examples/bulk_text_request.json --attempts 10 --retry-delay 30s
 ```
 
 The document supplies the content, the subject, the sender and the targets:
@@ -100,11 +110,11 @@ exactly as plain text does (both `500`). What it stores is a serialised
 visual-editor document, so a working template is a JSON file of that shape:
 
 ```text
-go run . template-upload template_document.json --name "Pubnight HTML template"
-go run . bulk-send-json bulk_html_request.json --dry-run
+go run ./cmd/sweego-client template-upload examples/template_document.json --name "Pubnight HTML template"
+go run ./cmd/sweego-client bulk-send-json examples/bulk_html_request.json --dry-run
 ```
 
-`template_document.json` is such a document, with the markup at
+`examples/template_document.json` is such a document, with the markup at
 `document.body.children[0].children[0].attrs.text`. Edit that string to change
 the email. The client still uploads the file verbatim - the document format is
 Sweego's requirement, not a transformation this client performs.
@@ -340,10 +350,11 @@ templates. This is the route the `body` key in the JSON document uses.
 
 This was carried out on 2026-08-28; the results are recorded above. To repeat it:
 
-1. `go run . template-upload template.txt` and note the printed template UUID.
+1. `go run ./cmd/sweego-client template-upload examples/template.txt` and note
+  the printed template UUID.
 2. Put that UUID in a document's `template` key with a single `dest` you control,
-   and run `go run . bulk-send-json <file> --dry-run`. Expect a 500, because a
-   plain-text template cannot be rendered.
+  and run `go run ./cmd/sweego-client bulk-send-json <file> --dry-run`. Expect
+  a 500, because a plain-text template cannot be rendered.
 3. Switch the document to `"body": "template.txt"` and repeat. Expect a 200.
 4. Repeat without `--dry-run` to deliver a real message.
 5. Open the received message and view its raw source, not the rendered body.

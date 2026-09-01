@@ -1,0 +1,6 @@
+Hello {{name}}
+
+Your pub night is on {{date}}.
+
+Thanks,
+Pubnight Picker

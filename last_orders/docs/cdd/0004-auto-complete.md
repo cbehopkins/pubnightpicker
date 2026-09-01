@@ -132,7 +132,9 @@ This deliberately allows the world to change between decision and execution.
 
 # 5. Completion Discovery
 
-The scheduled Completion Discovery Cell runs once per day at the configured housekeeping time.
+The scheduled Completion Discovery Cell runs once per day at the configured time. This uses a Cellar Timer object.
+The Timer object uses a fixed name so that regardless of starting with a clean database or reloading and existing one
+There is a single timer configured.
 
 The current operational schedule is:
 
@@ -149,7 +151,7 @@ date == today
 
 The date is interpreted using the service's configured Europe/London scheduling semantics.
 
-For every matching poll, the discovery Cell creates a Completion Candidate Cell containing:
+For every matching poll, the discovery Cell creates a PollAutoCompletionDue Fact.
 
 ```text
 pollId

@@ -1,0 +1,21 @@
+{
+    "body": "template.txt",
+    "subject": "Pub night for {{name}}",
+    "from": "Me <chris@email.cbeh.uk>",
+    "targets": [
+        {
+            "dest": "test1@cbeh.uk",
+            "vars": {
+                "name": "Test User",
+                "date": "Friday"
+            }
+        },
+        {
+            "dest": "test2@cbeh.uk",
+            "vars": {
+                "name": "Another User",
+                "date": "Saturday"
+            }
+        }
+    ]
+}

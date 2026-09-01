@@ -1,10 +1,11 @@
-package main
+package cli
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -140,7 +141,7 @@ func uploadLiveTemplate(t *testing.T, env liveEnv, label, content string) string
 
 func readLiveFixture(t *testing.T, path string) string {
 	t.Helper()
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(filepath.Join("..", "..", "examples", path))
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
