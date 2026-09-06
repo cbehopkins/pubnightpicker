@@ -107,6 +107,48 @@ func TestTimerFixedRateCoalescesMissedTicks(t *testing.T) {
 	})
 }
 
+func TestDailyCalendarTimerPreservesLondonWallClockAcrossDST(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatalf("load London location: %v", err)
+	}
+
+	config := TimerConfig{Mode: TimerDailyCalendar, DailyAt: "16:00", Location: location.String()}
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "before the daily deadline",
+			now:  time.Date(2026, time.March, 28, 15, 0, 0, 0, location),
+			want: time.Date(2026, time.March, 28, 16, 0, 0, 0, location),
+		},
+		{
+			name: "after the daily deadline across BST start",
+			now:  time.Date(2026, time.March, 28, 17, 0, 0, 0, location),
+			want: time.Date(2026, time.March, 29, 16, 0, 0, 0, location),
+		},
+		{
+			name: "after the daily deadline across GMT start",
+			now:  time.Date(2026, time.October, 24, 17, 0, 0, 0, location),
+			want: time.Date(2026, time.October, 25, 16, 0, 0, 0, location),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := nextCalendarDeadline(test.now, config)
+			if err != nil {
+				t.Fatalf("nextCalendarDeadline() error = %v", err)
+			}
+			if !got.Equal(test.want) {
+				t.Fatalf("nextCalendarDeadline() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTimerCallbackErrorDeletesTimer(t *testing.T) {
 	want := errors.New("application handled failure")
 	registration := newTestTimerRegistration(t, TimerFixedDelay, time.Minute, want)
@@ -131,6 +173,8 @@ func TestTimerValidatesConfiguration(t *testing.T) {
 		{name: "name", config: TimerConfig{Interval: time.Second, Mode: TimerFixedDelay}, callback: func(context.Context) error { return nil }, want: ErrHandlerNameRequired},
 		{name: "interval", timer: "timer", config: TimerConfig{Mode: TimerFixedDelay}, callback: func(context.Context) error { return nil }, want: ErrTimerIntervalInvalid},
 		{name: "mode", timer: "timer", config: TimerConfig{Interval: time.Second, Mode: "unknown"}, callback: func(context.Context) error { return nil }, want: ErrTimerModeInvalid},
+		{name: "calendar time", timer: "timer", config: TimerConfig{Mode: TimerDailyCalendar, Location: "Europe/London"}, callback: func(context.Context) error { return nil }, want: ErrTimerDailyAtInvalid},
+		{name: "calendar location", timer: "timer", config: TimerConfig{Mode: TimerDailyCalendar, DailyAt: "16:00", Location: "not-a-location"}, callback: func(context.Context) error { return nil }, want: ErrTimerLocationInvalid},
 		{name: "callback", timer: "timer", config: TimerConfig{Interval: time.Second, Mode: TimerFixedDelay}, want: ErrTimerCallbackNil},
 	}
 

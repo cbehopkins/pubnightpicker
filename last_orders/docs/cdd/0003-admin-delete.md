@@ -2,129 +2,185 @@
 
 ## 1. Purpose
 
-The Admin Delete Service provides a controlled backend mechanism for deleting a Firebase Authentication user in response to an administrator-created deletion request.
+The Admin Delete Service provides a controlled backend mechanism for deleting a
+Firebase Authentication user in response to an administrator-created deletion
+request. The requesting administrator is not assumed to have direct Firebase
+Authentication deletion privileges.
 
-The service exists because the requesting administrator is not assumed to have direct Firebase Authentication deletion privileges.
-
-Before deleting the Firebase Authentication account, the service verifies that the user's application data has already been removed.
-
-The service is designed for **safe retry and convergence**, rather than exactly-once execution.
-
-In particular, deletion of a Firebase Authentication user is treated as idempotent:
+Before deleting the Firebase Authentication account, the service verifies that
+the user's application data has already been removed. The service is designed
+for safe retry and convergence, rather than exactly-once execution.
 
 ```text
 user exists
-    → delete user
+    -> delete user
 
 user does not exist
-    → desired state already achieved
-    → successful outcome
+    -> desired state already achieved
+    -> successful outcome
 ```
 
 ---
 
-# 2. Architectural Position
+## 2. Architectural Position
 
-Admin Delete is a **housekeeping service** running on the new backend architecture.
-
-It is composed of:
-
-1. **Admin Delete Listener**
-2. **Admin Delete Cell Handler**
-3. **Admin Delete Service**
-4. **Firebase Auth adapter**
-5. **Audit/metrics persistence**
-
-The architectural flow is:
+Admin Delete is a housekeeping service following ADR 0008's application
+structure and ADR 0009's Truth boundary.
 
 ```text
-Firestore
-    │
-    │ admin_delete_requests change
-    ▼
-Admin Delete Listener
-    │
-    │ eligible request
-    ▼
-Cellar
-    │
-    │ Admin Delete Cell
-    ▼
-Admin Delete Handler
-    │
-    ▼
-Admin Delete Service
-    │
-    ├── validate request
-    ├── validate application-data preconditions
-    ├── evaluate execution mode
-    └── delete Firebase Auth user
-             │
-             ▼
-      Application result
-             │
-             ▼
-       Firestore transaction
-         ├── request state
-         └── audit record
+Firestore change
+    |
+    v
+database/listeners/admindelete
+    | constructs immutable evidence
+    v
+truths.AdminDeleteRequested
+    | identity + serialised Fact envelope
+    v
+components/firebaseidempotency
+    |
+    v
+plugins/admindelete
+    | Truth-to-service-Cell connectivity
+    v
+services/admindelete
+    | validate, check current preconditions, and delete Auth user
+    v
+outcome-specific persistence Cell
+    | Firestore transaction
+    +-- request terminal state
+    +-- audit evidence
 ```
 
-The listener is responsible for **recognising work**.
+The listener recognises an observation and constructs a Truth. The plugin
+answers which service work follows that Truth. The service Cell handlers perform
+Admin Delete work. These responsibilities must not be collapsed into one
+listener callback.
 
-The Cell handler is responsible for **executing work**.
+### 2.1 Package Responsibilities
 
-The service is responsible for **admin-delete domain behaviour**.
+| Responsibility | Package |
+| --- | --- |
+| Typed Admin Delete Truth | `internal/lastorders/truths` |
+| Firestore change observation | `internal/lastorders/database/listeners/admindelete` |
+| Truth-to-service connectivity | `internal/lastorders/plugins/admindelete` |
+| Admin Delete Cells, Auth client, request/audit repository | `internal/lastorders/services/admindelete` |
+| Reusable Fact and idempotency infrastructure | `internal/lastorders/components` |
+| Construction and explicit registration | `internal/lastorders/app` |
 
-The Firebase Auth adapter is responsible for **external-system interaction**.
-
-These responsibilities must not be collapsed into a single listener callback.
-
----
-
-# 3. Architectural Principles
-
-The service follows these principles.
-
-### 3.1 Listeners recognise work
-
-The listener must not perform Firebase Authentication deletion.
-
-It should:
-
-* receive a Firestore change;
-* determine whether the change represents eligible work;
-* apply cheap service-level gates;
-* create the corresponding Cell.
-
-### 3.2 Cells provide retryable execution
-
-The Cell is the unit of execution and retry.
-
-The Cell handler may be executed more than once.
-
-The service must therefore be safe to re-enter after an incomplete or ambiguous previous attempt.
-
-### 3.3 Services contain domain behaviour
-
-Validation, precondition checking, state transitions and interpretation of Firebase Authentication results belong to the Admin Delete Service rather than the listener.
-
-### 3.4 External systems are behind adapters
-
-Firebase Authentication must be accessed through an application adapter rather than directly from listener infrastructure.
-
-This keeps the service testable and makes the distributed transaction boundary explicit.
-
-### 3.5 Durable state is application state
-
-The Firestore request status represents the durable outcome of the deletion request.
-
-Transient Cell execution state belongs to Cellar.
-
-The application must not duplicate Cellar's execution state merely because a deletion is currently being attempted.
+A Firebase Authentication client or Firestore repository used only by Admin
+Delete is service-specific implementation, not a reusable `components` package.
+It may move to `components` only when a genuinely independent reuse case exists.
 
 ---
 
-# 4. Source Request
+## 3. Truth and Idempotency
+
+### 3.1 AdminDeleteRequested Truth
+
+The listener constructs a typed Truth in `internal/lastorders/truths`. It means:
+
+> An administrator requested deletion of this Firebase Authentication account.
+
+It does not mean that a Firestore listener received a particular document event.
+The source `DocumentSnapshot` is transient listener input and must not be
+persisted as Truth evidence.
+
+The Truth holds an application-owned immutable snapshot containing the evidence
+needed to understand the request:
+
+```go
+type AdminDeleteRequestSnapshot struct {
+    RequestID        string `json:"request_id"`
+    TargetUID        string `json:"target_uid"`
+    TargetEmail      string `json:"target_email"`
+    RequestedByUID   string `json:"requested_by_uid"`
+    RequestedByEmail string `json:"requested_by_email"`
+    Reason           string `json:"reason"`
+    SchemaVersion    string `json:"schema_version"`
+    CreatedAt        string `json:"created_at"`
+}
+
+type AdminDeleteRequested struct {
+    Request AdminDeleteRequestSnapshot `json:"request"`
+}
+
+func (truth AdminDeleteRequested) Identity() string {
+    return truth.Request.RequestID
+}
+```
+
+`requestId` identifies the deletion request and is the Truth identity.
+`targetUid` identifies the account being operated on; it is evidence, not the
+idempotency key. The exact timestamp representation follows the application
+model in force when this service is implemented, but it must be serialisable and
+independent of the Firebase SDK.
+
+### 3.2 Listener and Fact Transport
+
+The listener observes `admin_delete_requests` for `ADDED` and `MODIFIED` events.
+It considers current document eligibility only to decide whether to construct a
+Truth. Only `status == "pending"` is eligible; all other states are ignored.
+
+The listener must not delete a Firebase Authentication user. It receives the
+Firestore change, applies the listener gates in section 4, constructs
+`AdminDeleteRequested` from the observed document, and serialises that typed
+Truth into the existing generic `components/facts.Fact` envelope:
+
+```text
+firebaseidempotency.NewCellRequest(
+    listenerName,
+    truth.Identity(),
+    Fact{Name: AdminDeleteRequestedName, Payload: serialisedTruth},
+)
+```
+
+The generic Fact is durable transport for the typed Truth. It is not the
+application-level observation itself. Idempotency enforces the Truth identity;
+it does not define it. A modified request may cause another observation, but the
+same `requestId` must not establish a second dispatch of the same Truth.
+
+### 3.3 Service Cell Payload and Current State
+
+The service Cell receives the serialised `AdminDeleteRequested` Truth. This
+preserves the exact request evidence observed by the listener across
+persistence, restart, delay, and retry. It is deliberately not an
+identifier-only payload.
+
+Truth evidence answers what was observed. Firestore reads answer what is true
+now. A service handler may deliberately read Firestore only for current
+conditions: to confirm the request is still pending, check the pause/capability
+gates, check that application data is absent, or conditionally persist an
+outcome. It must not reload the request to reconstruct Truth evidence or
+silently substitute a later `targetUid`.
+
+---
+
+## 4. Listener Gates
+
+### 4.1 Service Enablement
+
+The service may be disabled by deployment or runtime configuration. When
+disabled, no Cell is created, the request is not mutated, and it remains
+`pending`. This allows the service to be deployed but inactive without
+destroying work.
+
+### 4.2 Kill Switch
+
+The operational kill switch is:
+
+```text
+system_config/admin_delete
+paused: boolean
+```
+
+When `paused == true`, no new Cell is created, the request remains `pending`,
+and no failure audit is written merely because processing is paused. Clearing
+the switch makes a pending request eligible for observation again.
+
+---
+
+## 5. Source Request
 
 Deletion requests are stored in:
 
@@ -132,21 +188,11 @@ Deletion requests are stored in:
 admin_delete_requests/{requestId}
 ```
 
-The Firestore document ID is the **request identity**.
+The Firestore document ID is the request identity. It is distinct from the
+target user's identity, and multiple deletion requests for one target UID are
+conceptually possible unless a separate business rule prevents them.
 
-The request identity and target user identity are distinct:
-
-```text
-requestId = identity of the deletion request
-
-targetUid = identity of the Firebase Authentication user
-```
-
-The service must not use `targetUid` as the request's idempotency key.
-
-Multiple deletion requests for the same UID are therefore conceptually possible unless a separate business rule prevents them.
-
-The current request contract includes fields such as:
+The request contract includes:
 
 ```text
 schemaVersion
@@ -165,189 +211,67 @@ userPublicDocExists
 authDeletedAt
 ```
 
-The authoritative Firestore security rules currently require administrator-created requests to contain a valid `schemaVersion`, `targetUid`, requesting identity and other request metadata.
-
-The service does not implement administrator authorisation for request creation.
-
----
-
-# 5. Trigger
-
-The Admin Delete Listener observes:
-
-```text
-admin_delete_requests
-```
-
-for:
-
-* `ADDED`
-* `MODIFIED`
-
-events.
-
-The listener considers only the current document state.
-
-Only:
-
-```text
-status == "pending"
-```
-
-is eligible for new work.
-
-All other states are ignored.
-
-This provides the first layer of idempotency:
-
-```text
-pending
-    → eligible
-
-anything else
-    → ignored
-```
-
-A request must not generate new Cell work merely because its Firestore document was modified.
+Firestore rules authorise and validate administrator-created requests. The
+service does not implement authorisation for request creation.
 
 ---
 
-# 6. Listener Gates
+## 6. Service Cells and Outcomes
 
-The listener applies operational gates before creating work.
+The Admin Delete plugin connects `AdminDeleteRequested` to the Admin Delete
+service Cell. It decides what work follows the Truth; it does not implement the
+deletion behaviour or replace Cellar Fanout.
 
-## 6.1 Service enablement
-
-The service may be disabled by deployment/runtime configuration.
-
-When disabled:
-
-* no Cell is created;
-* the request is not mutated;
-* the request remains `pending`.
-
-This allows the service to be deployed but inactive without destroying work.
-
-## 6.2 Kill switch
-
-The service has an operational kill switch:
+The service handler processes the Truth and either returns a retryable Cellar
+failure or creates an outcome-specific persistence Cell. That child Cell has a
+typed payload containing the request ID, determined outcome, and evidence
+needed to persist it.
 
 ```text
-system_config/admin_delete
+AdminDeleteRequested service Cell
+    |
+    +-- validate immutable Truth evidence
+    +-- check current request eligibility and operational gates
+    +-- check current application-data preconditions
+    +-- dry-run: determine dry_run_validated
+    +-- real delete: invoke Firebase Authentication
+                     |
+                     v
+          outcome-specific persistence Cell
+                     |
+                     v
+       Firestore transaction: request state + audit document
 ```
 
-with:
+Invalid, precondition-failed, blocked, and dry-run outcomes create their
+corresponding persistence Cell without invoking Firebase Authentication. A
+successful Auth deletion or `UserNotFound` creates the `auth_deleted`
+persistence Cell.
 
-```text
-paused: boolean
-```
-
-When `paused == true`:
-
-* no new Cell is created;
-* the request remains `pending`;
-* no failure audit is written merely because processing is paused.
-
-When the kill switch is cleared, the request becomes eligible again.
-
-The kill switch therefore **pauses processing rather than changing application state**.
+`Complete{NewCells: ...}` durably schedules the child Cell with the parent's
+Cellar progress. It is not a distributed transaction with Firestore or Firebase
+Authentication.
 
 ---
 
-# 7. Cell Payload
+## 7. Validation and Preconditions
 
-An eligible request produces an Admin Delete Cell containing sufficient information to identify the work.
-
-At minimum:
-
-```text
-requestId
-targetUid
-```
-
-The Cell must not contain a copied snapshot of the complete request unless there is a specific architectural reason to do so.
-
-The request document remains the durable source of request state.
-
-This prevents the Cell payload becoming a second, potentially stale representation of the request.
-
----
-
-# 8. Cell Execution
-
-The Admin Delete Cell Handler invokes the Admin Delete Service.
-
-Conceptually:
-
-```text
-Cell
-  │
-  ▼
-AdminDeleteService.process(requestId)
-  │
-  ├── load request
-  ├── verify eligibility
-  ├── validate request
-  ├── check application preconditions
-  ├── evaluate execution mode
-  └── perform Auth operation when permitted
-```
-
-The service must re-check important conditions at execution time.
-
-The listener is not a trusted snapshot of the request.
-
-This is particularly important because:
-
-* the request may have changed between event delivery and Cell execution;
-* multiple events may be delivered;
-* the Cell may be retried;
-* the service may have been paused between scheduling and execution.
-
----
-
-# 9. Request Validation
-
-`targetUid` is required.
-
-It must be a non-empty string.
-
-If the request is invalid:
+`targetUid` is required and must be a non-empty string. If it is invalid:
 
 ```text
 outcome = invalid_request
-status  = failed_terminal
+status  = invalid_request
 ```
 
 No Firebase Authentication operation is attempted.
 
-The service records an audit event identifying the validation failure.
-
-The exact validation rules for Firebase UID syntax may be tightened later, but the minimum contract is:
-
-```text
-targetUid exists
-targetUid is a string
-targetUid is non-empty
-```
-
----
-
-# 10. Application-Data Preconditions
-
-Before Firebase Authentication deletion is attempted, the service verifies that application data has already been scrubbed.
-
-The following documents must not exist:
+Before Firebase Authentication deletion, the service checks that both current
+application documents are absent:
 
 ```text
 users/{targetUid}
-
 user-public/{targetUid}
 ```
-
-These correspond to the current Firestore data contract.
-
-Both must be absent.
 
 If either exists:
 
@@ -356,307 +280,126 @@ outcome = failed_precondition
 status  = failed_precondition
 ```
 
-and Firebase Authentication deletion must not be attempted.
-
-The service records which documents remain, for example:
-
-```text
-usersDocExists = true
-userPublicDocExists = false
-```
-
-The service does **not** perform the scrubbing itself.
-
-That responsibility belongs to the separate user-data deletion/scrubbing process.
+Firebase Authentication deletion must not be attempted. The persistence payload
+records which documents remained. The service does not scrub application data;
+that belongs to the separate user-data deletion process.
 
 ---
 
-# 11. Dry-Run Mode
+## 8. Dry-Run and Real-Delete Gates
 
-The service supports a dry-run execution mode.
-
-Dry-run performs:
-
-* request validation;
-* application-data precondition checks;
-* audit recording;
-* result/state recording.
-
-Dry-run does not call Firebase Authentication.
-
-A successful dry-run validation produces:
+Dry-run performs validation, current application-data precondition checks, and
+durable result/audit persistence. It does not call Firebase Authentication.
+Successful validation produces the terminal outcome:
 
 ```text
-outcome = dry_run_validated
+pending -> dry_run_validated
 ```
 
-and the request may transition to:
+`dry_run_validated` is a durable result, not transient Cell execution state. It
+must not be promoted in place to a real delete. A later destructive deletion
+requires an explicit new request, and therefore a new Truth identity.
+
+Real deletion needs both service enablement and the explicit runtime capability
+`enable-real-auth-delete`:
 
 ```text
-dry_run_validated
+service disabled                 -> no processing
+service enabled + dry-run        -> validation only
+service enabled + real disabled  -> auth_delete_blocked
+service enabled + real enabled   -> Auth deletion permitted
 ```
 
-This state represents a durable result of the request's validation rather than transient Cell execution.
-
-Whether a dry-run validated request may subsequently be promoted to real deletion is an operational decision and must be explicitly controlled.
+The service-level configuration name is `ENABLE_ADMIN_DELETE_REQUESTS`.
 
 ---
 
-# 12. Real-Delete Gate
+## 9. Authentication Delete and Retry
 
-Real Firebase Authentication deletion requires an explicit runtime capability.
-
-There are two independent controls:
-
-### Service enablement
-
-Controls whether the service processes requests at all.
-
-### Real-delete capability
-
-Controls whether the service is permitted to perform destructive Firebase Authentication operations.
-
-Therefore:
+When validation and preconditions succeed and real deletion is permitted, the
+service invokes the service-owned Firebase Authentication client:
 
 ```text
-service disabled
-    → no processing
-
-service enabled + dry-run
-    → validation only
-
-service enabled + real delete disabled
-    → no Auth deletion
-
-service enabled + real delete enabled
-    → Auth deletion permitted
+FirebaseAuth.DeleteUser(targetUid)
 ```
 
-The existing operational configuration name is:
+The client owns the external call mechanics. The service owns result
+interpretation. A pre-delete user-existence check is not required: it cannot
+eliminate the race with deletion and adds no convergence guarantee.
+
+The following are successful outcomes:
 
 ```text
-ENABLE_ADMIN_DELETE_REQUESTS
+Firebase confirms deletion -> auth_deleted
+Firebase reports UserNotFound -> auth_deleted, idempotent = true
 ```
 
-for the service-level gate.
-
-The runtime option:
+Firebase Authentication and Firestore cannot participate in one atomic
+transaction. The following is therefore valid:
 
 ```text
-enable-real-auth-delete
+1. DeleteUser request is sent.
+2. Firebase deletes the user.
+3. The process terminates before receiving the response.
+4. Cellar retries the service Cell.
+5. DeleteUser returns UserNotFound.
+6. The service persists auth_deleted.
 ```
 
-controls destructive execution.
+Correctness comes from retry, idempotent external operation, and durable
+application result. `UserNotFound` must never become a retryable failure.
+
+Known permanent invalid-request or policy failures are terminal. Uncertain
+transport or Firebase service failures remain retryable according to Cellar's
+normal retry policy. The exact Firebase SDK error mapping must be defined before
+production enablement. An ambiguous external failure must not become
+`auth_deleted`.
 
 ---
 
-# 13. Auth Delete
+## 10. Durable Request State
 
-When all validation and preconditions have succeeded and real deletion is permitted, the service invokes:
-
-```text
-FirebaseAuth.delete_user(targetUid)
-```
-
-The Firebase Authentication adapter owns the mechanics of this operation.
-
-The Admin Delete Service owns interpretation of the result.
-
----
-
-# 14. Idempotent Authentication Semantics
-
-The following outcomes are considered successful:
-
-### Normal deletion
-
-Firebase Authentication confirms deletion.
-
-Result:
-
-```text
-auth_deleted
-```
-
-### User already absent
-
-Firebase Authentication reports that the user does not exist.
-
-Result:
-
-```text
-auth_deleted
-idempotent = true
-reason = auth_user_not_found
-```
-
-The latter is not an error.
-
-It means the external system is already in the desired state.
-
-This rule is essential for safe retry.
-
----
-
-# 15. Distributed Transaction Boundary
-
-Firebase Authentication and Firestore cannot participate in one atomic transaction for this operation.
-
-The following sequence is therefore valid:
-
-```text
-1. Validate request
-2. Validate application data has been scrubbed
-3. Delete Firebase Auth user
-4. Process terminates
-5. Firestore result is not committed
-6. Cell is retried
-7. Firebase Auth reports UserNotFound
-8. Service records auth_deleted
-```
-
-The architecture deliberately accepts this possibility.
-
-Correctness therefore comes from:
-
-```text
-retry
-+
-idempotent external operation
-+
-durable application result
-```
-
-rather than exactly-once execution.
-
-The service must never turn `UserNotFound` into a retryable failure.
-
----
-
-# 16. Durable Request State
-
-The request state represents durable application outcome.
-
-The preferred state model is:
+The request status represents durable application outcome:
 
 ```text
 pending
 invalid_request
 failed_precondition
 auth_delete_blocked
+dry_run_validated
 auth_deleted
 auth_delete_failed
 ```
 
-An optional:
-
-```text
-dry_run_validated
-```
-
-state exists where dry-run validation is itself a meaningful durable outcome.
-
-The service should not use:
-
-```text
-auth_deleting
-```
-
-as a required durable state.
-
-The fact that a Cell is currently executing is already represented by Cellar.
-
-Avoiding `auth_deleting` prevents a worker crash from leaving application state permanently claiming that an operation is in progress.
-
----
-
-# 17. State Transition Rules
-
-The durable state transition model is:
+The state transitions are:
 
 ```text
 pending
-   │
-   ├── invalid request ────────► invalid_request
-   │
-   ├── precondition failure ───► failed_precondition
-   │
-   ├── real deletion blocked ──► auth_delete_blocked
-   │
-   └── Auth deletion
-          │
-          ├── success ─────────► auth_deleted
-          │
-          ├── UserNotFound ────► auth_deleted
-          │
-          └── terminal error ──► auth_delete_failed
+    +-- invalid request -------> invalid_request
+    +-- precondition failure --> failed_precondition
+    +-- real deletion blocked -> auth_delete_blocked
+    +-- dry-run success -------> dry_run_validated
+    +-- Auth success ----------> auth_deleted
+    +-- UserNotFound ----------> auth_deleted
+    +-- terminal Auth failure -> auth_delete_failed
 ```
 
-Dry-run may additionally produce:
+All outcomes other than `pending` are terminal and are not eligible for new
+Cells. The service must conditionally enforce valid transitions so a stale
+persistence Cell cannot overwrite a terminal or superseded request.
 
-```text
-pending → dry_run_validated
-```
-
-The service must enforce valid transitions.
-
-Terminal states must not normally be reprocessed:
-
-```text
-invalid_request
-failed_precondition
-auth_delete_blocked
-auth_deleted
-auth_delete_failed
-```
-
-are not eligible for new Cells.
+The application must not use an `auth_deleting` request state. Cellar owns
+transient execution state; persisting it would allow a crash to leave a request
+permanently claiming that work is in progress.
 
 ---
 
-# 18. Retry Semantics
+## 11. Persistence and Audit
 
-The service must distinguish between:
+The outcome-specific persistence handler owns a Firestore transaction which:
 
-### Successful outcomes
-
-The requested external state has been achieved.
-
-Examples:
-
-```text
-auth_deleted
-UserNotFound → auth_deleted
-```
-
-### Terminal application failures
-
-The request cannot safely proceed without intervention or correction.
-
-Examples:
-
-```text
-invalid_request
-failed_precondition
-```
-
-### Retryable external failures
-
-The service cannot determine that the desired state has been achieved.
-
-These should remain retryable according to Cellar's normal retry policy.
-
-The exact Firebase Authentication error classification is an implementation concern of the Auth adapter/service and must be defined before production enablement.
-
-The critical rule is:
-
-> An ambiguous external failure must not be converted into `auth_deleted`.
-
----
-
-# 19. Application Transaction
-
-When the service has determined a durable outcome, it should commit the corresponding Firestore state and audit information together using the application's transaction mechanism where appropriate.
+1. conditionally writes the request's terminal state; and
+2. writes the corresponding audit document.
 
 For example:
 
@@ -673,35 +416,24 @@ audit
     at = timestamp
 ```
 
-The purpose is to prevent the application from recording:
+The Firestore transaction prevents a committed terminal request state without
+its matching audit evidence. It is separate from Cellar's local transaction. If
+Firestore commits but the persistence Cell terminates before Cellar records its
+completion, retrying the persistence Cell is safe: it conditionally preserves
+the terminal state and rewrites the same audit document.
+
+Audit documents are stored in:
 
 ```text
-request says deleted
+admin_delete_request_audit/{requestId}
 ```
 
-without corresponding audit evidence.
+The document ID is deterministically derived from the unique request ID. There
+is one audit document per request, describing its terminal outcome. It is not an
+attempt log or mutable workflow state. A persistence retry may harmlessly
+rewrite the same terminal evidence.
 
-Audit persistence is therefore part of the durable application result.
-
----
-
-# 20. Audit Trail
-
-Audit records are append-only historical evidence.
-
-Collection:
-
-```text
-admin_delete_request_audit
-```
-
-Document identity is derived from the request and event:
-
-```text
-{requestId}_{outcome}_{timestampMicros}
-```
-
-An audit record contains at least:
+An audit document contains at least:
 
 ```text
 requestId
@@ -709,7 +441,7 @@ outcome
 at
 ```
 
-and may contain:
+It may also contain:
 
 ```text
 targetUid
@@ -721,426 +453,124 @@ userPublicDocExists
 requestedByUid
 ```
 
-Audit records must not be updated as a substitute for request state.
-
-A request document describes **current durable state**.
-
-Audit documents describe **what happened**.
+The request document describes current durable state. Its matching audit
+document preserves the historical evidence for that terminal result.
 
 ---
 
-# 21. Metrics
+## 12. Metrics
 
-Operational metrics are best effort.
-
-The service may maintain:
+Operational metrics are best effort and may maintain:
 
 ```text
 admin_delete_request_metrics/global
 admin_delete_request_metrics/daily-YYYY-MM-DD
 ```
 
-with counters and last-outcome information.
-
-Metrics may include:
-
-```text
-invalid_request
-failed_precondition
-dry_run_validated
-auth_delete_blocked
-auth_deleted
-auth_delete_failed
-```
-
-Metrics must never determine correctness.
-
-A metrics failure must not:
-
-* fail a deletion;
-* prevent request-state persistence;
-* force Cell retry;
-* convert a successful deletion into an application failure.
-
-The ordering is therefore:
-
-```text
-correct application result
-        ↓
-durable request/audit state
-        ↓
-best-effort metrics
-```
+Metrics may count each terminal outcome. They run only after durable
+request/audit persistence and must never fail a deletion, prevent state
+persistence, force a retry, or convert success into an application failure.
 
 ---
 
-# 22. Safety Invariants
+## 13. Safety Invariants
 
-The following invariants are mandatory.
-
-### Invariant 1 — Application data first
-
-Firebase Authentication deletion must never be attempted while either:
-
-```text
-users/{targetUid}
-user-public/{targetUid}
-```
-
-exists.
-
-### Invariant 2 — Auth absence is success
-
-`UserNotFound` from Firebase Authentication represents successful convergence.
-
-### Invariant 3 — Safe retry
-
-Repeating an incomplete operation must converge on the desired state.
-
-### Invariant 4 — Pending work survives pauses
-
-Service disablement and the kill switch must leave pending requests pending.
-
-### Invariant 5 — Listener does not perform destructive work
-
-The listener only recognises and schedules work.
-
-### Invariant 6 — Cellar owns execution state
-
-Transient worker execution state must not unnecessarily become durable application state.
-
-### Invariant 7 — Request identity is distinct from target identity
-
-`requestId` identifies the requested operation.
-
-`targetUid` identifies the account being operated upon.
-
-### Invariant 8 — Metrics cannot affect correctness
-
-Metrics failure cannot cause deletion failure or false success.
-
-### Invariant 9 — Audit is historical
-
-Audit records are append-only evidence, not mutable workflow state.
-
-### Invariant 10 — No false success
-
-The request may enter `auth_deleted` only after the service has established that the desired Firebase Authentication state has been achieved.
+1. Firebase Authentication deletion must never be attempted while either
+   `users/{targetUid}` or `user-public/{targetUid}` exists.
+2. `UserNotFound` from Firebase Authentication represents successful
+   convergence.
+3. Repeating an incomplete operation must converge on the desired state.
+4. Service disablement and the kill switch leave pending requests pending.
+5. The listener only recognises and schedules work; it performs no destructive
+   operation.
+6. Cellar owns transient execution state.
+7. `requestId` identifies the request; `targetUid` identifies the account.
+8. Metrics cannot affect correctness.
+9. Every terminal request state has matching audit evidence.
+10. A request enters `auth_deleted` only when the desired Firebase
+    Authentication state has been established.
 
 ---
 
-# 23. Responsibility Boundaries
+## 14. Responsibility Boundaries
 
-| Responsibility                       | Component                           |
-| ------------------------------------ | ----------------------------------- |
-| Observe Firestore changes            | Admin Delete Listener               |
-| Determine request eligibility        | Admin Delete Listener               |
-| Apply service/kill-switch gates      | Admin Delete Listener               |
-| Create work                          | Cellar integration                  |
-| Retry execution                      | Cellar                              |
-| Load and validate request            | Admin Delete Service                |
-| Check application-data preconditions | Admin Delete Service                |
-| Decide dry-run vs real operation     | Admin Delete Service                |
-| Invoke Firebase Auth                 | Firebase Auth Adapter               |
-| Interpret Auth result                | Admin Delete Service                |
-| Enforce state transitions            | Admin Delete Service                |
-| Persist request outcome              | Admin Delete Service                |
-| Persist audit evidence               | Admin Delete Service                |
-| Record operational metrics           | Metrics component                   |
-| Authorise request creation           | Firestore rules / application       |
-| Scrub application data               | Separate deletion/scrubbing service |
+| Responsibility | Owner |
+| --- | --- |
+| Observe Firestore changes and construct Truth | Admin Delete Listener |
+| Apply cheap listener gates | Admin Delete Listener |
+| Establish Truth idempotency and emit Fact | Firebase idempotency component |
+| Connect Truth to service Cell | Admin Delete plugin |
+| Retry execution | Cellar |
+| Validate Truth evidence and decide outcome | Admin Delete service handlers |
+| Check current application-data preconditions | Admin Delete service handlers |
+| Invoke Firebase Authentication | Admin Delete service Auth client |
+| Persist request outcome and audit transaction | Admin Delete persistence handler/repository |
+| Record metrics | Best-effort metrics publisher |
+| Authorise request creation | Firestore rules / application |
+| Scrub application data | Separate deletion/scrubbing service |
 
 ---
 
-# 24. Listener-to-Service Contract
+## 15. Testing Contract
 
-The listener should expose a deliberately small contract to the rest of the architecture.
+The service must be testable without live Firebase Authentication. Tests cover:
 
-Conceptually:
-
-```text
-AdminDeleteListener
-    └── submit(requestId, targetUid)
-```
-
-The listener does not need to know:
-
-* how users are validated;
-* how application data is checked;
-* how Firebase Auth deletion works;
-* what constitutes `UserNotFound`;
-* how audit records are constructed;
-* how metrics are counted.
-
-Those belong to the service.
-
-The resulting dependency direction is:
-
-```text
-Firestore event infrastructure
-        ↓
-Admin Delete Listener
-        ↓
-Cellar
-        ↓
-Admin Delete Handler
-        ↓
-Admin Delete Service
-        ↓
-Firebase Auth Adapter
-```
-
-rather than:
-
-```text
-Firestore listener
-    └── everything
-```
+* listener construction of immutable `AdminDeleteRequested` evidence and
+  idempotency identity based on `requestId`;
+* pending `ADDED` and `MODIFIED` requests, plus ignored terminal requests;
+* service enablement and kill-switch behaviour;
+* missing, empty, and valid target UIDs;
+* every application-data precondition combination;
+* dry-run without an Auth client invocation;
+* successful deletion and `UserNotFound` convergence;
+* retryable and terminal Auth failures;
+* terminal-state transition enforcement and stale persistence protection;
+* a process failure after Firebase succeeds but before result persistence,
+  followed by retry to `auth_deleted`;
+* request state and its deterministic audit document written together; and
+* metrics failure not affecting processing.
 
 ---
 
-# 25. Testing Contract
+## 16. Implementation Sequence
 
-The service should be testable without requiring live Firebase Authentication.
-
-At minimum, tests must cover:
-
-### Listener
-
-* ADDED pending request creates Cell.
-* MODIFIED pending request creates Cell.
-* non-pending request is ignored.
-* disabled service leaves request untouched.
-* kill switch leaves request untouched.
-
-### Validation
-
-* missing target UID.
-* empty target UID.
-* valid target UID.
-
-### Preconditions
-
-* neither application document exists.
-* `users` document exists.
-* `user-public` document exists.
-* both documents exist.
-
-### Dry-run
-
-* validation succeeds.
-* Auth adapter is not invoked.
-* appropriate durable result is recorded.
-
-### Auth deletion
-
-* successful deletion.
-* UserNotFound becomes successful idempotent deletion.
-* retryable Auth failure.
-* terminal Auth failure.
-
-### State transitions
-
-* valid transitions succeed.
-* illegal transitions are rejected.
-* terminal requests cannot be reprocessed.
-
-### Reliability
-
-* Auth deletion succeeds but application process fails before result persistence.
-* retry receives UserNotFound.
-* retry converges on `auth_deleted`.
-
-### Observability
-
-* audit is produced for significant outcomes.
-* metrics failure does not affect processing.
+1. Add the Truth type, listener snapshot conversion, and listener tests.
+2. Register the Truth-to-service connection in the Admin Delete plugin and
+   application composition.
+3. Implement validation, precondition checks, and outcome payloads.
+4. Implement the terminal persistence Cell and its Firestore transaction.
+5. Complete the dry-run path.
+6. Implement and test the Firebase Authentication client and error mapping.
+7. Enable the real-delete gate only after retry semantics are verified.
+8. Add best-effort metrics after the correctness path is complete.
 
 ---
 
-# 26. Implementation Sequence
+## 17. Acceptance Criteria
 
-The service should be implemented incrementally.
+The migration is complete when:
 
-### Phase 1 — Listener
+1. A pending Firestore deletion request produces a typed
+   `AdminDeleteRequested` Truth.
+2. Idempotency dispatches that Truth through the Admin Delete plugin to a
+   service Cell.
+3. The listener never performs deletion.
+4. The service processes immutable Truth evidence and only deliberately reads
+   current Firestore conditions.
+5. Validation and application-data preconditions are enforced.
+6. Dry-run reaches `dry_run_validated` without calling Firebase Authentication.
+7. Real deletion requires the explicit capability gate.
+8. `UserNotFound` produces `auth_deleted`.
+9. A retry after an ambiguous successful Auth deletion converges to
+   `auth_deleted`.
+10. Each terminal request state and its deterministic audit document are
+    persisted in one Firestore transaction.
+11. Metrics remain best effort.
+12. Disabled service and the kill switch leave pending work untouched.
+13. The safety invariants are covered by automated tests.
 
-Implement:
+The resulting architecture is:
 
-```text
-Firestore event
-    ↓
-Admin Delete Listener
-    ↓
-log eligible request
-```
-
-No deletion and no Cell creation initially.
-
-### Phase 2 — Cell creation
-
-Implement:
-
-```text
-eligible request
-    ↓
-Admin Delete Cell
-```
-
-The Cell may initially log its payload.
-
-### Phase 3 — Service validation
-
-Implement:
-
-```text
-request validation
-application-data preconditions
-state transition handling
-```
-
-### Phase 4 — Dry-run
-
-Implement the complete non-destructive workflow.
-
-This establishes the majority of the safety architecture without enabling Auth deletion.
-
-### Phase 5 — Auth adapter
-
-Implement and test the Firebase Authentication adapter.
-
-### Phase 6 — Real deletion gate
-
-Enable real deletion only after the dry-run path and retry semantics are verified.
-
-### Phase 7 — Audit and metrics hardening
-
-Complete operational observability once the correctness path is established.
-
----
-
-# 27. Migration Relationship to Existing Implementation
-
-The existing Admin Delete implementation is the behavioural reference for the migration.
-
-It currently performs work through:
-
-```text
-admin_delete_requests
-```
-
-and maintains:
-
-```text
-admin_delete_request_audit
-admin_delete_request_metrics
-system_config/admin_delete
-```
-
-The new architecture must preserve externally observable safety behaviour while moving responsibilities into the new boundaries.
-
-In particular, the following existing behaviours are retained:
-
-* pending-only processing;
-* environment/service gating;
-* kill-switch behaviour;
-* application-data preconditions;
-* dry-run support;
-* real-delete gating;
-* Auth `UserNotFound` idempotency;
-* append-only audit;
-* best-effort metrics;
-* request state validation.
-
-The following architectural behaviour is intentionally changed:
-
-* the listener no longer performs the deletion;
-* Cellar owns execution and retry;
-* durable request state does not need an `auth_deleting` state;
-* Firebase Authentication is accessed through an adapter;
-* transient execution state is not represented as application state.
-
----
-
-# 28. Acceptance Criteria
-
-The Admin Delete Service may be considered migrated to the new architecture when:
-
-1. A pending Firestore deletion request is detected by the new listener.
-2. The listener creates an Admin Delete Cell rather than performing the deletion.
-3. The Cell invokes the Admin Delete Service.
-4. Validation and application-data preconditions are enforced.
-5. Dry-run execution completes without touching Firebase Authentication.
-6. Real deletion requires the explicit real-delete gate.
-7. Firebase Authentication `UserNotFound` produces `auth_deleted`.
-8. A retry after an ambiguous successful Auth deletion converges successfully.
-9. Request state and audit evidence are persisted correctly.
-10. Metrics remain best effort.
-11. Disabled service and kill-switch leave pending work untouched.
-12. Existing safety invariants are covered by automated tests.
-13. No legacy `sub_events` implementation is required for the migrated workflow.
-
-The milestone is therefore:
-
-> **Admin Delete runs entirely through the new Listener → Cellar → Handler → Service architecture, with the legacy implementation no longer responsible for processing deletion requests.**
-
----
-
-# 29. Architectural Summary
-
-The essential design is:
-
-```text
-                 Firestore
-                     │
-                     │ change
-                     ▼
-          ┌─────────────────────┐
-          │ Admin Delete        │
-          │ Listener            │
-          │                     │
-          │ pending?            │
-          │ enabled?            │
-          │ kill switch clear?  │
-          └──────────┬──────────┘
-                     │
-                     │ Cell
-                     ▼
-              ┌──────────────┐
-              │    Cellar    │
-              └──────┬───────┘
-                     │
-                     ▼
-          ┌─────────────────────┐
-          │ Admin Delete        │
-          │ Handler             │
-          └──────────┬──────────┘
-                     │
-                     ▼
-          ┌─────────────────────┐
-          │ Admin Delete        │
-          │ Service             │
-          │                     │
-          │ validate            │
-          │ preconditions       │
-          │ dry-run             │
-          │ state transitions   │
-          └───────┬───────┬─────┘
-                  │       │
-                  │       └──────────────┐
-                  ▼                      ▼
-          ┌───────────────┐      ┌───────────────┐
-          │ Firebase Auth │      │   Firestore   │
-          │    Adapter    │      │               │
-          └───────────────┘      │ request       │
-                                  │ audit         │
-                                  └───────────────┘
-
-                         ┌────────────────┐
-                         │ Metrics        │
-                         │ (best effort)  │
-                         └────────────────┘
-```
-
-The core architectural rule is:
-
-> **The listener recognises work, Cellar executes work, the service owns the domain decision, and external operations are made safely retryable.**
+> The listener constructs a Truth, the plugin chooses the service work, Cellar
+> executes it durably, and the service makes external operations safely
+> retryable.

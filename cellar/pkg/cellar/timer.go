@@ -15,12 +15,16 @@ const (
 	TimerFixedDelay TimerMode = "fixed-delay"
 	// TimerFixedRate schedules against the previous deadline and coalesces missed ticks.
 	TimerFixedRate TimerMode = "fixed-rate"
+	// TimerDailyCalendar schedules once per local calendar day at DailyAt in Location.
+	TimerDailyCalendar TimerMode = "daily-calendar"
 )
 
 // TimerConfig defines a durable timer's recurrence behaviour.
 type TimerConfig struct {
 	Interval time.Duration
 	Mode     TimerMode
+	DailyAt  string
+	Location string
 }
 
 // TimerCallback is application work invoked when a durable timer fires.
@@ -39,11 +43,18 @@ func NewTimer(name HandlerName, config TimerConfig, callback TimerCallback) (*Ti
 	if name == "" {
 		return nil, ErrHandlerNameRequired
 	}
-	if config.Interval <= 0 {
-		return nil, ErrTimerIntervalInvalid
-	}
-	if config.Mode != TimerFixedDelay && config.Mode != TimerFixedRate {
+	if config.Mode != TimerFixedDelay && config.Mode != TimerFixedRate && config.Mode != TimerDailyCalendar {
 		return nil, ErrTimerModeInvalid
+	}
+	if config.Mode == TimerDailyCalendar {
+		if _, _, err := parseDailyAt(config.DailyAt); err != nil {
+			return nil, ErrTimerDailyAtInvalid
+		}
+		if _, err := time.LoadLocation(config.Location); err != nil {
+			return nil, ErrTimerLocationInvalid
+		}
+	} else if config.Interval <= 0 {
+		return nil, ErrTimerIntervalInvalid
 	}
 	if callback == nil {
 		return nil, ErrTimerCallbackNil
@@ -92,6 +103,12 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 	}
 	id := timerCellID(t.name)
 	due := time.Now().Add(t.config.Interval)
+	if t.config.Mode == TimerDailyCalendar {
+		due, err = nextCalendarDeadline(time.Now(), t.config)
+		if err != nil {
+			return "", fmt.Errorf("calculate calendar timer deadline: %w", err)
+		}
+	}
 	_, err = c.store.Add([]CellRequest{{
 		ID:        id,
 		Steps:     []CellStep{{HandlerName: t.name, Payload: payload}},
@@ -126,7 +143,13 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 
 	now := time.Now()
 	next := now.Add(payload.Interval)
-	if payload.Mode == TimerFixedRate && cell.NotBefore != nil {
+	if payload.Mode == TimerDailyCalendar {
+		calendarNext, err := nextCalendarDeadline(now, TimerConfig(payload))
+		if err != nil {
+			return ErrorResult{Message: "calculate calendar timer deadline", Err: err}
+		}
+		next = calendarNext
+	} else if payload.Mode == TimerFixedRate && cell.NotBefore != nil {
 		next = nextFixedRateDeadline(*cell.NotBefore, now, payload.Interval)
 	}
 	return Retry{NotBefore: &next}
@@ -152,6 +175,31 @@ func nextFixedRateDeadline(previous, now time.Time, interval time.Duration) time
 	return previous.Add(missed * interval)
 }
 
+func nextCalendarDeadline(now time.Time, config TimerConfig) (time.Time, error) {
+	hour, minute, err := parseDailyAt(config.DailyAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	location, err := time.LoadLocation(config.Location)
+	if err != nil {
+		return time.Time{}, err
+	}
+	localNow := now.In(location)
+	deadline := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, location)
+	if !deadline.After(localNow) {
+		deadline = time.Date(localNow.Year(), localNow.Month(), localNow.Day()+1, hour, minute, 0, 0, location)
+	}
+	return deadline, nil
+}
+
+func parseDailyAt(value string) (int, int, error) {
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return 0, 0, err
+	}
+	return parsed.Hour(), parsed.Minute(), nil
+}
+
 func timerCellID(name HandlerName) CellID {
 	return CellID("timer:" + string(name))
 }
@@ -161,6 +209,8 @@ var (
 	ErrTimerNil             = errors.New("timer is nil")
 	ErrTimerIntervalInvalid = errors.New("timer interval must be positive")
 	ErrTimerModeInvalid     = errors.New("timer mode is invalid")
+	ErrTimerDailyAtInvalid  = errors.New("timer daily time must use HH:MM")
+	ErrTimerLocationInvalid = errors.New("timer location is invalid")
 	ErrTimerCallbackNil     = errors.New("timer callback is nil")
 	ErrTimerAlreadyExists   = errors.New("timer already exists")
 )

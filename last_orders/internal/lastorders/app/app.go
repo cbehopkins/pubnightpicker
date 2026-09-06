@@ -16,15 +16,19 @@ import (
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/recurrence"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
+	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
+	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	"last_orders/internal/lastorders/plugins/polls"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
+	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	"last_orders/internal/lastorders/truths"
 
@@ -149,6 +153,10 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
+	localIdempotencyStore, err := idempotency.New(baseStore)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, check := range cfg.StartupComponentChecks {
 		if check == nil {
@@ -166,6 +174,7 @@ func New(cfg Config) (application *App, err error) {
 	factRegistry.Register(recurrenceplugin.FactStaleEvent, recurrenceplugin.HandlerStaleEvent)
 	factRegistry.Register(recurrenceplugin.FactCreateEventPoll, recurrenceplugin.HandlerCreateEventPoll)
 	factRegistry.Register(logsvc.FactLogMessage, logsvc.HandlerLogMessage)
+	autocompleteplugin.Register(factRegistry)
 
 	factFanout, err := facts.Fanout(factRegistry)
 	if err != nil {
@@ -191,10 +200,25 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitFact, firebaseidempotency.EmitFactHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
+	if err := cellarRuntime.Register(idempotency.HandlerCheck, idempotency.CheckHandler{Store: localIdempotencyStore, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
 	if err := cellarRuntime.Register(logsvc.HandlerLogMessage, logsvc.Handler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if recurrenceService != nil {
+		if err := cellarRuntime.Register(autocompletesvc.HandlerDiscovery, autocompletesvc.DiscoveryHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+			return nil, err
+		}
+		if err := cellarRuntime.Register(autocompletesvc.HandlerCandidate, autocompletesvc.CandidateHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+			return nil, err
+		}
+		if err := cellarRuntime.Register(autocompletesvc.HandlerClose, autocompletesvc.CloseHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+			return nil, err
+		}
+		if err := cellarRuntime.Register(autocompletesvc.HandlerAmbiguous, autocompletesvc.AmbiguousHandler{Logger: cfg.Logger}); err != nil {
+			return nil, err
+		}
 		if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
 			return nil, err
 		}
@@ -211,6 +235,21 @@ func New(cfg Config) (application *App, err error) {
 	var completedPollListener *completedpolllistener.Listener
 	var venueCacheListener *venuecachelistener.Listener
 	if recurrenceService != nil {
+		autoCompleteListener, err := autocompletelistener.New(cellarStore, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+		autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, autoCompleteListener.RunOnce)
+		if err != nil {
+			return nil, err
+		}
+		if err := autoCompleteTimer.Register(cellarRuntime); err != nil {
+			return nil, err
+		}
+		if _, err := autoCompleteTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+			return nil, err
+		}
+
 		eventVenueListener, err = eventvenuelistener.New(eventvenuelistener.Config{
 			Store:              cellarStore,
 			Service:            recurrenceService,
