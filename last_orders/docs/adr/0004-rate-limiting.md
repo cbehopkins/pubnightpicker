@@ -414,3 +414,88 @@ The key invariant established by this ADR is:
 > **Operations which have an explicit application safety or quota requirement may be protected by a named, concurrency-safe local token bucket. Exceeding the limit must never silently result in the protected operation proceeding.**
 
 V0 deliberately stops there.
+# ADR Amendment: Version 0 Daily Token Sources
+
+**Date:** 2026-09-06
+**Status:** Proposed
+
+## Decision
+
+The Version 0 implementation of the application rate-limiting mechanism will use **daily token sources** rather than a general continuously-refilling token bucket.
+
+A token source is configured with:
+
+* a maximum number of tokens per day;
+* an optional exhaustion callback.
+
+Tokens are consumed by successful acquisitions.
+
+The source resets to its maximum token count at midnight.
+
+The caller-facing interface is:
+
+```go
+type TokenSource interface {
+    Acquire() int
+}
+```
+
+The return value has the following meaning:
+
+```text
+0       token granted
+
+>0      token unavailable; number of seconds until the
+        caller should try again
+```
+
+Acquisition is non-blocking and concurrency-safe.
+
+## Rationale
+
+The current Version 0 use cases require daily limits such as:
+
+```text
+email.send
+    maximum: 100/day
+```
+
+They do not currently require continuously refilling limits such as:
+
+```text
+10/minute
+100/hour
+```
+
+A daily quota therefore provides the required safety behaviour with substantially less implementation complexity.
+
+The architecture does not prevent a future implementation from supporting more general token-bucket refill policies if the application requires them.
+
+## Terminology
+
+The generic architectural concept remains **rate limiting**.
+
+The Version 0 implementation is specifically a **daily token source**.
+
+The existing ADR statement describing the mechanism as a "token bucket" should therefore be understood as the general architectural model; the V0 implementation deliberately uses the simpler discrete daily-reset form.
+
+## Consequences
+
+The V0 implementation does not support continuous refill.
+
+For example, a source configured for 100 tokens/day does not regain tokens throughout the day. Once its 100 tokens have been consumed, it remains exhausted until the next daily reset.
+
+This is intentional.
+
+All other architectural decisions in the original ADR remain unchanged, including:
+
+* local process state;
+* concurrency safety;
+* non-blocking acquisition;
+* separation from Cellar;
+* separation from alerting;
+* no distributed coordination;
+* no persistent rate-limit state;
+* no circuit-breaker behaviour.
+
+The detailed API and behavioural contract is defined by the **Token Source CDD**.
