@@ -17,12 +17,14 @@ import (
 	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
+	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/recurrence"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
+	notificationprofilelistener "last_orders/internal/lastorders/database/listeners/notificationprofile"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
@@ -51,24 +53,27 @@ type Config struct {
 }
 
 type App struct {
-	logger                *slog.Logger
-	baseStore             *basestore.Store
-	cellarStore           cellar.Store
-	idempotencyStore      *firebaseidempotency.Store
-	recurrenceService     *recurrence.Service
-	venueCacheStore       *venuecache.Store
-	venueCacheService     *venuecache.Service
-	firestoreClient       *firestore.Client
-	cellarRuntime         *cellar.Cellar
-	eventVenueListener    *eventvenuelistener.Listener
-	newPollListener       *newpolllistener.Listener
-	completedPollListener *completedpolllistener.Listener
-	venueCacheListener    *venuecachelistener.Listener
-	httpServer            *http.Server
-	httpListener          net.Listener
-	runCancel             context.CancelFunc
-	runDone               chan struct{}
-	runMu                 sync.Mutex
+	logger                      *slog.Logger
+	baseStore                   *basestore.Store
+	cellarStore                 cellar.Store
+	idempotencyStore            *firebaseidempotency.Store
+	recurrenceService           *recurrence.Service
+	venueCacheStore             *venuecache.Store
+	venueCacheService           *venuecache.Service
+	notificationProfileStore    *notificationprofile.Store
+	notificationProfileService  *notificationprofile.Service
+	firestoreClient             *firestore.Client
+	cellarRuntime               *cellar.Cellar
+	eventVenueListener          *eventvenuelistener.Listener
+	newPollListener             *newpolllistener.Listener
+	completedPollListener       *completedpolllistener.Listener
+	venueCacheListener          *venuecachelistener.Listener
+	notificationProfileListener *notificationprofilelistener.Listener
+	httpServer                  *http.Server
+	httpListener                net.Listener
+	runCancel                   context.CancelFunc
+	runDone                     chan struct{}
+	runMu                       sync.Mutex
 }
 
 func New(cfg Config) (application *App, err error) {
@@ -114,6 +119,8 @@ func New(cfg Config) (application *App, err error) {
 	var recurrenceService *recurrence.Service
 	var venueCacheStore *venuecache.Store
 	var venueCacheService *venuecache.Service
+	var notificationProfileStore *notificationprofile.Store
+	var notificationProfileService *notificationprofile.Service
 	if cfg.EnableFirestore {
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID)
 		if err != nil {
@@ -134,6 +141,19 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
+		if err != nil {
+			return nil, err
+		}
+
+		notificationProfileStore, err = notificationprofile.New(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init notification profile store: %w", err)
+		}
+		notificationProfileSource, err := notificationprofile.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+		notificationProfileService, err = notificationprofile.NewService(notificationProfileStore, notificationProfileSource, cfg.Logger)
 		if err != nil {
 			return nil, err
 		}
@@ -234,6 +254,7 @@ func New(cfg Config) (application *App, err error) {
 	var newPollListener *newpolllistener.Listener
 	var completedPollListener *completedpolllistener.Listener
 	var venueCacheListener *venuecachelistener.Listener
+	var notificationProfileListener *notificationprofilelistener.Listener
 	if recurrenceService != nil {
 		autoCompleteListener, err := autocompletelistener.New(cellarStore, cfg.Logger)
 		if err != nil {
@@ -298,22 +319,30 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
+
+		notificationProfileListener, err = notificationprofilelistener.New(notificationProfileService, notificationProfileStore, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	application = &App{
-		logger:                cfg.Logger,
-		baseStore:             baseStore,
-		cellarStore:           cellarStore,
-		idempotencyStore:      idempotencyStore,
-		recurrenceService:     recurrenceService,
-		venueCacheStore:       venueCacheStore,
-		venueCacheService:     venueCacheService,
-		firestoreClient:       firestoreClient,
-		cellarRuntime:         cellarRuntime,
-		eventVenueListener:    eventVenueListener,
-		newPollListener:       newPollListener,
-		completedPollListener: completedPollListener,
-		venueCacheListener:    venueCacheListener,
+		logger:                      cfg.Logger,
+		baseStore:                   baseStore,
+		cellarStore:                 cellarStore,
+		idempotencyStore:            idempotencyStore,
+		recurrenceService:           recurrenceService,
+		venueCacheStore:             venueCacheStore,
+		venueCacheService:           venueCacheService,
+		notificationProfileStore:    notificationProfileStore,
+		notificationProfileService:  notificationProfileService,
+		firestoreClient:             firestoreClient,
+		cellarRuntime:               cellarRuntime,
+		eventVenueListener:          eventVenueListener,
+		newPollListener:             newPollListener,
+		completedPollListener:       completedPollListener,
+		venueCacheListener:          venueCacheListener,
+		notificationProfileListener: notificationProfileListener,
 	}
 
 	if cfg.HTTPAddr != "" {
@@ -389,6 +418,13 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 
+	if a.notificationProfileListener != nil {
+		if err := a.notificationProfileListener.Start(runCtx); err != nil {
+			cancel()
+			return fmt.Errorf("start notification profile listener: %w", err)
+		}
+	}
+
 	if a.httpServer != nil {
 		go func() {
 			if err := a.httpServer.Serve(a.httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -448,6 +484,9 @@ func (a *App) closeListeners() error {
 	if a.venueCacheListener != nil {
 		closeErrs = append(closeErrs, a.venueCacheListener.Close())
 	}
+	if a.notificationProfileListener != nil {
+		closeErrs = append(closeErrs, a.notificationProfileListener.Close())
+	}
 	return errors.Join(closeErrs...)
 }
 
@@ -483,6 +522,11 @@ func (a *App) IdempotencyClaimed(ctx context.Context, listener, eventKey string)
 
 func (a *App) CellarStore() cellar.Store {
 	return a.cellarStore
+}
+
+// NotificationProfile returns the projection service, or nil when Firestore is disabled.
+func (a *App) NotificationProfile() *notificationprofile.Service {
+	return a.notificationProfileService
 }
 
 func sqliteDSN(path string) string {
