@@ -54,3 +54,23 @@ func TestFanoutExpanderReturnsKeyedTargetsPerRegisteredHandler(t *testing.T) {
 		t.Fatalf("add fanout: %v", err)
 	}
 }
+
+func TestFanoutTargetsUseHandlerNamesAsStableKeys(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register("NewPoll", "polls.new", "polls.audit")
+
+	targets, err := fanoutTargets(registry, Fact{Name: "NewPoll", Payload: []byte(`{"poll_id":"1"}`)})
+	if err != nil {
+		t.Fatalf("build fanout targets: %v", err)
+	}
+
+	want := []string{"polls.new", "polls.audit"}
+	if len(targets) != len(want) {
+		t.Fatalf("targets = %d, want %d", len(targets), len(want))
+	}
+	for index, target := range targets {
+		if target.Key != want[index] {
+			t.Fatalf("target %d key = %q, want %q", index, target.Key, want[index])
+		}
+	}
+}

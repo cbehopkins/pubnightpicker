@@ -21,9 +21,20 @@ func TestFanoutRegistrationExpandsTypedPayloadToIdentifiedChildren(t *testing.T)
 			if payload.OrderID != "order-42" {
 				t.Fatalf("payload = %#v, want order-42", payload)
 			}
+			emailCell, err := NewCellDefinition("email.send", fanoutTestPayload{OrderID: payload.OrderID})
+			if err != nil {
+				return nil, err
+			}
+			analyticsSequence, err := NewSequence(
+				Step{HandlerName: "analytics.publish", Payload: fanoutTestPayload{OrderID: payload.OrderID}},
+				Step{HandlerName: "audit.record", Payload: fanoutTestPayload{OrderID: payload.OrderID}},
+			)
+			if err != nil {
+				return nil, err
+			}
 			return []FanoutTarget{
-				{Key: "email", HandlerName: "email.send", Payload: fanoutTestPayload{OrderID: "order-42"}},
-				{Key: "analytics", HandlerName: "analytics.publish", Payload: fanoutTestPayload{OrderID: "order-42"}, NotBefore: &due},
+				{Key: "email", Cell: emailCell},
+				{Key: "analytics", Cell: analyticsSequence, NotBefore: &due},
 			}, nil
 		},
 	))
@@ -62,6 +73,12 @@ func TestFanoutRegistrationExpandsTypedPayloadToIdentifiedChildren(t *testing.T)
 	if string(complete.NewCells[0].Steps[0].Payload) != `{"order_id":"order-42"}` {
 		t.Fatalf("first child payload = %s, want encoded JSON", complete.NewCells[0].Steps[0].Payload)
 	}
+	if len(complete.NewCells[1].Steps) != 2 {
+		t.Fatalf("second child steps = %d, want 2", len(complete.NewCells[1].Steps))
+	}
+	if complete.NewCells[1].Steps[0].HandlerName != "analytics.publish" || complete.NewCells[1].Steps[1].HandlerName != "audit.record" {
+		t.Fatalf("second child steps = %#v, want analytics then audit", complete.NewCells[1].Steps)
+	}
 	if complete.NewCells[1].NotBefore == nil || !complete.NewCells[1].NotBefore.Equal(due) {
 		t.Fatalf("second child NotBefore = %v, want %v", complete.NewCells[1].NotBefore, due)
 	}
@@ -75,15 +92,19 @@ func TestFanoutRegistrationExpandsTypedPayloadToIdentifiedChildren(t *testing.T)
 }
 
 func TestFanoutRegistrationRejectsInvalidTargetKeys(t *testing.T) {
+	validCell, err := NewCellDefinition("child", fanoutTestPayload{OrderID: "one"})
+	if err != nil {
+		t.Fatalf("NewCellDefinition() error = %v", err)
+	}
 	tests := []struct {
 		name    string
 		targets []FanoutTarget
 		want    error
 	}{
-		{name: "empty", targets: []FanoutTarget{{HandlerName: "child"}}, want: ErrFanoutTargetKeyRequired},
+		{name: "empty", targets: []FanoutTarget{{Cell: validCell}}, want: ErrFanoutTargetKeyRequired},
 		{name: "duplicate", targets: []FanoutTarget{
-			{Key: "same", HandlerName: "child-a"},
-			{Key: "same", HandlerName: "child-b"},
+			{Key: "same", Cell: validCell},
+			{Key: "same", Cell: validCell},
 		}, want: ErrFanoutTargetKeyDuplicate},
 	}
 
@@ -139,10 +160,11 @@ func TestFanoutExpansionErrorReturnsErrorResult(t *testing.T) {
 	}
 }
 
-func TestFanoutTargetPayloadEncodingErrorReturnsErrorResult(t *testing.T) {
+func TestFanoutTargetCellErrorReturnsErrorResult(t *testing.T) {
+	want := errors.New("invalid child cell")
 	fanout, err := NewFanout("fanout", FanoutExpanderFunc[fanoutTestPayload](
 		func(context.Context, CellID, fanoutTestPayload) ([]FanoutTarget, error) {
-			return []FanoutTarget{{Key: "invalid", HandlerName: "child", Payload: make(chan int)}}, nil
+			return []FanoutTarget{{Key: "invalid", Cell: failingFanoutTargetCell{err: want}}}, nil
 		},
 	))
 	if err != nil {
@@ -158,8 +180,8 @@ func TestFanoutTargetPayloadEncodingErrorReturnsErrorResult(t *testing.T) {
 	if !ok {
 		t.Fatalf("result = %T, want ErrorResult", result)
 	}
-	if failure.Err == nil {
-		t.Fatal("error = nil, want payload encoding error")
+	if !errors.Is(failure.Err, want) {
+		t.Fatalf("error = %v, want %v", failure.Err, want)
 	}
 }
 
@@ -176,6 +198,35 @@ func TestFanoutValidatesConstruction(t *testing.T) {
 	}
 }
 
+func TestFanoutConstructsPayloadBearingCell(t *testing.T) {
+	fanout, err := NewFanout("order.completed", FanoutExpanderFunc[fanoutTestPayload](
+		func(context.Context, CellID, fanoutTestPayload) ([]FanoutTarget, error) {
+			return nil, nil
+		},
+	))
+	if err != nil {
+		t.Fatalf("NewFanout() error = %v", err)
+	}
+
+	cell, err := fanout.Cell(fanoutTestPayload{OrderID: "order-42"})
+	if err != nil {
+		t.Fatalf("Cell() error = %v", err)
+	}
+	request, err := cell.CellRequest()
+	if err != nil {
+		t.Fatalf("CellRequest() error = %v", err)
+	}
+	if len(request.Steps) != 1 {
+		t.Fatalf("steps = %d, want 1", len(request.Steps))
+	}
+	if request.Steps[0].HandlerName != "order.completed" {
+		t.Fatalf("handler = %q, want order.completed", request.Steps[0].HandlerName)
+	}
+	if string(request.Steps[0].Payload) != `{"order_id":"order-42"}` {
+		t.Fatalf("payload = %s, want encoded order payload", request.Steps[0].Payload)
+	}
+}
+
 func TestFanoutMaterialisesAndExecutesOrdinaryChildren(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("cell-", 1))
 	runtime := New(store, Config{PollDelay: time.Millisecond})
@@ -187,12 +238,20 @@ func TestFanoutMaterialisesAndExecutesOrdinaryChildren(t *testing.T) {
 	if err := runtime.Register("analytics.publish", child); err != nil {
 		t.Fatalf("Register(analytics.publish) error = %v", err)
 	}
+	emailCell, err := NewCellDefinition("email.send", fanoutTestPayload{OrderID: "order-42"})
+	if err != nil {
+		t.Fatalf("NewCellDefinition(email.send) error = %v", err)
+	}
+	analyticsCell, err := NewCellDefinition("analytics.publish", fanoutTestPayload{OrderID: "order-42"})
+	if err != nil {
+		t.Fatalf("NewCellDefinition(analytics.publish) error = %v", err)
+	}
 
 	fanout, err := NewFanout("order.completed", FanoutExpanderFunc[fanoutTestPayload](
 		func(context.Context, CellID, fanoutTestPayload) ([]FanoutTarget, error) {
 			return []FanoutTarget{
-				{Key: "email", HandlerName: "email.send", Payload: fanoutTestPayload{OrderID: "order-42"}},
-				{Key: "analytics", HandlerName: "analytics.publish", Payload: fanoutTestPayload{OrderID: "order-42"}},
+				{Key: "email", Cell: emailCell},
+				{Key: "analytics", Cell: analyticsCell},
 			}, nil
 		},
 	))
@@ -241,4 +300,12 @@ type fanoutRecordingHandler struct {
 func (h fanoutRecordingHandler) Handle(ctx context.Context, payload fanoutTestPayload) Result {
 	h.received <- payload
 	return Complete{}
+}
+
+type failingFanoutTargetCell struct {
+	err error
+}
+
+func (c failingFanoutTargetCell) CellRequest() (CellRequest, error) {
+	return CellRequest{}, c.err
 }

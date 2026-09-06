@@ -10,13 +10,11 @@ import (
 	"time"
 )
 
-// FanoutTarget describes one keyed child produced by a fanout expansion.
-// Cellar JSON-encodes Payload before persisting the child.
+// FanoutTarget describes one keyed child Cell produced by a fanout expansion.
 type FanoutTarget struct {
-	Key         string
-	HandlerName HandlerName
-	Payload     any
-	NotBefore   *time.Time
+	Key       string
+	Cell      CellDefinition
+	NotBefore *time.Time
 }
 
 // FanoutExpander expands one typed payload into zero or more keyed child cells.
@@ -81,6 +79,14 @@ func (f *Fanout[T]) Add(c *Cellar, payload T) (CellID, error) {
 	return c.Add(f.name, payload)
 }
 
+// Cell constructs a payload-bearing invocation of this fanout.
+func (f *Fanout[T]) Cell(payload T) (CellDefinition, error) {
+	if f == nil {
+		return nil, ErrFanoutNil
+	}
+	return NewCellDefinition(f.name, payload)
+}
+
 type fanoutRegistration[T any] struct {
 	expander FanoutExpander[T]
 }
@@ -127,14 +133,21 @@ func identifyFanoutTargets(parentID CellID, targets []FanoutTarget) ([]CellReque
 			return nil, fmt.Errorf("%w: %s", ErrFanoutTargetKeyDuplicate, target.Key)
 		}
 		keys[target.Key] = struct{}{}
-		payload, err := marshalJSON(target.Payload)
+		if target.Cell == nil {
+			return nil, ErrFanoutTargetCellRequired
+		}
+		child, err := target.Cell.CellRequest()
 		if err != nil {
-			return nil, fmt.Errorf("encode fanout target %q payload: %w", target.Key, err)
+			return nil, fmt.Errorf("materialise fanout target %q cell: %w", target.Key, err)
+		}
+		child.ID = deriveFanoutChildID(parentID, target.Key)
+		if target.NotBefore != nil {
+			child.NotBefore = cloneTimePtr(target.NotBefore)
 		}
 		children = append(children, CellRequest{
-			ID:        deriveFanoutChildID(parentID, target.Key),
-			Steps:     []CellStep{{HandlerName: target.HandlerName, Payload: payload}},
-			NotBefore: target.NotBefore,
+			ID:        child.ID,
+			Steps:     child.Steps,
+			NotBefore: child.NotBefore,
 		})
 	}
 	return children, nil
@@ -157,5 +170,6 @@ var (
 	ErrFanoutExpanderNil        = errors.New("fanout expander is nil")
 	ErrFanoutAlreadyExists      = errors.New("fanout already exists")
 	ErrFanoutTargetKeyRequired  = errors.New("fanout target key is required")
+	ErrFanoutTargetCellRequired = errors.New("fanout target cell is required")
 	ErrFanoutTargetKeyDuplicate = errors.New("fanout target key is duplicated")
 )

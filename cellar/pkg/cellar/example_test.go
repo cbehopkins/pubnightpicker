@@ -129,9 +129,17 @@ func ExampleFanout() {
 
 	fanout, err := cellar.NewFanout("order.completed", cellar.FanoutExpanderFunc[orderCompleted](
 		func(ctx context.Context, parentID cellar.CellID, order orderCompleted) ([]cellar.FanoutTarget, error) {
+			emailCell, err := cellar.NewCellDefinition("email.send", sendEmail{OrderID: order.OrderID, Email: order.Email})
+			if err != nil {
+				return nil, err
+			}
+			analyticsCell, err := cellar.NewCellDefinition("analytics.publish", publishAnalytics{OrderID: order.OrderID})
+			if err != nil {
+				return nil, err
+			}
 			return []cellar.FanoutTarget{
-				{Key: "email", HandlerName: "email.send", Payload: sendEmail{OrderID: order.OrderID, Email: order.Email}},
-				{Key: "analytics", HandlerName: "analytics.publish", Payload: publishAnalytics{OrderID: order.OrderID}},
+				{Key: "email", Cell: emailCell},
+				{Key: "analytics", Cell: analyticsCell},
 			}, nil
 		},
 	))

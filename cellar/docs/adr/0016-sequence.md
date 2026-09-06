@@ -126,7 +126,7 @@ Add(args ...any)
 
 This is explicitly rejected.
 
-The public API will instead retain a simple `Add` operation for ordinary work and provide a separate `AddSequence` operation.
+The public API will retain a simple `Add` operation for ordinary work and provide a separate `AddSequence` operation. Composition APIs may also construct a `CellDefinition` first with `NewCellDefinition` or `NewSequence` and then persist it with `AddCell`.
 
 Conceptually:
 
@@ -142,6 +142,14 @@ and:
 ```go
 func (c *Cellar) AddSequence(
     steps ...Step,
+) (CellID, error)
+```
+
+and:
+
+```go
+func (c *Cellar) AddCell(
+    definition CellDefinition,
 ) (CellID, error)
 ```
 

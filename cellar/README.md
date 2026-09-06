@@ -126,6 +126,10 @@ transition. A `Kill` removes the current Cell without running later steps, but m
 also carry cleanup Cells and `ApplicationWork`; those side effects commit atomically
 with the termination. A final `Complete` also removes the Cell.
 
+For composition APIs, `NewCellDefinition` and `NewSequence` construct values that
+satisfy the `CellDefinition` interface. `AddCell` persists any such construct and
+only then makes the resulting Cell eligible to run.
+
 ---
 
 ## Usage
@@ -160,21 +164,26 @@ do not construct workers, dispatchers, result appliers, or schedulers.
 
 ### Fanout
 
-A Fanout expands one durable Cell into zero or more ordinary child Cells. Each target
-has a key that is stable for that parent. Cellar uses the parent ID and target key to
-derive the child's opaque ID, so retrying the same expansion cannot silently create a
-second copy of a target.
+A Fanout expands one durable Cell into zero or more child Cells. Each target has a key
+that is stable for that parent and carries any value satisfying the `CellDefinition`
+interface, including ordinary one-step Cells, sequences, or payload-bearing fanout
+invocations.
+Cellar uses the parent ID and target key to derive the child's opaque ID, so retrying
+the same expansion cannot silently create a second copy of a target.
 
 ```go
 fanout, err := cellar.NewFanout(
     "order.completed",
     cellar.FanoutExpanderFunc[OrderCompleted](
         func(ctx context.Context, parentID cellar.CellID, order OrderCompleted) ([]cellar.FanoutTarget, error) {
+            emailCell, err := cellar.NewCellDefinition("email.send", SendEmail{OrderID: order.ID})
+            if err != nil {
+                return nil, err
+            }
             return []cellar.FanoutTarget{
                 {
-                    Key:         "email",
-                    HandlerName: "email.send",
-                    Payload:     SendEmail{OrderID: order.ID},
+                    Key:  "email",
+                    Cell: emailCell,
                 },
             }, nil
         },

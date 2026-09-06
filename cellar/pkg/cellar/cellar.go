@@ -53,7 +53,14 @@ func (c *Cellar) Register[T any](name HandlerName, handler Handler[T]) error {
 
 // Add JSON-encodes payload and persists a one-step Cell for the named handler.
 func (c *Cellar) Add[T any](name HandlerName, payload T) (CellID, error) {
-	return c.AddSequence(Step{HandlerName: name, Payload: payload})
+	if c.store == nil {
+		return "", ErrStoreNil
+	}
+	definition, err := NewCellDefinition(name, payload)
+	if err != nil {
+		return "", err
+	}
+	return c.AddCell(definition)
 }
 
 // Step describes one typed handler invocation in a sequence.
@@ -71,23 +78,27 @@ func (c *Cellar) AddSequence(steps ...Step) (CellID, error) {
 	if c.store == nil {
 		return "", ErrStoreNil
 	}
-	if len(steps) == 0 {
-		return "", errors.New("sequence must contain at least one step")
+	sequence, err := NewSequence(steps...)
+	if err != nil {
+		return "", err
+	}
+	return c.AddCell(sequence)
+}
+
+// AddCell persists a CellDefinition, making the resulting Cell eligible to run.
+func (c *Cellar) AddCell(definition CellDefinition) (CellID, error) {
+	if c.store == nil {
+		return "", ErrStoreNil
+	}
+	if definition == nil {
+		return "", ErrCellNil
+	}
+	request, err := definition.CellRequest()
+	if err != nil {
+		return "", err
 	}
 
-	requests := make([]CellStep, 0, len(steps))
-	for _, step := range steps {
-		if step.HandlerName == "" {
-			return "", errors.New("handler name is required")
-		}
-		raw, err := marshalJSON(step.Payload)
-		if err != nil {
-			return "", fmt.Errorf("encode cell payload: %w", err)
-		}
-		requests = append(requests, CellStep{HandlerName: step.HandlerName, Payload: raw})
-	}
-
-	ids, err := c.store.Add([]CellRequest{{Steps: requests}})
+	ids, err := c.store.Add([]CellRequest{request})
 	if err != nil {
 		return "", err
 	}

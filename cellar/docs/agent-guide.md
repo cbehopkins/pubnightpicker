@@ -168,6 +168,10 @@ id, err := runtime.AddSequence(
 )
 ```
 
+Use `cellar.NewCellDefinition` or `cellar.NewSequence` when constructing work for
+another composition API such as Fanout, then persist that value with `Cellar.AddCell`
+when it should be enqueued directly.
+
 Use the store’s `Add` method only when supplying already JSON-encoded steps:
 
 ```go

@@ -63,18 +63,25 @@ func Fanout(registry *Registry) (*cellar.Fanout[Fact], error) {
 		func(ctx context.Context, parentID cellar.CellID, fact Fact) ([]cellar.FanoutTarget, error) {
 			_ = ctx
 			_ = parentID
-			targets := registry.Targets(fact.Name)
-			out := make([]cellar.FanoutTarget, 0, len(targets))
-			for i, handlerName := range targets {
-				out = append(out, cellar.FanoutTarget{
-					Key:         fmt.Sprintf("%s-%d", handlerName, i),
-					HandlerName: handlerName,
-					Payload:     fact.Payload,
-				})
-			}
-			return out, nil
+			return fanoutTargets(registry, fact)
 		},
 	))
+}
+
+func fanoutTargets(registry *Registry, fact Fact) ([]cellar.FanoutTarget, error) {
+	targets := registry.Targets(fact.Name)
+	out := make([]cellar.FanoutTarget, 0, len(targets))
+	for _, handlerName := range targets {
+		cell, err := cellar.NewCellDefinition(handlerName, fact.Payload)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cellar.FanoutTarget{
+			Key:  string(handlerName),
+			Cell: cell,
+		})
+	}
+	return out, nil
 }
 
 // CellRequest builds a durable request which, once executed, fans the Fact out to its

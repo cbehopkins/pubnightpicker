@@ -7,9 +7,10 @@
 
 Fanout is exposed as a typed, process-local `Fanout[T]` registration. Its expander
 receives the parent `CellID` and typed payload and returns keyed `FanoutTarget` values.
-Target keys must be non-empty and unique within one expansion. A target carries an
-application payload as `any`; Cellar JSON-encodes it when constructing the durable
-child Cell.
+Target keys must be non-empty and unique within one expansion. A target carries a
+`CellDefinition`; Cellar materialises that definition to the durable child
+`CellRequest`. This allows a target to be ordinary one-step work, a multi-step
+sequence, or a payload-bearing fanout invocation.
 
 Cellar derives each target's opaque child ID from the parent ID and target key. All
 children use `Complete.NewCells`: an empty `CellRequest.ID` asks the Store to allocate
@@ -532,32 +533,10 @@ This ADR does not define:
 * priority scheduling;
 * per-handler concurrency limits;
 * multiple worker pools;
-* workflow/sequence execution;
 * durable workflow definitions; or
 * versioned workload registrations.
 
 These can be designed independently.
-
-## Future work: Sequence
-
-A future Sequence workload may build upon the same fundamental concepts.
-
-Unlike Fanout, a Sequence cannot necessarily materialise all of its work immediately because later steps depend upon earlier steps completing.
-
-Conceptually:
-
-```text
-Sequence
-   │
-   ▼
-Step A
-   │
-   ▼
-Step B
-   │
-   ▼
-Step C
-```
 
 This will likely require durable orchestration/state-machine semantics.
 

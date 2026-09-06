@@ -195,3 +195,46 @@ Backend Truth
 * Permanent endpoint failures cause endpoint invalidation rather than retry.
 * The authoritative endpoint store remains the source of truth; any notification-profile cache is derived state.
 * Delivery does not depend on re-querying the notification-profile cache after population.
+
+# CDD Amendment: Push Notification Pipeline
+
+## Endpoint Population
+
+Endpoint population determines the concrete push endpoints that are eligible to receive a notification.
+
+The population process obtains notification preferences and push subscription information from the **Firebase Notification Profile Projection**.
+
+The projection is a local, eventually consistent representation of authoritative Firebase data. The notification pipeline MUST NOT directly depend on the Firebase document structure.
+
+Population is evaluated when notification truth is expanded into concrete delivery work.
+
+The resulting population represents the recipients selected at that point in time.
+
+Once endpoint population has been committed, subsequent changes to:
+
+* Firebase notification preferences;
+* Firebase push subscriptions;
+* endpoint activity;
+
+MUST NOT modify the already-created notification population.
+
+Endpoint population MUST be idempotent and replayable.
+
+Population and creation of the associated delivery work MAY be performed by the same cell or by multiple cells. The architecture MUST NOT require a particular cell decomposition.
+
+Where they are performed together, the application database writes representing the population and the creation of delivery cells SHOULD be committed atomically.
+
+Where they are separated, the same externally visible guarantees MUST be maintained: replay MUST NOT create duplicate population entries or duplicate delivery work.
+
+## Dependency Boundary
+
+The push notification pipeline has a read-only dependency on the Firebase Notification Profile Projection.
+
+It does not:
+
+* maintain the projection;
+* write notification preferences;
+* interpret Firebase documents;
+* re-query Firebase during endpoint delivery.
+
+The projection therefore forms the boundary between Firebase's authoritative representation and the notification system's local recipient-selection model.
