@@ -1,5 +1,4 @@
 package notificationprofile
-package notificationprofile
 
 import (
 	"context"
