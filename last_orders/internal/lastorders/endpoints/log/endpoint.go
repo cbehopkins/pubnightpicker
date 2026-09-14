@@ -9,9 +9,8 @@ import (
 	"net/http"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
-	logsvc "last_orders/internal/lastorders/services/log"
+	"last_orders/internal/lastorders/truths"
 )
 
 // ListenerLog namespaces this endpoint's idempotency identities, mirroring how a
@@ -49,14 +48,14 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := cellar.JSONCodec[logsvc.Payload]().Marshal(logsvc.Payload{Message: body.Message})
+	envelope, err := truths.NewEnvelope(truths.LogMessageFanout, truths.LogMessage{Message: body.Message})
 	if err != nil {
 		e.logError("marshal log payload", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	request, err := firebaseidempotency.NewCellRequest(ListenerLog, body.EventID, facts.Fact{Name: logsvc.FactLogMessage, Payload: payload})
+	request, err := firebaseidempotency.NewCellRequest(ListenerLog, body.EventID, envelope)
 	if err != nil {
 		e.logError("build log cell request", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

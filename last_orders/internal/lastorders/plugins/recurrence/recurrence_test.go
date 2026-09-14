@@ -11,7 +11,7 @@ import (
 	"last_orders/internal/lastorders/truths"
 )
 
-func TestEvaluateEventVenueHandlerCreatesStaleEventFact(t *testing.T) {
+func TestEvaluateEventVenueHandlerCreatesStaleEventTruth(t *testing.T) {
 	handler := evaluator(t)
 	result := handler.Handle(context.Background(), truths.EventVenueObserved{
 		Venue: recurrence.EventVenue{
@@ -22,19 +22,19 @@ func TestEvaluateEventVenueHandlerCreatesStaleEventFact(t *testing.T) {
 		ObservedOn: "2030-01-01",
 	})
 
-	step := emittedFactStep(t, result)
+	step := emittedTruthStep(t, result)
 	if step.Listener != listenerStaleEvents {
 		t.Fatalf("listener = %q; want %q", step.Listener, listenerStaleEvents)
 	}
 	if step.EventKey != recurrence.StaleEventKey("event-1", "", map[string]any{"frequency": "once", "date": "2030-01-02"}) {
 		t.Fatalf("event key = %q", step.EventKey)
 	}
-	if step.Fact.Name != FactStaleEvent {
-		t.Fatalf("fact = %q; want %q", step.Fact.Name, FactStaleEvent)
+	if step.Truth.FanoutName != truths.StaleEventFanout {
+		t.Fatalf("fanout = %q; want %q", step.Truth.FanoutName, truths.StaleEventFanout)
 	}
 }
 
-func TestEvaluateEventVenueHandlerCreatesDueEventFact(t *testing.T) {
+func TestEvaluateEventVenueHandlerCreatesDueEventTruth(t *testing.T) {
 	handler := evaluator(t)
 	result := handler.Handle(context.Background(), truths.EventVenueObserved{
 		Venue: recurrence.EventVenue{
@@ -45,12 +45,12 @@ func TestEvaluateEventVenueHandlerCreatesDueEventFact(t *testing.T) {
 		ObservedOn: "2030-01-01",
 	})
 
-	step := emittedFactStep(t, result)
+	step := emittedTruthStep(t, result)
 	if step.Listener != listenerEventDue {
 		t.Fatalf("listener = %q; want %q", step.Listener, listenerEventDue)
 	}
-	if step.Fact.Name != FactCreateEventPoll {
-		t.Fatalf("fact = %q; want %q", step.Fact.Name, FactCreateEventPoll)
+	if step.Truth.FanoutName != truths.CreateEventPollFanout {
+		t.Fatalf("fanout = %q; want %q", step.Truth.FanoutName, truths.CreateEventPollFanout)
 	}
 }
 
@@ -83,7 +83,7 @@ func evaluator(t *testing.T) EvaluateEventVenueHandler {
 	return EvaluateEventVenueHandler{Store: cellar.NewMemoryStore(nil), Location: loc}
 }
 
-func emittedFactStep(t *testing.T, result cellar.Result) firebaseidempotency.StepPayload {
+func emittedTruthStep(t *testing.T, result cellar.Result) firebaseidempotency.StepPayload {
 	t.Helper()
 	complete, ok := result.(cellar.Complete)
 	if !ok {

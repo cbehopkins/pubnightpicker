@@ -1,9 +1,20 @@
 package truths
 
-const (
-	DailyPollAutoCompleteDueName = "DailyPollAutoCompleteDue"
-	PollAutoCompletionDueName    = "PollAutoCompletionDue"
-)
+import "cellar/pkg/cellar"
+
+// DailyPollAutoCompleteDueFanout is the durable Cellar handler name which fans
+// this Truth out to its registered handlers.
+const DailyPollAutoCompleteDueFanout cellar.HandlerName = "truths.daily_poll_auto_complete_due"
+
+// DailyPollAutoCompleteDueRegistry declares which handlers receive this Truth.
+var DailyPollAutoCompleteDueRegistry = NewRegistry[DailyPollAutoCompleteDue](DailyPollAutoCompleteDueFanout)
+
+// PollAutoCompletionDueFanout is the durable Cellar handler name which fans
+// this Truth out to its registered handlers.
+const PollAutoCompletionDueFanout cellar.HandlerName = "truths.poll_auto_completion_due"
+
+// PollAutoCompletionDueRegistry declares which handlers receive this Truth.
+var PollAutoCompletionDueRegistry = NewRegistry[PollAutoCompletionDue](PollAutoCompletionDueFanout)
 
 // DailyPollAutoCompleteDue states that automatic poll-completion discovery is
 // due on an observed London calendar date.

@@ -1,6 +1,6 @@
 // Package firebaseidempotency implements the Firebase-backed idempotency variant
 // described in docs/cdd/0001-idempotency.md. Processing is a 3-step Cell Sequence:
-// Check -> Populate Remote -> Emit Fact. The Cell's own step cursor is the durable
+// Check -> Populate Remote -> Emit Truth. The Cell's own step cursor is the durable
 // processing state machine; the local Store only caches the claimed identity.
 package firebaseidempotency
 
@@ -9,27 +9,27 @@ import (
 	"log/slog"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
+	"last_orders/internal/lastorders/truths"
 )
 
 const (
 	HandlerCheck          cellar.HandlerName = "firebase.idempotency.check"
 	HandlerPopulateRemote cellar.HandlerName = "firebase.idempotency.populate_remote"
-	HandlerEmitFact       cellar.HandlerName = "firebase.idempotency.emit_fact"
+	HandlerEmitTruth      cellar.HandlerName = "firebase.idempotency.emit_truth"
 )
 
-// StepPayload is carried by every step of the Sequence; the identity and Fact are
-// fixed when the Sequence is created and do not change as it progresses.
+// StepPayload is carried by every step of the Sequence; the identity and Truth
+// envelope are fixed when the Sequence is created and do not change as it progresses.
 type StepPayload struct {
-	Listener string     `json:"listener"`
-	EventKey string     `json:"event_key"`
-	Fact     facts.Fact `json:"fact"`
+	Listener string          `json:"listener"`
+	EventKey string          `json:"event_key"`
+	Truth    truths.Envelope `json:"truth"`
 }
 
 // NewCellRequest builds the 3-step Sequence which establishes idempotency for the
-// given identity and, once established, emits the Fact.
-func NewCellRequest(listener, eventKey string, fact facts.Fact) (cellar.CellRequest, error) {
-	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Fact: fact})
+// given identity and, once established, emits the Truth.
+func NewCellRequest(listener, eventKey string, truth truths.Envelope) (cellar.CellRequest, error) {
+	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Truth: truth})
 	if err != nil {
 		return cellar.CellRequest{}, err
 	}
@@ -37,7 +37,7 @@ func NewCellRequest(listener, eventKey string, fact facts.Fact) (cellar.CellRequ
 		Steps: []cellar.CellStep{
 			{HandlerName: HandlerCheck, Payload: payload},
 			{HandlerName: HandlerPopulateRemote, Payload: payload},
-			{HandlerName: HandlerEmitFact, Payload: payload},
+			{HandlerName: HandlerEmitTruth, Payload: payload},
 		},
 	}, nil
 }
@@ -67,7 +67,7 @@ func (h CheckHandler) Handle(ctx context.Context, payload StepPayload) cellar.Re
 
 	claimWork := h.Store.InsertUnlessExistsWork(payload.Listener, payload.EventKey)
 	if remoteExists {
-		// Already established elsewhere: cache the identity and stop, without emitting the Fact again.
+		// Already established elsewhere: cache the identity and stop, without emitting the Truth again.
 		if h.Logger != nil {
 			h.Logger.Info("idempotency observed remote establishment, terminating", "listener", payload.Listener, "event_key", payload.EventKey)
 		}
@@ -97,19 +97,19 @@ func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) 
 	return cellar.Complete{}
 }
 
-// EmitFactHandler is Step 3: it emits the Fact. Reaching this step means Step 1
+// EmitTruthHandler is Step 3: it emits the Truth. Reaching this step means Step 1
 // determined the identity was genuinely new, so this always runs.
-type EmitFactHandler struct {
+type EmitTruthHandler struct {
 	Logger *slog.Logger
 }
 
-func (h EmitFactHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
-	factCell, err := facts.CellRequest(payload.Fact.Name, payload.Fact.Payload)
+func (h EmitTruthHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
+	truthCell, err := payload.Truth.CellRequest()
 	if err != nil {
-		return cellar.ErrorResult{Message: "build fact cell", Err: err}
+		return cellar.ErrorResult{Message: "build truth cell", Err: err}
 	}
 	if h.Logger != nil {
-		h.Logger.Info("idempotency emitting fact", "listener", payload.Listener, "event_key", payload.EventKey, "fact", payload.Fact.Name)
+		h.Logger.Info("idempotency emitting truth", "listener", payload.Listener, "event_key", payload.EventKey, "fanout", payload.Truth.FanoutName)
 	}
-	return cellar.Complete{NewCells: []cellar.CellRequest{factCell}}
+	return cellar.Complete{NewCells: []cellar.CellRequest{truthCell}}
 }

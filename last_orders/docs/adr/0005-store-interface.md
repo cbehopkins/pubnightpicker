@@ -311,6 +311,10 @@ This is acceptable because the resulting Cells are filtered by the appropriate l
 
 # 11. Facts
 
+> **Superseded by ADR-0010.** The term "Fact" introduced below is retired in
+> favour of "Truth" (ADR-0009). This section is retained as a historical
+> record only; current code and documentation use "Truth" exclusively.
+
 The term **Fact** is preferred to "Event".
 
 A Fact represents something observed by a Listener which may cause application work.

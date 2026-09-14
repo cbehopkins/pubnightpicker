@@ -1,5 +1,10 @@
 # CDD: Event Recurrence and Poll Materialisation
 
+> **Terminology note:** this document predates ADR-0010. Where it says "Fact"
+> it means what the codebase now calls a **Truth** (ADR-0009); `StaleEvent` and
+> `CreateEventPoll` are declared in `internal/lastorders/truths` and dispatched
+> via their own native `cellar.Fanout[T]`.
+
 ## 1. Purpose
 
 Define the backend architecture and behaviour for recurring event venues.

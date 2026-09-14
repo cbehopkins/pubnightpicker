@@ -111,7 +111,7 @@ func TestDiscoveryCreatesPerPollTruthWorkAgainstEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode idempotency payload: %v", err)
 	}
-	if check.Key != pollID+"_2026-09-01" || check.Fact.Name != truths.PollAutoCompletionDueName {
+	if check.Key != pollID+"_2026-09-01" || check.Truth.FanoutName != truths.PollAutoCompletionDueFanout {
 		t.Fatalf("discovery payload = %+v", check)
 	}
 }

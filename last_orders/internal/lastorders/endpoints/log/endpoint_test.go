@@ -11,7 +11,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
-	logsvc "last_orders/internal/lastorders/services/log"
+	"last_orders/internal/lastorders/truths"
 )
 
 type fakeCellAdder struct {
@@ -59,13 +59,13 @@ func TestEndpointAcceptsValidRequest(t *testing.T) {
 	if step.EventKey != "evt-1" {
 		t.Fatalf("expected event key %q, got %q", "evt-1", step.EventKey)
 	}
-	if step.Fact.Name != logsvc.FactLogMessage {
-		t.Fatalf("expected fact %q, got %q", logsvc.FactLogMessage, step.Fact.Name)
+	if step.Truth.FanoutName != truths.LogMessageFanout {
+		t.Fatalf("expected fanout %q, got %q", truths.LogMessageFanout, step.Truth.FanoutName)
 	}
 
-	var logPayload logsvc.Payload
-	if err := json.Unmarshal(step.Fact.Payload, &logPayload); err != nil {
-		t.Fatalf("unmarshal fact payload: %v", err)
+	var logPayload truths.LogMessage
+	if err := json.Unmarshal(step.Truth.Payload, &logPayload); err != nil {
+		t.Fatalf("unmarshal truth payload: %v", err)
 	}
 	if logPayload.Message != "hello world" {
 		t.Fatalf("expected message %q, got %q", "hello world", logPayload.Message)

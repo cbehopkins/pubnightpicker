@@ -2,9 +2,18 @@
 // source and the plugins that react to them.
 package truths
 
-import "last_orders/internal/lastorders/components/recurrence"
+import (
+	"cellar/pkg/cellar"
 
-const EventVenueObservedName = "EventVenueObserved"
+	"last_orders/internal/lastorders/components/recurrence"
+)
+
+// EventVenueObservedFanout is the durable Cellar handler name which fans this
+// Truth out to its registered handlers.
+const EventVenueObservedFanout cellar.HandlerName = "truths.event_venue_observed"
+
+// EventVenueObservedRegistry declares which handlers receive this Truth.
+var EventVenueObservedRegistry = NewRegistry[EventVenueObserved](EventVenueObservedFanout)
 
 // EventVenueObserved is immutable evidence captured when an event venue is
 // observed. ObservedOn preserves the London calendar date used for evaluation.

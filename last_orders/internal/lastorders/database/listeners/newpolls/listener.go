@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
-	"last_orders/internal/lastorders/plugins/polls"
+	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	ListenerNewPoll = "NewPoll"
+	ListenerPollOpened = "PollOpened"
 
 	pollCollection  = "polls"
 	watchRetryDelay = 5 * time.Second
@@ -85,25 +84,25 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 			if change.Kind != firestore.DocumentAdded {
 				continue
 			}
-			l.createFact(change.Doc.Ref.ID)
+			l.createTruth(change.Doc.Ref.ID)
 		}
 	}
 }
 
-func (l *Listener) createFact(pollID string) {
-	targetPayload, err := cellar.JSONCodec[polls.PollObservedPayload]().Marshal(polls.PollObservedPayload{PollID: pollID})
+func (l *Listener) createTruth(pollID string) {
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID})
 	if err != nil {
 		l.logger.Error("marshal new poll payload", "poll_id", pollID, "err", err)
 		return
 	}
 
-	request, err := firebaseidempotency.NewCellRequest(ListenerNewPoll, pollID, facts.Fact{Name: polls.FactNewPoll, Payload: targetPayload})
+	request, err := firebaseidempotency.NewCellRequest(ListenerPollOpened, pollID, envelope)
 	if err != nil {
 		l.logger.Error("build new poll idempotency cell", "poll_id", pollID, "err", err)
 		return
 	}
 
 	if _, err := l.store.Add([]cellar.CellRequest{request}); err != nil {
-		l.logger.Error("create new poll fact cell", "poll_id", pollID, "err", err)
+		l.logger.Error("create new poll truth cell", "poll_id", pollID, "err", err)
 	}
 }

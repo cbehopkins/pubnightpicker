@@ -14,7 +14,6 @@ import (
 	"cellar/pkg/cellar"
 	publicsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/basestore"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/notificationprofile"
@@ -187,28 +186,22 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 
-	factRegistry := facts.NewRegistry()
-	factRegistry.Register(polls.FactNewPoll, polls.HandlerNewPoll)
-	factRegistry.Register(polls.FactCompletedPoll, polls.HandlerCompletedPoll)
-	factRegistry.Register(truths.EventVenueObservedName, recurrenceplugin.HandlerEvaluateEventVenue)
-	factRegistry.Register(recurrenceplugin.FactStaleEvent, recurrenceplugin.HandlerStaleEvent)
-	factRegistry.Register(recurrenceplugin.FactCreateEventPoll, recurrenceplugin.HandlerCreateEventPoll)
-	factRegistry.Register(logsvc.FactLogMessage, logsvc.HandlerLogMessage)
-	autocompleteplugin.Register(factRegistry)
-
-	factFanout, err := facts.Fanout(factRegistry)
-	if err != nil {
-		return nil, err
-	}
+	truths.PollOpenedRegistry.Register(polls.HandlerPollOpened)
+	truths.PollCompletedRegistry.Register(polls.HandlerPollCompleted)
+	truths.EventVenueObservedRegistry.Register(recurrenceplugin.HandlerEvaluateEventVenue)
+	truths.StaleEventRegistry.Register(recurrenceplugin.HandlerStaleEvent)
+	truths.CreateEventPollRegistry.Register(recurrenceplugin.HandlerCreateEventPoll)
+	truths.LogMessageRegistry.Register(logsvc.HandlerLogMessage)
+	autocompleteplugin.Register()
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay})
-	if err := factFanout.Register(cellarRuntime); err != nil {
+	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(polls.HandlerNewPoll, polls.NewPollHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(polls.HandlerPollOpened, polls.PollOpenedHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(polls.HandlerCompletedPoll, polls.CompletedPollHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(polls.HandlerPollCompleted, polls.PollCompletedHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
@@ -217,7 +210,7 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitFact, firebaseidempotency.EmitFactHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(idempotency.HandlerCheck, idempotency.CheckHandler{Store: localIdempotencyStore, Logger: cfg.Logger}); err != nil {
@@ -531,6 +524,38 @@ func (a *App) NotificationProfile() *notificationprofile.Service {
 
 func sqliteDSN(path string) string {
 	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+}
+
+// registerTruthFanouts registers every Truth's native Cellar Fanout with the
+// runtime. It must run after every Plugin has declared its handlers via the
+// truths package's per-Truth Registry.Register.
+func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
+	registrars := []func(*cellar.Cellar) error{
+		registerFanout[truths.PollObservedPayload](truths.PollOpenedRegistry),
+		registerFanout[truths.PollObservedPayload](truths.PollCompletedRegistry),
+		registerFanout[truths.EventVenueObserved](truths.EventVenueObservedRegistry),
+		registerFanout[truths.StaleEvent](truths.StaleEventRegistry),
+		registerFanout[truths.CreateEventPoll](truths.CreateEventPollRegistry),
+		registerFanout[truths.LogMessage](truths.LogMessageRegistry),
+		registerFanout[truths.DailyPollAutoCompleteDue](truths.DailyPollAutoCompleteDueRegistry),
+		registerFanout[truths.PollAutoCompletionDue](truths.PollAutoCompletionDueRegistry),
+	}
+	for _, registrar := range registrars {
+		if err := registrar(cellarRuntime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerFanout[T any](registry *truths.Registry[T]) func(*cellar.Cellar) error {
+	return func(cellarRuntime *cellar.Cellar) error {
+		fanout, err := registry.Fanout()
+		if err != nil {
+			return err
+		}
+		return fanout.Register(cellarRuntime)
+	}
 }
 
 type cleanupStack []func() error

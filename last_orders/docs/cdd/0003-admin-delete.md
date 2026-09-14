@@ -1,5 +1,11 @@
 # CDD: Admin Delete Service
 
+> **Terminology note:** this document predates ADR-0010. Where it says "Fact"
+> it means what the codebase now calls a **Truth** (ADR-0009); the generic
+> `components/facts.Fact` envelope it describes has been folded into
+> `internal/lastorders/truths` as `truths.Envelope`, dispatched via a native
+> `cellar.Fanout[T]` per Truth type rather than a single shared Fanout.
+
 ## 1. Purpose
 
 The Admin Delete Service provides a controlled backend mechanism for deleting a

@@ -17,7 +17,7 @@ import (
 const defaultRetryDelay = 5 * time.Second
 
 // Listener keeps the notification profile projection converged with Firebase.
-// It emits no Facts; it only maintains derived state.
+// It emits no Truths; it only maintains derived state.
 type Listener struct {
 	service    *notificationprofile.Service
 	store      *notificationprofile.Store

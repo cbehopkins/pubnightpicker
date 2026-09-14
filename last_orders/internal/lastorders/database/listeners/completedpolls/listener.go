@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
-	"last_orders/internal/lastorders/plugins/polls"
+	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	ListenerCompletedPoll = "CompletedPoll"
+	ListenerPollCompleted = "PollCompleted"
 
 	pollCollection  = "polls"
 	watchRetryDelay = 5 * time.Second
@@ -89,7 +88,7 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 			selectedVenueID, _ := change.Doc.Data()["selected"].(string)
 			selectedRestaurantID, _ := change.Doc.Data()["restaurant_id"].(string)
 			selectedRestaurantTime, _ := change.Doc.Data()["restaurant_time"].(string)
-			l.createFact(change.Doc.Ref.ID, selectedVenueID, changeKind(change.Kind), selectedRestaurantID, selectedRestaurantTime)
+			l.createTruth(change.Doc.Ref.ID, selectedVenueID, changeKind(change.Kind), selectedRestaurantID, selectedRestaurantTime)
 		}
 	}
 }
@@ -99,8 +98,8 @@ type eventIdentity struct {
 	SelectedVenueID string `json:"selected_venue_id"`
 }
 
-func (l *Listener) createFact(pollID, selectedVenueID, kind, selectedRestaurantID, selectedRestaurantTime string) {
-	targetPayload, err := cellar.JSONCodec[polls.PollObservedPayload]().Marshal(polls.PollObservedPayload{
+func (l *Listener) createTruth(pollID, selectedVenueID, kind, selectedRestaurantID, selectedRestaurantTime string) {
+	envelope, err := truths.NewEnvelope(truths.PollCompletedFanout, truths.PollObservedPayload{
 		PollID:                 pollID,
 		ChangeKind:             kind,
 		SelectedRestaurantID:   selectedRestaurantID,
@@ -112,9 +111,9 @@ func (l *Listener) createFact(pollID, selectedVenueID, kind, selectedRestaurantI
 	}
 
 	request, err := firebaseidempotency.NewCellRequest(
-		ListenerCompletedPoll,
+		ListenerPollCompleted,
 		completedEventKey(pollID, selectedVenueID, selectedRestaurantID, selectedRestaurantTime),
-		facts.Fact{Name: polls.FactCompletedPoll, Payload: targetPayload},
+		envelope,
 	)
 	if err != nil {
 		l.logger.Error("build completed poll idempotency cell", "poll_id", pollID, "err", err)
@@ -122,7 +121,7 @@ func (l *Listener) createFact(pollID, selectedVenueID, kind, selectedRestaurantI
 	}
 
 	if _, err := l.store.Add([]cellar.CellRequest{request}); err != nil {
-		l.logger.Error("create completed poll fact cell", "poll_id", pollID, "err", err)
+		l.logger.Error("create completed poll truth cell", "poll_id", pollID, "err", err)
 	}
 }
 

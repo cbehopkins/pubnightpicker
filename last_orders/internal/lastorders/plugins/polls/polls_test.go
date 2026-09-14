@@ -8,24 +8,25 @@ import (
 	"testing"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/truths"
 )
 
 func TestPollHandlersLogProcessedObservation(t *testing.T) {
 	tests := []struct {
 		name    string
-		handler cellar.Handler[PollObservedPayload]
-		payload PollObservedPayload
+		handler cellar.Handler[truths.PollObservedPayload]
+		payload truths.PollObservedPayload
 		message string
 	}{
 		{
 			name:    "new poll",
-			payload: PollObservedPayload{PollID: "poll-1"},
-			message: "new poll processed",
+			payload: truths.PollObservedPayload{PollID: "poll-1"},
+			message: "poll opened processed",
 		},
 		{
 			name:    "completed poll",
-			payload: PollObservedPayload{PollID: "poll-2", ChangeKind: "modified"},
-			message: "completed poll processed",
+			payload: truths.PollObservedPayload{PollID: "poll-2", ChangeKind: "modified"},
+			message: "poll completed processed",
 		},
 	}
 
@@ -34,9 +35,9 @@ func TestPollHandlersLogProcessedObservation(t *testing.T) {
 			var output bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&output, nil))
 			if test.name == "new poll" {
-				test.handler = NewPollHandler{Logger: logger}
+				test.handler = PollOpenedHandler{Logger: logger}
 			} else {
-				test.handler = CompletedPollHandler{Logger: logger}
+				test.handler = PollCompletedHandler{Logger: logger}
 			}
 
 			if _, ok := test.handler.Handle(context.Background(), test.payload).(cellar.Complete); !ok {

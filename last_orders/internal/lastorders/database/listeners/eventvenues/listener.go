@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/components/venuecache"
@@ -45,7 +44,7 @@ type Config struct {
 	Logger             *slog.Logger
 }
 
-// Listener observes event venues in the pubs collection and creates Facts for
+// Listener observes event venues in the pubs collection and creates Truths for
 // venues whose current state requires recurrence or poll-materialisation work.
 type Listener struct {
 	store    cellar.Store
@@ -193,29 +192,29 @@ func (l *Listener) createEventVenueObserved(ctx context.Context, venue recurrenc
 		Venue:      venue,
 		ObservedOn: observedOn,
 	}
-	payload, err := cellar.JSONCodec[truths.EventVenueObserved]().Marshal(event)
+	envelope, err := truths.NewEnvelope(truths.EventVenueObservedFanout, event)
 	if err != nil {
 		l.logger.Error("marshal event venue observation", "event_id", venue.ID, "err", err)
 		return
 	}
-	l.createFact(ctx, listenerEventVenueObserved, event.Identity(), truths.EventVenueObservedName, payload)
+	l.createTruth(ctx, listenerEventVenueObserved, event.Identity(), envelope)
 }
 
-// createFact hands the observation to the idempotency component, which is the sole
+// createTruth hands the observation to the idempotency component, which is the sole
 // authority on whether the work has already been established.
-func (l *Listener) createFact(ctx context.Context, listener, eventKey, factName string, payload []byte) {
+func (l *Listener) createTruth(ctx context.Context, listener, eventKey string, envelope truths.Envelope) {
 	_ = ctx
 
-	request, err := firebaseidempotency.NewCellRequest(listener, eventKey, facts.Fact{Name: factName, Payload: payload})
+	request, err := firebaseidempotency.NewCellRequest(listener, eventKey, envelope)
 	if err != nil {
 		l.logger.Error("build idempotency cell", "listener", listener, "event_key", eventKey, "err", err)
 		return
 	}
 
 	if _, err := l.store.Add([]cellar.CellRequest{request}); err != nil {
-		l.logger.Error("create fact cell", "listener", listener, "event_key", eventKey, "err", err)
+		l.logger.Error("create truth cell", "listener", listener, "event_key", eventKey, "err", err)
 		return
 	}
 
-	l.logger.Info("fact created", "listener", listener, "event_key", eventKey, "fact", factName)
+	l.logger.Info("truth created", "listener", listener, "event_key", eventKey, "fanout", envelope.FanoutName)
 }

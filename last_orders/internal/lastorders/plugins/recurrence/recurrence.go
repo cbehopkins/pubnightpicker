@@ -2,12 +2,10 @@ package recurrenceplugin
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/truths"
@@ -19,27 +17,10 @@ const (
 	HandlerCreateEventPoll    cellar.HandlerName = "recurrence.create_event_poll"
 )
 
-// Fact names registered against the handlers above.
-const (
-	FactStaleEvent      = "StaleEvent"
-	FactCreateEventPoll = "CreateEventPoll"
-)
-
 const (
 	listenerStaleEvents = "stale_events"
 	listenerEventDue    = "event_due"
 )
-
-type StaleEventPayload struct {
-	EventID string `json:"event_id"`
-	// ObservedDate is what the listener saw; the Cell revalidates against current state.
-	ObservedDate string `json:"observed_date"`
-}
-
-type CreateEventPollPayload struct {
-	EventID        string `json:"event_id"`
-	OccurrenceDate string `json:"occurrence_date"`
-}
 
 type EvaluateEventVenueHandler struct {
 	Store    cellar.Store
@@ -61,37 +42,37 @@ func (h EvaluateEventVenueHandler) Handle(ctx context.Context, payload truths.Ev
 	}
 
 	if recurrence.NeedsRecalculation(payload.Venue.Recurrence, payload.Venue.NextOccurrenceDate, observedOn, h.Location) {
-		return h.createStaleEventFact(payload.Venue)
+		return h.createStaleEventTruth(payload.Venue)
 	}
 	if recurrence.IsDue(payload.Venue.NextOccurrenceDate, observedOn, h.Location) {
-		return h.createEventDueFact(payload.Venue)
+		return h.createEventDueTruth(payload.Venue)
 	}
 	return cellar.Complete{}
 }
 
-func (h EvaluateEventVenueHandler) createStaleEventFact(venue recurrence.EventVenue) cellar.Result {
-	payload, err := cellar.JSONCodec[StaleEventPayload]().Marshal(StaleEventPayload{EventID: venue.ID, ObservedDate: venue.NextOccurrenceDate})
+func (h EvaluateEventVenueHandler) createStaleEventTruth(venue recurrence.EventVenue) cellar.Result {
+	envelope, err := truths.NewEnvelope(truths.StaleEventFanout, truths.StaleEvent{EventID: venue.ID, ObservedDate: venue.NextOccurrenceDate})
 	if err != nil {
-		return cellar.ErrorResult{Message: "marshal stale event payload", Err: err}
+		return cellar.ErrorResult{Message: "build stale event envelope", Err: err}
 	}
-	return h.createFact(listenerStaleEvents, recurrence.StaleEventKey(venue.ID, venue.NextOccurrenceDate, venue.Recurrence), FactStaleEvent, payload)
+	return h.createTruth(listenerStaleEvents, recurrence.StaleEventKey(venue.ID, venue.NextOccurrenceDate, venue.Recurrence), envelope)
 }
 
-func (h EvaluateEventVenueHandler) createEventDueFact(venue recurrence.EventVenue) cellar.Result {
-	payload, err := cellar.JSONCodec[CreateEventPollPayload]().Marshal(CreateEventPollPayload{EventID: venue.ID, OccurrenceDate: venue.NextOccurrenceDate})
+func (h EvaluateEventVenueHandler) createEventDueTruth(venue recurrence.EventVenue) cellar.Result {
+	envelope, err := truths.NewEnvelope(truths.CreateEventPollFanout, truths.CreateEventPoll{EventID: venue.ID, OccurrenceDate: venue.NextOccurrenceDate})
 	if err != nil {
-		return cellar.ErrorResult{Message: "marshal create event poll payload", Err: err}
+		return cellar.ErrorResult{Message: "build create event poll envelope", Err: err}
 	}
-	return h.createFact(listenerEventDue, recurrence.EventDueKey(venue.ID, venue.NextOccurrenceDate), FactCreateEventPoll, payload)
+	return h.createTruth(listenerEventDue, recurrence.EventDueKey(venue.ID, venue.NextOccurrenceDate), envelope)
 }
 
-func (h EvaluateEventVenueHandler) createFact(listener, eventKey, factName string, payload []byte) cellar.Result {
-	request, err := firebaseidempotency.NewCellRequest(listener, eventKey, facts.Fact{Name: factName, Payload: payload})
+func (h EvaluateEventVenueHandler) createTruth(listener, eventKey string, envelope truths.Envelope) cellar.Result {
+	request, err := firebaseidempotency.NewCellRequest(listener, eventKey, envelope)
 	if err != nil {
-		return cellar.ErrorResult{Message: fmt.Sprintf("build %s idempotency cell", factName), Err: err}
+		return cellar.ErrorResult{Message: "build idempotency cell", Err: err}
 	}
 	if h.Logger != nil {
-		h.Logger.Info("event venue evaluation created fact", "listener", listener, "event_key", eventKey, "fact", factName)
+		h.Logger.Info("event venue evaluation created truth", "listener", listener, "event_key", eventKey, "fanout", envelope.FanoutName)
 	}
 	return cellar.Complete{NewCells: []cellar.CellRequest{request}}
 }
@@ -101,7 +82,7 @@ type StaleEventHandler struct {
 	Logger  *slog.Logger
 }
 
-func (h StaleEventHandler) Handle(ctx context.Context, payload StaleEventPayload) cellar.Result {
+func (h StaleEventHandler) Handle(ctx context.Context, payload truths.StaleEvent) cellar.Result {
 	if h.Service == nil {
 		return cellar.ErrorResult{Message: "recurrence service is nil"}
 	}
@@ -124,7 +105,7 @@ type CreateEventPollHandler struct {
 	Logger  *slog.Logger
 }
 
-func (h CreateEventPollHandler) Handle(ctx context.Context, payload CreateEventPollPayload) cellar.Result {
+func (h CreateEventPollHandler) Handle(ctx context.Context, payload truths.CreateEventPoll) cellar.Result {
 	if h.Service == nil {
 		return cellar.ErrorResult{Message: "recurrence service is nil"}
 	}

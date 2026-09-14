@@ -13,7 +13,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/basestore"
-	"last_orders/internal/lastorders/components/facts"
+	"last_orders/internal/lastorders/truths"
 )
 
 // HandlerCheck is the single-step Cell which checks and establishes a local identity.
@@ -79,16 +79,16 @@ func (s *Store) InsertUnlessExistsWork(component, key string) cellar.Application
 
 var ErrClaimRejected = fmt.Errorf("idempotency claim rejected")
 
-// CheckPayload identifies the observation and the Fact to emit once established.
+// CheckPayload identifies the observation and the Truth to emit once established.
 type CheckPayload struct {
-	Component string     `json:"component"`
-	Key       string     `json:"key"`
-	Fact      facts.Fact `json:"fact"`
+	Component string          `json:"component"`
+	Key       string          `json:"key"`
+	Truth     truths.Envelope `json:"truth"`
 }
 
 // NewCellRequest builds the single-step Cell which performs the check-and-establish.
-func NewCellRequest(component, key string, fact facts.Fact) (cellar.CellRequest, error) {
-	payload, err := cellar.JSONCodec[CheckPayload]().Marshal(CheckPayload{Component: component, Key: key, Fact: fact})
+func NewCellRequest(component, key string, truth truths.Envelope) (cellar.CellRequest, error) {
+	payload, err := cellar.JSONCodec[CheckPayload]().Marshal(CheckPayload{Component: component, Key: key, Truth: truth})
 	if err != nil {
 		return cellar.CellRequest{}, err
 	}
@@ -110,15 +110,15 @@ func (h CheckHandler) Handle(ctx context.Context, payload CheckPayload) cellar.R
 		return cellar.Kill{}
 	}
 
-	factCell, err := facts.CellRequest(payload.Fact.Name, payload.Fact.Payload)
+	truthCell, err := payload.Truth.CellRequest()
 	if err != nil {
-		return cellar.ErrorResult{Message: "build fact cell", Err: err}
+		return cellar.ErrorResult{Message: "build truth cell", Err: err}
 	}
 	if h.Logger != nil {
-		h.Logger.Info("idempotency claiming and emitting fact", "component", payload.Component, "key", payload.Key, "fact", payload.Fact.Name)
+		h.Logger.Info("idempotency claiming and emitting truth", "component", payload.Component, "key", payload.Key, "fanout", payload.Truth.FanoutName)
 	}
 	return cellar.Complete{
-		NewCells:        []cellar.CellRequest{factCell},
+		NewCells:        []cellar.CellRequest{truthCell},
 		ApplicationWork: []cellar.ApplicationWork{h.Store.InsertUnlessExistsWork(payload.Component, payload.Key)},
 	}
 }

@@ -15,10 +15,9 @@ import (
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/basestore"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
-	"last_orders/internal/lastorders/plugins/polls"
+	"last_orders/internal/lastorders/truths"
 
 	_ "modernc.org/sqlite"
 )
@@ -93,7 +92,7 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 	}
 }
 
-func TestFactFanoutDeliversToRegisteredPollHandler(t *testing.T) {
+func TestTruthFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
@@ -108,8 +107,8 @@ func TestFactFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 	runFor(t, a, 300*time.Millisecond)
 
 	logged := output.String()
-	if !strings.Contains(logged, "new poll processed") || !strings.Contains(logged, "poll-fanout") {
-		t.Fatalf("expected fact to be delivered to the registered poll handler, got log: %s", logged)
+	if !strings.Contains(logged, "poll opened processed") || !strings.Contains(logged, "poll-fanout") {
+		t.Fatalf("expected truth to be delivered to the registered poll handler, got log: %s", logged)
 	}
 
 	active, err := a.CellarStore().ListActive()
@@ -117,7 +116,7 @@ func TestFactFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 		t.Fatalf("list active: %v", err)
 	}
 	if len(active) != 0 {
-		t.Fatalf("expected no active cells after fact delivery, got %d", len(active))
+		t.Fatalf("expected no active cells after truth delivery, got %d", len(active))
 	}
 }
 
@@ -139,17 +138,17 @@ func TestIdempotencyDuplicateObservationSuppressed(t *testing.T) {
 	runFor(t, a, 300*time.Millisecond)
 
 	logged := output.String()
-	if count := strings.Count(logged, "new poll processed"); count != 1 {
+	if count := strings.Count(logged, "poll opened processed"); count != 1 {
 		t.Fatalf("expected the duplicate observation to be suppressed, got %d deliveries: %s", count, logged)
 	}
 }
 
-func TestIdempotencyObservedRemoteDoesNotEmitFact(t *testing.T) {
+func TestIdempotencyObservedRemoteDoesNotEmitTruth(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
 	remote := firebaseidempotencytest.NewInMemoryRemoteStandIn(true)
-	remote.SeedExisting("NewPoll", "poll-observed", true)
+	remote.SeedExisting("PollOpened", "poll-observed", true)
 	dbPath := filepath.Join(t.TempDir(), "idem-observed.db")
 	a := mustNewAppWithLogger(t, dbPath, remote, nil, &output)
 	defer a.Close()
@@ -160,11 +159,11 @@ func TestIdempotencyObservedRemoteDoesNotEmitFact(t *testing.T) {
 
 	runFor(t, a, 300*time.Millisecond)
 
-	if strings.Contains(output.String(), "new poll processed") {
-		t.Fatal("a Fact already established remotely must not be re-emitted")
+	if strings.Contains(output.String(), "poll opened processed") {
+		t.Fatal("a Truth already established remotely must not be re-emitted")
 	}
 
-	exists, err := a.IdempotencyClaimed(context.Background(), "NewPoll", "poll-observed")
+	exists, err := a.IdempotencyClaimed(context.Background(), "PollOpened", "poll-observed")
 	if err != nil {
 		t.Fatalf("idempotency state: %v", err)
 	}
@@ -338,11 +337,11 @@ func runFor(t *testing.T, application *app.App, dur time.Duration) {
 
 func enqueueNewPoll(t *testing.T, application *app.App, pollID string) error {
 	t.Helper()
-	payload, err := cellar.JSONCodec[polls.PollObservedPayload]().Marshal(polls.PollObservedPayload{PollID: pollID})
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID})
 	if err != nil {
 		return err
 	}
-	request, err := firebaseidempotency.NewCellRequest("NewPoll", pollID, facts.Fact{Name: polls.FactNewPoll, Payload: payload})
+	request, err := firebaseidempotency.NewCellRequest("PollOpened", pollID, envelope)
 	if err != nil {
 		return err
 	}

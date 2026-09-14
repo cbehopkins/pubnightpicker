@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/truths"
 )
@@ -38,11 +37,11 @@ func New(store cellar.Store, logger *slog.Logger) (*Listener, error) {
 
 func (listener *Listener) RunOnce(ctx context.Context) error {
 	truth := truths.DailyPollAutoCompleteDue{ObservedOn: time.Now().In(listener.location).Format(time.DateOnly)}
-	payload, err := cellar.JSONCodec[truths.DailyPollAutoCompleteDue]().Marshal(truth)
+	envelope, err := truths.NewEnvelope(truths.DailyPollAutoCompleteDueFanout, truth)
 	if err != nil {
 		return fmt.Errorf("marshal daily auto-completion truth: %w", err)
 	}
-	request, err := idempotency.NewCellRequest(timerComponent, truth.Identity(), facts.Fact{Name: truths.DailyPollAutoCompleteDueName, Payload: payload})
+	request, err := idempotency.NewCellRequest(timerComponent, truth.Identity(), envelope)
 	if err != nil {
 		return fmt.Errorf("build daily auto-completion cell: %w", err)
 	}

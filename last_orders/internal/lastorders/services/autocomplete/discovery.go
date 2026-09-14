@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"cellar/pkg/cellar"
-	"last_orders/internal/lastorders/components/facts"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/truths"
 
@@ -39,11 +38,11 @@ func (handler DiscoveryHandler) Handle(ctx context.Context, truth truths.DailyPo
 		if err != nil {
 			return cellar.ErrorResult{Message: "decode eligible poll", Err: err}
 		}
-		payload, err := cellar.JSONCodec[truths.PollAutoCompletionDue]().Marshal(pollTruth)
+		envelope, err := truths.NewEnvelope(truths.PollAutoCompletionDueFanout, pollTruth)
 		if err != nil {
 			return cellar.ErrorResult{Message: "marshal poll auto-completion truth", Err: err}
 		}
-		request, err := idempotency.NewCellRequest(discoveryComponent, pollTruth.Identity(), facts.Fact{Name: truths.PollAutoCompletionDueName, Payload: payload})
+		request, err := idempotency.NewCellRequest(discoveryComponent, pollTruth.Identity(), envelope)
 		if err != nil {
 			return cellar.ErrorResult{Message: "build poll auto-completion idempotency cell", Err: err}
 		}

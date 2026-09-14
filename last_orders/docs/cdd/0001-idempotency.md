@@ -1,8 +1,8 @@
-# CDD: Idempotency and Fact Emission
+# CDD: Idempotency and Truth Emission
 
 ## 1. Purpose
 
-The backend performs work in response to Facts observed by listeners and other backend mechanisms.
+The backend performs work in response to Truths observed by listeners and other backend mechanisms. See ADR-0009 for the definition of a Truth as a durable, typed statement of something that happened or became due.
 
 The same underlying observation may be encountered more than once due to:
 
@@ -13,17 +13,17 @@ The same underlying observation may be encountered more than once due to:
 * delayed or duplicated external notifications;
 * timer events being observed more than once.
 
-The backend therefore requires a consistent mechanism ensuring that a particular Fact is **emitted for application processing at most once for a particular idempotency key**.
+The backend therefore requires a consistent mechanism ensuring that a particular Truth is **emitted for application processing at most once for a particular idempotency key**.
 
 This document defines the architecture of that mechanism.
 
 The central principle is:
 
-> **The Idempotency Layer determines whether a Fact with a particular idempotency key may be emitted. When it establishes that the Fact is new, it durably schedules a standard Cellar Fanout Cell which emits the Fact to all registered handlers. If the Fact has already been established, the Idempotency Sequence terminates without creating another Fanout Cell.**
+> **The Idempotency Layer determines whether a Truth with a particular idempotency key may be emitted. When it establishes that the Truth is new, it durably schedules a standard Cellar Fanout Cell which emits the Truth to all registered handlers. If the Truth has already been established, the Idempotency Sequence terminates without creating another Fanout Cell.**
 
 The Idempotency Layer does not execute application handlers itself.
 
-Its responsibility ends when it has atomically established the idempotency state and scheduled the Fact's Fanout Cell.
+Its responsibility ends when it has atomically established the idempotency state and scheduled the Truth's Fanout Cell.
 
 ---
 
@@ -42,7 +42,7 @@ Idempotency Sequence
     └── newly established
               │
               ▼
-         Fact Emission
+         Truth Emission
               │
               ▼
          Fanout Cell
@@ -56,16 +56,16 @@ An observation does not directly invoke application handlers.
 
 Instead:
 
-1. an observation produces a potential Fact and an idempotency key;
-2. the Idempotency Layer determines whether that Fact may be emitted;
+1. an observation produces a potential Truth and an idempotency key;
+2. the Idempotency Layer determines whether that Truth may be emitted;
 3. if so, the Idempotency Layer creates a standard Fanout Cell;
-4. the Fanout Cell dispatches the Fact to all registered handlers.
+4. the Fanout Cell dispatches the Truth to all registered handlers.
 
 This separates:
 
 * **observation** — recognising that something happened;
-* **idempotency** — determining whether the Fact may be emitted;
-* **fact emission** — scheduling delivery of the Fact;
+* **idempotency** — determining whether the Truth may be emitted;
+* **truth emission** — scheduling delivery of the Truth;
 * **application handling** — performing application-specific work.
 
 ---
@@ -74,7 +74,7 @@ This separates:
 
 ## 3.1 Observation
 
-An Observation is information recognised by a listener or backend mechanism which may result in a Fact being emitted.
+An Observation is information recognised by a listener or backend mechanism which may result in a Truth being emitted.
 
 Examples include:
 
@@ -89,18 +89,18 @@ The same underlying event may be observed more than once.
 
 ---
 
-## 3.2 Fact
+## 3.2 Truth
 
-A Fact is the application-level statement which is emitted for processing.
+A Truth is the application-level statement which is emitted for processing, as defined in ADR-0009.
 
 Examples might include:
 
-* `NewPoll`;
-* `CompletedPoll`;
-* `Chat`;
+* `PollOpened`;
+* `PollCompleted`;
+* `ChatMessageCreated`;
 * `AdminDelete`.
 
-Facts are delivered to registered application handlers through a Fanout Cell.
+Truths are delivered to registered application handlers through a Fanout Cell.
 
 ---
 
@@ -127,10 +127,10 @@ Chat    / abc123
 
 are distinct identities.
 
-Each Fact-producing observation must therefore provide:
+Each Truth-producing observation must therefore provide:
 
 ```text
-Fact
+Truth
 +
 Idempotency Component
 +
@@ -141,7 +141,7 @@ Idempotency Key
 
 ## 3.4 Idempotency Component
 
-An Idempotency Component defines the idempotency semantics for a particular class of Facts.
+An Idempotency Component defines the idempotency semantics for a particular class of Truths.
 
 Examples include:
 
@@ -155,7 +155,7 @@ An Idempotency Component determines:
 
 * how an observation derives its key;
 * whether idempotency is local-only or externally backed;
-* which Fact is emitted when the key is newly established.
+* which Truth is emitted when the key is newly established.
 
 The component does not itself execute application handlers.
 
@@ -163,12 +163,12 @@ The component does not itself execute application handlers.
 
 ## 3.5 Fanout Cell
 
-A Fanout Cell is a standard Cellar Cell responsible for dispatching a Fact to all registered handlers.
+A Fanout Cell is a standard Cellar Cell responsible for dispatching a Truth to all registered handlers.
 
 Conceptually:
 
 ```text
-Fact
+Truth
    │
    ▼
 Fanout Cell
@@ -178,7 +178,7 @@ Fanout Cell
    └── Handler C
 ```
 
-The Fanout Cell is created only when the Idempotency Layer has successfully established that the Fact may be emitted.
+The Fanout Cell is created only when the Idempotency Layer has successfully established that the Truth may be emitted.
 
 ---
 
@@ -192,12 +192,12 @@ Its question is not:
 
 Its question is:
 
-> **"May this Fact be emitted?"**
+> **"May this Truth be emitted?"**
 
 Therefore:
 
 ```text
-Potential Fact
+Potential Truth
       │
       ▼
 Idempotency
@@ -213,12 +213,12 @@ Idempotency
            create Fanout
                 │
                 ▼
-            emit Fact
+            emit Truth
 ```
 
 Application handlers may themselves have their own retry or transactional guarantees.
 
-Those concerns are separate from the idempotency decision which determines whether the Fact is emitted in the first place.
+Those concerns are separate from the idempotency decision which determines whether the Truth is emitted in the first place.
 
 ---
 
@@ -289,7 +289,7 @@ The sequence consists conceptually of:
 Step 1 — Check and Establish
             │
             ▼
-Step 2 — Fact Emission
+Step 2 — Truth Emission
 ```
 
 Step 2 is implemented by scheduling a standard Fanout Cell.
@@ -310,7 +310,7 @@ It checks the local idempotency store.
 
 ### If the key exists
 
-The Fact has already been established.
+The Truth has already been established.
 
 The sequence terminates:
 
@@ -387,7 +387,7 @@ Other attempts subsequently observe the key and terminate.
 
 # 7. Firebase-Backed Idempotency
 
-Firebase-backed idempotency is used when an external Firebase/Firestore store is the durable authority for whether a Fact has previously been established.
+Firebase-backed idempotency is used when an external Firebase/Firestore store is the durable authority for whether a Truth has previously been established.
 
 The Firebase store contains a durable idempotency record.
 
@@ -428,7 +428,7 @@ Step 1 — Check
 Step 2 — Populate Remote
       │
       ▼
-Step 3 — Emit Fact
+Step 3 — Emit Truth
 ```
 
 The Cell Sequence provides the durable state machine.
@@ -472,7 +472,7 @@ If the local key does not exist, the Firebase authority is checked.
 
 ### If the remote key exists
 
-The Fact has already been established.
+The Truth has already been established.
 
 The Step atomically:
 
@@ -574,7 +574,7 @@ Component
 Key
 ```
 
-must not create a different idempotency identity or cause duplicate Fact emission.
+must not create a different idempotency identity or cause duplicate Truth emission.
 
 For example:
 
@@ -631,17 +631,17 @@ Sequence at Step 3
 Remote key established
 ```
 
-The sequence may now emit the Fact.
+The sequence may now emit the Truth.
 
 ---
 
-# 11. Step 3 — Fact Emission
+# 11. Step 3 — Truth Emission
 
-Fact emission is the responsibility of the Idempotency Layer.
+Truth emission is the responsibility of the Idempotency Layer.
 
 The Idempotency Layer does not directly execute handlers.
 
-Instead, it creates a standard Cellar Fanout Cell containing the Fact and its registered destinations.
+Instead, it creates a standard Cellar Fanout Cell containing the Truth and its registered destinations.
 
 The Step atomically:
 
@@ -665,29 +665,29 @@ The Fanout Cell then performs normal Cellar fanout processing.
 
 ---
 
-# 12. Fact Handler Registration
+# 12. Truth Handler Registration
 
-Plugins and application components register interest in **Facts**.
+Plugins and application components register interest in **Truths**.
 
 They should not need to understand:
 
-* whether the Fact uses local idempotency;
-* whether the Fact uses Firebase-backed idempotency;
+* whether the Truth uses local idempotency;
+* whether the Truth uses Firebase-backed idempotency;
 * the remote collection structure;
 * the internal Cell Sequence used to establish idempotency.
 
 Conceptually, a Plugin declares:
 
 ```text
-I handle Fact X
+I handle Truth X
 ```
 
-The Fact Emission infrastructure records that registration.
+The Truth Emission infrastructure records that registration.
 
-When the Idempotency Layer establishes that a Fact may be emitted:
+When the Idempotency Layer establishes that a Truth may be emitted:
 
 ```text
-Fact
+Truth
    │
    ▼
 Fanout Cell
@@ -699,7 +699,7 @@ Fanout Cell
 
 Therefore:
 
-> **Plugins register against Facts and Fact Emission. The Idempotency Layer determines whether an emission of that Fact is permitted.**
+> **Plugins register against Truths and Truth Emission. The Idempotency Layer determines whether an emission of that Truth is permitted.**
 
 The public registration API should not leak the idempotency implementation.
 
@@ -714,21 +714,21 @@ The responsibilities are deliberately separate.
 Responsible for:
 
 * deriving or receiving the idempotency identity;
-* checking whether the Fact has already been established;
+* checking whether the Truth has already been established;
 * establishing the required local and/or remote state;
-* deciding whether the Fact may be emitted;
+* deciding whether the Truth may be emitted;
 * atomically scheduling the Fanout Cell when emission is permitted.
 
 ## Fanout Cell
 
 Responsible for:
 
-* dispatching the Fact to all registered handlers;
+* dispatching the Truth to all registered handlers;
 * participating in normal Cellar handler processing and retry semantics.
 
 Therefore:
 
-> **Idempotency authorises Fact emission. Fanout performs Fact delivery.**
+> **Idempotency authorises Truth emission. Fanout performs Truth delivery.**
 
 ---
 
@@ -740,7 +740,7 @@ The complete Firebase-backed flow is:
 Observation
     │
     ▼
-Potential Fact + Idempotency Key
+Potential Truth + Idempotency Key
     │
     ▼
 ┌──────────────────────────────┐
@@ -793,7 +793,7 @@ The local-only flow is:
 Observation
     │
     ▼
-Potential Fact + Idempotency Key
+Potential Truth + Idempotency Key
     │
     ▼
 Check Local Key
@@ -829,7 +829,7 @@ The local key is the authoritative idempotency record.
 ```text
 Local key present
         =
-Fact already established
+Truth already established
 ```
 
 ## Firebase-backed idempotency
@@ -864,14 +864,14 @@ Local key present
 Sequence Step 3
     =
 remote establishment complete;
-Fact emission pending
+Truth emission pending
 ```
 
 ```text
 Local key present
 No active sequence
     =
-Fact has already been established locally
+Truth has already been established locally
 ```
 
 Thus:
@@ -951,7 +951,7 @@ Fanout Cell not created
 
 # 18. Concurrency
 
-Concurrent observations of the same Fact and idempotency identity must converge safely.
+Concurrent observations of the same Truth and idempotency identity must converge safely.
 
 For local idempotency:
 
@@ -975,7 +975,7 @@ Subsequent duplicate observations observe the local key and terminate without pe
 
 The resulting invariant is:
 
-> **For a particular `(Component, Key)`, the backend must create at most one Fact Fanout Cell.**
+> **For a particular `(Component, Key)`, the backend must create at most one Truth Fanout Cell.**
 
 ---
 
@@ -1020,7 +1020,7 @@ They do not:
 Instead, a listener produces a durable Cell Sequence representing:
 
 ```text
-Potential Fact
+Potential Truth
 +
 Idempotency Component
 +
@@ -1035,10 +1035,10 @@ For example:
 New Poll Listener
        │
        ▼
-Potential NewPoll Fact
+Potential PollOpened Truth
        │
        ▼
-NewPoll Idempotency Sequence
+PollOpened Idempotency Sequence
        │
        ├── duplicate → terminate
        │
@@ -1056,12 +1056,12 @@ NewPoll Idempotency Sequence
 
 # 21. Relationship to Timer Events
 
-Timer events may use the same Fact and Idempotency architecture.
+Timer events may use the same Truth and Idempotency architecture.
 
 A timer Observation produces:
 
 ```text
-Potential Fact
+Potential Truth
 +
 Idempotency Key
 ```
@@ -1072,7 +1072,7 @@ For example:
 poll:X:auto-complete
 ```
 
-The Local Idempotency implementation may then determine whether the timer Fact has already been emitted.
+The Local Idempotency implementation may then determine whether the timer Truth has already been emitted.
 
 ```text
 Timer Observation
@@ -1101,9 +1101,9 @@ The public API should, however, preserve the architectural separation described 
 Application code should conceptually deal with:
 
 ```text
-Fact
+Truth
 +
-Fact registration
+Truth registration
 +
 Idempotency identity
 ```
@@ -1127,13 +1127,13 @@ The following invariants are normative.
 
 2. **Listeners do not directly perform application handling.**
 
-3. **Idempotency determines whether a Fact may be emitted.**
+3. **Idempotency determines whether a Truth may be emitted.**
 
 4. **Idempotency does not directly execute application handlers.**
 
-5. **A newly established Fact is emitted by creating a standard Fanout Cell.**
+5. **A newly established Truth is emitted by creating a standard Fanout Cell.**
 
-6. **Plugins register interest in Facts rather than in the internal implementation of idempotency.**
+6. **Plugins register interest in Truths rather than in the internal implementation of idempotency.**
 
 7. **A previously established `(Component, Key)` must not create another Fanout Cell.**
 
@@ -1147,9 +1147,9 @@ The following invariants are normative.
 
 12. **Remote idempotency population must be safe to retry for the same idempotency identity.**
 
-13. **For Firebase-backed idempotency, the remote authority must be established before the Fact is emitted.**
+13. **For Firebase-backed idempotency, the remote authority must be established before the Truth is emitted.**
 
-14. **Creating the Fanout Cell and completing the Fact Emission Step must be atomic.**
+14. **Creating the Fanout Cell and completing the Truth Emission Step must be atomic.**
 
 15. **For Firebase-backed idempotency, the remote store is the authoritative external idempotency authority.**
 
@@ -1157,9 +1157,9 @@ The following invariants are normative.
 
 17. **Once a remote key has been observed and cached locally, subsequent duplicate observations should normally be resolved without another remote lookup.**
 
-18. **A process termination at any point must result in recovery through retry of the appropriate Cell Step rather than loss of the Fact's idempotency state.**
+18. **A process termination at any point must result in recovery through retry of the appropriate Cell Step rather than loss of the Truth's idempotency state.**
 
-19. **For a particular `(Component, Key)`, the backend must create at most one Fact Fanout Cell.**
+19. **For a particular `(Component, Key)`, the backend must create at most one Truth Fanout Cell.**
 
 20. **All idempotency processing must be safe to retry.**
 
@@ -1173,7 +1173,7 @@ The complete architecture is based on a simple principle:
 Observe
    │
    ▼
-Can this Fact be emitted?
+Can this Truth be emitted?
    │
    ├── No
    │     │
@@ -1186,7 +1186,7 @@ Can this Fact be emitted?
    Durably create Fanout
          │
          ▼
-     Emit Fact
+     Emit Truth
          │
          ▼
    Registered Handlers
@@ -1215,6 +1215,6 @@ Cellar's transactional guarantees ensure that state changes and Step advancement
 
 The result is that:
 
-> **Idempotency owns the decision to emit a Fact. Fact emission owns the creation of the Fanout Cell. Plugins own the handling of the Fact.**
+> **Idempotency owns the decision to emit a Truth. Truth emission owns the creation of the Fanout Cell. Plugins own the handling of the Truth.**
 
 This keeps observation, deduplication, emission, and application processing as separate architectural responsibilities.

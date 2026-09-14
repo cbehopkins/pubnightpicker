@@ -1,5 +1,12 @@
 # CDD: Migration to ADR 0008 Application Structure
 
+> **Terminology note:** this document predates ADR-0010 and describes an
+> earlier, since-superseded design (§5.3's `components/facts` registry). Where
+> it says "Fact" it means what the codebase now calls a **Truth** (ADR-0009).
+> The catalogue of Truths, and their dispatch, now live in
+> `internal/lastorders/truths`, using a native `cellar.Fanout[T]` per Truth
+> type rather than a single shared Fanout keyed by a string name.
+
 ## 1. Purpose
 
 Migrate the current `internal/lastorders` layout onto the package structure decided in
