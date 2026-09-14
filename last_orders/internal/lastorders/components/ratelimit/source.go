@@ -24,7 +24,9 @@ type Source struct {
 	remaining   int
 }
 
-func NewSource(name string, maximum int, location *time.Location, onExhausted func()) (*Source, error) {
+// New constructs a new in-memory daily token source.
+// FIXME - there is no usage of this...
+func New(name string, maximum int, location *time.Location, onExhausted func()) (*Source, error) {
 	return newSource(name, maximum, location, onExhausted, time.Now)
 }
 

@@ -140,8 +140,8 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		recurrenceService, err = recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
-		if err != nil {
-			return nil, err
+		if err != nil || recurrenceService == nil {
+			return nil, fmt.Errorf("init recurrence service: %w", err)
 		}
 
 		notificationProfileStore, err = notificationprofile.New(baseStore)
@@ -198,6 +198,7 @@ func New(cfg Config) (application *App, err error) {
 	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
 	}
+	// FIXME this should probably be in a table
 	if err := cellarRuntime.Register(polls.HandlerPollOpened, polls.PollOpenedHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
@@ -219,28 +220,26 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(logsvc.HandlerLogMessage, logsvc.Handler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if recurrenceService != nil {
-		if err := cellarRuntime.Register(autocompletesvc.HandlerDiscovery, autocompletesvc.DiscoveryHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(autocompletesvc.HandlerCandidate, autocompletesvc.CandidateHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(autocompletesvc.HandlerClose, autocompletesvc.CloseHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(autocompletesvc.HandlerAmbiguous, autocompletesvc.AmbiguousHandler{Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
-		if err := cellarRuntime.Register(recurrenceplugin.HandlerCreateEventPoll, recurrenceplugin.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
-			return nil, err
-		}
+	if err := cellarRuntime.Register(autocompletesvc.HandlerDiscovery, autocompletesvc.DiscoveryHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(autocompletesvc.HandlerCandidate, autocompletesvc.CandidateHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(autocompletesvc.HandlerClose, autocompletesvc.CloseHandler{Client: firestoreClient, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(autocompletesvc.HandlerAmbiguous, autocompletesvc.AmbiguousHandler{Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerCreateEventPoll, recurrenceplugin.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+		return nil, err
 	}
 
 	var eventVenueListener *eventvenuelistener.Listener

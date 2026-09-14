@@ -26,6 +26,8 @@ type Listener struct {
 	lifecycle.Controller
 }
 
+// New constructs a new notification profile Listener.
+// see CDD 0009-notification-profile.md for design details.
 func New(service *notificationprofile.Service, store *notificationprofile.Store, logger *slog.Logger) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("notification profile service is required")

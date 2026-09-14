@@ -128,7 +128,7 @@ func TestNewSourceRejectsInvalidConfiguration(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := NewSource(test.source, test.maximum, test.location, nil); err == nil {
+			if _, err := New(test.source, test.maximum, test.location, nil); err == nil {
 				t.Fatal("NewSource succeeded; want error")
 			}
 		})

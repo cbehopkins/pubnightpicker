@@ -11,6 +11,8 @@ import (
 	"last_orders/internal/lastorders/basestore"
 )
 
+// Store provides access to notification profile data in the database.
+//FIXME arguably this package belongs under database/projections/notificationprofile
 type Store struct {
 	base *basestore.Store
 }

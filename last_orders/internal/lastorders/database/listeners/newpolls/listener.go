@@ -38,6 +38,8 @@ type Listener struct {
 	lifecycle.Controller
 }
 
+// New constructs a new newpolls Listener.
+// FIXME - there are no tests for this...
 func New(cfg Config) (*Listener, error) {
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("firestore client is required")

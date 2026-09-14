@@ -8,6 +8,8 @@ import (
 	"last_orders/internal/lastorders/basestore"
 )
 
+// Store provides access to venue cache data in the database.
+// FIXME arguably this package belongs under database/projections/venuecache
 type Store struct {
 	base *basestore.Store
 }

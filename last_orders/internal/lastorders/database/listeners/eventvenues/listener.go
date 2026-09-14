@@ -56,6 +56,9 @@ type Listener struct {
 	lifecycle.Controller
 }
 
+// New constructs a new eventvenue Listener.
+// This will Construct appropriate Truths either on venue observation or during periodic re-evaluation.
+// FIXME is there a timing issue here if we see an update that VenueCache has not yet observed?
 func New(cfg Config) (*Listener, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("cellar store is required")
