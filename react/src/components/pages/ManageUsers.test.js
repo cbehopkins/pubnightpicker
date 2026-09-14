@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ManageUsers, { ManageUserDetail } from "./ManageUsers";
@@ -20,13 +20,31 @@ const {
     useUsersMock,
     useAllRolesMock,
     useIsMobileViewMock,
+    preferencesFormMock,
 } = vi.hoisted(() => {
     return {
         useUsersMock: vi.fn(),
         useAllRolesMock: vi.fn(),
         useIsMobileViewMock: vi.fn(),
+        preferencesFormMock: vi.fn(),
     };
 });
+
+vi.mock("./PreferencesForm", () => ({
+    default: (props) => {
+        preferencesFormMock(props);
+        return (
+            <div data-testid="preferences-form">
+                Editing {props.uid}
+                <button type="button" onClick={props.onCancel}>Close editor</button>
+            </div>
+        );
+    },
+}));
+
+vi.mock("../UI/Modal", () => ({
+    default: ({ children }) => <div role="dialog">{children}</div>,
+}));
 
 vi.mock("../../hooks/useUsers", () => {
     return {
@@ -85,6 +103,7 @@ describe("ManageUsers responsive layout", () => {
         useUsersMock.mockReset();
         useAllRolesMock.mockReset();
         useIsMobileViewMock.mockReset();
+        preferencesFormMock.mockClear();
 
         useUsersMock.mockReturnValue({
             "uid-b": { name: "Bravo User", email: "bravo@example.com" },
@@ -125,6 +144,30 @@ describe("ManageUsers responsive layout", () => {
         expect(screen.getByRole("table")).toBeTruthy();
         const alphaLink = screen.getByRole("link", { name: "Alpha User" });
         expect(alphaLink.getAttribute("href")).toBe("/manage_users/uid-a");
+    });
+
+    it("opens preferences for the selected user and closes the editor", () => {
+        useIsMobileViewMock.mockReturnValue(false);
+
+        render(
+            <MemoryRouter>
+                <ManageUsers />
+            </MemoryRouter>
+        );
+
+        const alphaRow = screen.getByRole("link", { name: "Alpha User" }).closest("tr");
+        fireEvent.click(alphaRow.querySelector("button.btn-primary"));
+
+        expect(screen.getByTestId("preferences-form").textContent).toContain("Editing uid-a");
+        expect(preferencesFormMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            uid: "uid-a",
+            isAdminEditing: true,
+            method: "post",
+        }));
+
+        fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+
+        expect(screen.queryByTestId("preferences-form")).toBeNull();
     });
 
     it("renders the dedicated manage-user detail page with the same permission controls", () => {
