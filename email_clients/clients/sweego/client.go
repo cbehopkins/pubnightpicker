@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"email_clients/clients"
 )
 
 type Client struct {
@@ -16,11 +18,7 @@ type Client struct {
 	httpClient *http.Client
 }
 
-type HTTPResult struct {
-	Status  int
-	Headers http.Header
-	Body    []byte
-}
+type HTTPResult = clients.HTTPResult
 
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	return &Client{

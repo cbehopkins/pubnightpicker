@@ -9,12 +9,51 @@ are intentionally printed.
 
 - `cmd/sweego-client` is the executable entry point.
 - `internal/cli` owns command parsing, configuration, and terminal output.
+- `clients` defines the shared email request, response, and client contract.
+- `clients/dummy` is a callback-backed test client that does not send email.
 - `clients/sweego` is the importable Sweego API client for email sending and
   template administration. Additional providers will live alongside it under
   `clients/`.
 - `clients/sweego/logs` owns the raw logs API, verification, matching, and
   bulk log recovery.
 - `examples` contains runnable request documents and template sources.
+
+## Dummy client
+
+The dummy client implements the shared `clients.EmailClient` interface. Create
+it with a callback that receives each recipient address, rendered message, and
+application headers:
+
+```go
+client := dummy.NewClient(func(emailAddress, message string, headers map[string]string) error {
+  log.Printf("email=%s message=%q headers=%v", emailAddress, message, headers)
+  return nil
+})
+```
+
+`SendEmail` and `SendBulkEmail` invoke the callback synchronously once per
+recipient, in request order. They stop at the first callback error; otherwise
+they return HTTP 200 with an empty response body. Each invocation receives its
+own copy of the request headers.
+
+Register named bulk templates with `AddTemplate` before sending:
+
+```go
+err := client.AddTemplate("greeting", "Hello {{.name}}")
+```
+
+Dummy templates use Go `text/template` syntax. Set `BulkEmailRequest.TemplateID`
+to the registered name; the client renders the template separately for each
+recipient using `BulkRecipient.Variables`, then passes the rendered message to
+the callback. A missing template, missing variable, invalid template, or
+duplicate name returns an error. All recipients are rendered before the first
+callback is invoked.
+
+Bulk plain-text messages are passed to the callback unchanged and do not use
+recipient variables.
+
+This version does not retain messages or support message verification and
+recovery.
 
 ## Commands
 
