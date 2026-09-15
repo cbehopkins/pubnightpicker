@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 // bulkTemplateServer answers the bulk send and log endpoints and records both

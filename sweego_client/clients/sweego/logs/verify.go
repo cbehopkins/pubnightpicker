@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 type VerificationStatus string

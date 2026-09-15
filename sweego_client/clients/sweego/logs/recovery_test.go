@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 func recoveryRecord(submittedAt time.Time, recipient, uid string) Record {

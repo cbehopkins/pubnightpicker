@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 type Client struct {

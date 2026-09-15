@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"sweego_client/internal/cli"
+	"email_clients/internal/cli"
 )
 
 func main() {

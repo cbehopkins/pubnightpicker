@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 // These tests exercise the real Sweego API and are skipped unless

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 func runTemplateUpload(args []string, client *sweego.Client, clientUUID string) error {

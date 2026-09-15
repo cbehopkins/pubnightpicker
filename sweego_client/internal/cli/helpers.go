@@ -8,8 +8,8 @@ import (
 	"net/mail"
 	"os"
 
-	"sweego_client/sweego"
-	"sweego_client/sweego/logs"
+	"email_clients/clients/sweego"
+	"email_clients/clients/sweego/logs"
 )
 
 func parseAddress(raw string) (sweego.EmailAddress, error) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 func TestVerifyMessageBuildsQueryAndFindsMatchingRecord(t *testing.T) {

@@ -1,17 +1,19 @@
-# Sweego prototype client
+# Email clients prototype
 
-This is a small Go CLI for inspecting Sweego email sending and log behaviour.
-It is an experiment, not a production sending library. Raw provider responses
-and relevant log responses are intentionally printed.
+This is a small Go CLI for inspecting email provider integrations, starting
+with Sweego's sending and log behaviour. It is an experiment, not a
+production sending library. Raw provider responses and relevant log responses
+are intentionally printed.
 
 ## Package layout
 
 - `cmd/sweego-client` is the executable entry point.
 - `internal/cli` owns command parsing, configuration, and terminal output.
-- `sweego` is the importable API client for email sending and template
-  administration.
-- `sweego/logs` owns the raw logs API, verification, matching, and bulk log
-  recovery.
+- `clients/sweego` is the importable Sweego API client for email sending and
+  template administration. Additional providers will live alongside it under
+  `clients/`.
+- `clients/sweego/logs` owns the raw logs API, verification, matching, and
+  bulk log recovery.
 - `examples` contains runnable request documents and template sources.
 
 ## Commands

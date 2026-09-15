@@ -2,7 +2,8 @@
 
 ## Project purpose
 
-This repository contains a small Go CLI prototype for experimentally integrating with the Sweego email API.
+This repository contains a small Go CLI prototype for experimentally integrating with email provider APIs.
+Sweego is the first provider, implemented under `clients/sweego`; more providers will be added as siblings later.
 
 ## Working conventions
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 func matchingRecords(records []Record, operation RecoveryOperation, recipient, correlationID string, tolerance time.Duration) []Record {

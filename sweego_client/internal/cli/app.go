@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 func Main(args []string) int {

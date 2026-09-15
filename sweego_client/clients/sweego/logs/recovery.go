@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 type RecoveryOperation struct {

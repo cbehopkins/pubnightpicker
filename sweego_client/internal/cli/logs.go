@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"sweego_client/sweego"
-	"sweego_client/sweego/logs"
+	"email_clients/clients/sweego"
+	"email_clients/clients/sweego/logs"
 )
 
 func runLogs(args []string, client *sweego.Client) error {

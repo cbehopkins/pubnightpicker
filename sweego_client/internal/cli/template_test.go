@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 type capturedRequest struct {

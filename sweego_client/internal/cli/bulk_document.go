@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"sweego_client/sweego"
+	"email_clients/clients/sweego"
 )
 
 // bulkSendDocument is the on-disk target format. Field names follow the
