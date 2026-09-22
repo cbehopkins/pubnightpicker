@@ -3,6 +3,7 @@ package eventvenues
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -14,8 +15,6 @@ import (
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/truths"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -33,8 +32,8 @@ const (
 
 type Config struct {
 	Store      cellar.Store
-	Service    *recurrence.Service
-	Client     *firestore.Client
+	Clock      Clock
+	Source     Source
 	VenueCache *venuecache.Service
 	// ReevaluateInterval is the initial schedule interval for the durable
 	// re-evaluation Timer. Once the Timer has been scheduled, Cellar's persisted
@@ -44,12 +43,17 @@ type Config struct {
 	Logger             *slog.Logger
 }
 
+// Clock supplies the current date in the recurrence timezone. Satisfied by *recurrence.Service.
+type Clock interface {
+	Today() time.Time
+}
+
 // Listener observes event venues in the pubs collection and creates Truths for
 // venues whose current state requires recurrence or poll-materialisation work.
 type Listener struct {
 	store    cellar.Store
-	service  *recurrence.Service
-	client   *firestore.Client
+	clock    Clock
+	source   Source
 	cache    *venuecache.Service
 	interval time.Duration
 	logger   *slog.Logger
@@ -63,11 +67,11 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("cellar store is required")
 	}
-	if cfg.Service == nil {
-		return nil, fmt.Errorf("recurrence service is required")
+	if cfg.Clock == nil {
+		return nil, fmt.Errorf("recurrence clock is required")
 	}
-	if cfg.Client == nil {
-		return nil, fmt.Errorf("firestore client is required")
+	if cfg.Source == nil {
+		return nil, fmt.Errorf("event venue source is required")
 	}
 	if cfg.ReevaluateInterval <= 0 {
 		cfg.ReevaluateInterval = defaultReevaluateInterval
@@ -75,7 +79,7 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Listener{store: cfg.Store, service: cfg.Service, client: cfg.Client, cache: cfg.VenueCache, interval: cfg.ReevaluateInterval, logger: cfg.Logger}, nil
+	return &Listener{store: cfg.Store, clock: cfg.Clock, source: cfg.Source, cache: cfg.VenueCache, interval: cfg.ReevaluateInterval, logger: cfg.Logger}, nil
 }
 
 // Interval returns the initial schedule interval for the durable re-evaluation Timer.
@@ -100,23 +104,26 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) watchOnce(ctx context.Context) error {
-	iter := l.eventVenueQuery().Snapshots(ctx)
-	defer iter.Stop()
+	stream, err := l.source.Watch(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Stop()
 
 	for {
-		snapshot, err := iter.Next()
+		changes, err := stream.Next()
 		if err != nil {
-			if err == iterator.Done || err == context.Canceled || status.Code(err) == codes.Canceled {
+			if errors.Is(err, ErrStreamDone) || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return nil
 			}
 			return err
 		}
 
-		for _, change := range snapshot.Changes {
-			if change.Kind == firestore.DocumentRemoved {
+		for _, change := range changes {
+			if change.Kind == ChangeRemoved {
 				continue
 			}
-			l.createEventVenueObserved(ctx, recurrence.EventVenueFrom(change.Doc))
+			l.createEventVenueObserved(ctx, change.Venue)
 		}
 	}
 }
@@ -137,10 +144,6 @@ func (l *Listener) ReevaluateOnce(ctx context.Context) error {
 	return nil
 }
 
-func (l *Listener) eventVenueQuery() firestore.Query {
-	return l.client.Collection("pubs").Where("venueType", "==", "event")
-}
-
 func (l *Listener) listEventVenues(ctx context.Context) ([]recurrence.EventVenue, error) {
 	if l.cache != nil {
 		projections, err := l.cache.ListEventVenues(ctx)
@@ -158,20 +161,7 @@ func (l *Listener) listEventVenues(ctx context.Context) ([]recurrence.EventVenue
 		return venues, nil
 	}
 
-	iter := l.eventVenueQuery().Documents(ctx)
-	defer iter.Stop()
-
-	venues := make([]recurrence.EventVenue, 0, 32)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			return venues, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		venues = append(venues, recurrence.EventVenueFrom(doc))
-	}
+	return l.source.ListEventVenues(ctx)
 }
 
 func eventVenueFromProjection(projection venuecache.VenueProjection) (recurrence.EventVenue, error) {
@@ -190,7 +180,7 @@ func eventVenueFromProjection(projection venuecache.VenueProjection) (recurrence
 }
 
 func (l *Listener) createEventVenueObserved(ctx context.Context, venue recurrence.EventVenue) {
-	observedOn := l.service.Today().Format(time.DateOnly)
+	observedOn := l.clock.Today().Format(time.DateOnly)
 	event := truths.EventVenueObserved{
 		Venue:      venue,
 		ObservedOn: observedOn,

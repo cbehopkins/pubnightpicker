@@ -17,6 +17,13 @@ import (
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
+	"last_orders/internal/lastorders/components/recurrence/recurrencetest"
+	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
+	"last_orders/internal/lastorders/database/listeners/completedpolls/completedpollstest"
+	"last_orders/internal/lastorders/database/listeners/eventvenues/eventvenuestest"
+	"last_orders/internal/lastorders/database/listeners/newpolls/newpollstest"
+	"last_orders/internal/lastorders/services/autocomplete/autocompletetest"
 	"last_orders/internal/lastorders/truths"
 
 	_ "modernc.org/sqlite"
@@ -43,7 +50,7 @@ func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
 	mustTable(t, db, "firebase_idempotency_records")
 
 	var cells int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM cells`).Scan(&cells); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cells WHERE id NOT LIKE 'timer:%'`).Scan(&cells); err != nil {
 		t.Fatalf("count cells: %v", err)
 	}
 	if cells != 1 {
@@ -83,10 +90,7 @@ func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) 
 		t.Fatal("application work must roll back with failed completion")
 	}
 
-	active, err := store.ListActive()
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
+	active := activeWorkCells(t, store)
 	if len(active) != 1 || active[0].ID != claimed.ID || active[0].State != cellar.CellStateClaimed {
 		t.Fatalf("expected claimed parent cell to remain after rollback, got %+v", active)
 	}
@@ -111,10 +115,7 @@ func TestTruthFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 		t.Fatalf("expected truth to be delivered to the registered poll handler, got log: %s", logged)
 	}
 
-	active, err := a.CellarStore().ListActive()
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
+	active := activeWorkCells(t, a.CellarStore())
 	if len(active) != 0 {
 		t.Fatalf("expected no active cells after truth delivery, got %d", len(active))
 	}
@@ -171,10 +172,7 @@ func TestIdempotencyObservedRemoteDoesNotEmitTruth(t *testing.T) {
 		t.Fatalf("expected identity cached after observing remote establishment, got exists=%v", exists)
 	}
 
-	active, err := a.CellarStore().ListActive()
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
+	active := activeWorkCells(t, a.CellarStore())
 	if len(active) != 0 {
 		t.Fatalf("expected the sequence to terminate immediately at Step 1, got %d active cells", len(active))
 	}
@@ -252,10 +250,7 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 
 	runFor(t, a2, 300*time.Millisecond)
 
-	active, err := a2.CellarStore().ListActive()
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
+	active := activeWorkCells(t, a2.CellarStore())
 	if len(active) != 0 {
 		t.Fatalf("expected recovered claimed cell to be fully processed, got %d active cells", len(active))
 	}
@@ -299,6 +294,49 @@ func mustNewApp(
 	return mustNewAppWithLogger(t, dbPath, remote, startupChecks, nil)
 }
 
+// testConfig supplies every external collaborator as a stand-in, so the app wires up
+// without Firestore. Durable Timers are always scheduled, so assertions about
+// application work must use activeWorkCells.
+func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) app.Config {
+	t.Helper()
+
+	recurrenceService, err := recurrencetest.New(time.Now())
+	if err != nil {
+		t.Fatalf("new recurrence stand-in: %v", err)
+	}
+
+	return app.Config{
+		DBPath:                    dbPath,
+		PollDelay:                 5 * time.Millisecond,
+		IdempotencyRemote:         remote,
+		RecurrenceService:         recurrenceService,
+		VenueSource:               venuecachetest.New(),
+		NotificationProfileSource: notificationprofiletest.New(),
+		EventVenueSource:          eventvenuestest.New(),
+		NewPollSource:             newpollstest.New(),
+		CompletedPollSource:       completedpollstest.New(),
+		AutocompleteSource:        autocompletetest.New(),
+	}
+}
+
+// activeWorkCells lists active cells excluding the durable Timers the application
+// always schedules.
+func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
+	t.Helper()
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	work := make([]cellar.Cell, 0, len(active))
+	for _, cell := range active {
+		if strings.HasPrefix(string(cell.ID), "timer:") {
+			continue
+		}
+		work = append(work, cell)
+	}
+	return work
+}
+
 func mustNewAppWithLogger(
 	t *testing.T,
 	dbPath string,
@@ -313,13 +351,11 @@ func mustNewAppWithLogger(
 		logger = slog.New(slog.NewJSONHandler(logOutput, nil))
 	}
 
-	a, err := app.New(app.Config{
-		DBPath:                 dbPath,
-		PollDelay:              5 * time.Millisecond,
-		Logger:                 logger,
-		IdempotencyRemote:      remote,
-		StartupComponentChecks: startupChecks,
-	})
+	cfg := testConfig(t, dbPath, remote)
+	cfg.Logger = logger
+	cfg.StartupComponentChecks = startupChecks
+
+	a, err := app.New(cfg)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}

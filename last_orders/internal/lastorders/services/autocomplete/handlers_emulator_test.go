@@ -47,7 +47,7 @@ func TestCandidateCreatesCloseCellForCurrentClearWinnerAgainstEmulator(t *testin
 		t.Fatalf("seed venue: %v", err)
 	}
 
-	result := (CandidateHandler{Client: client}).Handle(ctx, dueTruth(pollID))
+	result := (CandidateHandler{Source: emulatorSource(t, client)}).Handle(ctx, dueTruth(pollID))
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 1 {
 		t.Fatalf("result = %#v, want one Close Cell", result)
@@ -61,6 +61,36 @@ func TestCandidateCreatesCloseCellForCurrentClearWinnerAgainstEmulator(t *testin
 	}
 }
 
+// A venue referenced by a poll but absent from the pubs collection is simply not
+// eligible; Firestore's NotFound must not fail the whole candidate evaluation.
+func TestCandidateSkipsMissingVenueAgainstEmulator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := emulatorClient(t, ctx)
+	pollID := fmt.Sprintf("autocomplete-missing-venue-%d", time.Now().UnixNano())
+	missingVenueID := fmt.Sprintf("venue-absent-%d", time.Now().UnixNano())
+	seedAutoCompletePoll(t, ctx, client, pollID, false, map[string]any{"venue-1": map[string]any{}, missingVenueID: map[string]any{}})
+	if _, err := client.Collection("votes").Doc(pollID).Set(ctx, map[string]any{"venue-1": []any{"user-1", "user-2"}}); err != nil {
+		t.Fatalf("seed votes: %v", err)
+	}
+	if _, err := client.Collection("pubs").Doc("venue-1").Set(ctx, map[string]any{"name": "One", "food": true}); err != nil {
+		t.Fatalf("seed venue: %v", err)
+	}
+
+	result := (CandidateHandler{Source: emulatorSource(t, client)}).Handle(ctx, dueTruth(pollID))
+	complete, ok := result.(cellar.Complete)
+	if !ok || len(complete.NewCells) != 1 {
+		t.Fatalf("result = %#v, want one Close Cell despite the missing venue", result)
+	}
+	payload, err := cellar.JSONCodec[CompletionClosePayload]().Unmarshal(complete.NewCells[0].Steps[0].Payload)
+	if err != nil {
+		t.Fatalf("decode close payload: %v", err)
+	}
+	if payload.SelectedVenueID != "venue-1" {
+		t.Fatalf("close payload = %+v, want venue-1 selected", payload)
+	}
+}
+
 func TestCloseDoesNotOverwriteCompletedPollAgainstEmulator(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -71,7 +101,7 @@ func TestCloseDoesNotOverwriteCompletedPollAgainstEmulator(t *testing.T) {
 		t.Fatalf("seed completed poll: %v", err)
 	}
 
-	result := (CloseHandler{Client: client}).Handle(ctx, CompletionClosePayload{PollID: pollID, PollDate: "2026-09-01", SelectedVenueID: "venue-auto"})
+	result := (CloseHandler{Source: emulatorSource(t, client)}).Handle(ctx, CompletionClosePayload{PollID: pollID, PollDate: "2026-09-01", SelectedVenueID: "venue-auto"})
 	if _, ok := result.(cellar.Complete); !ok {
 		t.Fatalf("result = %T, want cellar.Complete", result)
 	}
@@ -98,7 +128,7 @@ func TestDiscoveryCreatesPerPollTruthWorkAgainstEmulator(t *testing.T) {
 		t.Fatalf("seed other-day poll: %v", err)
 	}
 
-	result := (DiscoveryHandler{Client: client}).Handle(ctx, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-09-01"})
+	result := (DiscoveryHandler{Source: emulatorSource(t, client)}).Handle(ctx, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-09-01"})
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 1 {
 		t.Fatalf("result = %#v, want one locally idempotent poll Truth Cell", result)
@@ -126,7 +156,7 @@ func TestCloseCompletesPollAndWritesAuditAgainstEmulator(t *testing.T) {
 		t.Fatalf("seed unrelated field: %v", err)
 	}
 
-	result := (CloseHandler{Client: client}).Handle(ctx, CompletionClosePayload{PollID: pollID, PollDate: "2026-09-01", SelectedVenueID: "venue-1"})
+	result := (CloseHandler{Source: emulatorSource(t, client)}).Handle(ctx, CompletionClosePayload{PollID: pollID, PollDate: "2026-09-01", SelectedVenueID: "venue-1"})
 	if _, ok := result.(cellar.Complete); !ok {
 		t.Fatalf("result = %T, want cellar.Complete", result)
 	}
@@ -153,6 +183,15 @@ func TestCloseCompletesPollAndWritesAuditAgainstEmulator(t *testing.T) {
 	if got := audits[0].Data()["actorUid"]; got != "backend:auto" {
 		t.Fatalf("actorUid = %v, want backend:auto", got)
 	}
+}
+
+func emulatorSource(t *testing.T, client *firestore.Client) Source {
+	t.Helper()
+	source, err := NewFirestoreSource(client)
+	if err != nil {
+		t.Fatalf("new autocomplete source: %v", err)
+	}
+	return source
 }
 
 func seedAutoCompletePoll(t *testing.T, ctx context.Context, client *firestore.Client, pollID string, completed bool, pubs map[string]any) {

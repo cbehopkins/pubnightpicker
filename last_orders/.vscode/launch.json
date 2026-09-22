@@ -16,6 +16,8 @@
             },
             "args": [
                 "-run-for=0",
+                // 8080 is the Firestore emulator; keep the app's HTTP server off it.
+                "-http-addr=:8081",
             ],
         },
     ]

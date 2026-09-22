@@ -20,13 +20,11 @@ func TestLogEndpointEndToEnd(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 
-	a, err := app.New(app.Config{
-		DBPath:            dbPath,
-		PollDelay:         5 * time.Millisecond,
-		Logger:            logger,
-		IdempotencyRemote: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
-		HTTPAddr:          "127.0.0.1:0",
-	})
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = logger
+	cfg.HTTPAddr = "127.0.0.1:0"
+
+	a, err := app.New(cfg)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}

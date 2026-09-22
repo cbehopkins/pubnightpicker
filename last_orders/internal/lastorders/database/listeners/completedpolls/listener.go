@@ -2,6 +2,7 @@ package completedpolls
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,8 +12,6 @@ import (
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/truths"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,21 +24,21 @@ const (
 )
 
 type Config struct {
-	Client *firestore.Client
+	Source Source
 	Store  cellar.Store
 	Logger *slog.Logger
 }
 
 type Listener struct {
-	client *firestore.Client
+	source Source
 	store  cellar.Store
 	logger *slog.Logger
 	lifecycle.Controller
 }
 
 func New(cfg Config) (*Listener, error) {
-	if cfg.Client == nil {
-		return nil, fmt.Errorf("firestore client is required")
+	if cfg.Source == nil {
+		return nil, fmt.Errorf("completed poll source is required")
 	}
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("cellar store is required")
@@ -47,7 +46,7 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Listener{client: cfg.Client, store: cfg.Store, logger: cfg.Logger}, nil
+	return &Listener{source: cfg.Source, store: cfg.Store, logger: cfg.Logger}, nil
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -67,28 +66,30 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) watchOnce(ctx context.Context) error {
-	query := l.client.Collection(pollCollection).Where("completed", "==", true)
-	iter := query.Snapshots(ctx)
-	defer iter.Stop()
+	stream, err := l.source.Watch(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Stop()
 
 	for {
-		snapshot, err := iter.Next()
+		changes, err := stream.Next()
 		if err != nil {
-			if err == iterator.Done || err == context.Canceled || status.Code(err) == codes.Canceled {
+			if errors.Is(err, ErrStreamDone) || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return nil
 			}
 			return err
 		}
 
-		for _, change := range snapshot.Changes {
-			if change.Kind != firestore.DocumentAdded && change.Kind != firestore.DocumentModified {
+		for _, change := range changes {
+			if change.Kind != ChangeAdded && change.Kind != ChangeModified {
 				continue
 			}
 			// FIXME - if we use the schema we might be able to get this type safe earlier
-			selectedVenueID, _ := change.Doc.Data()["selected"].(string)
-			selectedRestaurantID, _ := change.Doc.Data()["restaurant_id"].(string)
-			selectedRestaurantTime, _ := change.Doc.Data()["restaurant_time"].(string)
-			l.createTruth(change.Doc.Ref.ID, selectedVenueID, changeKind(change.Kind), selectedRestaurantID, selectedRestaurantTime)
+			selectedVenueID, _ := change.Doc.Data["selected"].(string)
+			selectedRestaurantID, _ := change.Doc.Data["restaurant_id"].(string)
+			selectedRestaurantTime, _ := change.Doc.Data["restaurant_time"].(string)
+			l.createTruth(change.Doc.ID, selectedVenueID, changeKind(change.Kind), selectedRestaurantID, selectedRestaurantTime)
 		}
 	}
 }
@@ -142,11 +143,11 @@ func completedEventKey(pollID, selectedVenueID, selectedRestaurantID, selectedRe
 	return pollID + ":" + selectedVenueID + normalizedRestaurantID + normalizedRestaurantTime
 }
 
-func changeKind(kind firestore.DocumentChangeKind) string {
+func changeKind(kind ChangeKind) string {
 	switch kind {
-	case firestore.DocumentAdded:
+	case ChangeAdded:
 		return "added"
-	case firestore.DocumentModified:
+	case ChangeModified:
 		return "modified"
 	default:
 		return "unknown"

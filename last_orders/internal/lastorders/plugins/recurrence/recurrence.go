@@ -22,6 +22,17 @@ const (
 	listenerEventDue    = "event_due"
 )
 
+// StaleEventAdvancer recalculates the next occurrence of an event whose
+// recurrence rule has moved on. Satisfied by *recurrence.Service.
+type StaleEventAdvancer interface {
+	AdvanceStaleEvent(ctx context.Context, eventID string) error
+}
+
+// EventPollCreator materialises the poll for a due occurrence. Satisfied by *recurrence.Service.
+type EventPollCreator interface {
+	CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error
+}
+
 type EvaluateEventVenueHandler struct {
 	Store    cellar.Store
 	Location *time.Location
@@ -78,7 +89,7 @@ func (h EvaluateEventVenueHandler) createTruth(listener, eventKey string, envelo
 }
 
 type StaleEventHandler struct {
-	Service *recurrence.Service
+	Service StaleEventAdvancer
 	Logger  *slog.Logger
 }
 
@@ -101,7 +112,7 @@ func (h StaleEventHandler) Handle(ctx context.Context, payload truths.StaleEvent
 }
 
 type CreateEventPollHandler struct {
-	Service *recurrence.Service
+	Service EventPollCreator
 	Logger  *slog.Logger
 }
 

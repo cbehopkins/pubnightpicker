@@ -2,6 +2,7 @@ package newpolls
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -11,8 +12,6 @@ import (
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/truths"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,14 +24,14 @@ const (
 )
 
 type Config struct {
-	Client *firestore.Client
+	Source Source
 	Store  cellar.Store
 	Logger *slog.Logger
 }
 
 // Listener observes poll documents as they are added to Firestore.
 type Listener struct {
-	client *firestore.Client
+	source Source
 	store  cellar.Store
 	logger *slog.Logger
 	lifecycle.Controller
@@ -41,8 +40,8 @@ type Listener struct {
 // New constructs a new newpolls Listener.
 // FIXME - there are no tests for this...
 func New(cfg Config) (*Listener, error) {
-	if cfg.Client == nil {
-		return nil, fmt.Errorf("firestore client is required")
+	if cfg.Source == nil {
+		return nil, fmt.Errorf("poll source is required")
 	}
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("cellar store is required")
@@ -50,7 +49,7 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Listener{client: cfg.Client, store: cfg.Store, logger: cfg.Logger}, nil
+	return &Listener{source: cfg.Source, store: cfg.Store, logger: cfg.Logger}, nil
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -70,23 +69,26 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) watchOnce(ctx context.Context) error {
-	iter := l.client.Collection(pollCollection).Snapshots(ctx)
-	defer iter.Stop()
+	stream, err := l.source.Watch(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Stop()
 
 	for {
-		snapshot, err := iter.Next()
+		changes, err := stream.Next()
 		if err != nil {
-			if err == iterator.Done || err == context.Canceled || status.Code(err) == codes.Canceled {
+			if errors.Is(err, ErrStreamDone) || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return nil
 			}
 			return err
 		}
 
-		for _, change := range snapshot.Changes {
-			if change.Kind != firestore.DocumentAdded {
+		for _, change := range changes {
+			if change.Kind != ChangeAdded {
 				continue
 			}
-			l.createTruth(change.Doc.Ref.ID)
+			l.createTruth(change.Doc.ID)
 		}
 	}
 }

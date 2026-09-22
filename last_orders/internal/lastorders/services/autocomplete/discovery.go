@@ -8,8 +8,6 @@ import (
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/truths"
-
-	"cloud.google.com/go/firestore"
 )
 
 const HandlerDiscovery cellar.HandlerName = "autocomplete.discovery"
@@ -17,18 +15,18 @@ const HandlerDiscovery cellar.HandlerName = "autocomplete.discovery"
 const discoveryComponent = "autocomplete.discovery"
 
 type DiscoveryHandler struct {
-	Client *firestore.Client
+	Source Source
 	Logger *slog.Logger
 }
 
 func (handler DiscoveryHandler) Handle(ctx context.Context, truth truths.DailyPollAutoCompleteDue) cellar.Result {
-	if handler.Client == nil {
-		return cellar.ErrorResult{Message: "autocomplete firestore client is nil"}
+	if handler.Source == nil {
+		return cellar.ErrorResult{Message: "autocomplete source is nil"}
 	}
 	if truth.ObservedOn == "" {
 		return cellar.Complete{}
 	}
-	docs, err := handler.Client.Collection("polls").Where("completed", "==", false).Where("date", "==", truth.ObservedOn).Documents(ctx).GetAll()
+	docs, err := handler.Source.ListOpenPollsOn(ctx, truth.ObservedOn)
 	if err != nil {
 		return cellar.ErrorResult{Message: "list eligible polls", Err: err}
 	}
@@ -54,19 +52,19 @@ func (handler DiscoveryHandler) Handle(ctx context.Context, truth truths.DailyPo
 	return cellar.Complete{NewCells: requests}
 }
 
-func discoveredTruth(doc *firestore.DocumentSnapshot, observedOn string) (truths.PollAutoCompletionDue, error) {
-	if doc == nil || doc.Ref == nil {
+func discoveredTruth(doc Document, observedOn string) (truths.PollAutoCompletionDue, error) {
+	if doc.ID == "" {
 		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll document is nil")
 	}
-	date, ok := doc.Data()["date"].(string)
+	date, ok := doc.Data["date"].(string)
 	if !ok || date == "" {
-		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q date is invalid", doc.Ref.ID)
+		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q date is invalid", doc.ID)
 	}
-	completed, ok := doc.Data()["completed"].(bool)
+	completed, ok := doc.Data["completed"].(bool)
 	if !ok || completed {
-		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q completed is not false", doc.Ref.ID)
+		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q completed is not false", doc.ID)
 	}
 	return truths.PollAutoCompletionDue{Poll: truths.PollAutoCompletionSnapshot{
-		PollID: doc.Ref.ID, PollDate: date, Completed: completed, VenueIDs: venueIDs(doc.Data()["pubs"]), ObservedOn: observedOn,
+		PollID: doc.ID, PollDate: date, Completed: completed, VenueIDs: venueIDs(doc.Data["pubs"]), ObservedOn: observedOn,
 	}}, nil
 }

@@ -2,14 +2,10 @@ package autocomplete
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"time"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/truths"
-
-	"cloud.google.com/go/firestore"
 )
 
 const (
@@ -30,25 +26,25 @@ type CompletionAmbiguousPayload struct {
 }
 
 type CandidateHandler struct {
-	Client *firestore.Client
+	Source Source
 	Logger *slog.Logger
 }
 
 func (handler CandidateHandler) Handle(ctx context.Context, truth truths.PollAutoCompletionDue) cellar.Result {
-	if handler.Client == nil {
-		return cellar.ErrorResult{Message: "autocomplete firestore client is nil"}
+	if handler.Source == nil {
+		return cellar.ErrorResult{Message: "autocomplete source is nil"}
 	}
 	if !validCandidateTruth(truth) {
 		return cellar.Complete{}
 	}
-	poll, err := handler.Client.Collection("polls").Doc(truth.Poll.PollID).Get(ctx)
+	poll, err := handler.Source.GetPoll(ctx, truth.Poll.PollID)
 	if err != nil {
 		return cellar.ErrorResult{Message: "load current poll", Err: err}
 	}
-	if completed, _ := poll.Data()["completed"].(bool); completed {
+	if completed, _ := poll.Data["completed"].(bool); completed {
 		return cellar.Complete{}
 	}
-	venueIDs := venueIDs(poll.Data()["pubs"])
+	venueIDs := venueIDs(poll.Data["pubs"])
 	votes, err := handler.loadVotes(ctx, truth.Poll.PollID)
 	if err != nil {
 		return cellar.ErrorResult{Message: "load votes", Err: err}
@@ -65,15 +61,15 @@ func (handler CandidateHandler) Handle(ctx context.Context, truth truths.PollAut
 }
 
 func (handler CandidateHandler) loadVotes(ctx context.Context, pollID string) (map[string]int, error) {
-	doc, err := handler.Client.Collection("votes").Doc(pollID).Get(ctx)
+	doc, found, err := handler.Source.GetVotes(ctx, pollID)
 	if err != nil {
-		if doc == nil || !doc.Exists() {
-			return map[string]int{}, nil
-		}
 		return nil, err
 	}
-	counts := make(map[string]int, len(doc.Data()))
-	for venueID, raw := range doc.Data() {
+	if !found {
+		return map[string]int{}, nil
+	}
+	counts := make(map[string]int, len(doc.Data))
+	for venueID, raw := range doc.Data {
 		if voters, ok := raw.([]any); ok {
 			counts[venueID] = len(voters)
 		}
@@ -85,44 +81,29 @@ func (handler CandidateHandler) loadVenueEligibility(ctx context.Context, venueI
 	exists := make(map[string]bool, len(venueIDs))
 	food := make(map[string]bool, len(venueIDs))
 	for _, venueID := range venueIDs {
-		doc, err := handler.Client.Collection("pubs").Doc(venueID).Get(ctx)
+		doc, found, err := handler.Source.GetVenue(ctx, venueID)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !doc.Exists() {
+		if !found {
 			continue
 		}
 		exists[venueID] = true
-		food[venueID], _ = doc.Data()["food"].(bool)
+		food[venueID], _ = doc.Data["food"].(bool)
 	}
 	return exists, food, nil
 }
 
 type CloseHandler struct {
-	Client *firestore.Client
+	Source Source
 	Logger *slog.Logger
 }
 
 func (handler CloseHandler) Handle(ctx context.Context, payload CompletionClosePayload) cellar.Result {
-	if handler.Client == nil {
-		return cellar.ErrorResult{Message: "autocomplete firestore client is nil"}
+	if handler.Source == nil {
+		return cellar.ErrorResult{Message: "autocomplete source is nil"}
 	}
-	pollRef := handler.Client.Collection("polls").Doc(payload.PollID)
-	completed := false
-	err := handler.Client.RunTransaction(ctx, func(ctx context.Context, transaction *firestore.Transaction) error {
-		doc, err := transaction.Get(pollRef)
-		if err != nil {
-			return err
-		}
-		if current, _ := doc.Data()["completed"].(bool); current {
-			return nil
-		}
-		if err := transaction.Set(pollRef, map[string]any{"completed": true, "selected": payload.SelectedVenueID}, firestore.MergeAll); err != nil {
-			return err
-		}
-		completed = true
-		return nil
-	})
+	completed, err := handler.Source.CompletePoll(ctx, payload.PollID, payload.SelectedVenueID)
 	if err != nil {
 		return cellar.ErrorResult{Message: "conditionally complete poll", Err: err}
 	}
@@ -133,11 +114,8 @@ func (handler CloseHandler) Handle(ctx context.Context, payload CompletionCloseP
 }
 
 func (handler CloseHandler) writeAudit(ctx context.Context, payload CompletionClosePayload) {
-	auditID := fmt.Sprintf("%s_complete_%d", payload.PollID, time.Now().UTC().UnixNano())
-	if _, err := handler.Client.Collection("poll_action_audit").Doc(auditID).Set(ctx, map[string]any{
-		"actionType": "complete", "actorUid": "backend:auto", "pollId": payload.PollID,
-		"pollDate": payload.PollDate, "selectedVenueId": payload.SelectedVenueID, "at": firestore.ServerTimestamp,
-	}); err != nil && handler.Logger != nil {
+	entry := AuditEntry{PollID: payload.PollID, PollDate: payload.PollDate, SelectedVenueID: payload.SelectedVenueID}
+	if err := handler.Source.WriteCompletionAudit(ctx, entry); err != nil && handler.Logger != nil {
 		handler.Logger.Warn("poll auto-completion audit failed", "poll_id", payload.PollID, "err", err)
 	}
 }

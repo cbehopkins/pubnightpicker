@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -136,8 +137,6 @@ func cloneHeaders(headers map[string]string) map[string]string {
 	}
 
 	clone := make(map[string]string, len(headers))
-	for name, value := range headers {
-		clone[name] = value
-	}
+	maps.Copy(clone, headers)
 	return clone
 }

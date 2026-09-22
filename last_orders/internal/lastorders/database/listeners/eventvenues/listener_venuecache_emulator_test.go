@@ -58,7 +58,11 @@ func TestListEventVenuesReadsProjectionThroughVenueCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new recurrence service: %v", err)
 	}
-	listener, err := New(Config{Store: cellar.NewMemoryStore(nil), Service: service, Client: client, VenueCache: cache})
+	eventVenueSource, err := NewFirestoreSource(client)
+	if err != nil {
+		t.Fatalf("new event venue source: %v", err)
+	}
+	listener, err := New(Config{Store: cellar.NewMemoryStore(nil), Clock: service, Source: eventVenueSource, VenueCache: cache})
 	if err != nil {
 		t.Fatalf("new event venue listener: %v", err)
 	}
