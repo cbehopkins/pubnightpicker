@@ -14,6 +14,7 @@ import (
 type MemoryRemote struct {
 	mu          sync.Mutex
 	exists      map[string]bool
+	owners      map[string]string
 	visible     map[string]bool
 	autoVisible bool
 	createCalls map[string]int
@@ -27,6 +28,7 @@ type MemoryRemote struct {
 func NewInMemoryRemoteStandIn(autoVisible bool) *MemoryRemote {
 	return &MemoryRemote{
 		exists:      map[string]bool{},
+		owners:      map[string]string{},
 		visible:     map[string]bool{},
 		autoVisible: autoVisible,
 		createCalls: map[string]int{},
@@ -34,18 +36,19 @@ func NewInMemoryRemoteStandIn(autoVisible bool) *MemoryRemote {
 	}
 }
 
-func (r *MemoryRemote) CreateKey(ctx context.Context, listener, eventKey string) (bool, error) {
+func (r *MemoryRemote) CreateKey(ctx context.Context, listener, eventKey, owner string) (bool, bool, error) {
 	_ = ctx
 	key := listener + "::" + eventKey
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.createCalls[key]++
 	if r.exists[key] {
-		return true, nil
+		return true, r.owners[key] == owner, nil
 	}
 	r.exists[key] = true
+	r.owners[key] = owner
 	r.visible[key] = r.autoVisible
-	return false, nil
+	return false, true, nil
 }
 
 func (r *MemoryRemote) HasKey(ctx context.Context, listener, eventKey string) (bool, error) {
@@ -65,6 +68,7 @@ func (r *MemoryRemote) SeedExisting(listener, eventKey string, visible bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.exists[key] = true
+	r.owners[key] = "seeded"
 	r.visible[key] = visible
 }
 

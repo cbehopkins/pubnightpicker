@@ -3,6 +3,7 @@ package notificationprofile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -15,6 +16,8 @@ import (
 )
 
 const defaultRetryDelay = 5 * time.Second
+
+var ErrMalformedDocument = errors.New("malformed notification profile document")
 
 // Listener keeps the notification profile projection converged with Firebase.
 // It emits no Truths; it only maintains derived state.
@@ -96,8 +99,12 @@ func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyCh
 		}
 		for _, change := range changes {
 			if err := apply(ctx, change); err != nil {
-				l.logger.Error("apply notification profile change failed",
-					"doc_id", change.Doc.ID, "user_id", change.Doc.UserID, "err", err)
+				if errors.Is(err, ErrMalformedDocument) {
+					l.logger.Warn("skip malformed notification profile document",
+						"doc_id", change.Doc.ID, "user_id", change.Doc.UserID, "err", err)
+					continue
+				}
+				return err
 			}
 		}
 	}
@@ -109,7 +116,7 @@ func (l *Listener) applyUser(ctx context.Context, change notificationprofile.Cha
 	}
 	preferences, err := notificationprofile.PreferencesFromDocument(change.Doc)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
 	}
 	return l.store.PutPreferences(ctx, preferences)
 }
@@ -120,7 +127,7 @@ func (l *Listener) applyEndpoint(ctx context.Context, change notificationprofile
 	}
 	endpoint, err := notificationprofile.EndpointFromDocument(change.Doc)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
 	}
 	return l.store.PutEndpoint(ctx, endpoint)
 }

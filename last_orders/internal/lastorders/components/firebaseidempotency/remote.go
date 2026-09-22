@@ -10,6 +10,6 @@ import (
 // deliberately no non-durable fallback (see internal/lastorders/app.New). Tests may
 // bind this to the in-memory stand-in in the firebaseidempotencytest package.
 type Remote interface {
-	CreateKey(ctx context.Context, listener, eventKey string) (alreadyExists bool, err error)
+	CreateKey(ctx context.Context, listener, eventKey, owner string) (alreadyExists bool, ownedByThisExecution bool, err error)
 	HasKey(ctx context.Context, listener, eventKey string) (bool, error)
 }

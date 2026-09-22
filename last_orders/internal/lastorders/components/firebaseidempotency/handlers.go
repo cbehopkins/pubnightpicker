@@ -6,7 +6,9 @@ package firebaseidempotency
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/truths"
@@ -23,17 +25,20 @@ const (
 type StepPayload struct {
 	Listener string          `json:"listener"`
 	EventKey string          `json:"event_key"`
+	Owner    string          `json:"owner"`
 	Truth    truths.Envelope `json:"truth"`
 }
 
 // NewCellRequest builds the 3-step Sequence which establishes idempotency for the
 // given identity and, once established, emits the Truth.
 func NewCellRequest(listener, eventKey string, truth truths.Envelope) (cellar.CellRequest, error) {
-	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Truth: truth})
+	owner := cellar.CellID(fmt.Sprintf("firebase-idempotency:%s:%s:%d", listener, eventKey, time.Now().UTC().UnixNano()))
+	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Owner: string(owner), Truth: truth})
 	if err != nil {
 		return cellar.CellRequest{}, err
 	}
 	return cellar.CellRequest{
+		ID: owner,
 		Steps: []cellar.CellStep{
 			{HandlerName: HandlerCheck, Payload: payload},
 			{HandlerName: HandlerPopulateRemote, Payload: payload},
@@ -88,11 +93,18 @@ type PopulateRemoteHandler struct {
 }
 
 func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
-	if _, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey); err != nil {
+	alreadyExists, ownedByThisExecution, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
+	if err != nil {
 		return cellar.ErrorResult{Message: "populate remote idempotency key", Err: err}
 	}
+	if alreadyExists && !ownedByThisExecution {
+		if h.Logger != nil {
+			h.Logger.Info("idempotency remote key already belongs to another execution", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner)
+		}
+		return cellar.Kill{}
+	}
 	if h.Logger != nil {
-		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey)
+		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner, "already_exists", alreadyExists)
 	}
 	return cellar.Complete{}
 }

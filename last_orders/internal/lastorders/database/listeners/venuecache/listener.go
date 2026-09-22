@@ -3,6 +3,7 @@ package venuecache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 )
 
 const retryDelay = 5 * time.Second
+
+var ErrMalformedDocument = errors.New("malformed venue cache document")
 
 type Listener struct {
 	service *venuecache.Service
@@ -67,7 +70,11 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 		}
 		for _, change := range changes {
 			if err := l.apply(ctx, change); err != nil {
-				l.logger.Error("apply venue cache change failed", "venue_id", change.Doc.ID, "err", err)
+				if errors.Is(err, ErrMalformedDocument) {
+					l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
+					continue
+				}
+				return err
 			}
 		}
 	}
@@ -79,7 +86,7 @@ func (l *Listener) apply(ctx context.Context, change venuecache.Change) error {
 	}
 	projection, err := venuecache.ProjectionFromDocument(change.Doc)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
 	}
 	return l.store.Put(ctx, projection)
 }

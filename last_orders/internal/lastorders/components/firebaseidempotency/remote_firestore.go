@@ -39,21 +39,27 @@ func NewFirestoreRemote(client *firestore.Client, collectionRoot, namespace stri
 	}, nil
 }
 
-func (r *FirestoreRemote) CreateKey(ctx context.Context, listener, eventKey string) (bool, error) {
+func (r *FirestoreRemote) CreateKey(ctx context.Context, listener, eventKey, owner string) (bool, bool, error) {
 	doc := r.docRef(listener, eventKey)
 	_, err := doc.Create(ctx, map[string]any{
 		"listener":  listener,
 		"eventKey":  eventKey,
+		"owner":     owner,
 		"createdAt": firestore.ServerTimestamp,
 		"ttlAt":     time.Now().UTC().Add(14 * 24 * time.Hour),
 	})
 	if err == nil {
-		return false, nil
+		return false, true, nil
 	}
 	if status.Code(err) == codes.AlreadyExists {
-		return true, nil
+		snap, getErr := doc.Get(ctx)
+		if getErr != nil {
+			return true, false, getErr
+		}
+		existingOwner, _ := snap.Data()["owner"].(string)
+		return true, existingOwner == owner, nil
 	}
-	return false, err
+	return false, false, err
 }
 
 func (r *FirestoreRemote) HasKey(ctx context.Context, listener, eventKey string) (bool, error) {

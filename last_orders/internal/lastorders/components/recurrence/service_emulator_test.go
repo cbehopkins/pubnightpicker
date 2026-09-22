@@ -2,11 +2,15 @@ package recurrence
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
+
+	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
 )
@@ -164,6 +168,77 @@ func TestAdvanceStaleEventFromPastDateAgainstEmulator(t *testing.T) {
 		t.Fatalf("advanced occurrence still needs recalculation: %s", got)
 	}
 }
+
+func TestCreateEventPollUsesFirebaseStateWhenCacheIsStale(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	svc, client := emulatorService(t, ctx)
+	current := beginningOfDay(svc.Today()).AddDate(0, 0, 4).Format("2006-01-02")
+	stale := beginningOfDay(svc.Today()).AddDate(0, 0, 2).Format("2006-01-02")
+	eventID := fmt.Sprintf("venue-stale-cache-%d", time.Now().UnixNano())
+	if _, err := client.Collection("pubs").Doc(eventID).Set(ctx, map[string]any{
+		"venueType":         "event",
+		"name":              "The Freshly Resolved Arms",
+		"recurrence":        map[string]any{"frequency": "once", "date": current},
+		NextOccurrenceField: current,
+	}); err != nil {
+		t.Fatalf("seed venue: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatalf("new base store: %v", err)
+	}
+	cacheStore, err := venuecache.New(base)
+	if err != nil {
+		t.Fatalf("new cache store: %v", err)
+	}
+	if err := cacheStore.Put(context.Background(), venuecache.VenueProjection{
+		ID:                 eventID,
+		Name:               "stale-name",
+		VenueType:          "event",
+		NextOccurrenceDate: stale,
+	}); err != nil {
+		t.Fatalf("seed stale cache: %v", err)
+	}
+	cacheService, err := venuecache.NewService(cacheStore, staleSource{doc: venuecache.Document{ID: eventID, Data: map[string]any{"name": "fresh-name", "venueType": "event", "next_occurrence_date": current}}}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("new cache service: %v", err)
+	}
+	svc.cache = cacheService
+
+	if err := svc.CreateEventPoll(ctx, eventID, current); err != nil {
+		t.Fatalf("create event poll with Firebase authoritative date: %v", err)
+	}
+	polls, err := client.Collection("polls").Where("eventVenueId", "==", eventID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("query polls: %v", err)
+	}
+	if len(polls) != 1 {
+		t.Fatalf("expected one poll for the current authoritative occurrence, got %d", len(polls))
+	}
+	if stale == current {
+		t.Fatal("test setup bug: stale date must differ")
+	}
+}
+
+type staleSource struct {
+	doc venuecache.Document
+}
+
+func (s staleSource) Get(context.Context, string) (venuecache.Document, error) { return s.doc, nil }
+
+func (s staleSource) ListEventVenues(context.Context) ([]venuecache.Document, error) { return nil, nil }
+
+func (s staleSource) Watch(context.Context) (venuecache.ChangeStream, error) { return nil, nil }
 
 func TestCreateEventPollAgainstEmulator(t *testing.T) {
 	t.Parallel()

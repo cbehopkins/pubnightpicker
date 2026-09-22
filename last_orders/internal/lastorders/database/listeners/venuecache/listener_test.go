@@ -3,6 +3,8 @@ package venuecache
 import (
 	"context"
 	"database/sql"
+	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -107,9 +109,83 @@ func TestCloseWaitsForListenerGoroutine(t *testing.T) {
 	}
 }
 
+func TestListenerReconnectsAfterTransientProjectionFailure(t *testing.T) {
+	store := newTestStore(t)
+	service, err := component.NewService(store, &replaySource{changes: [][]component.Change{
+		{{Kind: component.ChangeAdded, Doc: component.Document{ID: "venue-1", Data: map[string]any{"name": "The Crown"}}}},
+		{{Kind: component.ChangeAdded, Doc: component.Document{ID: "venue-1", Data: map[string]any{"name": "The Crown"}}}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	listener, err := New(service, store, nil)
+	if err != nil {
+		t.Fatalf("new listener: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go listener.watch(ctx)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := store.Get(context.Background(), "venue-1"); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("listener did not rebuild the projection after a transient persistence failure")
+}
+
+type replaySource struct {
+	changes [][]component.Change
+	index   int
+}
+
+func (s *replaySource) Get(context.Context, string) (component.Document, error) {
+	return component.Document{}, component.ErrNotFound
+}
+
+func (s *replaySource) ListEventVenues(context.Context) ([]component.Document, error) {
+	return nil, nil
+}
+
+func (s *replaySource) Watch(context.Context) (component.ChangeStream, error) {
+	if s.index >= len(s.changes) {
+		return &replayStream{done: true}, nil
+	}
+	stream := &replayStream{changes: s.changes[s.index], failAfterFirst: s.index == 0}
+	s.index++
+	return stream, nil
+}
+
+type replayStream struct {
+	changes []component.Change
+	idx     int
+	done    bool
+	failAfterFirst bool
+}
+
+func (s *replayStream) Next() ([]component.Change, error) {
+	if s.done {
+		return nil, context.Canceled
+	}
+	if s.failAfterFirst && s.idx == 1 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	if s.idx >= len(s.changes) {
+		return nil, io.ErrUnexpectedEOF
+	}
+	batch := s.changes[s.idx : s.idx+1]
+	s.idx++
+	return batch, nil
+}
+
+func (s *replayStream) Stop() {}
+
 func newTestStore(t *testing.T) *component.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	path := filepath.Join(t.TempDir(), "venue_cache.db")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

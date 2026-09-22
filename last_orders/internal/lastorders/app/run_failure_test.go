@@ -14,8 +14,8 @@ type failingRemote struct {
 	err error
 }
 
-func (r failingRemote) CreateKey(context.Context, string, string) (bool, error) {
-	return false, r.err
+func (r failingRemote) CreateKey(context.Context, string, string, string) (bool, bool, error) {
+	return false, false, r.err
 }
 
 func (r failingRemote) HasKey(context.Context, string, string) (bool, error) {

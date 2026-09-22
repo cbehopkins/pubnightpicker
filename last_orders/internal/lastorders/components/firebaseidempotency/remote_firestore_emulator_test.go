@@ -49,12 +49,12 @@ func TestFirestoreRemoteAgainstEmulator(t *testing.T) {
 		t.Fatal("key should not exist before create")
 	}
 
-	alreadyExists, err := remote.CreateKey(ctx, listener, eventKey)
+	alreadyExists, ownedByThisExecution, err := remote.CreateKey(ctx, listener, eventKey, "execution-1")
 	if err != nil {
 		t.Fatalf("create key first attempt: %v", err)
 	}
-	if alreadyExists {
-		t.Fatal("first create should not report already exists")
+	if alreadyExists || !ownedByThisExecution {
+		t.Fatalf("first create = alreadyExists=%v ownedByThisExecution=%v; want false/true", alreadyExists, ownedByThisExecution)
 	}
 
 	exists, err = remote.HasKey(ctx, listener, eventKey)
@@ -65,11 +65,19 @@ func TestFirestoreRemoteAgainstEmulator(t *testing.T) {
 		t.Fatal("key should exist after create")
 	}
 
-	alreadyExists, err = remote.CreateKey(ctx, listener, eventKey)
+	alreadyExists, ownedByThisExecution, err = remote.CreateKey(ctx, listener, eventKey, "execution-1")
 	if err != nil {
-		t.Fatalf("create key second attempt: %v", err)
+		t.Fatalf("create key retry attempt: %v", err)
 	}
-	if !alreadyExists {
-		t.Fatal("second create should report already exists")
+	if !alreadyExists || !ownedByThisExecution {
+		t.Fatalf("retry = alreadyExists=%v ownedByThisExecution=%v; want true/true", alreadyExists, ownedByThisExecution)
+	}
+
+	alreadyExists, ownedByThisExecution, err = remote.CreateKey(ctx, listener, eventKey, "execution-2")
+	if err != nil {
+		t.Fatalf("create key conflicting attempt: %v", err)
+	}
+	if !alreadyExists || ownedByThisExecution {
+		t.Fatalf("conflict = alreadyExists=%v ownedByThisExecution=%v; want true/false", alreadyExists, ownedByThisExecution)
 	}
 }

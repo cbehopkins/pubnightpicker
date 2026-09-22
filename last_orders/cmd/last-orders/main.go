@@ -16,7 +16,7 @@ import (
 func main() {
 	var (
 		dbPath          = flag.String("db-path", "./last-orders.db", "path to SQLite database")
-		runFor          = flag.Duration("run-for", 20*time.Second, "how long to run before graceful stop (0 means until signal)")
+		runFor          = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
 		pollDelay       = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
 		reevaluateEvery = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
 		httpAddr        = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")

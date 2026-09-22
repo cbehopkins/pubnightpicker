@@ -106,24 +106,18 @@ func clearOccurrence(tx *firestore.Transaction, ref *firestore.DocumentRef, doc 
 // CreateEventPoll materialises the poll for a due occurrence, or completes silently
 // when a poll for (eventVenueId, occurrenceDate) already exists.
 func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
-	var venueType, current, venueName string
-	var err error
-	if s.cache != nil {
-		projection, err := s.cache.Get(ctx, eventID)
-		if err != nil {
-			return err
+	venueDoc, err := s.client.Collection(venueCollection).Doc(eventID).Get(ctx)
+	if err != nil {
+		return err
+	}
+	venueType, _ := venueDoc.Data()["venueType"].(string)
+	current, _ := venueDoc.Data()[NextOccurrenceField].(string)
+	venueName, _ := venueDoc.Data()["name"].(string)
+	if s.cache != nil && venueName == "" {
+		projection, cacheErr := s.cache.Get(ctx, eventID)
+		if cacheErr == nil {
+			venueName = projection.Name
 		}
-		venueType = projection.VenueType
-		current = projection.NextOccurrenceDate
-		venueName = projection.Name
-	} else {
-		venueDoc, err := s.client.Collection(venueCollection).Doc(eventID).Get(ctx)
-		if err != nil {
-			return err
-		}
-		venueType, _ = venueDoc.Data()["venueType"].(string)
-		current, _ = venueDoc.Data()[NextOccurrenceField].(string)
-		venueName, _ = venueDoc.Data()["name"].(string)
 	}
 	if venueType != "event" {
 		return nil
