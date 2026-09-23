@@ -94,36 +94,6 @@ func TestAPIWrapperRoutesAndBodies(t *testing.T) {
 		assertBody func(*testing.T, []byte)
 	}{
 		{
-			name: "send email", method: http.MethodPost, path: "/send",
-			call: func(ctx context.Context, client *Client) error {
-				_, err := client.SendEmail(ctx, SendEmailRequest{Channel: "email", MessageTxt: "hello", CampaignType: "transac", DryRun: true})
-				return err
-			},
-			assertBody: assertJSONFields(map[string]any{"channel": "email", "message-txt": "hello", "campaign-type": "transac", "dry-run": true}),
-		},
-		{
-			name: "send bulk email", method: http.MethodPost, path: "/send/bulk/email",
-			call: func(ctx context.Context, client *Client) error {
-				_, err := client.SendBulkEmail(ctx, BulkEmailRequest{Channel: "email", TemplateID: "tpl-1", DryRun: true, Recipients: []BulkRecipient{{Email: "alice@example.com", Variables: map[string]any{"name": "Alice"}}}})
-				return err
-			},
-			assertBody: func(t *testing.T, body []byte) {
-				t.Helper()
-				var value map[string]any
-				if err := json.Unmarshal(body, &value); err != nil {
-					t.Fatal(err)
-				}
-				if value["template-id"] != "tpl-1" || value["dry-run"] != true {
-					t.Fatalf("unexpected bulk fields: %v", value)
-				}
-				recipients := value["recipients"].([]any)
-				variables := recipients[0].(map[string]any)["variables"].(map[string]any)
-				if variables["name"] != "Alice" {
-					t.Fatalf("unexpected recipient variables: %v", variables)
-				}
-			},
-		},
-		{
 			name: "create template", method: http.MethodPost, path: "/clients/client%2Fid/channels/email/templates",
 			call: func(ctx context.Context, client *Client) error {
 				_, err := client.CreateTemplate(ctx, "client/id", CreateTemplateRequest{Name: "invite", Template: "body"})

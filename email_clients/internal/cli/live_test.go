@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"email_clients/clients"
 	"email_clients/clients/sweego"
 )
 
@@ -34,8 +35,8 @@ type liveEnv struct {
 	client     *sweego.Client
 	clientUUID string
 	provider   string
-	from       sweego.EmailAddress
-	to         sweego.BulkRecipient
+	from       clients.Address
+	to         clients.Recipient
 }
 
 func requireLive(t *testing.T) liveEnv {
@@ -72,33 +73,29 @@ func requireLive(t *testing.T) liveEnv {
 		clientUUID: values["SWEEGO_CLIENT_UUID"],
 		provider:   values["SWEEGO_PROVIDER"],
 		from:       from,
-		to: sweego.BulkRecipient{
-			Email:     to.Email,
-			Name:      to.Name,
+		to: clients.Recipient{
+			Address:   to,
 			Variables: map[string]any{"name": "Live Test", "date": "Friday"},
 		},
 	}
 }
 
-// dryRunSend returns the HTTP status of a dry-run bulk send using the supplied
-// content source.
-func (env liveEnv) dryRunSend(t *testing.T, templateID, messageTxt string) (int, []byte) {
-	t.Helper()
-	response, err := env.client.SendBulkEmail(context.Background(), sweego.BulkEmailRequest{
-		Channel:      "email",
-		From:         env.from,
-		Provider:     env.provider,
-		Subject:      "Live behaviour check",
-		Recipients:   []sweego.BulkRecipient{env.to},
-		MessageTxt:   messageTxt,
-		CampaignType: "transac",
-		TemplateID:   templateID,
-		DryRun:       true,
+func (env liveEnv) dryRunSend(templateID, messageTxt, subject string) error {
+	_, err := env.client.WithSendOptions(sweego.SendOptions{
+		Provider: env.provider, CampaignType: "transac", DryRun: true,
+	}).Send(context.Background(), clients.Email{
+		From: env.from, Subject: subject, To: []clients.Recipient{env.to},
+		Text: messageTxt, TemplateID: templateID,
 	})
+	return err
+}
+
+func (env liveEnv) successfulDryRun(t *testing.T, templateID, messageTxt string) {
+	t.Helper()
+	err := env.dryRunSend(templateID, messageTxt, "Live behaviour check")
 	if err != nil {
-		t.Fatalf("bulk send request failed: %v", err)
+		t.Fatalf("dry-run send failed: %v", err)
 	}
-	return response.Status, response.Body
 }
 
 func uploadLiveTemplate(t *testing.T, env liveEnv, label, content string) string {
@@ -178,10 +175,10 @@ func TestLivePlainTextTemplateCannotSend(t *testing.T) {
 	env := requireLive(t)
 	uuid := uploadLiveTemplate(t, env, "plaintext", livePlainTextTemplate)
 
-	status, body := env.dryRunSend(t, uuid, "")
-	if status != 500 {
-		t.Fatalf("Sweego no longer rejects a plain-text template (got %d: %s).\n"+
-			"If this is now a success, plain-text templates may be supported and the README conclusion is stale.", status, body)
+	err := env.dryRunSend(uuid, "", "Live behaviour check")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("Sweego no longer rejects a plain-text template (got %v).\n"+
+			"If this is now a success, plain-text templates may be supported and the README conclusion is stale.", err)
 	}
 }
 
@@ -191,9 +188,9 @@ func TestLiveRawHTMLTemplateCannotSend(t *testing.T) {
 	env := requireLive(t)
 	uuid := uploadLiveTemplate(t, env, "rawhtml", readLiveFixture(t, "template.html"))
 
-	status, body := env.dryRunSend(t, uuid, "")
-	if status != 500 {
-		t.Fatalf("expected 500 for a raw HTML template, got %d: %s", status, body)
+	err := env.dryRunSend(uuid, "", "Live behaviour check")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("expected HTTP 500 for a raw HTML template, got %v", err)
 	}
 }
 
@@ -203,9 +200,7 @@ func TestLiveEditorDocumentTemplateSends(t *testing.T) {
 	env := requireLive(t)
 	uuid := uploadLiveTemplate(t, env, "htmldoc", readLiveFixture(t, "template_document.json"))
 
-	if status, body := env.dryRunSend(t, uuid, ""); status != 200 {
-		t.Fatalf("expected 200 for an editor-document template, got %d: %s", status, body)
-	}
+	env.successfulDryRun(t, uuid, "")
 }
 
 // Isolates the cause: the same request succeeds when the only change is a
@@ -217,18 +212,14 @@ func TestLiveUIBuiltTemplateSends(t *testing.T) {
 		t.Skip("set SWEEGO_LIVE_UI_TEMPLATE_UUID to a template built in the Sweego UI")
 	}
 
-	if status, body := env.dryRunSend(t, uiTemplate, ""); status != 200 {
-		t.Fatalf("expected 200 for a UI-built template, got %d: %s", status, body)
-	}
+	env.successfulDryRun(t, uiTemplate, "")
 }
 
 // The route that actually delivers text/plain.
 func TestLiveMessageTxtSends(t *testing.T) {
 	env := requireLive(t)
 
-	if status, body := env.dryRunSend(t, "", livePlainTextTemplate); status != 200 {
-		t.Fatalf("expected 200 for a message-txt send, got %d: %s", status, body)
-	}
+	env.successfulDryRun(t, "", livePlainTextTemplate)
 }
 
 // Templates are capped per plan, so the client must be able to remove them.
@@ -257,19 +248,8 @@ func TestLiveTemplateDelete(t *testing.T) {
 func TestLiveSubjectIsRequired(t *testing.T) {
 	env := requireLive(t)
 
-	response, err := env.client.SendBulkEmail(context.Background(), sweego.BulkEmailRequest{
-		Channel:      "email",
-		From:         env.from,
-		Provider:     env.provider,
-		Recipients:   []sweego.BulkRecipient{env.to},
-		MessageTxt:   livePlainTextTemplate,
-		CampaignType: "transac",
-		DryRun:       true,
-	})
-	if err != nil {
-		t.Fatalf("bulk send request failed: %v", err)
-	}
-	if response.Status != 422 {
-		t.Fatalf("expected 422 for a missing subject, got %d: %s", response.Status, response.Body)
+	err := env.dryRunSend("", livePlainTextTemplate, "")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 422") {
+		t.Fatalf("expected HTTP 422 for a missing subject, got %v", err)
 	}
 }

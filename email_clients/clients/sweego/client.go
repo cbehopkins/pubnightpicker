@@ -8,17 +8,26 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"email_clients/clients"
 )
 
 type Client struct {
-	baseURL    string
-	token      string
-	httpClient *http.Client
+	baseURL     string
+	token       string
+	httpClient  *http.Client
+	sendOptions SendOptions
 }
 
-type HTTPResult = clients.HTTPResult
+type HTTPResult struct {
+	Status  int
+	Headers http.Header
+	Body    []byte
+}
+
+type SendOptions struct {
+	Provider     string
+	CampaignType string
+	DryRun       bool
+}
 
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	return &Client{
@@ -28,6 +37,12 @@ func NewClient(baseURL, token string, timeout time.Duration) *Client {
 			Timeout: timeout,
 		},
 	}
+}
+
+func (c *Client) WithSendOptions(options SendOptions) *Client {
+	clone := *c
+	clone.sendOptions = options
+	return &clone
 }
 
 // Do sends an authenticated request with payload encoded as JSON. A nil payload

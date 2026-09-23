@@ -2,14 +2,16 @@
 
 This is a small Go CLI for inspecting email provider integrations, starting
 with Sweego's sending and log behaviour. It is an experiment, not a
-production sending library. Raw provider responses and relevant log responses
-are intentionally printed.
+production sending library. Relevant raw log and template responses are
+intentionally printed; email submission exposes provider message IDs through
+the provider-neutral client API.
 
 ## Package layout
 
 - `cmd/sweego-client` is the executable entry point.
 - `internal/cli` owns command parsing, configuration, and terminal output.
-- `clients` defines the shared email request, response, and client contract.
+- `clients` defines the provider-neutral email, result, client, and verifier
+  contracts.
 - `clients/dummy` is a callback-backed test client that does not send email.
 - `clients/sweego` is the importable Sweego API client for email sending and
   template administration. Additional providers will live alongside it under
@@ -31,10 +33,10 @@ client := dummy.NewClient(func(emailAddress, message string, headers map[string]
 })
 ```
 
-`SendEmail` and `SendBulkEmail` invoke the callback synchronously once per
-recipient, in request order. They stop at the first callback error; otherwise
-they return HTTP 200 with an empty response body. Each invocation receives its
-own copy of the request headers.
+`Send` invokes the callback synchronously once per recipient, in request order.
+It stops at the first callback error; otherwise it returns one `SendResult`
+with a distinct PMUID for each recipient. Each callback receives its own copy
+of `Email.Headers`.
 
 Register named bulk templates with `AddTemplate` before sending:
 
@@ -42,15 +44,15 @@ Register named bulk templates with `AddTemplate` before sending:
 err := client.AddTemplate("greeting", "Hello {{.name}}")
 ```
 
-Dummy templates use Go `text/template` syntax. Set `BulkEmailRequest.TemplateID`
-to the registered name; the client renders the template separately for each
-recipient using `BulkRecipient.Variables`, then passes the rendered message to
-the callback. A missing template, missing variable, invalid template, or
-duplicate name returns an error. All recipients are rendered before the first
-callback is invoked.
+Dummy templates use Go `text/template` syntax internally. Set
+`Email.TemplateID` to the registered name; the client renders the template
+separately for each recipient using common `Email.Variables` combined with
+`Recipient.Variables`, with recipient values taking precedence. A missing
+template, missing variable, invalid template, or duplicate name returns an
+error. All recipients are rendered before the first callback is invoked.
 
-Bulk plain-text messages are passed to the callback unchanged and do not use
-recipient variables.
+Plain-text messages without a configured template are passed to the callback
+unchanged.
 
 This version does not retain messages or support message verification and
 recovery.
@@ -78,9 +80,15 @@ go run ./cmd/sweego-client bulk-send \
 
 Useful bulk flags are `--template-id` and `--dry-run`. The request includes only
 the fields whose values are supplied. `--discard-response` performs a
-lost-response simulation: the HTTP request is made and printed, but recovery is
-given neither `transaction_id` nor response `swg_uid` values. The response is
-retained only for the final comparison report.
+lost-response simulation: the request is made, but recovery is not given the
+PMUID values returned by the provider. They are retained only for the final
+comparison report.
+
+The shared `Email` API does not expose provider, campaign, or dry-run fields.
+The Sweego CLI applies those as provider-specific client options. A plain
+single-recipient email uses `/send`; templates, variables, or multiple
+recipients use `/send/bulk/email`. Each `Send` makes at most one provider
+request.
 
 Set `SWEEGO_TOKEN` and `SWEEGO_PROVIDER`; `SWEEGO_BASE_URL` is optional and
 defaults to `https://api.sweego.io`. The template commands additionally need
@@ -181,28 +189,22 @@ eventual caller populates targets from a database query that may return no rows.
 
 ## Bulk experiment behaviour
 
-The command submits `POST /send/bulk/email`, printing the status, headers, and
-complete raw response body. The parser accepts the currently hypothesised
-`transaction_id` plus `swg_uids` map shape and also scans nested objects for
-`recipient`/`email` plus `swg_uid` pairs. This flexibility is deliberate: the
-actual bulk response must be inspected before treating any shape as a provider
-contract.
+The command submits one `POST /send/bulk/email` request. The Sweego client
+parses the provider response and maps each `swg_uid` to a provider-neutral
+PMUID in request order.
 
 The output retains the relationship:
 
 ```text
 Bulk operation
-  transaction_id: <one provider identity>
-
 Recipients:
   alice@example.com
     swg_uid: <individual provider identity>
 ```
 
-`transaction_id` identifies the bulk submission. `swg_uid` identifies an
-individual recipient message and is the identity needed for individual log,
-webhook, and delivery correlation. The command never substitutes one for the
-other.
+`swg_uid` identifies an individual recipient message and is exposed through
+the generic API only as `RecipientResult.PMUID`. Transaction IDs and raw HTTP
+metadata are intentionally not part of `SendResult`.
 
 Recovery queries the existing `/logs/` endpoint once per unresolved recipient,
 using a day-level date range and the recipient as the search word. It then
@@ -212,7 +214,6 @@ matches locally using:
 - recipient;
 - email channel;
 - `email_creation` within `--recovery-window` of submission;
-- transaction ID when it is available;
 - the application-owned `X-Pubnight-Message-ID` header when present.
 
 The date range is deliberately broader than the local timestamp tolerance

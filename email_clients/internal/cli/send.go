@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"email_clients/clients"
 	"email_clients/clients/sweego"
 	"email_clients/clients/sweego/logs"
 )
@@ -47,23 +48,31 @@ func runSend(args []string, client *sweego.Client, provider string) error {
 			return err
 		}
 	}
-	req := sweego.SendEmailRequest{Channel: "email", From: fromAddr, Provider: provider, Subject: subject, Recipients: []sweego.EmailAddress{toAddr}, MessageTxt: text, CampaignType: "transac", DryRun: dryRun, Headers: map[string]string{sweego.PubnightMessageIDHeader: correlationID}}
+	email := clients.Email{
+		From: fromAddr, To: []clients.Recipient{{Address: toAddr}}, Subject: subject, Text: text,
+		Headers: map[string]string{sweego.PubnightMessageIDHeader: correlationID},
+	}
 	fmt.Printf("PubNight message ID: %s\n", correlationID)
 	ctx := context.Background()
 	sentAt := time.Now()
-	response, sendErr := client.SendEmail(ctx, req)
+	result, sendErr := client.WithSendOptions(sweego.SendOptions{
+		Provider: provider, CampaignType: "transac", DryRun: dryRun,
+	}).Send(ctx, email)
 	if sendErr != nil {
 		fmt.Fprintln(os.Stderr, "send error:", sendErr)
 	} else {
-		printHTTPResult(response.Status, response.Body)
+		fmt.Printf("PMUID: %s\n", result.Recipients[0].PMUID)
 	}
-	result := logs.NewVerifier(logs.NewClient(client), tolerance).VerifyMessage(ctx, correlationID, toAddr.Email, sentAt)
-	printVerificationResult(result)
+	verification, verifyErr := logs.NewVerifier(logs.NewClient(client), tolerance).Verify(ctx, clients.VerifyRequest{
+		CorrelationID: correlationID, Recipient: toAddr.Email, SentAt: sentAt,
+	})
+	if verifyErr != nil {
+		fmt.Fprintln(os.Stderr, "verification error:", verifyErr)
+	} else {
+		printVerificationResult(verification)
+	}
 	if sendErr != nil {
 		return sendErr
 	}
-	if response.Status < 200 || response.Status >= 300 {
-		return fmt.Errorf("non-2xx response: %d", response.Status)
-	}
-	return nil
+	return verifyErr
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"email_clients/clients"
 	"email_clients/clients/sweego"
 	"email_clients/clients/sweego/logs"
 )
@@ -17,7 +18,7 @@ import (
 type bulkOperation struct {
 	TransactionID string
 	SubmittedAt   time.Time
-	Sender        sweego.EmailAddress
+	Sender        clients.Address
 	Recipients    []bulkRecipient
 }
 
@@ -53,17 +54,13 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 		}
 	}
 
-	request := sweego.BulkEmailRequest{
-		Channel:      "email",
-		From:         from,
-		Provider:     provider,
-		Subject:      options.subject,
-		Recipients:   recipients,
-		MessageTxt:   options.text,
-		CampaignType: options.campaignType,
-		TemplateID:   options.templateID,
-		DryRun:       options.dryRun,
-		Headers:      map[string]string{sweego.PubnightMessageIDHeader: correlationID},
+	email := clients.Email{
+		From:       from,
+		To:         recipients,
+		Subject:    options.subject,
+		Text:       options.text,
+		TemplateID: options.templateID,
+		Headers:    map[string]string{sweego.PubnightMessageIDHeader: correlationID},
 	}
 
 	operation := bulkOperation{Sender: from, SubmittedAt: time.Now()}
@@ -71,25 +68,26 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 		operation.Recipients = append(operation.Recipients, bulkRecipient{Email: recipient.Email})
 	}
 
-	requestBody, _ := json.Marshal(request)
+	requestBody, _ := json.Marshal(email)
 	fmt.Printf("Bulk operation\n  submitted_at: %s\n  operation_id: %s\n  sender: %s\n  recipients: %d\n\nBulk request:\n%s\n",
 		operation.SubmittedAt.Format(time.RFC3339), correlationID, from.Email, len(recipients), requestBody)
 
-	response, sendErr := client.SendBulkEmail(context.Background(), request)
+	response, sendErr := client.WithSendOptions(sweego.SendOptions{
+		Provider: provider, CampaignType: options.campaignType, DryRun: options.dryRun,
+	}).Send(context.Background(), email)
 	if sendErr != nil {
-		fmt.Fprintln(osStderr, "bulk POST error:", sendErr)
+		fmt.Fprintln(osStderr, "bulk send error:", sendErr)
 	} else {
-		fmt.Printf("Bulk POST response\n  HTTP status: %d\n  headers: %v\n  raw body: %s\n", response.Status, response.Headers, response.Body)
+		fmt.Println("Bulk send response received.")
 	}
 
-	actual, parseErr := parseBulkResponse(response.Body)
-	if parseErr != nil {
-		fmt.Fprintln(osStderr, "bulk response parse warning:", parseErr)
-	} else {
-		operation.TransactionID = actual.TransactionID
-		for index := range operation.Recipients {
-			operation.Recipients[index].SwgUID = actual.SwgUIDs[operation.Recipients[index].Email]
+	actual := bulkResponse{SwgUIDs: make(map[string]string)}
+	for index, recipient := range response.Recipients {
+		if index >= len(operation.Recipients) {
+			break
 		}
+		operation.Recipients[index].SwgUID = recipient.PMUID
+		actual.SwgUIDs[operation.Recipients[index].Email] = recipient.PMUID
 	}
 
 	fmt.Printf("\nBulk operation\n  transaction_id: %s\n\nRecipients:\n", operation.TransactionID)
@@ -111,9 +109,6 @@ func runBulkSend(args []string, client *sweego.Client, provider string) error {
 	printBulkRecovery(results, actual, options.discardResponse)
 	if sendErr != nil {
 		return sendErr
-	}
-	if response.Status < 200 || response.Status >= 300 {
-		return fmt.Errorf("non-2xx response: %d", response.Status)
 	}
 	return recoveryErr
 }
@@ -176,8 +171,8 @@ func parseBulkOptions(args []string) (bulkOptions, error) {
 	return options, nil
 }
 
-func parseRecipients(raw string) ([]sweego.BulkRecipient, error) {
-	var recipients []sweego.BulkRecipient
+func parseRecipients(raw string) ([]clients.Recipient, error) {
+	var recipients []clients.Recipient
 	for value := range strings.SplitSeq(raw, ",") {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -187,67 +182,12 @@ func parseRecipients(raw string) ([]sweego.BulkRecipient, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid recipient %q: %w", value, err)
 		}
-		recipients = append(recipients, sweego.BulkRecipient{Email: address.Email, Name: address.Name})
+		recipients = append(recipients, clients.Recipient{Address: address})
 	}
 	if len(recipients) == 0 {
 		return nil, errors.New("--to must contain at least one recipient")
 	}
 	return recipients, nil
-}
-
-func parseBulkResponse(body []byte) (bulkResponse, error) {
-	var root any
-	if len(body) == 0 {
-		return bulkResponse{}, errors.New("empty response body")
-	}
-	if err := json.Unmarshal(body, &root); err != nil {
-		return bulkResponse{}, fmt.Errorf("decode response JSON: %w", err)
-	}
-	response := bulkResponse{SwgUIDs: map[string]string{}}
-	collectBulkIdentifiers(root, &response)
-	if response.TransactionID == "" && len(response.SwgUIDs) == 0 {
-		return response, errors.New("no transaction_id or per-recipient swg_uid found; raw response retained above")
-	}
-	return response, nil
-}
-
-func collectBulkIdentifiers(value any, response *bulkResponse) {
-	switch current := value.(type) {
-	case map[string]any:
-		var recipient, swgUID string
-		for key, child := range current {
-			switch strings.ToLower(strings.ReplaceAll(key, "-", "_")) {
-			case "transaction_id", "transactionid":
-				if text, ok := child.(string); ok && response.TransactionID == "" {
-					response.TransactionID = text
-				}
-			case "swg_uids", "swguids":
-				if ids, ok := child.(map[string]any); ok {
-					for recipient, identifier := range ids {
-						if text, ok := identifier.(string); ok {
-							response.SwgUIDs[recipient] = text
-						}
-					}
-				}
-			case "recipient", "email", "to":
-				if text, ok := child.(string); ok {
-					recipient = text
-				}
-			case "swg_uid", "swguid":
-				if text, ok := child.(string); ok {
-					swgUID = text
-				}
-			}
-			collectBulkIdentifiers(child, response)
-		}
-		if recipient != "" && swgUID != "" {
-			response.SwgUIDs[recipient] = swgUID
-		}
-	case []any:
-		for _, child := range current {
-			collectBulkIdentifiers(child, response)
-		}
-	}
 }
 
 func recoverBulkLogs(ctx context.Context, client *sweego.Client, operation bulkOperation, correlationID string, options recoveryOptions) ([]logs.RecoveryResult, []logs.QueryObservation, error) {

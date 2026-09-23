@@ -2,52 +2,52 @@ package clients
 
 import (
 	"context"
-	"net/http"
+	"time"
 )
 
-type EmailAddress struct {
-	Email string `json:"email"`
-	Name  string `json:"name,omitempty"`
+type Address struct {
+	Email string
+	Name  string
 }
 
-type SendEmailRequest struct {
-	Channel      string            `json:"channel"`
-	From         EmailAddress      `json:"from"`
-	Provider     string            `json:"provider"`
-	Subject      string            `json:"subject"`
-	Recipients   []EmailAddress    `json:"recipients"`
-	MessageTxt   string            `json:"message-txt"`
-	CampaignType string            `json:"campaign-type"`
-	DryRun       bool              `json:"dry-run,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
+type Recipient struct {
+	Address
+	Variables map[string]any
 }
 
-type BulkRecipient struct {
-	Email     string         `json:"email"`
-	Name      string         `json:"name,omitempty"`
-	Variables map[string]any `json:"variables,omitempty"`
+type Email struct {
+	From       Address
+	To         []Recipient
+	Subject    string
+	TemplateID string
+	Text       string
+	Variables  map[string]any
+	Headers    map[string]string
 }
 
-type BulkEmailRequest struct {
-	Channel      string            `json:"channel"`
-	From         EmailAddress      `json:"from"`
-	Provider     string            `json:"provider"`
-	Subject      string            `json:"subject,omitempty"`
-	Recipients   []BulkRecipient   `json:"recipients"`
-	MessageTxt   string            `json:"message-txt,omitempty"`
-	CampaignType string            `json:"campaign-type,omitempty"`
-	TemplateID   string            `json:"template-id,omitempty"`
-	DryRun       bool              `json:"dry-run,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
+type SendResult struct {
+	Recipients []RecipientResult
 }
 
-type HTTPResult struct {
-	Status  int
-	Headers http.Header
-	Body    []byte
+type RecipientResult struct {
+	PMUID string
 }
 
 type EmailClient interface {
-	SendEmail(context.Context, SendEmailRequest) (HTTPResult, error)
-	SendBulkEmail(context.Context, BulkEmailRequest) (HTTPResult, error)
+	Send(context.Context, Email) (SendResult, error)
+}
+
+type VerifyRequest struct {
+	CorrelationID string
+	Recipient     string
+	SentAt        time.Time
+}
+
+type VerifyResult struct {
+	Found bool
+	PMUID string
+}
+
+type EmailVerifier interface {
+	Verify(context.Context, VerifyRequest) (VerifyResult, error)
 }

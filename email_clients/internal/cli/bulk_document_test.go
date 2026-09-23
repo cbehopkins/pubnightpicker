@@ -52,7 +52,7 @@ func quickRecoveryArgs(path string) []string {
 }
 
 func TestBulkSendDocumentMapsTemplateOntoSweegoRequest(t *testing.T) {
-	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1"}}`)
+	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1","bob@example.com":"U2"}}`)
 	path := writeTempFile(t, "targets.json", twoTargetDocument)
 
 	if err := runBulkSendDocument(quickRecoveryArgs(path), client, "example.com"); err != nil {
@@ -88,7 +88,7 @@ func TestBulkSendDocumentMapsTemplateOntoSweegoRequest(t *testing.T) {
 }
 
 func TestBulkSendDocumentWithSingleTarget(t *testing.T) {
-	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1"}`)
+	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1"}}`)
 	path := writeTempFile(t, "targets.json", `{"template":"tpl-123","subject":"S","from":"sender@example.com","targets":[{"dest":"alice@example.com"}]}`)
 
 	if err := runBulkSendDocument(quickRecoveryArgs(path), client, "example.com"); err != nil {
@@ -102,7 +102,7 @@ func TestBulkSendDocumentWithSingleTarget(t *testing.T) {
 // The plain-text route: "body" names a text file whose contents become
 // message-txt, with no template involved.
 func TestBulkSendDocumentWithBodyFileSendsMessageTxt(t *testing.T) {
-	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1"}`)
+	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1"}}`)
 	dir := t.TempDir()
 	bodyPath := filepath.Join(dir, "body.txt")
 	if err := os.WriteFile(bodyPath, []byte(rawTemplateSource), 0o600); err != nil {
@@ -181,7 +181,7 @@ func TestBulkSendDocumentReportsAPIFailure(t *testing.T) {
 }
 
 func TestBulkSendDocumentFromFlagOverridesDocument(t *testing.T) {
-	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1"}`)
+	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1","bob@example.com":"U2"}}`)
 	path := writeTempFile(t, "targets.json", twoTargetDocument)
 
 	args := append([]string{"--from", "override@example.com"}, quickRecoveryArgs(path)...)
@@ -195,7 +195,7 @@ func TestBulkSendDocumentFromFlagOverridesDocument(t *testing.T) {
 }
 
 func TestBulkSendDocumentAcceptsTrailingFlags(t *testing.T) {
-	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1"}`)
+	client, body, _ := bulkTemplateServer(t, http.StatusOK, `{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1","bob@example.com":"U2"}}`)
 	path := writeTempFile(t, "targets.json", twoTargetDocument)
 
 	args := []string{path, "--dry-run", "--attempts", "1", "--retry-delay", "0s"}
@@ -204,24 +204,5 @@ func TestBulkSendDocumentAcceptsTrailingFlags(t *testing.T) {
 	}
 	if (*body)["dry-run"] != true {
 		t.Fatal("flags after the positional argument were ignored")
-	}
-}
-
-// The hyphenated names come from Sweego's documented request sample; snake case
-// variants are silently ignored by the provider.
-func TestBulkEmailRequestUsesDocumentedFieldNames(t *testing.T) {
-	raw, err := json.Marshal(sweego.BulkEmailRequest{
-		Channel:    "email",
-		TemplateID: "tpl-123",
-		DryRun:     true,
-		Recipients: []sweego.BulkRecipient{{Email: "alice@example.com", Variables: map[string]any{"name": "Alice"}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{`"template-id":"tpl-123"`, `"dry-run":true`, `"variables":{"name":"Alice"}`} {
-		if !strings.Contains(string(raw), expected) {
-			t.Fatalf("expected %s in %s", expected, raw)
-		}
 	}
 }

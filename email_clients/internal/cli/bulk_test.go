@@ -4,17 +4,12 @@ import (
 	"testing"
 )
 
-func TestParseBulkResponseSupportsObservedAndPerRecipientShapes(t *testing.T) {
-	for _, body := range []string{
-		`{"transaction_id":"T1","swg_uids":{"alice@example.com":"U1","bob@example.com":"U2"}}`,
-		`{"transaction_id":"T1","messages":[{"recipient":"alice@example.com","swg_uid":"U1"},{"email":"bob@example.com","swg_uid":"U2"}]}`,
-	} {
-		response, err := parseBulkResponse([]byte(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if response.TransactionID != "T1" || response.SwgUIDs["alice@example.com"] != "U1" || response.SwgUIDs["bob@example.com"] != "U2" {
-			t.Fatalf("unexpected parsed response: %+v", response)
-		}
+func TestParseRecipientsUsesGenericRecipientAddresses(t *testing.T) {
+	recipients, err := parseRecipients("Alice <alice@example.com>, bob@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recipients) != 2 || recipients[0].Email != "alice@example.com" || recipients[0].Name != "Alice" || recipients[1].Email != "bob@example.com" {
+		t.Fatalf("recipients = %#v", recipients)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"email_clients/clients"
 	"email_clients/clients/sweego"
 )
 
@@ -100,17 +101,13 @@ func runBulkSendDocument(args []string, client *sweego.Client, provider string) 
 	}
 
 	// Exactly one of these is populated; the loader enforces that.
-	request := sweego.BulkEmailRequest{
-		Channel:      "email",
-		From:         from,
-		Provider:     provider,
-		Subject:      document.Subject,
-		Recipients:   recipients,
-		MessageTxt:   messageTxt,
-		CampaignType: campaignType,
-		TemplateID:   document.Template,
-		DryRun:       options.dryRun,
-		Headers:      map[string]string{sweego.PubnightMessageIDHeader: correlationID},
+	email := clients.Email{
+		From:       from,
+		To:         recipients,
+		Subject:    document.Subject,
+		Text:       messageTxt,
+		TemplateID: document.Template,
+		Headers:    map[string]string{sweego.PubnightMessageIDHeader: correlationID},
 	}
 
 	operation := bulkOperation{Sender: from, SubmittedAt: time.Now()}
@@ -122,25 +119,26 @@ func runBulkSendDocument(args []string, client *sweego.Client, provider string) 
 	if document.Body != "" {
 		source = "body file " + document.Body
 	}
-	requestBody, _ := json.Marshal(request)
+	requestBody, _ := json.Marshal(email)
 	fmt.Printf("Bulk document operation\n  submitted_at: %s\n  operation_id: %s\n  sender: %s\n  content: %s\n  recipients: %d\n\nBulk request:\n%s\n",
 		operation.SubmittedAt.Format(time.RFC3339), correlationID, from.Email, source, len(recipients), requestBody)
 
-	response, sendErr := client.SendBulkEmail(context.Background(), request)
+	response, sendErr := client.WithSendOptions(sweego.SendOptions{
+		Provider: provider, CampaignType: campaignType, DryRun: options.dryRun,
+	}).Send(context.Background(), email)
 	if sendErr != nil {
-		fmt.Fprintln(osStderr, "bulk POST error:", sendErr)
+		fmt.Fprintln(osStderr, "bulk send error:", sendErr)
 	} else {
-		fmt.Printf("Bulk POST response\n  HTTP status: %d\n  headers: %v\n  raw body: %s\n", response.Status, response.Headers, response.Body)
+		fmt.Println("Bulk send response received.")
 	}
 
-	actual, parseErr := parseBulkResponse(response.Body)
-	if parseErr != nil {
-		fmt.Fprintln(osStderr, "bulk response parse warning:", parseErr)
-	} else {
-		operation.TransactionID = actual.TransactionID
-		for index := range operation.Recipients {
-			operation.Recipients[index].SwgUID = actual.SwgUIDs[operation.Recipients[index].Email]
+	actual := bulkResponse{SwgUIDs: make(map[string]string)}
+	for index, recipient := range response.Recipients {
+		if index >= len(operation.Recipients) {
+			break
 		}
+		operation.Recipients[index].SwgUID = recipient.PMUID
+		actual.SwgUIDs[operation.Recipients[index].Email] = recipient.PMUID
 	}
 
 	fmt.Printf("\nBulk document operation\n  transaction_id: %s\n\nRecipients:\n", operation.TransactionID)
@@ -163,9 +161,6 @@ func runBulkSendDocument(args []string, client *sweego.Client, provider string) 
 
 	if sendErr != nil {
 		return sendErr
-	}
-	if response.Status < 200 || response.Status >= 300 {
-		return fmt.Errorf("non-2xx response: %d", response.Status)
 	}
 	return recoveryErr
 }
@@ -214,16 +209,15 @@ func loadBulkSendDocument(path string) (bulkSendDocument, string, error) {
 	return document, string(messageTxt), nil
 }
 
-func bulkSendRecipients(targets []bulkSendTarget) ([]sweego.BulkRecipient, error) {
-	recipients := make([]sweego.BulkRecipient, 0, len(targets))
+func bulkSendRecipients(targets []bulkSendTarget) ([]clients.Recipient, error) {
+	recipients := make([]clients.Recipient, 0, len(targets))
 	for index, target := range targets {
 		address, err := parseAddress(target.Dest)
 		if err != nil {
 			return nil, fmt.Errorf("invalid target %d dest %q: %w", index, target.Dest, err)
 		}
-		recipients = append(recipients, sweego.BulkRecipient{
-			Email:     address.Email,
-			Name:      address.Name,
+		recipients = append(recipients, clients.Recipient{
+			Address:   address,
 			Variables: target.Vars,
 		})
 	}

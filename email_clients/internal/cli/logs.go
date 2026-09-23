@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"email_clients/clients"
 	"email_clients/clients/sweego"
 	"email_clients/clients/sweego/logs"
 )
@@ -73,10 +74,12 @@ func runVerify(args []string, client *sweego.Client) error {
 		}
 		sentAt = parsed
 	}
-	result := logs.NewVerifier(logs.NewClient(client), tolerance).VerifyMessage(context.Background(), messageID, to, sentAt)
-	printVerificationResult(result)
-	if result.Status == logs.VerificationQueryError {
-		return result.Err
+	result, err := logs.NewVerifier(logs.NewClient(client), tolerance).Verify(context.Background(), clients.VerifyRequest{
+		CorrelationID: messageID, Recipient: to, SentAt: sentAt,
+	})
+	if err != nil {
+		return err
 	}
+	printVerificationResult(result)
 	return nil
 }

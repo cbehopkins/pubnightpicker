@@ -8,16 +8,15 @@ import (
 	"net/mail"
 	"os"
 
-	"email_clients/clients/sweego"
-	"email_clients/clients/sweego/logs"
+	"email_clients/clients"
 )
 
-func parseAddress(raw string) (sweego.EmailAddress, error) {
+func parseAddress(raw string) (clients.Address, error) {
 	addr, err := mail.ParseAddress(raw)
 	if err != nil {
-		return sweego.EmailAddress{}, err
+		return clients.Address{}, err
 	}
-	return sweego.EmailAddress{Email: addr.Address, Name: addr.Name}, nil
+	return clients.Address{Email: addr.Address, Name: addr.Name}, nil
 }
 
 func parseFlagsWithPositionals(fs *flag.FlagSet, args []string) ([]string, error) {
@@ -40,16 +39,12 @@ func printHTTPResult(status int, body []byte) {
 	fmt.Println(prettyJSON(body))
 }
 
-func printVerificationResult(result logs.VerificationResult) {
-	fmt.Printf("Verification: %s\n", result.Status)
-	switch result.Status {
-	case logs.VerificationFound:
-		fmt.Printf("  correlation_id: %s\n  recipient:      %s\n  transaction_id: %s\n  swg_uid:        %s\n  email_status:   %s\n", result.CorrelationID, result.Recipient, result.TransactionID, result.SwgUID, result.EmailStatus)
-	case logs.VerificationNotFound:
-		fmt.Printf("  correlation_id: %s\n  recipient:      %s\n", result.CorrelationID, result.Recipient)
-	case logs.VerificationQueryError:
-		fmt.Printf("  error: %v\n", result.Err)
+func printVerificationResult(result clients.VerifyResult) {
+	if result.Found {
+		fmt.Printf("Verification: FOUND\n  pmuid: %s\n", result.PMUID)
+		return
 	}
+	fmt.Println("Verification: NOT_FOUND")
 }
 
 func prettyJSON(raw []byte) string {
