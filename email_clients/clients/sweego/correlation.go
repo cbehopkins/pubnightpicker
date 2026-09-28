@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+
+	"email_clients/clients"
 )
 
 // PubnightMessageIDHeader is the application-owned custom header used to
 // correlate an outgoing email with its record in Sweego's logs.
-const PubnightMessageIDHeader = "X-Pubnight-Message-ID"
+const PubnightMessageIDHeader = clients.CorrelationHeader
 
 // NewCorrelationID generates a unique, application-owned message ID to embed
 // in the PubnightMessageIDHeader before a send attempt.

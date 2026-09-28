@@ -36,9 +36,21 @@ type Client struct {
 
 	templatesMu sync.RWMutex
 	templates   map[string]*template.Template
+
+	recordsMu sync.Mutex
+	records   []sentRecord
+}
+
+// sentRecord is the dummy client's local record of a recipient the callback
+// accepted, used to answer later Verify calls without a real provider.
+type sentRecord struct {
+	correlationID string
+	recipient     string
+	pmuid         string
 }
 
 var _ clients.EmailClient = (*Client)(nil)
+var _ clients.EmailVerifier = (*Client)(nil)
 
 func NewClient(callback SendCallback) *Client {
 	return &Client{callback: callback, templates: make(map[string]*template.Template)}
@@ -134,9 +146,38 @@ func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.
 			return clients.SendResult{}, err
 		}
 		result.Recipients[index].PMUID = pmuid
+		c.record(message.headers[clients.CorrelationHeader], message.emailAddress, pmuid)
 	}
 
 	return result, nil
+}
+
+func (c *Client) record(correlationID, recipient, pmuid string) {
+	c.recordsMu.Lock()
+	defer c.recordsMu.Unlock()
+	c.records = append(c.records, sentRecord{correlationID: correlationID, recipient: recipient, pmuid: pmuid})
+}
+
+// Verify requires an exact, non-empty correlation ID match, mirroring the
+// strict single-message contract used by provider verifiers rather than the
+// looser multi-candidate matching used by bulk recovery.
+func (c *Client) Verify(ctx context.Context, request clients.VerifyRequest) (clients.VerifyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return clients.VerifyResult{}, err
+	}
+
+	c.recordsMu.Lock()
+	defer c.recordsMu.Unlock()
+	for _, record := range c.records {
+		if record.correlationID == "" || record.correlationID != request.CorrelationID {
+			continue
+		}
+		if !strings.EqualFold(record.recipient, request.Recipient) {
+			continue
+		}
+		return clients.VerifyResult{Found: true, PMUID: record.pmuid}, nil
+	}
+	return clients.VerifyResult{}, nil
 }
 
 func newPMUID() (string, error) {

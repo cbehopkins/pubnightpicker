@@ -58,6 +58,15 @@ Field semantics:
 * `Variables` — variables common to all recipients.
 * `Headers` — custom email headers.
 
+`Headers` applies to the whole request and is therefore identical for every
+recipient. The API does not support per-recipient headers, because the
+underlying provider requests carry headers only at request level.
+
+An application correlation identifier placed in a header therefore identifies
+the Send operation rather than one recipient. A single recipient is identified
+by that correlation identifier combined with the recipient address, which is
+the pairing the verification API expects.
+
 For a recipient, the effective template variables are the common `Email.Variables` combined with that recipient's `Variables`, with recipient-specific values taking precedence on collision.
 
 `TemplateID` and `Text` may both be present. A templated email can therefore use a provider-hosted template for its rich content while supplying its plain-text alternative through `Text`.
@@ -109,6 +118,9 @@ type RecipientResult struct {
     PMUID string
 }
 ```
+
+`Recipients` is positionally aligned with `Email.To`: the result at each index
+describes the submitted recipient at the same index.
 
 `PMUID` means **provider message UID**.
 
@@ -177,6 +189,9 @@ type EmailVerifier interface {
 The durable layer asks:
 
 > Has the provider recorded a message corresponding to this application's correlation ID and recipient, and if so what is its provider message UID?
+
+Both values are required. A correlation ID may cover several recipients of one
+Send operation, so it does not identify a message on its own.
 
 If:
 

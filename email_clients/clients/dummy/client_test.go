@@ -162,3 +162,102 @@ func TestAddTemplateRejectsInvalidDefinitions(t *testing.T) {
 		t.Fatalf("duplicate name error = %v", err)
 	}
 }
+
+func TestVerifyFindsRecipientAfterSuccessfulSend(t *testing.T) {
+	client := NewClient(func(string, string, map[string]string) error { return nil })
+	email := clients.Email{
+		To:      []clients.Recipient{{Address: clients.Address{Email: "Alice@Example.com"}}},
+		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+	}
+
+	result, err := client.Send(context.Background(), email)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verified, err := client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: "pn-1", Recipient: "alice@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Found || verified.PMUID != result.Recipients[0].PMUID {
+		t.Fatalf("Verify = %+v, want found with PMUID %q", verified, result.Recipients[0].PMUID)
+	}
+}
+
+func TestVerifyReturnsNotFoundForUnmatchedRequest(t *testing.T) {
+	client := NewClient(func(string, string, map[string]string) error { return nil })
+	if _, err := client.Send(context.Background(), clients.Email{
+		To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []clients.VerifyRequest{
+		{CorrelationID: "pn-2", Recipient: "alice@example.com"},
+		{CorrelationID: "pn-1", Recipient: "bob@example.com"},
+		{CorrelationID: "", Recipient: "alice@example.com"},
+	}
+	for _, request := range tests {
+		verified, err := client.Verify(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if verified.Found {
+			t.Fatalf("Verify(%+v) = %+v, want not found", request, verified)
+		}
+	}
+}
+
+func TestVerifyIgnoresRecipientsFromFailedCallbacks(t *testing.T) {
+	callbackErr := errors.New("recording failed")
+	client := NewClient(func(emailAddress, _ string, _ map[string]string) error {
+		if emailAddress == "bob@example.com" {
+			return callbackErr
+		}
+		return nil
+	})
+	email := clients.Email{
+		To: []clients.Recipient{
+			{Address: clients.Address{Email: "alice@example.com"}},
+			{Address: clients.Address{Email: "bob@example.com"}},
+		},
+		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+	}
+	if _, err := client.Send(context.Background(), email); !errors.Is(err, callbackErr) {
+		t.Fatalf("send error = %v", err)
+	}
+
+	verified, err := client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: "pn-1", Recipient: "bob@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Found {
+		t.Fatalf("Verify = %+v, want not found for failed recipient", verified)
+	}
+
+	verified, err = client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: "pn-1", Recipient: "alice@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Found {
+		t.Fatal("expected the recipient preceding the failure to be recorded")
+	}
+}
+
+func TestVerifyRequiresCorrelationHeaderOnRecord(t *testing.T) {
+	client := NewClient(func(string, string, map[string]string) error { return nil })
+	if _, err := client.Send(context.Background(), clients.Email{
+		To: []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	verified, err := client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: "", Recipient: "alice@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Found {
+		t.Fatalf("Verify = %+v, want not found when no correlation header was sent", verified)
+	}
+}

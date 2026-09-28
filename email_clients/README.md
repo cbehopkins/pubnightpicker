@@ -54,8 +54,13 @@ error. All recipients are rendered before the first callback is invoked.
 Plain-text messages without a configured template are passed to the callback
 unchanged.
 
-This version does not retain messages or support message verification and
-recovery.
+`Client` also implements `clients.EmailVerifier`. Every recipient whose
+callback succeeds is recorded against the correlation ID carried in
+`Email.Headers[clients.CorrelationHeader]`. `Verify` looks up a record by exact
+correlation ID and case-insensitive recipient address; a recipient with no
+correlation header, an unmatched correlation ID, or a failed callback is never
+found. This version does not persist records beyond the process and has no
+search-window concept, since it holds exact records rather than provider logs.
 
 ## Commands
 

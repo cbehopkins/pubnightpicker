@@ -1,0 +1,708 @@
+# CDD — Durable Email Delivery
+
+## 1. Purpose
+
+This document defines the durable email delivery component that sits between the application and the provider-neutral `email_clients` API.
+
+The component makes email submission durable using Cellar. It records per-recipient progress, handles ambiguous provider submission outcomes, performs provider-log recovery, and records eventual delivery results reported by provider webhooks.
+
+The component is deliberately separate from the raw email client.
+
+The raw email client is responsible only for communicating with an external email provider.
+
+The durable email delivery component is responsible for:
+
+* creating durable progress records;
+* creating and executing Cellar sequences;
+* submitting pending email recipients;
+* recovering ambiguous submissions;
+* maintaining per-recipient state;
+* creating verification work;
+* processing provider webhook results.
+
+---
+
+# 2. Responsibilities
+
+## 2.1 Raw Email Client
+
+The raw `EmailClient`:
+
+```go
+type EmailClient interface {
+    Send(context.Context, Email) (SendResult, error)
+}
+```
+
+is responsible for communicating with the provider.
+
+It:
+
+* constructs the provider request;
+* chooses the appropriate provider endpoint;
+* performs at most one provider request for one `Send` call;
+* maps the provider response into `SendResult`;
+* returns the provider's per-recipient PMUID where available.
+
+It does not know about:
+
+* Cellar;
+* the progress table;
+* application transactions;
+* durable state;
+* recovery state;
+* Truths.
+
+The raw `EmailVerifier`:
+
+```go
+type EmailVerifier interface {
+    Verify(context.Context, VerifyRequest) (VerifyResult, error)
+}
+```
+
+is responsible for querying provider-side records to determine whether an ambiguous submission can be identified.
+
+---
+
+# 3. Durable Request and Progress
+
+The durable email component maintains two related tables:
+
+* `email_requests` contains one row per logical Send operation;
+* `email_progress` contains one row per recipient of that operation.
+
+Together the tables contain the provider-neutral request data and per-recipient
+progress required to execute and recover the delivery operation. They are not
+an independent source of truth for application email configuration.
+
+## 3.1 Schema
+
+The logical schema is:
+
+```sql
+CREATE TABLE email_requests (
+    idempotency_token TEXT NOT NULL PRIMARY KEY,
+    message_id        TEXT NOT NULL UNIQUE,
+    sender_email      TEXT NOT NULL,
+    sender_name       TEXT NOT NULL,
+    subject           TEXT NOT NULL,
+    template_id       TEXT NOT NULL,
+    text              TEXT NOT NULL,
+    variables         TEXT NOT NULL,
+    headers           TEXT NOT NULL
+);
+
+CREATE TABLE email_progress (
+    idempotency_token TEXT NOT NULL,
+    recipient        TEXT NOT NULL,
+    recipient_name   TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    pmuid            TEXT,
+    variables        TEXT NOT NULL,
+    submitted_at     DATETIME,
+
+    PRIMARY KEY (idempotency_token, recipient)
+);
+```
+
+The exact SQLite declaration may be adjusted to match the final database migration conventions, but the logical fields and constraints are normative.
+
+## 3.2 Request fields
+
+### `idempotency_token`
+
+Identifies the logical Send transaction.
+
+Several Send transactions may be in progress simultaneously.
+
+The token is the identity of the request row and forms part of the identity of
+each related progress row.
+
+An idempotency token identifies one immutable logical request, including its
+recipient set. Reusing a token with different request data or recipients is an
+error; existing data must not be silently merged or replaced.
+
+### `message_id`
+
+The durable correlation identifier used as the value of:
+
+```text
+X-Pubnight-Message-ID
+```
+
+It belongs to the Send operation, not to an individual recipient.
+
+Provider headers are request-level and identical for every recipient of one
+provider request, so a per-recipient correlation header cannot be expressed.
+A recipient is therefore identified by the pair:
+
+```text
+(message_id, recipient)
+```
+
+This pair is used both for provider-log verification and for webhook
+correlation.
+
+### Sender, content, variables, and headers
+
+`sender_email`, `sender_name`, `subject`, `template_id`, and `text` preserve the
+corresponding fields of the provider-neutral `Email` request. Empty strings are
+stored as empty strings rather than interpreted as missing values.
+
+`variables` stores the operation-wide template variables as a JSON object.
+`headers` stores the application-supplied headers as a JSON object. Empty maps
+are stored as `{}`.
+
+The durable layer owns `X-Pubnight-Message-ID`. When reconstructing a request,
+it sets that header from the request's `message_id`, overriding any value
+present in the stored common headers.
+
+## 3.3 Progress fields
+
+### `recipient`
+
+The recipient email address.
+
+A separate progress row exists for each recipient.
+
+### `recipient_name`
+
+The recipient display name supplied in the provider-neutral `Recipient`.
+
+It is stored per recipient because display names may differ within one logical
+Send operation.
+
+### `state`
+
+The current durable state of the recipient.
+
+The allowed states are defined in Section 4.
+
+### `pmuid`
+
+The provider message identifier.
+
+It is populated once provider acceptance has been established, either directly from `EmailClient.Send` or through recovery verification.
+
+It is NULL until then.
+
+The durable layer treats this value as opaque. Its provider-specific representation is mapped to the generic `PMUID` type used by the raw API.
+
+### `variables`
+
+The recipient-specific template variables required to construct the provider submission.
+
+The value is stored in a form suitable for reconstruction by the durable email component.
+
+For a direct non-templated email this will normally be an empty variable map.
+
+### `submitted_at`
+
+The time of the latest provider submission attempt for this recipient.
+
+It is NULL before the first attempt. It is recorded before calling
+`EmailClient.Send`, so an interruption after the external request still leaves
+a timestamp suitable for provider verification. Recipients submitted in one
+provider request share a submission time, but later retries may submit a subset
+at a different time, so this value belongs to the progress row rather than the
+request row.
+
+---
+
+# 4. Progress State Machine
+
+Each progress row follows the following state machine:
+
+```text
+                         ┌──────────────┐
+                         │    Pending   │
+                         └──────┬───────┘
+                                │
+                         EmailClient.Send
+                                │
+                    ┌───────────┴───────────┐
+                    │                       │
+             usable result             error /
+             containing PMUID          uncertain outcome
+                    │                       │
+                    ▼                       ▼
+               Accepted                 Recovery
+                    │                       │
+                    │                 Recovery handler
+                    │                       │
+                    │                       ▼
+                    │                RecoveryWaiting
+                    │                       │
+                    │                    Verify
+                    │                       │
+                    │              ┌────────┴────────┐
+                    │              │                 │
+                    │            Found           Not Found
+                    │              │                 │
+                    │              ▼                 ▼
+                    └──────────► Accepted          Pending
+                                   │
+                              provider webhook
+                                   │
+                         ┌─────────┴─────────┐
+                         │                   │
+                         ▼                   ▼
+                       Sent               Rejected
+```
+
+## 4.1 States
+
+### `Pending`
+
+The recipient has not yet been established as accepted by the provider.
+
+A Pending recipient is eligible for provider submission.
+
+This is the initial state of every progress row.
+
+### `Accepted`
+
+The provider has accepted the recipient submission and a provider message identifier (`PMUID`) is known.
+
+`Accepted` does not mean that the message has been delivered to the recipient.
+
+An Accepted row awaits the provider's eventual delivery result.
+
+### `Sent`
+
+The provider has reported successful delivery through its webhook mechanism.
+
+`Sent` is a terminal state.
+
+### `Rejected`
+
+The provider has reported that delivery failed through its webhook mechanism.
+
+`Rejected` is a terminal state.
+
+### `Recovery`
+
+The previous submission attempt produced no usable provider result, so the system cannot determine whether the provider received the request.
+
+`Recovery` is therefore an ambiguous-submission state.
+
+It is not permission to immediately submit the email again.
+
+### `RecoveryWaiting`
+
+The recipient has entered provider-log recovery and is waiting for provider records to become visible.
+
+The recovery handler waits for the configured delay before querying the provider.
+
+For the initial implementation the delay is **120 seconds**.
+
+---
+
+# 5. State Transitions
+
+The following transitions are permitted.
+
+| Current state     | Event                                      | New state         |
+| ----------------- | ------------------------------------------ | ----------------- |
+| —                 | New Send creates recipient                 | `Pending`         |
+| `Pending`         | `Send` returns usable PMUID                | `Accepted`        |
+| `Pending`         | `Send` returns an error / no usable result | `Recovery`        |
+| `Recovery`        | Recovery handler schedules verification    | `RecoveryWaiting` |
+| `RecoveryWaiting` | Verification finds provider message        | `Accepted`        |
+| `RecoveryWaiting` | Verification finds no provider message     | `Pending`         |
+| `Accepted`        | Successful provider webhook                | `Sent`            |
+| `Accepted`        | Failed provider webhook                    | `Rejected`        |
+
+No other state transitions are valid.
+
+In particular:
+
+* `Sent` cannot return to `Pending`;
+* `Sent` cannot return to `Accepted`;
+* `Rejected` cannot return to `Pending`;
+* `Rejected` cannot return to `Accepted`;
+* `Recovery` does not directly perform another provider submission;
+* `RecoveryWaiting` does not directly perform another provider submission.
+
+---
+
+# 6. Startup Recovery
+
+Startup recovery is an application-level operation.
+
+It is not a Cellar Recovery Cell and does not create a separate recovery workflow.
+
+On application startup, the durable email component changes existing:
+
+```text
+Pending → Recovery
+```
+
+for all appropriate progress rows.
+
+This protects against the possibility that a process stopped after a provider submission was made but before the durable result was recorded.
+
+The already-persisted Send sequences remain responsible for processing the rows.
+
+---
+
+# 7. Send Sequence
+
+A logical Send creates a Cellar Sequence consisting of three steps:
+
+```text
+Setup
+  ↓
+Recovery
+  ↓
+Post
+```
+
+The sequence is durable and survives process restart.
+
+---
+
+# 8. Setup Handler
+
+The Setup handler establishes the durable request and progress records required
+by the Send operation.
+
+It creates one `email_requests` row containing the operation-wide fields and a
+unique `message_id` for the operation. For each recipient it then:
+
+1. creates one `email_progress` row;
+2. records the Send transaction's idempotency token;
+3. records the recipient address and display name;
+4. records the recipient's template variables;
+5. sets `submitted_at` to NULL;
+6. sets the initial state to `Pending`.
+
+The request row and all recipient rows are created in one Cellar-managed
+application transaction. They must not become visible independently.
+
+The Setup handler does not communicate with the email provider.
+
+---
+
+# 9. Recovery Handler
+
+The Recovery handler first examines the associated progress rows.
+
+During ordinary execution there will normally be no `Recovery` rows, and the handler completes.
+
+During startup recovery, rows may have been changed to `Recovery`.
+
+The handler changes eligible rows:
+
+```text
+Recovery → RecoveryWaiting
+```
+
+and returns a Cellar retry with a 120-second `NotBefore` time.
+
+This uses Cellar's scheduling mechanism rather than blocking a worker.
+
+When the handler executes again after the delay:
+
+1. it finds `RecoveryWaiting` rows;
+2. it calls `EmailVerifier.Verify` for each candidate;
+3. if verification finds the provider message:
+
+   * records the returned PMUID;
+   * changes the row to `Accepted`;
+4. if verification succeeds but finds no provider message:
+
+   * changes the row to `Pending`.
+
+A verification error is an operational failure of the verification operation and is handled using the Cellar retry/error semantics.
+
+The recovery operation never sends an email itself.
+
+---
+
+# 10. Provider Verification
+
+For each recovery candidate the durable layer constructs:
+
+```go
+type VerifyRequest struct {
+    CorrelationID string
+    Recipient     string
+    SentAt        time.Time
+}
+```
+
+`CorrelationID` is the request's `message_id`.
+
+Because one correlation ID covers every recipient of the operation, the
+correlation ID alone does not identify a recipient. The verifier combines it
+with `Recipient` to select the provider record.
+
+A correlation ID may cover more than one submission attempt for the same
+recipient, because a retry after recovery reuses it. Any matching provider
+record represents the same logical message; the PMUID identifies the specific
+attempt.
+
+The provider-specific verifier uses:
+
+* correlation ID;
+* recipient;
+* submission timestamp;
+
+to search provider records.
+
+Provider-specific search tolerances remain implementation details of the provider verifier.
+
+If a matching provider message is found:
+
+```go
+VerifyResult{
+    Found: true,
+    PMUID: "...",
+}
+```
+
+is returned.
+
+If the provider query succeeds but no message is found:
+
+```go
+VerifyResult{
+    Found: false,
+}
+```
+
+is returned.
+
+`Found == false` is not an error.
+
+---
+
+# 11. Post Handler
+
+The Post handler processes `Pending` progress rows.
+
+It reconstructs one provider-neutral `Email` containing **all** pending
+recipients of the operation and calls:
+
+```go
+EmailClient.Send(...)
+```
+
+Reconstruction combines the operation-wide fields from `email_requests` with
+the recipient address, display name, and variables of each pending row. The
+durable layer sets `X-Pubnight-Message-ID` from the request's `message_id`.
+Provider configuration remains an injected runtime dependency and is not part
+of the durable request data.
+
+The handler must not issue one provider request per recipient. The Cell is the
+unit of idempotency for exactly one external call, and the raw client API
+requires that one `Send` produce at most one provider request.
+
+`SendResult.Recipients` is positionally aligned with the submitted recipients,
+so each recipient's PMUID is taken from the corresponding entry.
+
+Immediately before the external call, the handler records `submitted_at` for
+every recipient in the batch. This deliberately favours an unnecessary
+verification delay after a crash before the call over an untraceable submission
+after a crash following the call.
+
+A logical Send operation must result in **at most one external provider request per invocation of `EmailClient.Send`**.
+
+The durable layer must not assume that an error means that the provider definitely did not receive the request.
+
+Therefore:
+
+* usable provider result → `Accepted`;
+* error / no usable result → `Recovery`.
+
+The provider PMUID returned by `SendResult` is stored in the progress row when the result is usable.
+
+The correlation/message ID stored in the request row is supplied to the provider through:
+
+```text
+X-Pubnight-Message-ID
+```
+
+---
+
+# 12. Atomic Cellar Completion
+
+The final Post processing is not simply a final database update followed by a separately-created Cell.
+
+When Post completes, any follow-up Query Cells required for the individual recipients are created using Cellar's `Complete.NewCells`.
+
+The progress-table updates and creation of those Cells therefore occur as one Cellar-managed atomic operation.
+
+This ensures that durable application progress cannot be committed without the corresponding follow-up work also being committed.
+
+---
+
+# 13. Webhook Processing
+
+Provider webhooks report the eventual delivery result.
+
+The webhook processing path is deliberately simple.
+
+The provider webhook supplies the email headers, including:
+
+```text
+X-Pubnight-Message-ID
+```
+
+The message ID identifies the Send operation. Combined with the recipient
+address reported by the event, it identifies the corresponding progress row.
+
+The webhook handler locates that row and updates its state according to the provider's delivery result:
+
+```text
+Accepted → Sent
+Accepted → Rejected
+```
+
+This assumes the provider event reports the recipient address. If a provider
+does not, the recorded `pmuid` is used as the correlation key instead. The
+Sweego event payload has not yet been inspected, so this remains an assumption
+rather than an established fact.
+
+The webhook handler does not need to understand the complete email workflow.
+
+The progress row is the durable correlation point between the original submission and the asynchronous provider event.
+
+Provider-specific event terminology is translated into the generic durable states.
+
+---
+
+# 14. Idempotency
+
+The idempotency token belongs to the logical Send transaction. It is the primary
+key of its request row and is stored in every related recipient progress row.
+
+The durable layer must ensure that re-execution of a Send sequence does not create duplicate progress records for the same:
+
+```text
+(idempotency_token, recipient)
+```
+
+pair.
+
+Re-execution with the same token is idempotent only when the complete immutable
+request and recipient set match the existing durable records. A conflicting
+reuse of the token is rejected.
+
+The database primary key provides the durable identity of the recipient's progress record.
+
+The message ID provides a separate stable identity for the operation, used with
+the recipient address by provider callbacks.
+
+---
+
+# 15. Durable Recovery Model
+
+The recovery design exists because external email submission cannot provide an exactly-once guarantee.
+
+The sequence therefore treats an unsuccessful provider call as ambiguous.
+
+The safe assumption is:
+
+```text
+provider may have received the request
+```
+
+rather than:
+
+```text
+provider definitely did not receive the request
+```
+
+The resulting workflow is:
+
+```text
+Pending
+   │
+   ├── accepted + PMUID ──────────────► Accepted
+   │
+   └── error / uncertain
+             │
+             ▼
+         Recovery
+             │
+             ▼
+      RecoveryWaiting
+             │
+             ▼
+          Verify
+          /     \
+       found   absent
+         │        │
+         ▼        ▼
+      Accepted  Pending
+                   │
+                   └── may submit again
+```
+
+This prevents an ambiguous provider response from immediately causing a duplicate submission.
+
+The provider's own log is given an opportunity to establish whether the original request succeeded.
+
+---
+
+# 16. Separation of Concerns
+
+The resulting architecture is:
+
+```text
+Application
+    │
+    │ Truth / Cell creation
+    ▼
+Durable Email Delivery
+    │
+    ├── email_requests
+    ├── email_progress
+    │
+    ├── Cellar Sequence
+    │
+    ├── EmailClient
+    │
+    └── EmailVerifier
+             │
+             ▼
+       External Provider
+```
+
+The durable layer owns:
+
+* progress;
+* state transitions;
+* persistence;
+* Cellar integration;
+* recovery;
+* correlation.
+
+The raw provider client owns:
+
+* provider request construction;
+* provider API interaction;
+* provider response mapping;
+* provider-specific verification.
+
+Neither layer takes ownership of responsibilities belonging to the other.
+
+---
+
+# 17. Resulting Guarantees
+
+The design provides the following guarantees:
+
+1. Every recipient has an independently durable progress record.
+2. Every recipient is identified by a stable correlation ID and recipient address.
+3. A provider submission is never blindly retried immediately after an ambiguous result.
+4. Provider logs are used to resolve ambiguous submissions.
+5. Provider acceptance is distinguished from eventual delivery.
+6. Delivery success and failure are represented independently of provider-specific terminology.
+7. Cellar provides durable scheduling and atomic creation of follow-up work.
+8. Raw email clients remain independently testable and contain no Cellar dependencies.
+9. The request and progress tables together contain the information required to reconstruct a pending submission.
+10. The application does not need to know which provider endpoint implements a logical Send operation.

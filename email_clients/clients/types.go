@@ -51,3 +51,6 @@ type VerifyResult struct {
 type EmailVerifier interface {
 	Verify(context.Context, VerifyRequest) (VerifyResult, error)
 }
+
+// CorrelationHeader carries the application-owned correlation ID in Email.Headers.
+const CorrelationHeader = "X-Pubnight-Message-ID"
