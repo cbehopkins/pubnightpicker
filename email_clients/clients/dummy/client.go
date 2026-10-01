@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 
 	"email_clients/clients"
 )
@@ -57,6 +59,30 @@ func (r Response) refused() bool {
 	return r.Status != 0 && (r.Status < 200 || r.Status >= 300)
 }
 
+// Accepted describes one recipient the simulated service accepted.
+type Accepted struct {
+	CorrelationID string
+	Recipient     string
+	PMUID         string
+	Message       string
+	Headers       map[string]string
+}
+
+// AcceptedHook runs once per accepted recipient, after Send has assigned its
+// PMUID. Hooks run synchronously inside Send; use Delayed for later work.
+type AcceptedHook func(Accepted)
+
+// Delayed returns a hook that runs hook on a new goroutine after d, modelling
+// provider-side work that lands some time after the request was accepted.
+func Delayed(d time.Duration, hook AcceptedHook) AcceptedHook {
+	return func(accepted Accepted) {
+		go func() {
+			time.Sleep(d)
+			hook(accepted)
+		}()
+	}
+}
+
 type callbackMessage struct {
 	emailAddress string
 	message      string
@@ -65,6 +91,9 @@ type callbackMessage struct {
 
 type Client struct {
 	callback SendCallback
+
+	hooksMu sync.Mutex
+	hooks   []AcceptedHook
 
 	templatesMu sync.RWMutex
 	templates   map[string]*template.Template
@@ -86,6 +115,23 @@ var _ clients.EmailVerifier = (*Client)(nil)
 
 func NewClient(callback SendCallback) *Client {
 	return &Client{callback: callback, templates: make(map[string]*template.Template)}
+}
+
+// OnAccepted appends hook to the hooks run, in registration order, for each
+// accepted recipient. A nil hook is ignored.
+func (c *Client) OnAccepted(hook AcceptedHook) {
+	if hook == nil {
+		return
+	}
+	c.hooksMu.Lock()
+	defer c.hooksMu.Unlock()
+	c.hooks = append(c.hooks, hook)
+}
+
+// RecordAcceptedAfter registers RecordAccepted to run d after each acceptance,
+// modelling the provider's log ingestion lag.
+func (c *Client) RecordAcceptedAfter(d time.Duration) {
+	c.OnAccepted(Delayed(d, c.RecordAccepted))
 }
 
 func (c *Client) AddTemplate(name, source string) error {
@@ -165,6 +211,10 @@ func (c *Client) render(templateID, message string, variables map[string]any) (s
 }
 
 func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.SendResult, error) {
+	c.hooksMu.Lock()
+	hooks := slices.Clone(c.hooks)
+	c.hooksMu.Unlock()
+
 	result := clients.SendResult{Recipients: make([]clients.RecipientResult, len(messages))}
 	for index, message := range messages {
 		if err := ctx.Err(); err != nil {
@@ -186,16 +236,26 @@ func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.
 			pmuid = generated
 		}
 		result.Recipients[index].PMUID = pmuid
-		c.record(message.headers[clients.CorrelationHeader], message.emailAddress, pmuid)
+		for _, hook := range hooks {
+			hook(Accepted{
+				CorrelationID: message.headers[clients.CorrelationHeader],
+				Recipient:     message.emailAddress,
+				PMUID:         pmuid,
+				Message:       message.message,
+				Headers:       cloneHeaders(message.headers),
+			})
+		}
 	}
 
 	return result, nil
 }
 
-func (c *Client) record(correlationID, recipient, pmuid string) {
+// RecordAccepted stores accepted so Verify can find it. Register it with
+// OnAccepted for immediate records, or use RecordAcceptedAfter.
+func (c *Client) RecordAccepted(accepted Accepted) {
 	c.recordsMu.Lock()
 	defer c.recordsMu.Unlock()
-	c.records = append(c.records, sentRecord{correlationID: correlationID, recipient: recipient, pmuid: pmuid})
+	c.records = append(c.records, sentRecord{correlationID: accepted.CorrelationID, recipient: accepted.Recipient, pmuid: accepted.PMUID})
 }
 
 // Verify requires an exact, non-empty correlation ID match, mirroring the

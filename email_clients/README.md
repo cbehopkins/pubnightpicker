@@ -67,8 +67,35 @@ error. All recipients are rendered before the first callback is invoked.
 Plain-text messages without a configured template are passed to the callback
 unchanged.
 
-`Client` also implements `clients.EmailVerifier`. Every accepted recipient is
-recorded against the correlation ID carried in
+### Accepted hooks
+
+After each recipient is accepted and assigned a PMUID, `Send` runs every hook
+registered with `OnAccepted`, in registration order. Each hook receives a
+`dummy.Accepted` carrying the correlation ID, recipient, PMUID, rendered
+message, and its own copy of the headers. Refused or faulted recipients, and
+those after them, trigger no hooks.
+
+Hooks run synchronously. `dummy.Delayed(d, hook)` wraps a hook so it runs on a
+new goroutine after `d`, which models provider-side work that lands later,
+such as log ingestion or a delivery webhook:
+
+```go
+client.RecordAcceptedAfter(75 * time.Second) // logs appear after 50-100 s
+client.OnAccepted(dummy.Delayed(2*time.Minute, func(a dummy.Accepted) {
+  // emulate the delivery webhook for a.PMUID
+}))
+```
+
+Delayed hooks do not see the `Send` context and cannot be cancelled. In tests,
+run them inside `testing/synctest` so the delays elapse on a fake clock.
+
+### Verification
+
+`Client` also implements `clients.EmailVerifier`. Records are written only by
+`RecordAccepted`, which must be registered as a hook, either directly for
+immediate records (`client.OnAccepted(client.RecordAccepted)`) or with a delay
+through `RecordAcceptedAfter`. **Without it, `Verify` never finds anything.**
+Each record is keyed by the correlation ID carried in
 `Email.Headers[clients.CorrelationHeader]`. `Verify` looks up a record by exact
 correlation ID and case-insensitive recipient address; a recipient with no
 correlation header, an unmatched correlation ID, a refusal, or a fault is never

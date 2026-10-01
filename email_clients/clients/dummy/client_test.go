@@ -6,7 +6,10 @@ import (
 	"maps"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"email_clients/clients"
 )
@@ -189,6 +192,7 @@ func TestSendUsesCallbackPMUIDWhenSupplied(t *testing.T) {
 		}
 		return Response{}, nil
 	})
+	client.OnAccepted(client.RecordAccepted)
 
 	result, err := client.Send(context.Background(), clients.Email{
 		To: []clients.Recipient{
@@ -223,6 +227,7 @@ func TestVerifyIgnoresRefusedRecipients(t *testing.T) {
 		}
 		return Response{}, nil
 	})
+	client.OnAccepted(client.RecordAccepted)
 	if _, err := client.Send(context.Background(), clients.Email{
 		To: []clients.Recipient{
 			{Address: clients.Address{Email: "alice@example.com"}},
@@ -276,6 +281,7 @@ func TestAddTemplateRejectsInvalidDefinitions(t *testing.T) {
 
 func TestVerifyFindsRecipientAfterSuccessfulSend(t *testing.T) {
 	client := NewClient(func(string, string, map[string]string) (Response, error) { return Response{}, nil })
+	client.OnAccepted(client.RecordAccepted)
 	email := clients.Email{
 		To:      []clients.Recipient{{Address: clients.Address{Email: "Alice@Example.com"}}},
 		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
@@ -297,6 +303,7 @@ func TestVerifyFindsRecipientAfterSuccessfulSend(t *testing.T) {
 
 func TestVerifyReturnsNotFoundForUnmatchedRequest(t *testing.T) {
 	client := NewClient(func(string, string, map[string]string) (Response, error) { return Response{}, nil })
+	client.OnAccepted(client.RecordAccepted)
 	if _, err := client.Send(context.Background(), clients.Email{
 		To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
 		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
@@ -328,6 +335,7 @@ func TestVerifyIgnoresRecipientsFromFailedCallbacks(t *testing.T) {
 		}
 		return Response{}, nil
 	})
+	client.OnAccepted(client.RecordAccepted)
 	email := clients.Email{
 		To: []clients.Recipient{
 			{Address: clients.Address{Email: "alice@example.com"}},
@@ -358,6 +366,7 @@ func TestVerifyIgnoresRecipientsFromFailedCallbacks(t *testing.T) {
 
 func TestVerifyRequiresCorrelationHeaderOnRecord(t *testing.T) {
 	client := NewClient(func(string, string, map[string]string) (Response, error) { return Response{}, nil })
+	client.OnAccepted(client.RecordAccepted)
 	if _, err := client.Send(context.Background(), clients.Email{
 		To: []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
 	}); err != nil {
@@ -371,4 +380,162 @@ func TestVerifyRequiresCorrelationHeaderOnRecord(t *testing.T) {
 	if verified.Found {
 		t.Fatalf("Verify = %+v, want not found when no correlation header was sent", verified)
 	}
+}
+
+func acceptAll(string, string, map[string]string) (Response, error) { return Response{}, nil }
+
+func verifyFound(t *testing.T, client *Client, correlationID, recipient string) bool {
+	t.Helper()
+	verified, err := client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: correlationID, Recipient: recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified.Found
+}
+
+func TestOnAcceptedRunsHooksInOrderForAcceptedRecipients(t *testing.T) {
+	callbackErr := errors.New("no answer")
+	client := NewClient(func(emailAddress, _ string, _ map[string]string) (Response, error) {
+		if emailAddress == "carol@example.com" {
+			return Response{}, callbackErr
+		}
+		return Response{}, nil
+	})
+	var calls []string
+	var accepted []Accepted
+	client.OnAccepted(func(a Accepted) {
+		calls = append(calls, "first:"+a.Recipient)
+		accepted = append(accepted, a)
+	})
+	client.OnAccepted(nil)
+	client.OnAccepted(func(a Accepted) { calls = append(calls, "second:"+a.Recipient) })
+
+	result, err := client.Send(context.Background(), clients.Email{
+		To: []clients.Recipient{
+			{Address: clients.Address{Email: "alice@example.com"}},
+			{Address: clients.Address{Email: "bob@example.com"}},
+			{Address: clients.Address{Email: "carol@example.com"}},
+		},
+		Text:    "Hello",
+		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+	})
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("send error = %v", err)
+	}
+	if result.Recipients != nil {
+		t.Fatalf("result = %+v, want empty on failure", result)
+	}
+	want := []string{"first:alice@example.com", "second:alice@example.com", "first:bob@example.com", "second:bob@example.com"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("hook calls = %v, want %v", calls, want)
+	}
+	first := accepted[0]
+	if first.CorrelationID != "pn-1" || first.Message != "Hello" || !strings.HasPrefix(first.PMUID, "dummy-") || first.Headers[clients.CorrelationHeader] != "pn-1" {
+		t.Fatalf("accepted = %+v", first)
+	}
+	if accepted[0].PMUID == accepted[1].PMUID {
+		t.Fatalf("hooks saw duplicate PMUIDs: %+v", accepted)
+	}
+}
+
+func TestOnAcceptedGivesEachHookItsOwnHeaders(t *testing.T) {
+	client := NewClient(acceptAll)
+	client.OnAccepted(func(a Accepted) { a.Headers["changed"] = "yes" })
+	var seen map[string]string
+	client.OnAccepted(func(a Accepted) { seen = a.Headers })
+	headers := map[string]string{clients.CorrelationHeader: "pn-1"}
+
+	if _, err := client.Send(context.Background(), clients.Email{
+		To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+		Headers: headers,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := seen["changed"]; ok {
+		t.Fatalf("header mutation leaked between hooks: %v", seen)
+	}
+	if _, ok := headers["changed"]; ok {
+		t.Fatalf("header mutation changed email: %v", headers)
+	}
+}
+
+func TestVerifyFindsNothingWithoutRecordsHook(t *testing.T) {
+	client := NewClient(acceptAll)
+	if _, err := client.Send(context.Background(), clients.Email{
+		To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+		Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if verifyFound(t, client, "pn-1", "alice@example.com") {
+		t.Fatal("Verify found a record without a registered records hook")
+	}
+}
+
+func TestRecordAcceptedAfterDelaysVerify(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := NewClient(acceptAll)
+		client.RecordAcceptedAfter(75 * time.Second)
+		if _, err := client.Send(context.Background(), clients.Email{
+			To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+			Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if verifyFound(t, client, "pn-1", "alice@example.com") {
+			t.Fatal("record visible immediately after Send")
+		}
+		time.Sleep(75*time.Second - time.Nanosecond)
+		synctest.Wait()
+		if verifyFound(t, client, "pn-1", "alice@example.com") {
+			t.Fatal("record visible before the delay elapsed")
+		}
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		if !verifyFound(t, client, "pn-1", "alice@example.com") {
+			t.Fatal("record not visible after the delay")
+		}
+	})
+}
+
+func TestDelayedWebhookFiresAfterRecords(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := NewClient(acceptAll)
+		client.RecordAcceptedAfter(75 * time.Second)
+		var mu sync.Mutex
+		var delivered []string
+		client.OnAccepted(Delayed(120*time.Second, func(a Accepted) {
+			mu.Lock()
+			defer mu.Unlock()
+			delivered = append(delivered, a.PMUID)
+		}))
+		deliveredCount := func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(delivered)
+		}
+
+		result, err := client.Send(context.Background(), clients.Email{
+			To:      []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}},
+			Headers: map[string]string{clients.CorrelationHeader: "pn-1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		time.Sleep(75 * time.Second)
+		synctest.Wait()
+		if !verifyFound(t, client, "pn-1", "alice@example.com") || deliveredCount() != 0 {
+			t.Fatalf("at 75s: found=%t delivered=%d, want record and no webhook", verifyFound(t, client, "pn-1", "alice@example.com"), deliveredCount())
+		}
+
+		time.Sleep(45 * time.Second)
+		synctest.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		if want := []string{result.Recipients[0].PMUID}; !reflect.DeepEqual(delivered, want) {
+			t.Fatalf("webhook deliveries = %v, want %v", delivered, want)
+		}
+	})
 }
