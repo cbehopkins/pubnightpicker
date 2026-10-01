@@ -39,6 +39,14 @@
         "webPushEnabled": {
             "type": "boolean"
         },
+        "testEmailReq": {
+            "type": "string",
+            "description": "Client-written UUID requesting a diagnostics test email."
+        },
+        "testEmailAck": {
+            "type": "string",
+            "description": "Backend-written copy of testEmailReq once the test email is handled."
+        },
         "pushPreferences": {
             "type": "object",
             "properties": {

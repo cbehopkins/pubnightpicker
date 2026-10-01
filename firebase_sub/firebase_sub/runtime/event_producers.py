@@ -64,6 +64,17 @@ class EventProducer:
             modify=self._admin_delete_request_callback,
         )
 
+    def build_test_email_request_manager(self) -> AbstractContextManager[object]:
+        """Build manager for per-user test email request watch."""
+        return PollManager(
+            query=self.db_handler.query_test_email_requests,
+            add=self._test_email_request_callback,
+            modify=self._test_email_request_callback,
+        )
+
+    def _test_email_request_callback(self, document: DocumentSnapshot) -> None:
+        self.event_queue.put(Event(type=EventType.TEST_EMAIL_REQUEST, doc=document))
+
     def _chat_message_callback(self, document: DocumentSnapshot) -> None:
         """Called when a chat message document is created or updated."""
         event = Event(

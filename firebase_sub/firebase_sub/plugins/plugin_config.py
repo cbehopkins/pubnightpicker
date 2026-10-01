@@ -18,6 +18,7 @@ from firebase_sub.database.housekeeping_tasks import (
 )
 from firebase_sub.database.notification_mirror import NotificationAckMirrorHandler
 from firebase_sub.database.notification_push_diag import NotificationPushTestHandler
+from firebase_sub.database.test_email_request import TestEmailRequestHandler
 from firebase_sub.event import Event, EventType
 from firebase_sub.plugins.admin_delete_request import AdminDeleteRequestListenerPlugin
 from firebase_sub.plugins.chat_message import ChatMessageListenerPlugin
@@ -33,6 +34,7 @@ from firebase_sub.plugins.protocols import (
     HousekeepingPlugin,
     ListenerPlugin,
 )
+from firebase_sub.plugins.test_email_request import TestEmailRequestListenerPlugin
 from firebase_sub.runtime.config import RuntimeConfig
 from firebase_sub.runtime.event_producers import EventProducer
 from firebase_sub.runtime.event_registry import EventRegistry
@@ -83,6 +85,12 @@ def build_listener_plugins(
             db_handler=db_handler,
             dummy_run=runtime_config.dummy_push,
         ),
+        TestEmailRequestListenerPlugin(
+            handler=TestEmailRequestHandler(
+                db_handler.db,
+                dummy_run=runtime_config.dummy_email,
+            ),
+        ),
     ]
 
 
@@ -112,6 +120,9 @@ def build_event_registry(
             continue
         if isinstance(plugin, AdminDeleteRequestListenerPlugin):
             registry.subscribe(EventType.ADMIN_DELETE_REQUEST, plugin)
+            continue
+        if isinstance(plugin, TestEmailRequestListenerPlugin):
+            registry.subscribe(EventType.TEST_EMAIL_REQUEST, plugin)
             continue
 
         raise ValueError(

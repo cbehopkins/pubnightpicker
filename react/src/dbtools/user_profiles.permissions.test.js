@@ -85,6 +85,36 @@ describe("users doc deletion rules", () => {
     });
 });
 
+describe("users testEmail fields rules", () => {
+    it("allows a user to write testEmailReq on their own doc", async () => {
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertSucceeds(setDoc(doc(db, "users", "user-a"), { testEmailReq: "uuid-1" }, { merge: true }));
+    });
+
+    it("denies a user writing testEmailAck on their own doc", async () => {
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertFails(setDoc(doc(db, "users", "user-a"), { testEmailAck: "uuid-1" }, { merge: true }));
+    });
+
+    it("denies a user creating their doc with testEmailAck", async () => {
+        const db = testEnv.authenticatedContext("user-c").firestore();
+        await assertFails(setDoc(doc(db, "users", "user-c"), { uid: "user-c", testEmailAck: "uuid-1" }));
+    });
+
+    it("allows unrelated updates when testEmailAck already exists", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), "users", "user-a"), { testEmailAck: "uuid-1" }, { merge: true });
+        });
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertSucceeds(setDoc(doc(db, "users", "user-a"), { name: "A" }, { merge: true }));
+    });
+
+    it("allows admin to write testEmailAck", async () => {
+        const db = testEnv.authenticatedContext("admin-user").firestore();
+        await assertSucceeds(setDoc(doc(db, "users", "user-a"), { testEmailAck: "uuid-1" }, { merge: true }));
+    });
+});
+
 describe("user-public doc deletion rules", () => {
     it("allows a user to delete their own user-public/{uid} doc", async () => {
         const db = testEnv.authenticatedContext("user-a").firestore();

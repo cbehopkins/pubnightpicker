@@ -28,6 +28,7 @@ import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 import usePolls from "../../hooks/usePolls";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
+import useTestEmailRequest from "../../hooks/useTestEmailRequest";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -415,6 +416,44 @@ export function PollActionAuditPanel() {
     );
 }
 
+const TEST_EMAIL_TIMEOUT_MS = 60000;
+
+const TEST_EMAIL_BUTTON_TEXT = {
+    sending: "Sending...",
+    sent: "Test Email Sent",
+};
+
+export function TestEmailPanel({ uid }) {
+    const { status, address, sendTestEmail } = useTestEmailRequest(uid, TEST_EMAIL_TIMEOUT_MS);
+
+    return (
+        <section className="mb-4">
+            <h2 className="h5 mb-2">Email Diagnostics</h2>
+            <p className="mb-3 text-body-secondary">
+                {address
+                    ? `Send a test email to ${address}.`
+                    : "No email address is set on your account."}
+            </p>
+            <button
+                type="button"
+                className="btn btn-outline-secondary"
+                onClick={sendTestEmail}
+                disabled={!address || status === "sending"}
+            >
+                {TEST_EMAIL_BUTTON_TEXT[status] ?? "Send Test Email"}
+            </button>
+            {status === "timeout" && (
+                <p className="small text-danger mt-2 mb-0">
+                    {`No response from the backend after ${TEST_EMAIL_TIMEOUT_MS / 1000}s. It may be offline or rate limited.`}
+                </p>
+            )}
+            {status === "error" && (
+                <p className="small text-danger mt-2 mb-0">Unable to request a test email.</p>
+            )}
+        </section>
+    );
+}
+
 function DiagnosticsPage() {
     const uid = useSelector((state) => state.auth.uid);
 
@@ -453,6 +492,8 @@ function DiagnosticsPage() {
                     preSendDelaySeconds={5}
                 />
             )}
+
+            {uid && <TestEmailPanel uid={uid} />}
 
             <AutopopulateCandidateListsPanel />
 
