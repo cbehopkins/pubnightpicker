@@ -19,6 +19,7 @@ import (
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/pushsources"
+	"last_orders/internal/lastorders/components/ratelimit"
 	"last_orders/internal/lastorders/components/recurrence"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
@@ -29,6 +30,7 @@ import (
 	notificationmirrorlistener "last_orders/internal/lastorders/database/listeners/notificationmirror"
 	notificationprofilelistener "last_orders/internal/lastorders/database/listeners/notificationprofile"
 	pushtestlistener "last_orders/internal/lastorders/database/listeners/pushtest"
+	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
@@ -37,6 +39,7 @@ import (
 	pushplugin "last_orders/internal/lastorders/plugins/push"
 	"last_orders/internal/lastorders/plugins/pushevents"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
+	testemailplugin "last_orders/internal/lastorders/plugins/testemail"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	"last_orders/internal/lastorders/truths"
@@ -90,7 +93,13 @@ type Config struct {
 	ChatMessageSource         chatmessagelistener.Source
 	PushTestSource            pushtestlistener.Source
 	NotificationMirrorSource  notificationmirrorlistener.Source
+	TestEmailSource           testemaillistener.Source
+	// TestEmailTokens limits diagnostics test emails; defaults to TestEmailDailyLimit per day.
+	TestEmailTokens ratelimit.TokenSource
 }
+
+// TestEmailDailyLimit is the default number of diagnostics test emails per day.
+const TestEmailDailyLimit = 10
 
 type App struct {
 	logger                      *slog.Logger
@@ -110,6 +119,7 @@ type App struct {
 	completedPollListener       *completedpolllistener.Listener
 	chatMessageListener         *chatmessagelistener.Listener
 	pushTestListener            *pushtestlistener.Listener
+	testEmailListener           *testemaillistener.Listener
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	notificationProfileListener *notificationprofilelistener.Listener
@@ -328,6 +338,28 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 
+	testEmailSource := cfg.TestEmailSource
+	if testEmailSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("test email source is required: supply Config.TestEmailSource or enable firestore")
+		}
+		testEmailSource, err = testemaillistener.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	testEmailTokens := cfg.TestEmailTokens
+	if testEmailTokens == nil {
+		logger := cfg.Logger
+		testEmailTokens, err = ratelimit.New("email.test", TestEmailDailyLimit, recurrenceService.Location(), func() {
+			logger.Warn("test email daily limit exhausted", "limit", TestEmailDailyLimit)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if cfg.IdempotencyRemote == nil {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("idempotency remote is required: enable firestore or supply Config.IdempotencyRemote")
@@ -375,6 +407,7 @@ func New(cfg Config) (application *App, err error) {
 	truths.PollManualCompletionRequiredRegistry.Register(polls.HandlerManualCompletionNeedPush)
 	truths.ChatMessagePostedRegistry.Register(pushevents.HandlerChatPush)
 	truths.PushTestRequestedRegistry.Register(pushevents.HandlerPushTest)
+	truths.TestEmailRequestedRegistry.Register(testemailplugin.HandlerTestEmail)
 	truths.EventVenueObservedRegistry.Register(recurrenceplugin.HandlerEvaluateEventVenue)
 	truths.StaleEventRegistry.Register(recurrenceplugin.HandlerStaleEvent)
 	truths.CreateEventPollRegistry.Register(recurrenceplugin.HandlerCreateEventPoll)
@@ -446,6 +479,12 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(pushevents.HandlerPushTestCompleted, pushevents.PushTestCompletedHandler{Source: pushSources, Push: pushPlugin}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(testemailplugin.HandlerTestEmail, testemailplugin.Handler{Tokens: testEmailTokens, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(testemailplugin.HandlerTestEmailAcked, testemailplugin.AckedHandler{Acks: testEmailSource}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
@@ -554,6 +593,11 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 
+	testEmailListener, err := testemaillistener.New(testEmailSource, cellarStore, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+
 	notificationMirrorListener, err := notificationmirrorlistener.New(notificationmirrorlistener.Config{
 		Source: notificationMirrorSource,
 		Logger: cfg.Logger,
@@ -590,6 +634,7 @@ func New(cfg Config) (application *App, err error) {
 		completedPollListener:       completedPollListener,
 		chatMessageListener:         chatMessageListener,
 		pushTestListener:            pushTestListener,
+		testEmailListener:           testEmailListener,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
 		notificationProfileListener: notificationProfileListener,
@@ -691,6 +736,9 @@ func (a *App) Run(ctx context.Context) error {
 	if err := a.pushTestListener.Start(runCtx); err != nil {
 		return fmt.Errorf("start push test listener: %w", err)
 	}
+	if err := a.testEmailListener.Start(runCtx); err != nil {
+		return fmt.Errorf("start test email listener: %w", err)
+	}
 	if err := a.notificationMirrorListener.Start(runCtx); err != nil {
 		return fmt.Errorf("start notification mirror listener: %w", err)
 	}
@@ -761,6 +809,9 @@ func (a *App) closeListeners() error {
 	}
 	if a.pushTestListener != nil {
 		closeErrs = append(closeErrs, a.pushTestListener.Close())
+	}
+	if a.testEmailListener != nil {
+		closeErrs = append(closeErrs, a.testEmailListener.Close())
 	}
 	if a.notificationMirrorListener != nil {
 		closeErrs = append(closeErrs, a.notificationMirrorListener.Close())
@@ -836,6 +887,7 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.PollManualCompletionRequired](truths.PollManualCompletionRequiredRegistry),
 		registerFanout[truths.ChatMessagePosted](truths.ChatMessagePostedRegistry),
 		registerFanout[truths.PushTestRequested](truths.PushTestRequestedRegistry),
+		registerFanout[truths.TestEmailRequested](truths.TestEmailRequestedRegistry),
 	}
 	for _, registrar := range registrars {
 		if err := registrar(cellarRuntime); err != nil {

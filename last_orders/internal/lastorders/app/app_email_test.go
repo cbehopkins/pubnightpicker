@@ -21,6 +21,8 @@ import (
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
+	"last_orders/internal/lastorders/database/listeners/testemail"
+	"last_orders/internal/lastorders/database/listeners/testemail/testemailtest"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -238,6 +240,54 @@ func TestPollCompletedTruthEmailsAndRecordsCompletionActions(t *testing.T) {
 		if !strings.Contains(logged, want) {
 			t.Errorf("logs missing %q", want)
 		}
+	}
+}
+
+func TestTestEmailRequestSendsOnceThenAcknowledges(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "test-email.db")
+	logs := &syncBuffer{}
+	source := testemailtest.New()
+	source.Documents = []testemail.Document{
+		{ID: "alice", Data: map[string]any{"testEmailReq": "req-1", "notificationEmail": "alice@example.com", "email": "login@example.com"}},
+		{ID: "alice", Data: map[string]any{"testEmailReq": "req-1", "notificationEmail": "alice@example.com", "email": "login@example.com"}},
+		{ID: "bob", Data: map[string]any{"testEmailReq": "req-2", "testEmailAck": "req-2", "email": "bob@example.com"}},
+	}
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.TestEmailSource = source
+	a := newApp(t, cfg)
+	defer a.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if requestID, ok := source.Ack("alice"); ok && requestID == "req-1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("test email was not acknowledged")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("run app: %v", err)
+	}
+
+	logged := logs.String()
+	if sends := strings.Count(logged, `"msg":"dummy email sent"`); sends != 1 {
+		t.Errorf("dummy sends = %d, want 1", sends)
+	}
+	if !strings.Contains(logged, `"recipient":"alice@example.com"`) {
+		t.Errorf("logs missing alice's notification email: %s", logged)
+	}
+	if _, ok := source.Ack("bob"); ok {
+		t.Error("an already acknowledged request must not be re-acknowledged")
 	}
 }
 

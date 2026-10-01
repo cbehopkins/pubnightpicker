@@ -28,6 +28,7 @@ import (
 	"last_orders/internal/lastorders/database/listeners/newpolls/newpollstest"
 	"last_orders/internal/lastorders/database/listeners/notificationmirror/notificationmirrortest"
 	"last_orders/internal/lastorders/database/listeners/pushtest/pushtesttest"
+	"last_orders/internal/lastorders/database/listeners/testemail/testemailtest"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
 	"last_orders/internal/lastorders/services/autocomplete/autocompletetest"
@@ -331,6 +332,7 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 		ChatMessageSource:         chatmessagestest.New(),
 		PushTestSource:            pushtesttest.New(),
 		NotificationMirrorSource:  notificationmirrortest.New(),
+		TestEmailSource:           testemailtest.New(),
 		CompletionActions:         completionactionstest.New(),
 		EmailClient:               emailplugin.ClientDummy,
 		Push:                      pushplugin.Options{Client: pushplugin.ClientDummy},
