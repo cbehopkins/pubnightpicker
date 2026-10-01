@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +46,17 @@ func main() {
 		logger.Info("firestore emulator enabled", "firestore_emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"), "project_id", firestoreProjectID)
 	}
 
+	emailOptions := emailplugin.Options{Client: emailplugin.ClientDummy, Logger: logger}
+	sweegoToken := strings.TrimSpace(os.Getenv("SWEEGO_TOKEN"))
+	sweegoProvider := strings.TrimSpace(os.Getenv("SWEEGO_PROVIDER"))
+	if sweegoToken != "" || sweegoProvider != "" {
+		emailOptions.Client = emailplugin.ClientSweego
+		emailOptions.SweegoToken = sweegoToken
+		emailOptions.SweegoProvider = sweegoProvider
+		emailOptions.SweegoBaseURL = os.Getenv("SWEEGO_BASE_URL")
+		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
+	}
+
 	application, err := app.New(app.Config{
 		DBPath:               *dbPath,
 		PollDelay:            *pollDelay,
@@ -53,7 +65,7 @@ func main() {
 		FirestoreProjectID:   firestoreProjectID,
 		EventReevaluateEvery: *reevaluateEvery,
 		HTTPAddr:             *httpAddr,
-		EmailClient:          emailplugin.ClientDummy,
+		Email:                emailOptions,
 		Push: pushplugin.Options{
 			Client:          pushplugin.ClientKind(*pushClient),
 			VAPIDPrivateKey: os.Getenv("WEB_PUSH_VAPID_PRIVATE_KEY"),

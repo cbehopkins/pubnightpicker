@@ -71,6 +71,9 @@ type Config struct {
 	HTTPAddr string
 	// EmailClient selects the provider used for durable email delivery.
 	EmailClient emailplugin.ClientKind
+	// Email contains provider credentials and options. EmailClient remains as a
+	// compatibility shortcut for callers that only need to select a client kind.
+	Email emailplugin.Options
 	// Push configures Web Push delivery.
 	Push pushplugin.Options
 
@@ -175,7 +178,14 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("init notification profile store: %w", err)
 	}
-	emailPlugin, err := emailplugin.New(baseStore.DB(), emailplugin.Options{Client: cfg.EmailClient, Logger: cfg.Logger})
+	emailOptions := cfg.Email
+	if emailOptions.Client == "" {
+		emailOptions.Client = cfg.EmailClient
+	}
+	if emailOptions.Logger == nil {
+		emailOptions.Logger = cfg.Logger
+	}
+	emailPlugin, err := emailplugin.New(baseStore.DB(), emailOptions)
 	if err != nil {
 		return nil, fmt.Errorf("init email plugin: %w", err)
 	}

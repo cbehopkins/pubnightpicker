@@ -1,4 +1,5 @@
 .vscode/*
+**/.vscode/*
 **/backup.json
 node_modules/
 **/.medorg.xml
@@ -6,7 +7,6 @@ __pycache__
 firebase_sub/firestore.rules
 firebase_sub/firestore.indexes.json
 .env
-.vscode
 *.exe
 last_orders/cmd/last-orders/*.db
 last_orders/cmd/last-orders/*.db-shm

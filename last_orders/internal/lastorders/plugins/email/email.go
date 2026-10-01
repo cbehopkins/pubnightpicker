@@ -5,11 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"cellar/pkg/cellar"
 	durableemail "durable_email"
 	"email_clients/clients"
 	"email_clients/clients/dummy"
+	"email_clients/clients/sweego"
+	sweegologs "email_clients/clients/sweego/logs"
 )
 
 // ClientKind selects the email provider the plugin sends through.
@@ -18,11 +22,18 @@ type ClientKind string
 const (
 	// ClientDummy logs each email instead of sending it.
 	ClientDummy ClientKind = "dummy"
+	// ClientSweego sends email through Sweego and verifies delivery through its logs API.
+	ClientSweego ClientKind = "sweego"
 )
 
 type Options struct {
-	Client ClientKind
-	Logger *slog.Logger
+	Client                ClientKind
+	Logger                *slog.Logger
+	SweegoToken           string
+	SweegoProvider        string
+	SweegoBaseURL         string
+	SweegoTimeout         time.Duration
+	SweegoVerifyTolerance time.Duration
 }
 
 // Plugin adapts durable email delivery to the last_orders application.
@@ -44,6 +55,26 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	case ClientDummy:
 		dummyClient := newDummyClient(logger)
 		client, verifier = dummyClient, dummyClient
+	case ClientSweego:
+		token := strings.TrimSpace(opts.SweegoToken)
+		provider := strings.TrimSpace(opts.SweegoProvider)
+		if token == "" || provider == "" {
+			return nil, fmt.Errorf("Sweego requires both token and provider")
+		}
+		baseURL := strings.TrimRight(strings.TrimSpace(opts.SweegoBaseURL), "/")
+		if baseURL == "" {
+			baseURL = "https://api.sweego.io"
+		}
+		timeout := opts.SweegoTimeout
+		if timeout <= 0 {
+			timeout = 30 * time.Second
+		}
+		sweegoClient := sweego.NewClient(baseURL, token, timeout).WithSendOptions(sweego.SendOptions{Provider: provider})
+		tolerance := opts.SweegoVerifyTolerance
+		if tolerance <= 0 {
+			tolerance = 5 * time.Minute
+		}
+		client, verifier = sweegoClient, sweegologs.NewVerifier(sweegologs.NewClient(sweegoClient), tolerance)
 	case "":
 		return nil, fmt.Errorf("email client kind is required")
 	default:

@@ -46,4 +46,8 @@ go run ./cmd/last-orders -db-path=./last-orders.db
 Set `FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`) to enable
 Firestore-backed listeners and idempotency instead of the in-memory stand-in.
 
+Email uses the dummy client by default. To enable Sweego, provide both
+`SWEEGO_TOKEN` and `SWEEGO_PROVIDER`; `SWEEGO_BASE_URL` is optional and defaults
+to `https://api.sweego.io`.
+
 See `docs/cellar-findings.md` for integration notes discovered while adopting Cellar.

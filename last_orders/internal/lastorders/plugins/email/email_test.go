@@ -23,6 +23,27 @@ func TestNewRejectsMissingAndUnknownClientKinds(t *testing.T) {
 	}
 }
 
+func TestNewSweegoRequiresCredentials(t *testing.T) {
+	if _, err := emailplugin.New(openDB(t), emailplugin.Options{Client: emailplugin.ClientSweego}); err == nil {
+		t.Fatal("Sweego without credentials returned nil error")
+	}
+}
+
+func TestNewSweegoAcceptsCredentials(t *testing.T) {
+	plugin, err := emailplugin.New(openDB(t), emailplugin.Options{
+		Client:         emailplugin.ClientSweego,
+		SweegoToken:    "token",
+		SweegoProvider: "email.example.test",
+		SweegoBaseURL:  "http://127.0.0.1:1",
+	})
+	if err != nil {
+		t.Fatalf("new Sweego plugin: %v", err)
+	}
+	if plugin == nil {
+		t.Fatal("new Sweego plugin returned nil plugin")
+	}
+}
+
 func TestDummyPluginRegistersEveryDurableEmailHandler(t *testing.T) {
 	db := openDB(t)
 	cellarStore, err := cellarsqlite.NewStore(db, nil)
