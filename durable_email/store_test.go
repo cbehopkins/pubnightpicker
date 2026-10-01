@@ -56,6 +56,8 @@ func TestNewStoreInitialisesSchemaAlongsideCellar(t *testing.T) {
 		{name: "submitted_at", typeName: "DATETIME"},
 	})
 	assertUniqueIndex(t, db, "email_requests", "message_id")
+	assertIndexedColumn(t, db, "email_progress", "recipient")
+	assertIndexedColumn(t, db, "email_progress", "state")
 }
 
 func TestSchemaStoresReconstructableRequestData(t *testing.T) {
@@ -222,4 +224,20 @@ func assertUniqueIndex(t *testing.T, db *sql.DB, table, column string) {
 		}
 	}
 	t.Fatalf("table %q has no unique index on %q", table, column)
+}
+
+func assertIndexedColumn(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM pragma_index_list(?) AS indexes
+		JOIN pragma_index_info(indexes.name) AS columns
+		WHERE columns.seqno = 0 AND columns.name = ?
+	`, table, column).Scan(&count); err != nil {
+		t.Fatalf("inspect indexes for %q: %v", table, err)
+	}
+	if count == 0 {
+		t.Fatalf("table %q has no index leading with %q", table, column)
+	}
 }

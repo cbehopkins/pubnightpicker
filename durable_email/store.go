@@ -67,6 +67,21 @@ func NewStore(db *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("create email_progress schema: %w", err)
 	}
 
+	// The progress primary key cannot serve queries that do not lead with the token.
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS email_progress_recipient
+			ON email_progress (recipient);
+	`); err != nil {
+		return nil, fmt.Errorf("create email_progress recipient index: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS email_progress_state
+			ON email_progress (state);
+	`); err != nil {
+		return nil, fmt.Errorf("create email_progress state index: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit durable email schema: %w", err)
 	}

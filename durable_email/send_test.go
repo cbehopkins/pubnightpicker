@@ -62,9 +62,9 @@ func TestSendSequenceDeliversAndRecordsAcceptance(t *testing.T) {
 	}
 
 	sent := make(chan sentEmail, 4)
-	client := &countingClient{inner: dummy.NewClient(func(emailAddress, message string, headers map[string]string) error {
+	client := &countingClient{inner: dummy.NewClient(func(emailAddress, message string, headers map[string]string) (dummy.Response, error) {
 		sent <- sentEmail{recipient: emailAddress, message: message, headers: headers}
-		return nil
+		return dummy.Response{}, nil
 	})}
 
 	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})

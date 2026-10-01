@@ -706,3 +706,98 @@ The design provides the following guarantees:
 8. Raw email clients remain independently testable and contain no Cellar dependencies.
 9. The request and progress tables together contain the information required to reconstruct a pending submission.
 10. The application does not need to know which provider endpoint implements a logical Send operation.
+
+---
+
+# 18. Progress Query API
+
+## 18.1 Purpose
+
+The durable layer exposes a read-only query surface over the progress records so
+that an operator interface can display outstanding work, and so that an
+individual recipient can be shown the state of the email addressed to them.
+
+The query surface exists for reporting. It is not a source of truth for
+application email configuration, and it is not part of any workflow. Nothing in
+the Send sequence consults it.
+
+## 18.2 Interface
+
+```go
+type ProgressFilter struct {
+    IdempotencyToken string
+    Recipient        string
+    States           []string
+    Limit            int
+    Offset           int
+}
+
+type ProgressRow struct {
+    IdempotencyToken string
+    Recipient        string
+    RecipientName    string
+    State            string
+    PMUID            string
+    SubmittedAt      *time.Time
+    Subject          string
+    SenderEmail      string
+    SenderName       string
+    TemplateID       string
+}
+
+func (s *Store) QueryProgress(context.Context, ProgressFilter) ([]ProgressRow, error)
+```
+
+A `ProgressRow` is one recipient of one logical Send operation. The request
+fields are carried alongside the progress fields so that a caller can label a
+row without issuing a second query. Request payload is deliberately excluded:
+`text`, `variables`, and `headers` are submission material rather than
+reporting material.
+
+`PMUID` is empty while the provider message identifier is NULL. `SubmittedAt` is
+nil before the first submission attempt.
+
+## 18.3 Filter semantics
+
+A zero-value filter selects every progress row. This is the operator view of
+overall outstanding state.
+
+Each populated field narrows the selection, and populated fields combine
+conjunctively:
+
+* `IdempotencyToken` restricts the result to one logical Send operation.
+* `Recipient` restricts the result to one recipient address. The recipient
+  address is the only identity the durable layer holds; it carries no account
+  identifier of its own.
+* `States` restricts the result to the listed states. An empty slice imposes no
+  restriction.
+
+Filter values are not validated. A state the durable layer never writes is not
+an error; it simply matches nothing. The query surface holds no policy.
+
+## 18.4 Ordering and pagination
+
+Results are ordered by `idempotency_token` then `recipient`. This is the primary
+key order of the progress table, so it is total and stable across calls.
+
+`Limit`, when positive, bounds the number of rows returned. `Offset`, when
+positive, skips that many rows of the ordered result. Because the ordering is
+total, successive pages of an unchanged table are disjoint and exhaustive.
+
+A non-positive `Limit` imposes no bound, and may be combined with a positive
+`Offset`.
+
+## 18.5 Execution
+
+The query runs outside any transaction and takes no part in Cellar's
+application transaction. It reflects committed state at the moment it runs, and
+a caller must not assume that two successive queries observe the same table.
+
+All filter values are bound as query parameters. The query text is fixed apart
+from the number of parameter placeholders required by `States`.
+
+## 18.6 Indexes
+
+The progress table carries indexes on `recipient` and on `state`, because the
+query surface selects on those columns without an `idempotency_token` prefix and
+so cannot use the primary key index.
