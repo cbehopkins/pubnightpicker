@@ -1,17 +1,18 @@
-name: sub_events image
+name: last_orders image
 
 on:
-  workflow_run:
-    workflows:
-      - Python CI
-    types:
-      - completed
+  push:
     branches:
       - main
-  push:
+    paths:
+      - "last_orders/**"
+      - "cellar/**"
+      - "durable_email/**"
+      - "email_clients/**"
+      - ".github/workflows/last-orders-image.yml"
     tags:
       - "v*"
-      - "sub_events-v*"
+      - "last_orders-v*"
   workflow_dispatch:
 
 permissions:
@@ -21,52 +22,45 @@ permissions:
   packages: write
 
 concurrency:
-  group: sub-events-image-${{ github.ref }}
+  group: last-orders-image-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  tox:
-    name: tox (${{ matrix.toxenv }})
+  go-test:
+    name: go test (${{ matrix.module }})
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: firebase_sub
+        working-directory: ${{ matrix.module }}
     strategy:
       fail-fast: false
       matrix:
-        toxenv:
-          - py312
-          - black
-          - flake8
-          - mypy
+        module:
+          - last_orders
+          - cellar
+          - durable_email
+          - email_clients
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            firebase_sub/pyproject.toml
-            firebase_sub/requirements.txt
-            firebase_sub/tox.ini
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: "*/go.sum"
 
-      - name: Install CI tooling
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install tox poetry poetry-plugin-export
+      - name: Vet
+        run: go vet ./...
 
-      - name: Run tox
-        run: python -m tox -e "${{ matrix.toxenv }}"
+      - name: Test
+        run: go test ./...
 
   build-and-push:
     name: Build and push to GHCR
-    needs: tox
+    needs: go-test
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -86,7 +80,7 @@ jobs:
 
       - name: Derive image name
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/sub_events" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/last_orders" >> "$GITHUB_OUTPUT"
 
       - name: Compute tags
         id: meta
@@ -94,19 +88,19 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' || github.event.workflow_run.head_branch == 'main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
             type=sha,format=long,prefix=sha-
 
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: firebase_sub
-          file: firebase_sub/Dockerfile
+          context: .
+          file: last_orders/Dockerfile
           platforms: linux/arm64
           push: true
           provenance: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=sub_events
-          cache-to: type=gha,mode=max,scope=sub_events
+          cache-from: type=gha,scope=last_orders
+          cache-to: type=gha,mode=max,scope=last_orders
