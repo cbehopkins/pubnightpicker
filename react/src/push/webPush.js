@@ -54,6 +54,19 @@ function decodeBase64Url(value) {
     return output;
 }
 
+function subscriptionUsesVapidKey(subscription, vapidKey) {
+    const applicationServerKey = subscription.options?.applicationServerKey;
+    if (!applicationServerKey) {
+        return false;
+    }
+
+    const currentKey = new Uint8Array(applicationServerKey);
+    return (
+        currentKey.length === vapidKey.length &&
+        currentKey.every((value, index) => value === vapidKey[index])
+    );
+}
+
 function subscriptionKeys(subscription) {
     const json = subscription.toJSON();
     return {
@@ -216,10 +229,42 @@ export async function touchCurrentWebPushEndpoint(uid) {
     if (!FEATURE_ENABLED || !supportsWebPush()) {
         return false;
     }
-    const subscription = await getCurrentSubscription();
+    const registration = await ensureRegistration();
+    let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
         return false;
     }
+
+    if (!PUBLIC_VAPID_KEY) {
+        throw new Error("Missing VITE_WEB_PUSH_PUBLIC_KEY");
+    }
+
+    const configuredKey = decodeBase64Url(PUBLIC_VAPID_KEY);
+    if (!subscriptionUsesVapidKey(subscription, configuredKey)) {
+        const oldEndpointId = hashEndpoint(subscription.endpoint);
+        await setDoc(
+            endpointRef(uid, oldEndpointId),
+            {
+                active: false,
+                disabledAt: serverTimestamp(),
+                lastSeenAt: serverTimestamp(),
+            },
+            { merge: true },
+        );
+
+        const unsubscribed = await subscription.unsubscribe();
+        if (!unsubscribed) {
+            throw new Error("Failed to unsubscribe VAPID subscription using the previous key");
+        }
+
+        subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: configuredKey,
+        });
+        await upsertEndpointDoc(uid, subscription);
+        return true;
+    }
+
     const { endpoint } = subscriptionKeys(subscription);
     const endpointId = hashEndpoint(endpoint);
     try {

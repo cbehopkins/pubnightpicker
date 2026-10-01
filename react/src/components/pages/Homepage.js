@@ -14,7 +14,7 @@ function Homepage() {
         <div className="d-flex flex-wrap gap-2">
           {loggedIn && (
             <NavLink className="btn btn-primary" to="/active_polls">
-              View Active Polls - testtt
+              View Active Polls
             </NavLink>
           )}
           <NavLink className="btn btn-outline-primary" to="/current_events">
