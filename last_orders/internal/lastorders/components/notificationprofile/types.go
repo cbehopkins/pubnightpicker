@@ -24,7 +24,8 @@ const (
 	KindPollCompletes Kind = "pollCompletes"
 	KindGlobalChat    Kind = "globalChat"
 	KindEventChat     Kind = "eventChat"
-	// KindDiagnostic is the admin push test. It is gated on endpoint activity alone.
+	// KindDiagnostic is the admin push test. It ignores per-type preferences but,
+	// like Python, still requires the webPushEnabled master switch.
 	KindDiagnostic Kind = "diagnostic"
 )
 
@@ -37,7 +38,24 @@ const (
 	defaultGlobalChat     = false
 	defaultEventChat      = false
 	defaultEndpointActive = false
+
+	defaultOpenPollEmail            = false
+	defaultNotificationEmailEnabled = false
 )
+
+// EmailKind identifies the email preference which gates a delivery.
+type EmailKind string
+
+const (
+	EmailPollOpens     EmailKind = "pollOpens"
+	EmailPollCompletes EmailKind = "pollCompletes"
+)
+
+// EmailRecipient is one user eligible to receive an email notification.
+type EmailRecipient struct {
+	UserID string
+	Email  string
+}
 
 // UserPreferences is the projected notification preference state for one user.
 type UserPreferences struct {
@@ -48,18 +66,21 @@ type UserPreferences struct {
 	GlobalChat            bool
 	EventChat             bool
 	EventChatMutedPollIDs []string
-	UpdatedAt             time.Time
+	// Email preferences are independent of WebPushEnabled.
+	NotificationEmail        string
+	OpenPollEmailEnabled     bool
+	NotificationEmailEnabled bool
+	UpdatedAt                time.Time
 }
 
 // Enabled reports whether the user wants notifications of the given kind.
 func (p UserPreferences) Enabled(kind Kind) bool {
-	if kind == KindDiagnostic {
-		return true
-	}
 	if !p.WebPushEnabled {
 		return false
 	}
 	switch kind {
+	case KindDiagnostic:
+		return true
 	case KindPollOpens:
 		return p.PollOpens
 	case KindPollCompletes:
@@ -134,6 +155,10 @@ func PreferencesFromDocument(doc Document) (UserPreferences, error) {
 		GlobalChat:            optionalBool(preferences, string(KindGlobalChat), defaultGlobalChat),
 		EventChat:             optionalBool(preferences, string(KindEventChat), defaultEventChat),
 		EventChatMutedPollIDs: optionalStrings(preferences, "eventChatMutedPollIds"),
+
+		NotificationEmail:        optionalString(doc.Data, "notificationEmail"),
+		OpenPollEmailEnabled:     optionalBool(doc.Data, "openPollEmailEnabled", defaultOpenPollEmail),
+		NotificationEmailEnabled: optionalBool(doc.Data, "notificationEmailEnabled", defaultNotificationEmailEnabled),
 	}, nil
 }
 
@@ -180,6 +205,11 @@ func optionalBool(data map[string]any, field string, fallback bool) bool {
 	if !ok {
 		return fallback
 	}
+	return value
+}
+
+func optionalString(data map[string]any, field string) string {
+	value, _ := data[field].(string)
 	return value
 }
 

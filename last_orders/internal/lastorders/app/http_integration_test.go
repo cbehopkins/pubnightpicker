@@ -1,7 +1,6 @@
 package app_test
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
@@ -17,7 +16,7 @@ func TestLogEndpointEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	dbPath := t.TempDir() + "/http-log.db"
-	var output bytes.Buffer
+	var output syncBuffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
@@ -73,7 +72,7 @@ func postLog(t *testing.T, addr, eventID, message string) {
 	}
 }
 
-func waitForLogLine(t *testing.T, output *bytes.Buffer, substr string) {
+func waitForLogLine(t *testing.T, output *syncBuffer, substr string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

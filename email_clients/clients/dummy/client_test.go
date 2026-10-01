@@ -64,7 +64,7 @@ func TestSendRendersTemplateWithMergedVariables(t *testing.T) {
 		messages = append(messages, message)
 		return Response{}, nil
 	})
-	if err := client.AddTemplate("greeting", "Hello {{.name}} at {{.place}}"); err != nil {
+	if err := client.AddTemplate("greeting", "Hello {{name}} at {{ place }}"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,13 +84,35 @@ func TestSendRendersTemplateWithMergedVariables(t *testing.T) {
 	}
 }
 
+func TestSendSubstitutesMessageTextLikeSweego(t *testing.T) {
+	var messages []string
+	client := NewClient(func(_ string, message string, _ map[string]string) (Response, error) {
+		messages = append(messages, message)
+		return Response{}, nil
+	})
+
+	_, err := client.Send(context.Background(), clients.Email{
+		Text:      "nospace={{name}} spaced={{ name }} date={{date}}",
+		Variables: map[string]any{"date": "Friday"},
+		To: []clients.Recipient{
+			{Address: clients.Address{Email: "alice@example.com"}, Variables: map[string]any{"name": "Alice"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"nospace=Alice spaced=Alice date=Friday"}; !reflect.DeepEqual(messages, want) {
+		t.Fatalf("messages = %v, want %v", messages, want)
+	}
+}
+
 func TestSendRendersAllRecipientsBeforeCallbacks(t *testing.T) {
 	called := false
 	client := NewClient(func(_ string, _ string, _ map[string]string) (Response, error) {
 		called = true
 		return Response{}, nil
 	})
-	if err := client.AddTemplate("greeting", "Hello {{.name}}"); err != nil {
+	if err := client.AddTemplate("greeting", "Hello {{name}}"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -270,6 +292,9 @@ func TestAddTemplateRejectsInvalidDefinitions(t *testing.T) {
 	}
 	if err := client.AddTemplate("broken", "{{"); err == nil {
 		t.Fatal("expected template parse error")
+	}
+	if err := client.AddTemplate("go-syntax", "Hello {{.name}}"); err == nil {
+		t.Fatal("expected Go template syntax to be rejected")
 	}
 	if err := client.AddTemplate("greeting", "Hello"); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/app"
+	emailplugin "last_orders/internal/lastorders/plugins/email"
+	pushplugin "last_orders/internal/lastorders/plugins/push"
 )
 
 // The mocked app tests cover behaviour; this covers that the Firestore-backed
@@ -27,6 +29,8 @@ func TestAppWiresUpFirestoreCollaboratorsAgainstEmulator(t *testing.T) {
 		Logger:             testLogger(),
 		EnableFirestore:    true,
 		FirestoreProjectID: projectID,
+		EmailClient:        emailplugin.ClientDummy,
+		Push:               pushplugin.Options{Client: pushplugin.ClientDummy},
 	})
 	if err != nil {
 		t.Fatalf("new app against emulator: %v", err)

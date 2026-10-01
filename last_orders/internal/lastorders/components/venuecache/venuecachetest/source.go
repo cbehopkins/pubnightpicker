@@ -55,9 +55,7 @@ type stream struct {
 func (s *stream) Next() ([]venuecache.Change, error) {
 	if !s.done {
 		s.done = true
-		if len(s.pending) > 0 {
-			return s.pending, nil
-		}
+		return s.pending, nil
 	}
 	<-s.ctx.Done()
 	return nil, s.ctx.Err()

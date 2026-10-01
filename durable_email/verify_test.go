@@ -3,12 +3,56 @@ package durableemail
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"cellar/pkg/cellar"
 	cellarsqlite "cellar/pkg/sqlite"
+	"email_clients/clients/sweego"
+	"email_clients/clients/sweego/logs"
 )
+
+func TestVerifyWithSweegoLogs(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, store := seedSubmittedRecipient(t, db, "alice@example.com")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/logs/" {
+			t.Errorf("provider request = %s %s, want POST /logs/", request.Method, request.URL.Path)
+		}
+		var query logs.Request
+		if err := json.NewDecoder(request.Body).Decode(&query); err != nil {
+			t.Errorf("decode logs query: %v", err)
+		}
+		if query.SearchWord != "alice@example.com" {
+			t.Errorf("logs search word = %q", query.SearchWord)
+		}
+		_ = json.NewEncoder(w).Encode(logs.Response{Result: []logs.Record{{
+			SwgUID: "uid-a", Headers: map[string]any{"x-pubnight-message-id": "message-1"},
+		}}})
+	}))
+	t.Cleanup(server.Close)
+
+	client := sweego.NewClient(server.URL, "token", time.Second)
+	verifier := logs.NewVerifier(logs.NewClient(client), time.Minute)
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
+	if err := runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Add(HandlerVerify, verifyRequest{IdempotencyToken: "send-1", Recipient: "alice@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	stop := startRuntime(t, runtime)
+	waitForIdle(t, cellarStore)
+	stop()
+
+	state, pmuid, _ := progressRow(t, db, "send-1", "alice@example.com")
+	if state != StateAccepted || pmuid.String != "uid-a" {
+		t.Errorf("state = %q, PMUID = %q; want Accepted, uid-a", state, pmuid.String)
+	}
+}
 
 func TestVerifyMarksFoundRecipientsAccepted(t *testing.T) {
 	db := openTestDB(t)
@@ -19,7 +63,7 @@ func TestVerifyMarksFoundRecipientsAccepted(t *testing.T) {
 	if err := runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier}); err != nil {
 		t.Fatalf("register verify handler: %v", err)
 	}
-	if _, err := runtime.Add(HandlerVerify, operationRequest{IdempotencyToken: "send-1"}); err != nil {
+	if _, err := runtime.Add(HandlerVerify, verifyRequest{IdempotencyToken: "send-1", Recipient: "alice@example.com"}); err != nil {
 		t.Fatalf("add verify cell: %v", err)
 	}
 
@@ -36,7 +80,7 @@ func TestVerifyMarksFoundRecipientsAccepted(t *testing.T) {
 	}
 }
 
-func TestVerifyRetriesLaterWhenRecipientIsNotFound(t *testing.T) {
+func TestVerifyReturnsRecipientToPendingWhenNotFound(t *testing.T) {
 	db := openTestDB(t)
 	cellarStore, store := seedSubmittedRecipient(t, db, "alice@example.com")
 
@@ -45,27 +89,27 @@ func TestVerifyRetriesLaterWhenRecipientIsNotFound(t *testing.T) {
 	if err := runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier}); err != nil {
 		t.Fatalf("register verify handler: %v", err)
 	}
-	if _, err := runtime.Add(HandlerVerify, operationRequest{IdempotencyToken: "send-1"}); err != nil {
+	if _, err := runtime.Add(HandlerVerify, verifyRequest{IdempotencyToken: "send-1", Recipient: "alice@example.com"}); err != nil {
 		t.Fatalf("add verify cell: %v", err)
 	}
 
 	stop := startRuntime(t, runtime)
-	notBefore := waitForScheduledRetry(t, cellarStore)
+	waitForIdle(t, cellarStore)
 	stop()
 
-	if requests := verifier.requests.Load(); requests == 0 {
-		t.Fatal("verifier was never called")
-	}
-	if delay := time.Until(notBefore); delay <= 0 || delay > VerifyDelay {
-		t.Errorf("retry delay = %v, want a positive delay no greater than %v", delay, VerifyDelay)
+	if requests := verifier.requests.Load(); requests != 1 {
+		t.Errorf("verification requests = %d, want 1", requests)
 	}
 
-	state, pmuid, _ := progressRow(t, db, "send-1", "alice@example.com")
+	state, pmuid, submittedAt := progressRow(t, db, "send-1", "alice@example.com")
 	if state != StatePending {
 		t.Errorf("state = %q, want %q", state, StatePending)
 	}
 	if pmuid.Valid {
 		t.Errorf("pmuid = %q, want NULL while unverified", pmuid.String)
+	}
+	if submittedAt.Valid {
+		t.Errorf("submitted_at = %v, want NULL before resubmission", submittedAt.Time)
 	}
 }
 
@@ -92,7 +136,7 @@ func seedSubmittedRecipient(t *testing.T, db *sql.DB, recipient string) (*cellar
 		INSERT INTO email_progress (
 			idempotency_token, recipient, recipient_name, state, variables, submitted_at
 		) VALUES (?, ?, ?, ?, ?, ?)
-	`, "send-1", recipient, "Alice", StatePending, `{}`, time.Now().UTC()); err != nil {
+	`, "send-1", recipient, "Alice", StateRecoveryWaiting, `{}`, time.Now().UTC()); err != nil {
 		t.Fatalf("seed progress: %v", err)
 	}
 	return cellarStore, store
@@ -118,8 +162,7 @@ func startRuntime(t *testing.T, runtime *cellar.Cellar) func() {
 	}
 }
 
-// waitForScheduledRetry returns the NotBefore of the cell once it is rescheduled.
-func waitForScheduledRetry(t *testing.T, store cellar.Store) time.Time {
+func waitForRecoveryFanout(t *testing.T, store cellar.Store) time.Time {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -128,12 +171,12 @@ func waitForScheduledRetry(t *testing.T, store cellar.Store) time.Time {
 			t.Fatalf("list active cells: %v", err)
 		}
 		for _, cell := range active {
-			if cell.NotBefore != nil {
+			if cell.Steps[cell.CurrentStep].HandlerName == HandlerRecoveryFanout && cell.NotBefore != nil {
 				return *cell.NotBefore
 			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("timed out waiting for verification to be rescheduled")
+	t.Fatal("timed out waiting for recovery fanout")
 	return time.Time{}
 }

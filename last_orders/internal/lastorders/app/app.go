@@ -14,20 +14,28 @@ import (
 	"cellar/pkg/cellar"
 	publicsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/recurrence"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
+	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
+	notificationmirrorlistener "last_orders/internal/lastorders/database/listeners/notificationmirror"
 	notificationprofilelistener "last_orders/internal/lastorders/database/listeners/notificationprofile"
+	pushtestlistener "last_orders/internal/lastorders/database/listeners/pushtest"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
+	emailplugin "last_orders/internal/lastorders/plugins/email"
 	"last_orders/internal/lastorders/plugins/polls"
+	pushplugin "last_orders/internal/lastorders/plugins/push"
+	"last_orders/internal/lastorders/plugins/pushevents"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
@@ -49,16 +57,22 @@ type RecurrenceService interface {
 }
 
 type Config struct {
-	DBPath                 string
-	PollDelay              time.Duration
-	Logger                 *slog.Logger
-	FirestoreProjectID     string
-	EnableFirestore        bool
-	IdempotencyRemote      firebaseidempotency.Remote
+	DBPath             string
+	PollDelay          time.Duration
+	Logger             *slog.Logger
+	FirestoreProjectID string
+	EnableFirestore    bool
+	IdempotencyRemote  firebaseidempotency.Remote
+	// CompletionActions is the durable completed-poll action history shared with Python.
+	CompletionActions      completionactions.Store
 	EventReevaluateEvery   time.Duration
 	StartupComponentChecks []func(*basestore.Store) error
 	// HTTPAddr is the address to serve HTTP endpoints on. An empty value disables HTTP entirely.
 	HTTPAddr string
+	// EmailClient selects the provider used for durable email delivery.
+	EmailClient emailplugin.ClientKind
+	// Push configures Web Push delivery.
+	Push pushplugin.Options
 
 	// External collaborators. Each is optional; when nil it is built from the
 	// Firestore client, and construction fails if Firestore is disabled.
@@ -69,6 +83,10 @@ type Config struct {
 	NewPollSource             newpolllistener.Source
 	CompletedPollSource       completedpolllistener.Source
 	AutocompleteSource        autocompletesvc.Source
+	PushSources               pushsources.Source
+	ChatMessageSource         chatmessagelistener.Source
+	PushTestSource            pushtestlistener.Source
+	NotificationMirrorSource  notificationmirrorlistener.Source
 }
 
 type App struct {
@@ -83,9 +101,13 @@ type App struct {
 	notificationProfileService  *notificationprofile.Service
 	firestoreClient             *firestore.Client
 	cellarRuntime               *cellar.Cellar
+	emailPlugin                 *emailplugin.Plugin
 	eventVenueListener          *eventvenuelistener.Listener
 	newPollListener             *newpolllistener.Listener
 	completedPollListener       *completedpolllistener.Listener
+	chatMessageListener         *chatmessagelistener.Listener
+	pushTestListener            *pushtestlistener.Listener
+	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	notificationProfileListener *notificationprofilelistener.Listener
 	httpServer                  *http.Server
@@ -153,6 +175,10 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("init notification profile store: %w", err)
 	}
+	emailPlugin, err := emailplugin.New(baseStore.DB(), emailplugin.Options{Client: cfg.EmailClient, Logger: cfg.Logger})
+	if err != nil {
+		return nil, fmt.Errorf("init email plugin: %w", err)
+	}
 
 	venueSource := cfg.VenueSource
 	if venueSource == nil {
@@ -182,6 +208,14 @@ func New(cfg Config) (application *App, err error) {
 	notificationProfileService, err := notificationprofile.NewService(notificationProfileStore, notificationProfileSource, cfg.Logger)
 	if err != nil {
 		return nil, err
+	}
+	pushOptions := cfg.Push
+	if pushOptions.Logger == nil {
+		pushOptions.Logger = cfg.Logger
+	}
+	pushPlugin, err := pushplugin.New(baseStore.DB(), notificationProfileService, pushOptions)
+	if err != nil {
+		return nil, fmt.Errorf("init push plugin: %w", err)
 	}
 
 	recurrenceService := cfg.RecurrenceService
@@ -240,11 +274,65 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 
+	pushSources := cfg.PushSources
+	if pushSources == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("push sources are required: supply Config.PushSources or enable firestore")
+		}
+		pushSources, err = pushsources.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	chatMessageSource := cfg.ChatMessageSource
+	if chatMessageSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("chat message source is required: supply Config.ChatMessageSource or enable firestore")
+		}
+		chatMessageSource, err = chatmessagelistener.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	pushTestSource := cfg.PushTestSource
+	if pushTestSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("push test source is required: supply Config.PushTestSource or enable firestore")
+		}
+		pushTestSource, err = pushtestlistener.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	notificationMirrorSource := cfg.NotificationMirrorSource
+	if notificationMirrorSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("notification mirror source is required: supply Config.NotificationMirrorSource or enable firestore")
+		}
+		notificationMirrorSource, err = notificationmirrorlistener.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if cfg.IdempotencyRemote == nil {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("idempotency remote is required: enable firestore or supply Config.IdempotencyRemote")
 		}
 		cfg.IdempotencyRemote, err = firebaseidempotency.NewFirestoreRemote(firestoreClient, "listener_state", "last_orders")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if cfg.CompletionActions == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("completion actions are required: enable firestore or supply Config.CompletionActions")
+		}
+		cfg.CompletionActions, err = completionactions.NewFirestoreStore(firestoreClient)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +357,14 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	truths.PollOpenedRegistry.Register(polls.HandlerPollOpened)
+	truths.PollOpenedRegistry.Register(polls.HandlerPollOpenedEmail)
+	truths.PollOpenedRegistry.Register(polls.HandlerPollOpenedPush)
 	truths.PollCompletedRegistry.Register(polls.HandlerPollCompleted)
+	truths.PollCompletedRegistry.Register(polls.HandlerPollCompletedEmail)
+	truths.PollCompletedRegistry.Register(polls.HandlerPollCompletedPush)
+	truths.PollManualCompletionRequiredRegistry.Register(polls.HandlerManualCompletionNeedPush)
+	truths.ChatMessagePostedRegistry.Register(pushevents.HandlerChatPush)
+	truths.PushTestRequestedRegistry.Register(pushevents.HandlerPushTest)
 	truths.EventVenueObservedRegistry.Register(recurrenceplugin.HandlerEvaluateEventVenue)
 	truths.StaleEventRegistry.Register(recurrenceplugin.HandlerStaleEvent)
 	truths.CreateEventPollRegistry.Register(recurrenceplugin.HandlerCreateEventPoll)
@@ -280,11 +375,67 @@ func New(cfg Config) (application *App, err error) {
 	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
 	}
+	if err := emailPlugin.Register(cellarRuntime); err != nil {
+		return nil, fmt.Errorf("register email plugin: %w", err)
+	}
+	if err := pushPlugin.Register(cellarRuntime); err != nil {
+		return nil, fmt.Errorf("register push plugin: %w", err)
+	}
 	// FIXME this should probably be in a table
 	if err := cellarRuntime.Register(polls.HandlerPollOpened, polls.PollOpenedHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
+	if err := cellarRuntime.Register(polls.HandlerPollOpenedEmail, polls.PollOpenedEmailHandler{Actions: cfg.CompletionActions, Recipients: notificationProfileService, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(polls.HandlerPollOpenedPush, polls.PollOpenedPushHandler{
+		Actions:   cfg.CompletionActions,
+		Endpoints: notificationProfileService,
+		Push:      pushPlugin,
+		Logger:    cfg.Logger,
+	}); err != nil {
+		return nil, err
+	}
 	if err := cellarRuntime.Register(polls.HandlerPollCompleted, polls.PollCompletedHandler{Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(polls.HandlerPollCompletedEmail, polls.PollCompletedEmailHandler{
+		Actions:    cfg.CompletionActions,
+		Venues:     venueCacheService,
+		Recipients: notificationProfileService,
+		Logger:     cfg.Logger,
+	}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(polls.HandlerCompletionMarked, polls.CompletionMarkedHandler{Actions: cfg.CompletionActions}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(polls.HandlerPollCompletedPush, polls.PollCompletedPushHandler{
+		Actions:   cfg.CompletionActions,
+		Venues:    venueCacheService,
+		Endpoints: notificationProfileService,
+		Push:      pushPlugin,
+		Logger:    cfg.Logger,
+	}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(polls.HandlerManualCompletionNeedPush, polls.ManualCompletionPushHandler{
+		Completers: pushSources,
+		Endpoints:  notificationProfileService,
+		Push:       pushPlugin,
+	}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(pushevents.HandlerChatPush, pushevents.ChatPushHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(pushevents.HandlerPushTest, pushevents.PushTestHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(pushevents.HandlerPushTestCompleted, pushevents.PushTestCompletedHandler{Source: pushSources, Push: pushPlugin}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
@@ -383,6 +534,24 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 
+	chatMessageListener, err := chatmessagelistener.New(chatMessageSource, cellarStore, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+
+	pushTestListener, err := pushtestlistener.New(pushTestSource, cellarStore, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+
+	notificationMirrorListener, err := notificationmirrorlistener.New(notificationmirrorlistener.Config{
+		Source: notificationMirrorSource,
+		Logger: cfg.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger)
 	if err != nil {
 		return nil, err
@@ -405,9 +574,13 @@ func New(cfg Config) (application *App, err error) {
 		notificationProfileService:  notificationProfileService,
 		firestoreClient:             firestoreClient,
 		cellarRuntime:               cellarRuntime,
+		emailPlugin:                 emailPlugin,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
+		chatMessageListener:         chatMessageListener,
+		pushTestListener:            pushTestListener,
+		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
 		notificationProfileListener: notificationProfileListener,
 	}
@@ -432,64 +605,84 @@ func (a *App) Run(ctx context.Context) error {
 	if a.baseStore == nil {
 		return fmt.Errorf("app is not initialised")
 	}
+	// Must precede Cellar so interrupted submissions are verified before any resend.
+	if err := a.emailPlugin.RecoverSubmissions(ctx); err != nil {
+		return fmt.Errorf("recover email submissions: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
+	runDone := make(chan struct{})
 	a.runMu.Lock()
 	a.runCancel = cancel
-	a.runDone = make(chan struct{})
-	runDone := a.runDone
+	a.runDone = runDone
 	a.runMu.Unlock()
+	var cellarDone chan struct{}
 	defer func() {
 		a.shutdownHTTP()
 		cancel()
 		a.closeListeners()
-		_ = a.cellarRuntime.Stop()
-		<-runDone
+		if cellarDone != nil {
+			_ = a.cellarRuntime.Stop()
+			<-cellarDone
+		}
 		a.runMu.Lock()
 		a.runCancel = nil
 		a.runDone = nil
 		a.runMu.Unlock()
+		close(runDone)
 	}()
 
+	// Recipient and venue reads must see complete projections before any work runs.
+	for _, projection := range []interface {
+		Start(context.Context) error
+		Ready() <-chan struct{}
+	}{a.notificationProfileListener, a.venueCacheListener} {
+		if err := projection.Start(runCtx); err != nil {
+			return fmt.Errorf("start projection listener: %w", err)
+		}
+	}
+	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
+		select {
+		case <-ready:
+		case <-runCtx.Done():
+			a.logger.Info("run context cancelled before projections were ready")
+			return nil
+		}
+	}
+
 	cellarErr := make(chan error, 1)
+	cellarDone = make(chan struct{})
 	go func() {
-		defer close(runDone)
+		defer close(cellarDone)
 		cellarErr <- a.cellarRuntime.Start(runCtx)
 	}()
 
 	if a.eventVenueListener != nil {
 		if err := a.eventVenueListener.Start(runCtx); err != nil {
-			cancel()
 			return fmt.Errorf("start event venue listener: %w", err)
 		}
 	}
 
 	if a.newPollListener != nil {
 		if err := a.newPollListener.Start(runCtx); err != nil {
-			cancel()
 			return fmt.Errorf("start new poll listener: %w", err)
 		}
 	}
 
 	if a.completedPollListener != nil {
 		if err := a.completedPollListener.Start(runCtx); err != nil {
-			cancel()
 			return fmt.Errorf("start completed poll listener: %w", err)
 		}
 	}
 
-	if a.venueCacheListener != nil {
-		if err := a.venueCacheListener.Start(runCtx); err != nil {
-			cancel()
-			return fmt.Errorf("start venue cache listener: %w", err)
-		}
+	if err := a.chatMessageListener.Start(runCtx); err != nil {
+		return fmt.Errorf("start chat message listener: %w", err)
 	}
-
-	if a.notificationProfileListener != nil {
-		if err := a.notificationProfileListener.Start(runCtx); err != nil {
-			cancel()
-			return fmt.Errorf("start notification profile listener: %w", err)
-		}
+	if err := a.pushTestListener.Start(runCtx); err != nil {
+		return fmt.Errorf("start push test listener: %w", err)
+	}
+	if err := a.notificationMirrorListener.Start(runCtx); err != nil {
+		return fmt.Errorf("start notification mirror listener: %w", err)
 	}
 
 	if a.httpServer != nil {
@@ -552,6 +745,15 @@ func (a *App) closeListeners() error {
 	}
 	if a.completedPollListener != nil {
 		closeErrs = append(closeErrs, a.completedPollListener.Close())
+	}
+	if a.chatMessageListener != nil {
+		closeErrs = append(closeErrs, a.chatMessageListener.Close())
+	}
+	if a.pushTestListener != nil {
+		closeErrs = append(closeErrs, a.pushTestListener.Close())
+	}
+	if a.notificationMirrorListener != nil {
+		closeErrs = append(closeErrs, a.notificationMirrorListener.Close())
 	}
 	if a.venueCacheListener != nil {
 		closeErrs = append(closeErrs, a.venueCacheListener.Close())
@@ -621,6 +823,9 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.LogMessage](truths.LogMessageRegistry),
 		registerFanout[truths.DailyPollAutoCompleteDue](truths.DailyPollAutoCompleteDueRegistry),
 		registerFanout[truths.PollAutoCompletionDue](truths.PollAutoCompletionDueRegistry),
+		registerFanout[truths.PollManualCompletionRequired](truths.PollManualCompletionRequiredRegistry),
+		registerFanout[truths.ChatMessagePosted](truths.ChatMessagePostedRegistry),
+		registerFanout[truths.PushTestRequested](truths.PushTestRequestedRegistry),
 	}
 	for _, registrar := range registrars {
 		if err := registrar(cellarRuntime); err != nil {

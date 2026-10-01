@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"last_orders/internal/lastorders/components/venuecache"
@@ -19,9 +20,11 @@ const retryDelay = 5 * time.Second
 var ErrMalformedDocument = errors.New("malformed venue cache document")
 
 type Listener struct {
-	service *venuecache.Service
-	store   *venuecache.Store
-	logger  *slog.Logger
+	service   *venuecache.Service
+	store     *venuecache.Store
+	logger    *slog.Logger
+	ready     chan struct{}
+	readyOnce sync.Once
 	lifecycle.Controller
 }
 
@@ -35,7 +38,12 @@ func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logg
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger}, nil
+	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{})}, nil
+}
+
+// Ready closes once the first full venue snapshot has been applied.
+func (l *Listener) Ready() <-chan struct{} {
+	return l.ready
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -77,6 +85,7 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 				return err
 			}
 		}
+		l.readyOnce.Do(func() { close(l.ready) })
 	}
 }
 

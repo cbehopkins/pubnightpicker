@@ -12,7 +12,7 @@ import (
 )
 
 // Store provides access to notification profile data in the database.
-//FIXME arguably this package belongs under database/projections/notificationprofile
+// FIXME arguably this package belongs under database/projections/notificationprofile
 type Store struct {
 	base *basestore.Store
 }
@@ -30,10 +30,23 @@ func New(base *basestore.Store) (*Store, error) {
 			global_chat INTEGER NOT NULL DEFAULT 0,
 			event_chat INTEGER NOT NULL DEFAULT 0,
 			muted_poll_ids_json TEXT NOT NULL DEFAULT '[]',
+			notification_email TEXT NOT NULL DEFAULT '',
+			open_poll_email INTEGER NOT NULL DEFAULT 0,
+			notification_email_enabled INTEGER NOT NULL DEFAULT 0,
 			updated_at DATETIME NOT NULL
 		);
 	`); err != nil {
 		return nil, fmt.Errorf("create notification_user_prefs schema: %w", err)
+	}
+	// CREATE TABLE IF NOT EXISTS leaves tables from earlier schemas unchanged.
+	for _, column := range []struct{ name, definition string }{
+		{name: "notification_email", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "open_poll_email", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "notification_email_enabled", definition: "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := ensureColumn(base.DB(), "notification_user_prefs", column.name, column.definition); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := base.DB().Exec(`
 		CREATE TABLE IF NOT EXISTS notification_endpoints (
@@ -68,8 +81,9 @@ func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences)
 	_, err = s.base.DB().ExecContext(ctx, `
 		INSERT INTO notification_user_prefs(
 			user_id, web_push_enabled, poll_opens, poll_completes,
-			global_chat, event_chat, muted_poll_ids_json, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+			global_chat, event_chat, muted_poll_ids_json,
+			notification_email, open_poll_email, notification_email_enabled, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			web_push_enabled = excluded.web_push_enabled,
 			poll_opens = excluded.poll_opens,
@@ -77,10 +91,14 @@ func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences)
 			global_chat = excluded.global_chat,
 			event_chat = excluded.event_chat,
 			muted_poll_ids_json = excluded.muted_poll_ids_json,
+			notification_email = excluded.notification_email,
+			open_poll_email = excluded.open_poll_email,
+			notification_email_enabled = excluded.notification_email_enabled,
 			updated_at = excluded.updated_at
 	`, preferences.UserID, preferences.WebPushEnabled, preferences.PollOpens,
 		preferences.PollCompletes, preferences.GlobalChat, preferences.EventChat,
-		string(muted), time.Now().UTC())
+		string(muted), preferences.NotificationEmail, preferences.OpenPollEmailEnabled,
+		preferences.NotificationEmailEnabled, time.Now().UTC())
 	return err
 }
 
@@ -94,12 +112,14 @@ func (s *Store) Preferences(ctx context.Context, userID string) (UserPreferences
 	var muted string
 	err := s.base.DB().QueryRowContext(ctx, `
 		SELECT user_id, web_push_enabled, poll_opens, poll_completes,
-			global_chat, event_chat, muted_poll_ids_json, updated_at
+			global_chat, event_chat, muted_poll_ids_json,
+			notification_email, open_poll_email, notification_email_enabled, updated_at
 		FROM notification_user_prefs WHERE user_id = ?
 	`, userID).Scan(
 		&preferences.UserID, &preferences.WebPushEnabled, &preferences.PollOpens,
 		&preferences.PollCompletes, &preferences.GlobalChat, &preferences.EventChat,
-		&muted, &preferences.UpdatedAt,
+		&muted, &preferences.NotificationEmail, &preferences.OpenPollEmailEnabled,
+		&preferences.NotificationEmailEnabled, &preferences.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -167,7 +187,10 @@ func (s *Store) EligibleEndpoints(ctx context.Context, selector Selector) ([]End
 			WHERE e.active = 1 AND p.web_push_enabled = 1 AND p.%s = 1
 		`, column)
 	} else {
-		query.WriteString(` WHERE e.active = 1`)
+		query.WriteString(`
+			JOIN notification_user_prefs p ON p.user_id = e.user_id
+			WHERE e.active = 1 AND p.web_push_enabled = 1
+		`)
 	}
 
 	if len(selector.UserIDs) > 0 {
@@ -215,6 +238,74 @@ func preferenceColumn(kind Kind) (string, error) {
 
 func placeholders(count int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+}
+
+// EmailRecipients returns users opted in to kind with a usable address.
+func (s *Store) EmailRecipients(ctx context.Context, kind EmailKind) ([]EmailRecipient, error) {
+	column, err := emailPreferenceColumn(kind)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.base.DB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT user_id, notification_email
+		FROM notification_user_prefs
+		WHERE %s = 1 AND notification_email <> ''
+		ORDER BY user_id
+	`, column))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recipients := []EmailRecipient{}
+	for rows.Next() {
+		var recipient EmailRecipient
+		if err := rows.Scan(&recipient.UserID, &recipient.Email); err != nil {
+			return nil, err
+		}
+		recipients = append(recipients, recipient)
+	}
+	return recipients, rows.Err()
+}
+
+// emailPreferenceColumn must only return fixed literals because its result is
+// interpolated into SQL.
+func emailPreferenceColumn(kind EmailKind) (string, error) {
+	switch kind {
+	case EmailPollOpens:
+		return "open_poll_email", nil
+	case EmailPollCompletes:
+		return "notification_email_enabled", nil
+	default:
+		return "", fmt.Errorf("%w: email %q", ErrUnknownKind, kind)
+	}
+}
+
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("inspect %s schema: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition)); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 func nonNilStrings(values []string) []string {

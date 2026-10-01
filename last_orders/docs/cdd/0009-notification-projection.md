@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-The backend requires local access to user notification preferences and push subscription information when determining the recipients of a notification.
+The backend requires local access to user notification preferences, email recipient data, and push subscription information when determining the recipients of a notification.
 
 The authoritative representation of this information is held in Firebase.
 
@@ -19,6 +19,7 @@ Its purpose is to provide a simple and efficient local query interface while iso
 Firebase is the authoritative source for:
 
 * notification preferences;
+* notification email addresses and email preferences;
 * push subscription information;
 * the association between subscriptions and users;
 * the active/inactive state represented in Firebase.
@@ -55,17 +56,27 @@ The local database MUST contain the information required by notification recipie
 The exact schema is an implementation concern, but it is expected to represent concepts such as:
 
 * user notification preferences;
+* notification email addresses and email preferences;
 * push endpoints/subscriptions;
 * the user associated with each endpoint;
 * whether an endpoint is currently active.
 
 The local representation SHOULD be structured for the queries required by notification population rather than being a direct copy of the Firebase schema.
 
+Email eligibility is independent of push eligibility. A user is eligible for an
+email notification when the corresponding email preference is enabled and the
+notification email address is non-empty; `webPushEnabled` does not affect email.
+
 ---
 
 ## 5. Consistency
 
 The projection is eventually consistent with Firebase.
+
+At application startup, the projection is ready once the users and push endpoint
+listeners have both applied their first Firebase snapshot. The application waits
+for this readiness before starting Cellar or work-producing listeners. After
+startup, the projection is eventually consistent.
 
 There may therefore be a period during which the local projection does not yet reflect the latest Firebase state.
 
@@ -119,6 +130,7 @@ For example, notification population may conceptually request:
 
 ```text
 GetEligiblePushEndpoints(...)
+GetEligibleEmailRecipients(...)
 ```
 
 The interface SHOULD expose notification-oriented concepts rather than Firebase document structures.

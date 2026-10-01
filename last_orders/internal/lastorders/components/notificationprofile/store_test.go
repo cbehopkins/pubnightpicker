@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"last_orders/internal/lastorders/basestore"
@@ -113,9 +114,9 @@ func TestEligibleEndpointsFilteringMatrix(t *testing.T) {
 			want:     []string{"keen/a", "keen/b"},
 		},
 		{
-			name:     "diagnostic ignores preferences but still requires an active endpoint",
-			selector: Selector{Kind: KindDiagnostic, UserIDs: []string{"master-off", "stale", "unknown"}},
-			want:     []string{"master-off/a", "unknown/a"},
+			name:     "diagnostic ignores type preferences but requires the master switch and an active endpoint",
+			selector: Selector{Kind: KindDiagnostic, UserIDs: []string{"keen", "no-opens", "master-off", "stale", "unknown"}},
+			want:     []string{"keen/a", "keen/b", "no-opens/a"},
 		},
 		{
 			name:     "explicit audience narrows an otherwise eligible set",
@@ -226,5 +227,98 @@ func TestPreferencesRoundTripsEmptyMutedList(t *testing.T) {
 	}
 	if len(stored.EventChatMutedPollIDs) != 0 {
 		t.Fatalf("muted poll ids = %v; want empty", stored.EventChatMutedPollIDs)
+	}
+}
+
+func TestEmailRecipientsSelectsOptedInUsersWithAddresses(t *testing.T) {
+	store := newTestStore(t)
+	seedUser(t, store, UserPreferences{UserID: "both", NotificationEmail: "both@example.com", OpenPollEmailEnabled: true, NotificationEmailEnabled: true})
+	seedUser(t, store, UserPreferences{UserID: "opens", NotificationEmail: "opens@example.com", OpenPollEmailEnabled: true, WebPushEnabled: true})
+	seedUser(t, store, UserPreferences{UserID: "completes", NotificationEmail: "completes@example.com", NotificationEmailEnabled: true})
+	seedUser(t, store, UserPreferences{UserID: "blank", OpenPollEmailEnabled: true, NotificationEmailEnabled: true})
+	seedUser(t, store, UserPreferences{UserID: "push-only", NotificationEmail: "push@example.com", WebPushEnabled: true, PollOpens: true})
+
+	tests := []struct {
+		kind EmailKind
+		want []string
+	}{
+		{kind: EmailPollOpens, want: []string{"both@example.com", "opens@example.com"}},
+		{kind: EmailPollCompletes, want: []string{"both@example.com", "completes@example.com"}},
+	}
+	for _, test := range tests {
+		t.Run(string(test.kind), func(t *testing.T) {
+			recipients, err := store.EmailRecipients(context.Background(), test.kind)
+			if err != nil {
+				t.Fatalf("email recipients: %v", err)
+			}
+			got := make([]string, 0, len(recipients))
+			for _, recipient := range recipients {
+				got = append(got, recipient.Email)
+			}
+			if !equalStrings(got, test.want) {
+				t.Fatalf("recipients = %v; want %v", got, test.want)
+			}
+		})
+	}
+
+	if _, err := store.EmailRecipients(context.Background(), "nonsense"); !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("error = %v; want ErrUnknownKind", err)
+	}
+}
+
+func TestEmailPreferencesRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	seedUser(t, store, UserPreferences{UserID: "user", NotificationEmail: "user@example.com", OpenPollEmailEnabled: true})
+	stored, err := store.Preferences(context.Background(), "user")
+	if err != nil {
+		t.Fatalf("preferences: %v", err)
+	}
+	if stored.NotificationEmail != "user@example.com" || !stored.OpenPollEmailEnabled || stored.NotificationEmailEnabled {
+		t.Fatalf("stored = %+v; want email preferences preserved", stored)
+	}
+}
+
+func TestNewAddsEmailColumnsToExistingSchema(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "profile.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE notification_user_prefs (
+			user_id TEXT PRIMARY KEY,
+			web_push_enabled INTEGER NOT NULL DEFAULT 0,
+			poll_opens INTEGER NOT NULL DEFAULT 1,
+			poll_completes INTEGER NOT NULL DEFAULT 1,
+			global_chat INTEGER NOT NULL DEFAULT 0,
+			event_chat INTEGER NOT NULL DEFAULT 0,
+			muted_poll_ids_json TEXT NOT NULL DEFAULT '[]',
+			updated_at DATETIME NOT NULL
+		);
+		INSERT INTO notification_user_prefs(user_id, updated_at) VALUES('existing', CURRENT_TIMESTAMP);
+	`); err != nil {
+		t.Fatalf("create previous schema: %v", err)
+	}
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatalf("new base store: %v", err)
+	}
+
+	for range 2 {
+		if _, err := New(base); err != nil {
+			t.Fatalf("new notification profile store: %v", err)
+		}
+	}
+
+	store, err := New(base)
+	if err != nil {
+		t.Fatalf("new notification profile store: %v", err)
+	}
+	existing, err := store.Preferences(context.Background(), "existing")
+	if err != nil {
+		t.Fatalf("existing preferences: %v", err)
+	}
+	if existing.NotificationEmail != "" || existing.OpenPollEmailEnabled || existing.NotificationEmailEnabled {
+		t.Fatalf("existing = %+v; want email defaults", existing)
 	}
 }

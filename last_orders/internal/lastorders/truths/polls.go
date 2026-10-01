@@ -23,6 +23,8 @@ var PollCompletedRegistry = NewRegistry[PollObservedPayload](PollCompletedFanout
 type PollObservedPayload struct {
 	PollID                 string `json:"poll_id"`
 	ChangeKind             string `json:"change_kind,omitempty"`
+	SelectedVenueID        string `json:"selected_venue_id,omitempty"`
+	PollDate               string `json:"poll_date,omitempty"`
 	SelectedRestaurantID   string `json:"selected_restaurant_id,omitempty"`
 	SelectedRestaurantTime string `json:"selected_restaurant_time,omitempty"`
 }

@@ -10,6 +10,7 @@ import (
 
 	"last_orders/internal/lastorders/basestore"
 	component "last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
 
 	_ "modernc.org/sqlite"
 )
@@ -78,6 +79,51 @@ func TestApplyAddedModifiedAndRemovedChanges(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "venue-1"); err != component.ErrCacheMiss {
 		t.Fatalf("after removal error = %v; want cache miss", err)
+	}
+}
+
+func TestListenerReadyAfterFirstSnapshot(t *testing.T) {
+	store := newTestStore(t)
+	source := venuecachetest.New()
+	service, err := component.NewService(store, source, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	listener, err := New(service, store, nil)
+	if err != nil {
+		t.Fatalf("new listener: %v", err)
+	}
+	if err := listener.Start(t.Context()); err != nil {
+		t.Fatalf("start listener: %v", err)
+	}
+	defer listener.Close()
+
+	select {
+	case <-listener.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener was not ready after an empty first snapshot")
+	}
+}
+
+func TestListenerNotReadyBeforeFirstSnapshot(t *testing.T) {
+	store := newTestStore(t)
+	service, err := component.NewService(store, &blockingSource{fakeSource: &fakeSource{}, stream: &blockingStream{}}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	listener, err := New(service, store, nil)
+	if err != nil {
+		t.Fatalf("new listener: %v", err)
+	}
+	if err := listener.Start(t.Context()); err != nil {
+		t.Fatalf("start listener: %v", err)
+	}
+	defer listener.Close()
+
+	select {
+	case <-listener.Ready():
+		t.Fatal("listener ready before any snapshot")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -159,9 +205,9 @@ func (s *replaySource) Watch(context.Context) (component.ChangeStream, error) {
 }
 
 type replayStream struct {
-	changes []component.Change
-	idx     int
-	done    bool
+	changes        []component.Change
+	idx            int
+	done           bool
 	failAfterFirst bool
 }
 

@@ -1,6 +1,41 @@
 package completedpolls
 
-import "testing"
+import (
+	"testing"
+
+	"last_orders/internal/lastorders/truths"
+)
+
+func TestCompletedPayloadCarriesSelectionAndDate(t *testing.T) {
+	got := completedPayload(Change{Kind: ChangeModified, Doc: Document{ID: "poll-1", Data: map[string]any{
+		"selected":        "pub-1",
+		"date":            "2026-10-02",
+		"restaurant":      "restaurant-1",
+		"restaurant_time": "18:30",
+		"completed":       true,
+	}}})
+	want := truths.PollObservedPayload{
+		PollID:                 "poll-1",
+		ChangeKind:             "modified",
+		SelectedVenueID:        "pub-1",
+		PollDate:               "2026-10-02",
+		SelectedRestaurantID:   "restaurant-1",
+		SelectedRestaurantTime: "18:30",
+	}
+	if got != want {
+		t.Fatalf("completedPayload() = %+v, want %+v", got, want)
+	}
+}
+
+func TestCompletedPayloadIgnoresMistypedFields(t *testing.T) {
+	got := completedPayload(Change{Kind: ChangeAdded, Doc: Document{ID: "poll-1", Data: map[string]any{
+		"selected": 7,
+		"date":     true,
+	}}})
+	if got.SelectedVenueID != "" || got.PollDate != "" {
+		t.Fatalf("completedPayload() = %+v, want mistyped fields left empty", got)
+	}
+}
 
 func TestCompletedEventKey(t *testing.T) {
 	tests := []struct {

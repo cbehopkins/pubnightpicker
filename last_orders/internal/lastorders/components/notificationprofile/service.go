@@ -34,6 +34,11 @@ func (s *Service) GetEligiblePushEndpoints(ctx context.Context, selector Selecto
 	return s.store.EligibleEndpoints(ctx, selector)
 }
 
+// GetEligibleEmailRecipients reads the local projection only.
+func (s *Service) GetEligibleEmailRecipients(ctx context.Context, kind EmailKind) ([]EmailRecipient, error) {
+	return s.store.EmailRecipients(ctx, kind)
+}
+
 // Preferences returns one user's projected preferences, for recipient resolution
 // which cannot be expressed as a selector.
 func (s *Service) Preferences(ctx context.Context, userID string) (UserPreferences, error) {

@@ -54,18 +54,19 @@ distinct PMUID.
 Register named bulk templates with `AddTemplate` before sending:
 
 ```go
-err := client.AddTemplate("greeting", "Hello {{.name}}")
+err := client.AddTemplate("greeting", "Hello {{ name }}")
 ```
 
-Dummy templates use Go `text/template` syntax internally. Set
-`Email.TemplateID` to the registered name; the client renders the template
-separately for each recipient using common `Email.Variables` combined with
-`Recipient.Variables`, with recipient values taking precedence. A missing
-template, missing variable, invalid template, or duplicate name returns an
-error. All recipients are rendered before the first callback is invoked.
+Dummy rendering uses Sweego's observed placeholder syntax: `{{name}}` or
+`{{ name }}`. Set `Email.TemplateID` to the registered name; the client renders
+the template separately for each recipient using common `Email.Variables`
+combined with `Recipient.Variables`, with recipient values taking precedence.
+A missing template, missing variable, unsupported placeholder syntax, or
+duplicate name returns an error. All recipients are rendered before the first
+callback is invoked.
 
-Plain-text messages without a configured template are passed to the callback
-unchanged.
+Plain-text messages without a configured template use the same substitution,
+matching Sweego's `message-txt` behaviour.
 
 ### Accepted hooks
 

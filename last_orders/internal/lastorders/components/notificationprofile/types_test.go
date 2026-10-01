@@ -16,6 +16,29 @@ func TestPreferencesFromDocumentAppliesDefaults(t *testing.T) {
 	if preferences.GlobalChat || preferences.EventChat {
 		t.Error("chat preferences should default to disabled")
 	}
+	if preferences.NotificationEmail != "" || preferences.OpenPollEmailEnabled || preferences.NotificationEmailEnabled {
+		t.Error("email preferences should default to no address and disabled")
+	}
+}
+
+func TestPreferencesFromDocumentReadsEmailPreferences(t *testing.T) {
+	preferences, err := PreferencesFromDocument(Document{ID: "user", Data: map[string]any{
+		"notificationEmail":        "user@example.com",
+		"openPollEmailEnabled":     true,
+		"notificationEmailEnabled": "yes",
+	}})
+	if err != nil {
+		t.Fatalf("preferences from document: %v", err)
+	}
+	if preferences.NotificationEmail != "user@example.com" || !preferences.OpenPollEmailEnabled {
+		t.Fatalf("preferences = %+v; want the email fields applied", preferences)
+	}
+	if preferences.NotificationEmailEnabled {
+		t.Error("a non-boolean flag should keep its disabled default")
+	}
+	if preferences.Enabled(KindPollOpens) {
+		t.Error("email preferences must not enable push")
+	}
 }
 
 func TestPreferencesFromDocumentReadsNestedPreferences(t *testing.T) {
@@ -46,8 +69,11 @@ func TestPreferencesEnabledRespectsMasterSwitch(t *testing.T) {
 	if preferences.Enabled(KindPollOpens) {
 		t.Error("master switch off should disable poll opens")
 	}
-	if !preferences.Enabled(KindDiagnostic) {
-		t.Error("diagnostic push should not be gated on preferences")
+	if preferences.Enabled(KindDiagnostic) {
+		t.Error("master switch off should disable diagnostic push")
+	}
+	if !(UserPreferences{WebPushEnabled: true}).Enabled(KindDiagnostic) {
+		t.Error("diagnostic push should ignore per-type preferences")
 	}
 }
 

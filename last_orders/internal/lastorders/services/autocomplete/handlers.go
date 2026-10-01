@@ -21,8 +21,9 @@ type CompletionClosePayload struct {
 }
 
 type CompletionAmbiguousPayload struct {
-	PollID string `json:"poll_id"`
-	Reason string `json:"reason"`
+	PollID   string `json:"poll_id"`
+	PollDate string `json:"poll_date,omitempty"`
+	Reason   string `json:"reason"`
 }
 
 type CandidateHandler struct {
@@ -57,7 +58,7 @@ func (handler CandidateHandler) Handle(ctx context.Context, truth truths.PollAut
 	if decision.IsClearWinner() {
 		return newCloseCell(truth.Poll.PollID, truth.Poll.PollDate, decision.SelectedVenueID)
 	}
-	return newAmbiguousCell(truth.Poll.PollID, decision.Reason)
+	return newAmbiguousCell(truth.Poll.PollID, truth.Poll.PollDate, decision.Reason)
 }
 
 func (handler CandidateHandler) loadVotes(ctx context.Context, pollID string) (map[string]int, error) {
@@ -127,7 +128,19 @@ func (handler AmbiguousHandler) Handle(ctx context.Context, payload CompletionAm
 	if handler.Logger != nil {
 		handler.Logger.Info("poll requires manual completion", "poll_id", payload.PollID, "reason", payload.Reason)
 	}
-	return cellar.Complete{}
+	envelope, err := truths.NewEnvelope(truths.PollManualCompletionRequiredFanout, truths.PollManualCompletionRequired{
+		PollID:   payload.PollID,
+		PollDate: payload.PollDate,
+		Reason:   payload.Reason,
+	})
+	if err != nil {
+		return cellar.ErrorResult{Message: "build manual completion truth", Err: err}
+	}
+	truth, err := envelope.CellRequest()
+	if err != nil {
+		return cellar.ErrorResult{Message: "build manual completion truth", Err: err}
+	}
+	return cellar.Complete{NewCells: []cellar.CellRequest{truth}}
 }
 
 func newCloseCell(pollID, pollDate, venueID string) cellar.Result {
@@ -138,8 +151,8 @@ func newCloseCell(pollID, pollDate, venueID string) cellar.Result {
 	return cellar.Complete{NewCells: []cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: HandlerClose, Payload: payload}}}}}
 }
 
-func newAmbiguousCell(pollID, reason string) cellar.Result {
-	payload, err := cellar.JSONCodec[CompletionAmbiguousPayload]().Marshal(CompletionAmbiguousPayload{PollID: pollID, Reason: reason})
+func newAmbiguousCell(pollID, pollDate, reason string) cellar.Result {
+	payload, err := cellar.JSONCodec[CompletionAmbiguousPayload]().Marshal(CompletionAmbiguousPayload{PollID: pollID, PollDate: pollDate, Reason: reason})
 	if err != nil {
 		return cellar.ErrorResult{Message: "marshal completion ambiguous payload", Err: err}
 	}

@@ -88,13 +88,14 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 			if change.Kind != ChangeAdded {
 				continue
 			}
-			l.createTruth(change.Doc.ID)
+			pollDate, _ := change.Doc.Data["date"].(string)
+			l.createTruth(change.Doc.ID, pollDate)
 		}
 	}
 }
 
-func (l *Listener) createTruth(pollID string) {
-	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID})
+func (l *Listener) createTruth(pollID, pollDate string) {
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID, PollDate: pollDate})
 	if err != nil {
 		l.logger.Error("marshal new poll payload", "poll_id", pollID, "err", err)
 		return

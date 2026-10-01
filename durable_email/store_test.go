@@ -1,9 +1,11 @@
 package durableemail
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cellar/pkg/cellar"
 	cellarsqlite "cellar/pkg/sqlite"
@@ -142,6 +144,116 @@ func TestNewStoreIsIdempotent(t *testing.T) {
 	if _, err := NewStore(db); err != nil {
 		t.Fatalf("second NewStore: %v", err)
 	}
+}
+
+func TestRepeatedSetupPreservesProgressAndRejectsConflicts(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{
+		IdempotencyToken: "send-1", SenderEmail: "sender@example.com", Subject: "Pub night",
+		Variables:  map[string]any{"event": "Friday"},
+		Recipients: []SendRecipient{{Email: "alice@example.com", Name: "Alice", Variables: map[string]any{"name": "Alice"}}},
+	}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	messageID := requestMessageID(t, db, request.IdempotencyToken)
+	if _, err := db.Exec(`UPDATE email_progress SET state = ?, pmuid = ? WHERE idempotency_token = ?`,
+		StateAccepted, "pmuid-1", request.IdempotencyToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatalf("repeat identical Setup: %v", err)
+	}
+	if got := requestMessageID(t, db, request.IdempotencyToken); got != messageID {
+		t.Errorf("message ID = %q, want original %q", got, messageID)
+	}
+	state, pmuid, _ := progressRow(t, db, request.IdempotencyToken, "alice@example.com")
+	if state != StateAccepted || pmuid.String != "pmuid-1" {
+		t.Errorf("progress reset on repeat Setup: state = %q, pmuid = %q", state, pmuid.String)
+	}
+	changed := request
+	changed.Subject = "Changed"
+	if err := applySetup(t, cellarStore, store, changed); err == nil {
+		t.Error("conflicting subject was accepted")
+	}
+	changed = request
+	changed.Recipients = []SendRecipient{{Email: "bob@example.com"}}
+	if err := applySetup(t, cellarStore, store, changed); err == nil {
+		t.Error("conflicting recipient set was accepted")
+	}
+}
+
+func TestRecoverSubmissionsOnlyMarksAttemptedPending(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		recipient string
+		state     string
+		at        any
+	}{
+		{"attempted@example.com", StatePending, time.Now().UTC()},
+		{"virgin@example.com", StatePending, nil},
+		{"accepted@example.com", StateAccepted, time.Now().UTC()},
+	} {
+		if _, err := db.Exec(`INSERT INTO email_progress
+			(idempotency_token, recipient, recipient_name, state, variables, submitted_at)
+			VALUES (?, ?, ?, ?, ?, ?)`, "send-1", row.recipient, "", row.state, `{}`, row.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := store.RecoverSubmissions(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for recipient, want := range map[string]string{
+		"attempted@example.com": StateRecovery,
+		"virgin@example.com":    StatePending,
+		"accepted@example.com":  StateAccepted,
+	} {
+		state, _, _ := progressRow(t, db, "send-1", recipient)
+		if state != want {
+			t.Errorf("%s state = %q, want %q", recipient, state, want)
+		}
+	}
+}
+
+func applySetup(t *testing.T, cellarStore *cellarsqlite.Store, store *Store, request SendRequest) error {
+	t.Helper()
+	work, err := store.insertRequestWork(request)
+	if err != nil {
+		return err
+	}
+	definition, err := cellar.NewCellDefinition(HandlerSetup, request)
+	if err != nil {
+		return err
+	}
+	cellRequest, err := definition.CellRequest()
+	if err != nil {
+		return err
+	}
+	if _, err := cellarStore.Add([]cellar.CellRequest{cellRequest}); err != nil {
+		return err
+	}
+	cell, ok, err := cellarStore.ClaimNext(time.Now())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		t.Fatal("Setup cell was not claimable")
+	}
+	return cellarStore.ApplyResult(cell, cellar.Complete{ApplicationWork: []cellar.ApplicationWork{work}})
 }
 
 func openTestDB(t *testing.T) *sql.DB {

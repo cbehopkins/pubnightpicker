@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"last_orders/internal/lastorders/components/notificationprofile"
@@ -26,6 +27,8 @@ type Listener struct {
 	store      *notificationprofile.Store
 	logger     *slog.Logger
 	retryDelay time.Duration
+	ready      chan struct{}
+	unloaded   atomic.Int32
 	lifecycle.Controller
 }
 
@@ -41,7 +44,14 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay}, nil
+	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{})}
+	listener.unloaded.Store(2)
+	return listener, nil
+}
+
+// Ready closes once both streams have applied their first full snapshot.
+func (l *Listener) Ready() <-chan struct{} {
+	return l.ready
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -55,22 +65,34 @@ func (l *Listener) watch(ctx context.Context) {
 	group.Add(2)
 	go func() {
 		defer group.Done()
-		l.watchStream(ctx, "user", l.service.SourceWatchUsers, l.applyUser)
+		l.watchStream(ctx, "user", l.service.SourceWatchUsers, l.applyUser, l.streamLoaded())
 	}()
 	go func() {
 		defer group.Done()
-		l.watchStream(ctx, "endpoint", l.service.SourceWatchEndpoints, l.applyEndpoint)
+		l.watchStream(ctx, "endpoint", l.service.SourceWatchEndpoints, l.applyEndpoint, l.streamLoaded())
 	}()
 	group.Wait()
+}
+
+// streamLoaded returns a marker that counts one stream's first snapshot once.
+func (l *Listener) streamLoaded() func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if l.unloaded.Add(-1) == 0 {
+				close(l.ready)
+			}
+		})
+	}
 }
 
 type openStream func(context.Context) (notificationprofile.ChangeStream, error)
 
 type applyChange func(context.Context, notificationprofile.Change) error
 
-func (l *Listener) watchStream(ctx context.Context, name string, open openStream, apply applyChange) {
+func (l *Listener) watchStream(ctx context.Context, name string, open openStream, apply applyChange, loaded func()) {
 	for ctx.Err() == nil {
-		if err := l.watchOnce(ctx, open, apply); err != nil {
+		if err := l.watchOnce(ctx, open, apply, loaded); err != nil {
 			l.logger.Error("notification profile watch failed", "stream", name, "err", err)
 			select {
 			case <-ctx.Done():
@@ -83,7 +105,7 @@ func (l *Listener) watchStream(ctx context.Context, name string, open openStream
 // watchOnce establishes a stream and applies changes until it fails. Firestore
 // replays a full snapshot on each new stream, which is what rebuilds a lost
 // projection.
-func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyChange) error {
+func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyChange, loaded func()) error {
 	stream, err := open(ctx)
 	if err != nil {
 		return err
@@ -107,6 +129,7 @@ func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyCh
 				return err
 			}
 		}
+		loaded()
 	}
 }
 

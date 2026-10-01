@@ -15,14 +15,21 @@ import (
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
+	"last_orders/internal/lastorders/components/pushsources/pushsourcestest"
 	"last_orders/internal/lastorders/components/recurrence/recurrencetest"
 	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
+	"last_orders/internal/lastorders/database/listeners/chatmessages/chatmessagestest"
 	"last_orders/internal/lastorders/database/listeners/completedpolls/completedpollstest"
 	"last_orders/internal/lastorders/database/listeners/eventvenues/eventvenuestest"
 	"last_orders/internal/lastorders/database/listeners/newpolls/newpollstest"
+	"last_orders/internal/lastorders/database/listeners/notificationmirror/notificationmirrortest"
+	"last_orders/internal/lastorders/database/listeners/pushtest/pushtesttest"
+	emailplugin "last_orders/internal/lastorders/plugins/email"
+	pushplugin "last_orders/internal/lastorders/plugins/push"
 	"last_orders/internal/lastorders/services/autocomplete/autocompletetest"
 	"last_orders/internal/lastorders/truths"
 
@@ -183,9 +190,10 @@ func TestNewRequiresIdempotencyRemoteWhenFirestoreDisabled(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "no-remote.db")
 	_, err := app.New(app.Config{
-		DBPath:    dbPath,
-		PollDelay: 5 * time.Millisecond,
-		Logger:    testLogger(),
+		DBPath:      dbPath,
+		PollDelay:   5 * time.Millisecond,
+		Logger:      testLogger(),
+		EmailClient: emailplugin.ClientDummy,
 	})
 	if err == nil {
 		t.Fatal("expected app.New to fail fast without a durable idempotency remote")
@@ -200,6 +208,9 @@ func TestStartupFailureBlocksListeners(t *testing.T) {
 		PollDelay:         5 * time.Millisecond,
 		Logger:            testLogger(),
 		IdempotencyRemote: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
+		CompletionActions: completionactionstest.New(),
+		EmailClient:       emailplugin.ClientDummy,
+		Push:              pushplugin.Options{Client: pushplugin.ClientDummy},
 		StartupComponentChecks: []func(*basestore.Store) error{
 			func(*basestore.Store) error { return errors.New("synthetic startup failure") },
 		},
@@ -316,6 +327,13 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 		NewPollSource:             newpollstest.New(),
 		CompletedPollSource:       completedpollstest.New(),
 		AutocompleteSource:        autocompletetest.New(),
+		PushSources:               pushsourcestest.New(),
+		ChatMessageSource:         chatmessagestest.New(),
+		PushTestSource:            pushtesttest.New(),
+		NotificationMirrorSource:  notificationmirrortest.New(),
+		CompletionActions:         completionactionstest.New(),
+		EmailClient:               emailplugin.ClientDummy,
+		Push:                      pushplugin.Options{Client: pushplugin.ClientDummy},
 	}
 }
 

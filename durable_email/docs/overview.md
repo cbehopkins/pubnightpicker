@@ -293,7 +293,8 @@ It is not permission to immediately submit the email again.
 
 The recipient has entered provider-log recovery and is waiting for provider records to become visible.
 
-The recovery handler waits for the configured delay before querying the provider.
+The recovery handler schedules a delayed Fanout; its individual Verify Cells
+query the provider after that delay.
 
 For the initial implementation the delay is **120 seconds**.
 
@@ -333,7 +334,8 @@ Startup recovery is an application-level operation.
 
 It is not a Cellar Recovery Cell and does not create a separate recovery workflow.
 
-On application startup, the durable email component changes existing:
+Before starting Cellar, the application invokes durable email startup recovery to
+change rows that are still `Pending` with a non-NULL `submitted_at`:
 
 ```text
 Pending → Recovery
@@ -343,7 +345,10 @@ for all appropriate progress rows.
 
 This protects against the possibility that a process stopped after a provider submission was made but before the durable result was recorded.
 
-The already-persisted Send sequences remain responsible for processing the rows.
+Rows never submitted, and rows already accepted, are left alone. The
+already-persisted Send sequences remain responsible for processing the rows.
+Cellar restores a claimed Cell at its previous step; if that step is Post,
+Post restarts the sequence before making another provider call.
 
 ---
 
@@ -391,7 +396,8 @@ The Recovery handler first examines the associated progress rows.
 
 During ordinary execution there will normally be no `Recovery` rows, and the handler completes.
 
-During startup recovery, rows may have been changed to `Recovery`.
+After an ambiguous Post or during startup recovery, rows may have been changed
+to `Recovery`.
 
 The handler changes eligible rows:
 
@@ -399,23 +405,34 @@ The handler changes eligible rows:
 Recovery → RecoveryWaiting
 ```
 
-and returns a Cellar retry with a 120-second `NotBefore` time.
+and atomically creates one Fanout Cell with `NotBefore` no earlier than the
+latest affected `submitted_at` plus 120 seconds. It retries its own step no
+earlier than the same deadline.
 
 This uses Cellar's scheduling mechanism rather than blocking a worker.
 
-When the handler executes again after the delay:
+The Fanout creates one keyed Verify Cell per `RecoveryWaiting` recipient. Each
+Verify Cell independently asks the provider about its recipient and atomically
+records one outcome with its own completion:
 
-1. it finds `RecoveryWaiting` rows;
-2. it calls `EmailVerifier.Verify` for each candidate;
-3. if verification finds the provider message:
+1. if verification finds the provider message, it records the PMUID and changes
+    the row to `Accepted`;
+2. if verification succeeds but finds no provider message, it changes the row
+    to `Pending` and clears `submitted_at`;
+3. if verification fails, the row stays `RecoveryWaiting` and Post cannot run.
 
-   * records the returned PMUID;
-   * changes the row to `Accepted`;
-4. if verification succeeds but finds no provider message:
+Recovery retries while any `RecoveryWaiting` rows remain. Only after every
+recipient is resolved does it complete and allow Post to submit those now
+`Pending`. One provider check after the delay is sufficient to establish
+absence; repeated checks for a successful `Found == false` are not required.
 
-   * changes the row to `Pending`.
+The delay is measured from the persisted timestamp recorded immediately before
+the provider call. A crash before the call may therefore incur an unnecessary
+verification, but cannot cause an immediate duplicate submission.
 
-A verification error is an operational failure of the verification operation and is handled using the Cellar retry/error semantics.
+A verification error is an operational failure of that recipient's Verify Cell,
+handled using Cellar's error/recovery semantics. Other recipients can finish
+independently; an unresolved recipient never releases Post.
 
 The recovery operation never sends an email itself.
 
@@ -515,7 +532,14 @@ The durable layer must not assume that an error means that the provider definite
 Therefore:
 
 * usable provider result → `Accepted`;
-* error / no usable result → `Recovery`.
+* error / no usable result → `Recovery` and restart at Setup using
+    `RetrySequence` with the progress update in `ApplicationWork`.
+
+Setup must accept an identical existing request without replacing the message
+ID or resetting recipient progress; a conflicting reuse of the token fails.
+Recovery then delays and verifies before a subsequent Post may run. On startup
+Post also checks for unresolved recovery rows before sending, since Cellar may
+resume an interrupted Cell directly at Post.
 
 The provider PMUID returned by `SendResult` is stored in the progress row when the result is usable.
 

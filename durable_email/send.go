@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	HandlerSetup  cellar.HandlerName = "durable_email.setup"
-	HandlerPost   cellar.HandlerName = "durable_email.post"
-	HandlerVerify cellar.HandlerName = "durable_email.verify"
+	HandlerSetup          cellar.HandlerName = "durable_email.setup"
+	HandlerPost           cellar.HandlerName = "durable_email.post"
+	HandlerRecovery       cellar.HandlerName = "durable_email.recovery"
+	HandlerRecoveryFanout cellar.HandlerName = "durable_email.recovery_fanout"
+	HandlerVerify         cellar.HandlerName = "durable_email.verify"
 )
 
-// VerifyDelay is how long verification waits before looking again for
-// recipients the provider has not yet reported.
+// VerifyDelay is the minimum interval from submission to provider verification.
 const VerifyDelay = 120 * time.Second
 
 // MessageIDHeader correlates a provider message with its progress row.
@@ -47,14 +48,43 @@ type SendRequest struct {
 func NewSendSequence(request SendRequest) []cellar.Step {
 	return []cellar.Step{
 		{HandlerName: HandlerSetup, Payload: request},
+		{HandlerName: HandlerRecovery, Payload: operationRequest{IdempotencyToken: request.IdempotencyToken}},
 		{HandlerName: HandlerPost, Payload: operationRequest{IdempotencyToken: request.IdempotencyToken}},
-		{HandlerName: HandlerVerify, Payload: operationRequest{IdempotencyToken: request.IdempotencyToken}},
 	}
 }
 
 // operationRequest identifies the Send operation a step acts on.
 type operationRequest struct {
 	IdempotencyToken string `json:"idempotency_token"`
+}
+
+// Register binds every durable email handler to runtime; call before Cellar.Start.
+func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, verifier clients.EmailVerifier) error {
+	if store == nil || client == nil || verifier == nil {
+		return fmt.Errorf("durable email store, client, and verifier are required")
+	}
+	if err := runtime.Register(HandlerSetup, SetupHandler{Store: store}); err != nil {
+		return err
+	}
+	if err := runtime.Register(HandlerRecovery, RecoveryHandler{Store: store}); err != nil {
+		return err
+	}
+	fanout, err := NewRecoveryFanout(store)
+	if err != nil {
+		return err
+	}
+	if err := fanout.Register(runtime); err != nil {
+		return err
+	}
+	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client}); err != nil {
+		return err
+	}
+	return runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier})
+}
+
+type verifyRequest struct {
+	IdempotencyToken string `json:"idempotency_token"`
+	Recipient        string `json:"recipient"`
 }
 
 // SetupHandler records the durable request and progress rows.
@@ -72,6 +102,73 @@ func (h SetupHandler) Handle(ctx context.Context, request SendRequest) cellar.Re
 	return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{work}}
 }
 
+// RecoveryHandler waits for independent verification before permitting another Post.
+type RecoveryHandler struct {
+	Store *Store
+}
+
+func (h RecoveryHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
+	candidates, err := h.Store.recoveryCandidates(ctx, request.IdempotencyToken)
+	if err != nil {
+		return cellar.ErrorResult{Message: "read recovery recipients", Err: err}
+	}
+	if len(candidates) > 0 {
+		deadline := candidates[0].submittedAt.Add(VerifyDelay)
+		for _, candidate := range candidates[1:] {
+			if later := candidate.submittedAt.Add(VerifyDelay); later.After(deadline) {
+				deadline = later
+			}
+		}
+		definition, err := cellar.NewCellDefinition(HandlerRecoveryFanout, request)
+		if err != nil {
+			return cellar.ErrorResult{Message: "prepare recovery fanout", Err: err}
+		}
+		child, err := definition.CellRequest()
+		if err != nil {
+			return cellar.ErrorResult{Message: "prepare recovery fanout", Err: err}
+		}
+		child.NotBefore = &deadline
+		return cellar.Retry{
+			NotBefore:       &deadline,
+			NewCells:        []cellar.CellRequest{child},
+			ApplicationWork: []cellar.ApplicationWork{h.Store.waitWork(request.IdempotencyToken)},
+		}
+	}
+	waiting, err := h.Store.waitingRecipients(ctx, request.IdempotencyToken)
+	if err != nil {
+		return cellar.ErrorResult{Message: "read waiting recipients", Err: err}
+	}
+	if len(waiting) > 0 {
+		notBefore := time.Now().UTC().Add(time.Second)
+		return cellar.Retry{NotBefore: &notBefore}
+	}
+	return cellar.Complete{}
+}
+
+// NewRecoveryFanout registers a durable expansion into per-recipient Verify cells.
+func NewRecoveryFanout(store *Store) (*cellar.Fanout[operationRequest], error) {
+	return cellar.NewFanout(HandlerRecoveryFanout, cellar.FanoutExpanderFunc[operationRequest](
+		func(ctx context.Context, _ cellar.CellID, request operationRequest) ([]cellar.FanoutTarget, error) {
+			candidates, err := store.waitingRecipients(ctx, request.IdempotencyToken)
+			if err != nil {
+				return nil, err
+			}
+			targets := make([]cellar.FanoutTarget, 0, len(candidates))
+			for _, candidate := range candidates {
+				definition, err := cellar.NewCellDefinition(HandlerVerify, verifyRequest{
+					IdempotencyToken: request.IdempotencyToken,
+					Recipient:        candidate.recipient,
+				})
+				if err != nil {
+					return nil, err
+				}
+				targets = append(targets, cellar.FanoutTarget{Key: candidate.recipient, Cell: definition})
+			}
+			return targets, nil
+		}),
+	)
+}
+
 // PostHandler submits pending recipients to the email provider.
 type PostHandler struct {
 	Store  *Store
@@ -79,6 +176,13 @@ type PostHandler struct {
 }
 
 func (h PostHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
+	unresolved, err := h.Store.hasUnresolved(ctx, request.IdempotencyToken)
+	if err != nil {
+		return cellar.ErrorResult{Message: "read recovery state", Err: err}
+	}
+	if unresolved {
+		return cellar.RetrySequence{}
+	}
 	pending, err := h.Store.pendingRecipients(ctx, request.IdempotencyToken)
 	if err != nil {
 		return cellar.ErrorResult{Message: "read pending recipients", Err: err}
@@ -99,14 +203,17 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 
 	result, err := h.Client.Send(ctx, newEmail(common, pending))
 	if err != nil {
-		return cellar.ErrorResult{Message: "send email", Err: err}
+		return cellar.RetrySequence{ApplicationWork: []cellar.ApplicationWork{h.Store.recoverWork(request.IdempotencyToken)}}
 	}
 	if len(result.Recipients) != len(pending) {
-		return cellar.ErrorResult{Message: fmt.Sprintf("send returned %d results, want %d", len(result.Recipients), len(pending))}
+		return cellar.RetrySequence{ApplicationWork: []cellar.ApplicationWork{h.Store.recoverWork(request.IdempotencyToken)}}
 	}
 
 	work := make([]cellar.ApplicationWork, 0, len(pending))
 	for index, recipient := range pending {
+		if result.Recipients[index].PMUID == "" {
+			return cellar.RetrySequence{ApplicationWork: []cellar.ApplicationWork{h.Store.recoverWork(request.IdempotencyToken)}}
+		}
 		work = append(work, h.Store.acceptWork(request.IdempotencyToken, recipient.email, result.Recipients[index].PMUID))
 	}
 	return cellar.Complete{ApplicationWork: work}
@@ -145,12 +252,12 @@ type VerifyHandler struct {
 	Verifier clients.EmailVerifier
 }
 
-func (h VerifyHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
-	candidates, err := h.Store.verifyCandidates(ctx, request.IdempotencyToken)
+func (h VerifyHandler) Handle(ctx context.Context, request verifyRequest) cellar.Result {
+	submittedAt, waiting, err := h.Store.waitingRecipient(ctx, request.IdempotencyToken, request.Recipient)
 	if err != nil {
-		return cellar.ErrorResult{Message: "read verification candidates", Err: err}
+		return cellar.ErrorResult{Message: "read verification recipient", Err: err}
 	}
-	if len(candidates) == 0 {
+	if !waiting {
 		return cellar.Complete{}
 	}
 
@@ -159,28 +266,19 @@ func (h VerifyHandler) Handle(ctx context.Context, request operationRequest) cel
 		return cellar.ErrorResult{Message: "read durable email request", Err: err}
 	}
 
-	work := make([]cellar.ApplicationWork, 0, len(candidates))
-	outstanding := 0
-	for _, candidate := range candidates {
-		result, err := h.Verifier.Verify(ctx, clients.VerifyRequest{
-			CorrelationID: common.messageID,
-			Recipient:     candidate.recipient,
-			SentAt:        candidate.submittedAt,
-		})
-		if err != nil {
-			return cellar.ErrorResult{Message: fmt.Sprintf("verify %q", candidate.recipient), Err: err}
-		}
-		if !result.Found {
-			outstanding++
-			continue
-		}
-		work = append(work, h.Store.acceptWork(request.IdempotencyToken, candidate.recipient, result.PMUID))
+	result, err := h.Verifier.Verify(ctx, clients.VerifyRequest{
+		CorrelationID: common.messageID,
+		Recipient:     request.Recipient,
+		SentAt:        submittedAt,
+	})
+	if err != nil {
+		return cellar.ErrorResult{Message: fmt.Sprintf("verify %q", request.Recipient), Err: err}
 	}
-
-	if outstanding > 0 {
-		// Retry repeats this step, so unresolved recipients are looked for again.
-		notBefore := time.Now().UTC().Add(VerifyDelay)
-		return cellar.Retry{NotBefore: &notBefore, ApplicationWork: work}
+	if !result.Found {
+		return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{h.Store.absentWork(request.IdempotencyToken, request.Recipient)}}
 	}
-	return cellar.Complete{ApplicationWork: work}
+	if result.PMUID == "" {
+		return cellar.ErrorResult{Message: fmt.Sprintf("verify %q returned no PMUID", request.Recipient)}
+	}
+	return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{h.Store.acceptRecoveredWork(request.IdempotencyToken, request.Recipient, result.PMUID)}}
 }

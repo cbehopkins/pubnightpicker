@@ -85,12 +85,24 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 			if change.Kind != ChangeAdded && change.Kind != ChangeModified {
 				continue
 			}
-			// FIXME - if we use the schema we might be able to get this type safe earlier
-			selectedVenueID, _ := change.Doc.Data["selected"].(string)
-			selectedRestaurantID, _ := change.Doc.Data["restaurant_id"].(string)
-			selectedRestaurantTime, _ := change.Doc.Data["restaurant_time"].(string)
-			l.createTruth(change.Doc.ID, selectedVenueID, changeKind(change.Kind), selectedRestaurantID, selectedRestaurantTime)
+			l.createTruth(completedPayload(change))
 		}
+	}
+}
+
+// FIXME - if we use the schema we might be able to get this type safe earlier
+func completedPayload(change Change) truths.PollObservedPayload {
+	selectedVenueID, _ := change.Doc.Data["selected"].(string)
+	pollDate, _ := change.Doc.Data["date"].(string)
+	selectedRestaurantID, _ := change.Doc.Data["restaurant"].(string)
+	selectedRestaurantTime, _ := change.Doc.Data["restaurant_time"].(string)
+	return truths.PollObservedPayload{
+		PollID:                 change.Doc.ID,
+		ChangeKind:             changeKind(change.Kind),
+		SelectedVenueID:        selectedVenueID,
+		PollDate:               pollDate,
+		SelectedRestaurantID:   selectedRestaurantID,
+		SelectedRestaurantTime: selectedRestaurantTime,
 	}
 }
 
@@ -99,13 +111,9 @@ type eventIdentity struct {
 	SelectedVenueID string `json:"selected_venue_id"`
 }
 
-func (l *Listener) createTruth(pollID, selectedVenueID, kind, selectedRestaurantID, selectedRestaurantTime string) {
-	envelope, err := truths.NewEnvelope(truths.PollCompletedFanout, truths.PollObservedPayload{
-		PollID:                 pollID,
-		ChangeKind:             kind,
-		SelectedRestaurantID:   selectedRestaurantID,
-		SelectedRestaurantTime: selectedRestaurantTime,
-	})
+func (l *Listener) createTruth(payload truths.PollObservedPayload) {
+	pollID := payload.PollID
+	envelope, err := truths.NewEnvelope(truths.PollCompletedFanout, payload)
 	if err != nil {
 		l.logger.Error("marshal completed poll payload", "poll_id", pollID, "err", err)
 		return
@@ -113,7 +121,7 @@ func (l *Listener) createTruth(pollID, selectedVenueID, kind, selectedRestaurant
 
 	request, err := firebaseidempotency.NewCellRequest(
 		ListenerPollCompleted,
-		completedEventKey(pollID, selectedVenueID, selectedRestaurantID, selectedRestaurantTime),
+		completedEventKey(pollID, payload.SelectedVenueID, payload.SelectedRestaurantID, payload.SelectedRestaurantTime),
 		envelope,
 	)
 	if err != nil {

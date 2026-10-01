@@ -168,6 +168,64 @@ func TestListenerProjectsUsersAndEndpoints(t *testing.T) {
 	waitForEndpointKeys(t, store, "user/a")
 }
 
+func TestListenerReadyAfterBothEmptyFirstSnapshots(t *testing.T) {
+	source := &fakeSource{
+		users:     [][]notificationprofile.Change{{}},
+		endpoints: [][]notificationprofile.Change{{}},
+	}
+	_, listener := newTestHarness(t, source)
+	if err := listener.Start(t.Context()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer listener.Close()
+
+	waitForReady(t, listener)
+	// The scripted streams keep reconnecting; marking readiness again must not panic.
+	time.Sleep(50 * time.Millisecond)
+	waitForReady(t, listener)
+}
+
+func TestListenerNotReadyUntilEveryStreamLoads(t *testing.T) {
+	source := &fakeSource{
+		users: [][]notificationprofile.Change{{userChange(notificationprofile.ChangeAdded, "user", map[string]any{"notificationEmail": "user@example.com", "openPollEmailEnabled": true})}},
+	}
+	store, listener := newTestHarness(t, source)
+	if err := listener.Start(t.Context()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer listener.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		recipients, err := store.EmailRecipients(context.Background(), notificationprofile.EmailPollOpens)
+		if err != nil {
+			t.Fatalf("email recipients: %v", err)
+		}
+		if len(recipients) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the user snapshot")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case <-listener.Ready():
+		t.Fatal("listener ready before the endpoint stream loaded")
+	default:
+	}
+}
+
+func waitForReady(t *testing.T, listener *Listener) {
+	t.Helper()
+	select {
+	case <-listener.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for listener readiness")
+	}
+}
+
 func TestListenerAppliesRemovals(t *testing.T) {
 	optedIn := map[string]any{"webPushEnabled": true}
 	source := &fakeSource{

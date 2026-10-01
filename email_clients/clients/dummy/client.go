@@ -1,21 +1,23 @@
 package dummy
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"email_clients/clients"
 )
+
+// placeholder matches Sweego's observed substitution syntax: {{name}} or {{ name }}.
+var placeholder = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
 var (
 	ErrNilCallback       = errors.New("dummy email client callback is nil")
@@ -96,7 +98,7 @@ type Client struct {
 	hooks   []AcceptedHook
 
 	templatesMu sync.RWMutex
-	templates   map[string]*template.Template
+	templates   map[string]string
 
 	recordsMu sync.Mutex
 	records   []sentRecord
@@ -114,7 +116,7 @@ var _ clients.EmailClient = (*Client)(nil)
 var _ clients.EmailVerifier = (*Client)(nil)
 
 func NewClient(callback SendCallback) *Client {
-	return &Client{callback: callback, templates: make(map[string]*template.Template)}
+	return &Client{callback: callback, templates: make(map[string]string)}
 }
 
 // OnAccepted appends hook to the hooks run, in registration order, for each
@@ -139,8 +141,7 @@ func (c *Client) AddTemplate(name, source string) error {
 		return ErrTemplateNameEmpty
 	}
 
-	parsed, err := template.New(name).Option("missingkey=error").Parse(source)
-	if err != nil {
+	if err := validatePlaceholders(source); err != nil {
 		return fmt.Errorf("parse dummy email template %q: %w", name, err)
 	}
 
@@ -150,9 +151,9 @@ func (c *Client) AddTemplate(name, source string) error {
 		return fmt.Errorf("%w: %q", ErrTemplateExists, name)
 	}
 	if c.templates == nil {
-		c.templates = make(map[string]*template.Template)
+		c.templates = make(map[string]string)
 	}
-	c.templates[name] = parsed
+	c.templates[name] = source
 	return nil
 }
 
@@ -192,22 +193,44 @@ func mergedVariables(common, recipient map[string]any) map[string]any {
 }
 
 func (c *Client) render(templateID, message string, variables map[string]any) (string, error) {
-	if templateID == "" {
-		return message, nil
+	source := message
+	if templateID != "" {
+		c.templatesMu.RLock()
+		registered, ok := c.templates[templateID]
+		c.templatesMu.RUnlock()
+		if !ok {
+			return "", fmt.Errorf("%w: %q", ErrTemplateNotFound, templateID)
+		}
+		source = registered
 	}
+	return substitute(source, variables)
+}
 
-	c.templatesMu.RLock()
-	registered := c.templates[templateID]
-	c.templatesMu.RUnlock()
-	if registered == nil {
-		return "", fmt.Errorf("%w: %q", ErrTemplateNotFound, templateID)
+func validatePlaceholders(source string) error {
+	remaining := placeholder.ReplaceAllString(source, "")
+	if strings.Contains(remaining, "{{") || strings.Contains(remaining, "}}") {
+		return errors.New("placeholders must use {{name}} or {{ name }} syntax")
 	}
+	return nil
+}
 
-	var rendered bytes.Buffer
-	if err := registered.Execute(&rendered, variables); err != nil {
-		return "", fmt.Errorf("execute dummy email template %q: %w", templateID, err)
+func substitute(source string, variables map[string]any) (string, error) {
+	if err := validatePlaceholders(source); err != nil {
+		return "", err
 	}
-	return rendered.String(), nil
+	var missing error
+	rendered := placeholder.ReplaceAllStringFunc(source, func(match string) string {
+		name := placeholder.FindStringSubmatch(match)[1]
+		value, ok := variables[name]
+		if !ok {
+			if missing == nil {
+				missing = fmt.Errorf("missing variable %q", name)
+			}
+			return match
+		}
+		return fmt.Sprint(value)
+	})
+	return rendered, missing
 }
 
 func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.SendResult, error) {

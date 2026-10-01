@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/app"
+	emailplugin "last_orders/internal/lastorders/plugins/email"
+	pushplugin "last_orders/internal/lastorders/plugins/push"
 )
 
 func main() {
@@ -20,6 +22,7 @@ func main() {
 		pollDelay       = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
 		reevaluateEvery = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
 		httpAddr        = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
+		pushClient      = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
 	)
 	flag.Parse()
 
@@ -50,6 +53,13 @@ func main() {
 		FirestoreProjectID:   firestoreProjectID,
 		EventReevaluateEvery: *reevaluateEvery,
 		HTTPAddr:             *httpAddr,
+		EmailClient:          emailplugin.ClientDummy,
+		Push: pushplugin.Options{
+			Client:          pushplugin.ClientKind(*pushClient),
+			VAPIDPrivateKey: os.Getenv("WEB_PUSH_VAPID_PRIVATE_KEY"),
+			VAPIDSubject:    os.Getenv("WEB_PUSH_VAPID_SUBJECT"),
+			BaseURL:         os.Getenv("PUBNIGHTPICKER_WEB_BASE_URL"),
+		},
 	})
 	if err != nil {
 		fatalf("initialise app: %v", err)
