@@ -238,7 +238,8 @@ def _send_to_endpoint(
     ttl_seconds: int,
     topic: str,
     dummy_run: bool,
-) -> None:
+) -> int | None:
+    """Send one push; returns the push service HTTP status, or None for dummy runs."""
     if dummy_run:
         _log.info(
             "Dummy web push to %s: %s (ttl=%s topic=%s)",
@@ -247,8 +248,8 @@ def _send_to_endpoint(
             ttl_seconds,
             topic,
         )
-        return
-    webpush(
+        return None
+    response = webpush(
         subscription_info={
             "endpoint": endpoint.endpoint,
             "keys": {
@@ -262,6 +263,13 @@ def _send_to_endpoint(
         vapid_private_key=_vapid_private_key(),
         vapid_claims=_vapid_claims(),
     )
+    status_code = getattr(response, "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _endpoint_label(endpoint: ValidPushEndpoint | PushEndpoint) -> str:
+    """Short stable identifier for log correlation, without leaking the full URL."""
+    return f"{endpoint.user_id}:...{endpoint.endpoint[-12:]}"
 
 
 def _deliver_pushes(
@@ -275,6 +283,19 @@ def _deliver_pushes(
     delivered = 0
     invalid = 0
     retryable_failures = 0
+    delivered_labels: list[str] = []
+    deactivated_labels: list[str] = []
+    payload_fields: dict[str, object] = dict(payload)
+
+    _log.info(
+        "Push request: eventType=%s tag=%s topic=%s ttl=%s bytes=%s dummy_run=%s",
+        payload_fields.get("eventType"),
+        payload_fields.get("tag"),
+        topic,
+        ttl_seconds,
+        len(json.dumps(payload)),
+        dummy_run,
+    )
 
     for document in endpoints_src():
         raw_endpoint = _push_endpoint_from_snapshot(document)
@@ -287,10 +308,11 @@ def _deliver_pushes(
                 raw_endpoint.user_id,
             )
             _deactivate_endpoint(raw_endpoint)
+            deactivated_labels.append(f"{_endpoint_label(raw_endpoint)}(missing-keys)")
             invalid += 1
             continue
         try:
-            _send_to_endpoint(
+            status = _send_to_endpoint(
                 endpoint,
                 payload,
                 ttl_seconds=ttl_seconds,
@@ -298,6 +320,7 @@ def _deliver_pushes(
                 dummy_run=dummy_run,
             )
             delivered += 1
+            delivered_labels.append(f"{_endpoint_label(endpoint)}={status}")
         except WebPushException as exc:
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
             response_text = getattr(getattr(exc, "response", None), "text", None)
@@ -306,6 +329,7 @@ def _deliver_pushes(
                     "Deactivating stale push endpoint for user %s", endpoint.user_id
                 )
                 _deactivate_endpoint(raw_endpoint)
+                deactivated_labels.append(f"{_endpoint_label(endpoint)}({status_code})")
                 invalid += 1
                 continue
             if status_code in {400, 401, 403}:
@@ -318,6 +342,7 @@ def _deliver_pushes(
                     response_text,
                 )
                 _deactivate_endpoint(endpoint)
+                deactivated_labels.append(f"{_endpoint_label(endpoint)}({status_code})")
                 invalid += 1
                 continue
             retryable_failures += 1
@@ -341,11 +366,15 @@ def _deliver_pushes(
         retryable_failures=retryable_failures,
     )
     _log.info(
-        "Push delivery result: delivered=%s invalid=%s retryable_failures=%s",
+        "Push delivery result: eventType=%s delivered=%s invalid=%s retryable_failures=%s",
+        payload_fields.get("eventType"),
         result.delivered,
         result.invalid,
         result.retryable_failures,
     )
+    _log.info("Push delivered to: %s", ", ".join(delivered_labels) or "<none>")
+    if deactivated_labels:
+        _log.info("Push deactivated: %s", ", ".join(deactivated_labels))
     if result.retryable_failures:
         raise CallbackExceptionRetry(
             "Retryable push failures "

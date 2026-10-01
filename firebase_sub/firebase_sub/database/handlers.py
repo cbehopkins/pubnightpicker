@@ -151,7 +151,14 @@ class DbHandler:
             collection_group_any.where(filter=FieldFilter("active", "==", True)),
         )
         user_preference_cache: dict[str, bool] = {}
+        scanned = 0
+        yielded = 0
         for endpoint_doc in query.stream():
+            scanned += 1
+            _log.debug(
+                "Collection-group push endpoint candidate: %s",
+                endpoint_doc.reference.path,
+            )
             user_id = _endpoint_parent_user_id(endpoint_doc)
             if user_id is None:
                 continue
@@ -187,7 +194,14 @@ class DbHandler:
                             preference_field,
                         )
             if user_preference_cache[user_id]:
+                yielded += 1
                 yield endpoint_doc
+        _log.info(
+            "Push endpoint query (%s): collection_group matched=%s yielded=%s",
+            preference_field,
+            scanned,
+            yielded,
+        )
 
     def query_active_push_endpoints_for_user(
         self, user_id: str
