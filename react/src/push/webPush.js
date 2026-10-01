@@ -10,6 +10,9 @@ import {
 } from "firebase/firestore";
 
 const WEB_PUSH_SW_PATH = import.meta.env.DEV ? "/dev-sw.js?dev-sw" : "/sw.js";
+/**
+ * @param {null} value
+ */
 function parseBooleanEnv(value) {
     if (value === undefined || value === null) {
         return false;
@@ -33,6 +36,9 @@ function supportsWebPush() {
     );
 }
 
+/**
+ * @param {string} endpoint
+ */
 function hashEndpoint(endpoint) {
     let hash = 2166136261;
     for (let index = 0; index < endpoint.length; index += 1) {
@@ -43,6 +49,9 @@ function hashEndpoint(endpoint) {
     return `ep_${(hash >>> 0).toString(16)}`;
 }
 
+/**
+ * @param {string | any[]} value
+ */
 function decodeBase64Url(value) {
     const padding = "=".repeat((4 - (value.length % 4)) % 4);
     const normalized = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -54,6 +63,10 @@ function decodeBase64Url(value) {
     return output;
 }
 
+/**
+ * @param {PushSubscription} subscription
+ * @param {string | any[] | Uint8Array<ArrayBuffer>} vapidKey
+ */
 function subscriptionUsesVapidKey(subscription, vapidKey) {
     const applicationServerKey = subscription.options?.applicationServerKey;
     if (!applicationServerKey) {
@@ -67,6 +80,9 @@ function subscriptionUsesVapidKey(subscription, vapidKey) {
     );
 }
 
+/**
+ * @param {PushSubscription} subscription
+ */
 function subscriptionKeys(subscription) {
     const json = subscription.toJSON();
     return {
@@ -76,6 +92,10 @@ function subscriptionKeys(subscription) {
     };
 }
 
+/**
+ * @param {string} uid
+ * @param {string} endpointId
+ */
 function endpointRef(uid, endpointId) {
     return doc(db, "users", uid, "push_endpoints", endpointId);
 }
@@ -108,6 +128,10 @@ async function subscribeCurrentBrowser() {
     });
 }
 
+/**
+ * @param {any} uid
+ * @param {PushSubscription} subscription
+ */
 async function upsertEndpointDoc(uid, subscription) {
     const { endpoint, p256dh, auth } = subscriptionKeys(subscription);
     const endpointId = hashEndpoint(endpoint);
@@ -141,6 +165,10 @@ export function webPushStatus() {
     };
 }
 
+/**
+ * @param {string} uid
+ * @param {boolean} enabled
+ */
 export async function setWebPushPreference(uid, enabled) {
     await setDoc(
         doc(db, "users", uid),
@@ -151,6 +179,11 @@ export async function setWebPushPreference(uid, enabled) {
     );
 }
 
+/**
+ * @param {string} uid
+ * @param {unknown} pollId
+ * @param {boolean} muted
+ */
 export async function setEventChatMuted(uid, pollId, muted) {
     if (!uid || !pollId) {
         throw new Error("Missing uid or pollId for event chat mute preference");
@@ -169,6 +202,10 @@ export async function setEventChatMuted(uid, pollId, muted) {
     );
 }
 
+/**
+ * @param {string} uid
+ * @param {boolean} muted
+ */
 export async function setGlobalChatMuted(uid, muted) {
     if (!uid) {
         throw new Error("Missing uid for global chat mute preference");
@@ -181,6 +218,9 @@ export async function setGlobalChatMuted(uid, muted) {
     );
 }
 
+/**
+ * @param {any} uid
+ */
 export async function enableWebPush(uid) {
     if (!FEATURE_ENABLED) {
         throw new Error("Web push is disabled by feature flag");
@@ -198,6 +238,9 @@ export async function enableWebPush(uid) {
     return { endpointId };
 }
 
+/**
+ * @param {any} uid
+ */
 export async function deactivateCurrentWebPushEndpoint(uid, { unsubscribe = false } = {}) {
     if (!supportsWebPush()) {
         return { endpointId: null };
@@ -225,6 +268,9 @@ export async function deactivateCurrentWebPushEndpoint(uid, { unsubscribe = fals
     return { endpointId };
 }
 
+/**
+ * @param {any} uid
+ */
 export async function touchCurrentWebPushEndpoint(uid) {
     if (!FEATURE_ENABLED || !supportsWebPush()) {
         return false;
