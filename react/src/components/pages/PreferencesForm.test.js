@@ -1,20 +1,219 @@
 ﻿// @vitest-environment jsdom
 
-import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const useWebPushSettingsMock = vi.hoisted(() => vi.fn());
+const getDocMock = vi.hoisted(() => vi.fn());
+const firestoreDocMock = vi.hoisted(() => vi.fn());
+const setDocMock = vi.hoisted(() => vi.fn(async () => undefined));
+const updateDocMock = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("firebase/firestore", () => ({
+    doc: firestoreDocMock,
+    getDoc: getDocMock,
+    setDoc: setDocMock,
+    updateDoc: updateDocMock,
+}));
+
+vi.mock("../../firebase", () => ({
+    db: {},
+}));
+
+vi.mock("react-redux", () => ({
+    useSelector: (selector) => selector({
+        auth: {
+            loggedIn: true,
+            photoUrl: "",
+            uid: "user-1",
+        },
+    }),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+    const original = await importOriginal();
+    return {
+        ...original,
+        useNavigate: () => vi.fn(),
+        useNavigation: () => ({ state: "idle" }),
+    };
+});
 
 vi.mock("../../hooks/useWebPushSettings", () => ({
     default: useWebPushSettingsMock,
 }));
 
-import { PushPreferences } from "./PreferencesForm";
+import PreferencesForm, { PushPreferences } from "./PreferencesForm";
 
 afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+});
+
+describe("PreferencesForm", () => {
+    it("restores all saved fields after browser state restoration", async () => {
+        let resolvePrivateProfile;
+        const privateProfile = new Promise((resolve) => {
+            resolvePrivateProfile = resolve;
+        });
+        let resolvePublicProfile;
+        const publicProfile = new Promise((resolve) => {
+            resolvePublicProfile = resolve;
+        });
+
+        firestoreDocMock.mockImplementation((_db, collection, uid) => ({ collection, uid }));
+        getDocMock.mockImplementation(({ collection }) => collection === "users"
+            ? privateProfile
+            : publicProfile);
+        useWebPushSettingsMock.mockReturnValue({ featureEnabled: false });
+
+        render(<PreferencesForm method="post" uid="managed-user" isAdminEditing />);
+
+        const nameInput = screen.getByLabelText("My Preferred Name");
+        const avatarInput = screen.getByLabelText("Chat Avatar");
+        const emailEnabledCheckbox = screen.getByLabelText("Email Me");
+        const emailInput = screen.getByLabelText("Email Address");
+        const votesVisibleCheckbox = screen.getByLabelText("Votes Visible to Known Users");
+        const openPollEmailCheckbox = screen.getByLabelText("Email me when a poll opens");
+        const arrivalTimeInput = screen.getByLabelText("Default arrival time (ETA)");
+
+        nameInput.value = "Restored stale name";
+        avatarInput.value = "https://stale.example/avatar.png";
+        emailEnabledCheckbox.checked = false;
+        emailInput.value = "stale@example.com";
+        votesVisibleCheckbox.checked = true;
+        openPollEmailCheckbox.checked = false;
+        arrivalTimeInput.value = "19:30";
+
+        await act(async () => {
+            resolvePrivateProfile({
+                exists: () => true,
+                data: () => ({
+                    notificationEmail: "alerts@example.com",
+                    notificationEmailEnabled: true,
+                    openPollEmailEnabled: true,
+                    defaultArrivalTime: "18:45",
+                }),
+            });
+            resolvePublicProfile({
+                exists: () => true,
+                data: () => ({
+                    name: "Managed User",
+                    photoUrl: "https://example.com/avatar.png",
+                    votesVisible: false,
+                }),
+            });
+            await Promise.all([privateProfile, publicProfile]);
+        });
+
+        expect(nameInput.value).toBe("Managed User");
+        expect(avatarInput.value).toBe("https://example.com/avatar.png");
+        expect(emailEnabledCheckbox.checked).toBe(true);
+        expect(emailInput.value).toBe("alerts@example.com");
+        expect(votesVisibleCheckbox.checked).toBe(false);
+        expect(openPollEmailCheckbox.checked).toBe(true);
+        expect(arrivalTimeInput.value).toBe("18:45");
+        expect(firestoreDocMock).toHaveBeenCalledWith({}, "users", "managed-user");
+        expect(firestoreDocMock).toHaveBeenCalledWith({}, "user-public", "managed-user");
+    });
+
+    it("saves edited private and public preferences for the managed user", async () => {
+        firestoreDocMock.mockImplementation((_db, collection, uid) => ({ collection, uid }));
+        getDocMock.mockImplementation(({ collection }) => Promise.resolve({
+            exists: () => true,
+            data: () => collection === "users"
+                ? {
+                    notificationEmail: "old@example.com",
+                    notificationEmailEnabled: true,
+                    openPollEmailEnabled: true,
+                    defaultArrivalTime: "18:45",
+                    webPushEnabled: true,
+                    pushPreferences: {
+                        pollOpens: true,
+                        pollCompletes: false,
+                        globalChat: false,
+                        eventChat: true,
+                    },
+                }
+                : {
+                    name: "Managed User",
+                    photoUrl: "https://example.com/old-avatar.png",
+                    votesVisible: false,
+                },
+        }));
+        const onCancel = vi.fn();
+
+        render(
+            <PreferencesForm
+                method="post"
+                uid="managed-user"
+                isAdminEditing
+                onCancel={onCancel}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByLabelText("My Preferred Name").value).toBe("Managed User");
+        });
+
+        fireEvent.change(screen.getByLabelText("My Preferred Name"), { target: { value: "Updated User" } });
+        fireEvent.change(screen.getByLabelText("Chat Avatar"), { target: { value: "https://example.com/new-avatar.png" } });
+        fireEvent.click(screen.getByLabelText("Email Me"));
+        fireEvent.change(screen.getByLabelText("Email Address"), { target: { value: "new@example.com" } });
+        fireEvent.click(screen.getByLabelText("Votes Visible to Known Users"));
+        fireEvent.click(screen.getByLabelText("Email me when a poll opens"));
+        fireEvent.change(screen.getByLabelText("Default arrival time (ETA)"), { target: { value: "20:15" } });
+        fireEvent.click(screen.getByLabelText("A message is sent in global chat"));
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
+        expect(updateDocMock).toHaveBeenCalledWith(
+            { collection: "users", uid: "managed-user" },
+            expect.objectContaining({
+                notificationEmail: "new@example.com",
+                notificationEmailEnabled: false,
+                openPollEmailEnabled: false,
+                defaultArrivalTime: "20:15",
+                pushPreferences: {
+                    pollOpens: true,
+                    pollCompletes: false,
+                    globalChat: true,
+                    eventChat: true,
+                },
+            })
+        );
+        expect(setDocMock).toHaveBeenCalledWith(
+            { collection: "user-public", uid: "managed-user" },
+            expect.objectContaining({
+                uid: "managed-user",
+                name: "Updated User",
+                photoUrl: "https://example.com/new-avatar.png",
+                votesVisible: true,
+            }),
+            { merge: true }
+        );
+    });
+
+    it("closes admin editing without saving when cancelled", () => {
+        firestoreDocMock.mockImplementation((_db, collection, uid) => ({ collection, uid }));
+        getDocMock.mockResolvedValue({ exists: () => false });
+        const onCancel = vi.fn();
+
+        render(
+            <PreferencesForm
+                method="post"
+                uid="managed-user"
+                isAdminEditing
+                onCancel={onCancel}
+            />
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        expect(onCancel).toHaveBeenCalledTimes(1);
+        expect(updateDocMock).not.toHaveBeenCalled();
+        expect(setDocMock).not.toHaveBeenCalled();
+    });
 });
 
 describe("PushPreferences", () => {

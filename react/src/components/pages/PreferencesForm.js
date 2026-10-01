@@ -218,15 +218,34 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
 function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCancel }) {
   const authUid = useSelector((state) => state.auth.uid);
   const loggedIn = useSelector((state) => state.auth.loggedIn);
+  const authPhotoUrl = useSelector((state) => state.auth.photoUrl);
   const uid = targetUid || authUid;
   const [currUserDoc, setCurrUserDoc] = useState({});
   const [publicUserDoc, setPublicUserDoc] = useState({});
+  const [formValues, setFormValues] = useState({
+    name: "",
+    avatar: isAdminEditing ? "" : authPhotoUrl || "",
+    notificationEmailEnabled: false,
+    notificationEmail: "",
+    votesVisible: true,
+    openPollEmailEnabled: false,
+    defaultArrivalTime: normalizeArrivalTime(),
+  });
   const [isSavingForUser, setIsSavingForUser] = useState(false);
 
   useEffect(() => {
     if (!loggedIn || !uid) {
       setCurrUserDoc({});
       setPublicUserDoc({});
+      setFormValues({
+        name: "",
+        avatar: isAdminEditing ? "" : authPhotoUrl || "",
+        notificationEmailEnabled: false,
+        notificationEmail: "",
+        votesVisible: true,
+        openPollEmailEnabled: false,
+        defaultArrivalTime: normalizeArrivalTime(),
+      });
       return;
     }
 
@@ -236,32 +255,27 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
         getDoc(firestoreDoc(db, "user-public", uid)),
       ]);
 
-      if (!privateDoc.exists()) {
-        setCurrUserDoc({});
-      } else {
-        setCurrUserDoc(privateDoc.data());
-      }
-
-      if (publicDoc.exists()) {
-        setPublicUserDoc(publicDoc.data());
-      } else {
-        setPublicUserDoc({});
-      }
+      const privateData = privateDoc.exists() ? privateDoc.data() : {};
+      const publicData = publicDoc.exists() ? publicDoc.data() : {};
+      setCurrUserDoc(privateData);
+      setPublicUserDoc(publicData);
+      setFormValues({
+        name: publicData?.name || privateData?.name || "",
+        avatar: isAdminEditing ? publicData?.photoUrl || "" : authPhotoUrl || "",
+        notificationEmailEnabled: privateData?.notificationEmailEnabled === true,
+        notificationEmail: privateData?.notificationEmail || privateData?.email || "",
+        votesVisible: publicData?.votesVisible !== false,
+        openPollEmailEnabled: privateData?.openPollEmailEnabled === true,
+        defaultArrivalTime: normalizeArrivalTime(privateData?.defaultArrivalTime),
+      });
     };
 
     loadProfiles();
-  }, [loggedIn, uid]);
+  }, [authPhotoUrl, isAdminEditing, loggedIn, uid]);
 
-  const name = loggedIn ? publicUserDoc?.name || currUserDoc?.name || "" : "";
-  const notificationEmail = loggedIn ? currUserDoc?.notificationEmail || currUserDoc.email : "";
-  const notificationEnabled = loggedIn ? currUserDoc?.notificationEmailEnabled : false;
-  const votesVisible = loggedIn ? publicUserDoc?.votesVisible !== false : true;
-  const openPollEmail = loggedIn ? currUserDoc?.openPollEmailEnabled : false;
   const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
   const pushPreferences = loggedIn ? currUserDoc?.pushPreferences ?? null : null;
-  const defaultArrivalTime = normalizeArrivalTime(loggedIn ? currUserDoc?.defaultArrivalTime : undefined);
-  const authPhotoUrl = useSelector((state) => state.auth.photoUrl);
-  const photoUrl = isAdminEditing ? publicUserDoc?.photoUrl || "" : authPhotoUrl;
+  const currentPhotoUrl = isAdminEditing ? publicUserDoc?.photoUrl || "" : authPhotoUrl;
   const navigate = useNavigate();
   const navigation = useNavigation();
 
@@ -279,7 +293,7 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     setIsSavingForUser(true);
-    const saved = await savePreferences({ uid, formData, currentPhotoUrl: photoUrl });
+    const saved = await savePreferences({ uid, formData, currentPhotoUrl });
     setIsSavingForUser(false);
     if (saved && onCancel) {
       onCancel();
@@ -296,12 +310,13 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
           <Row className="g-3">
             <Col xs={12}>
               <Form.Group>
-                <Form.Label>My Preferred Name</Form.Label>
+                <Form.Label htmlFor="name">My Preferred Name</Form.Label>
                 <Form.Control
                   id="name"
                   name="name"
                   type="text"
-                  defaultValue={name}
+                  value={formValues.name}
+                  onChange={(event) => setFormValues((values) => ({ ...values, name: event.target.value }))}
                   title="My preferred name"
                   autoComplete="name"
                 />
@@ -310,12 +325,12 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
 
             <Col xs={12}>
               <Form.Group>
-                <Form.Label>Chat Avatar</Form.Label>
-                {photoUrl && (
+                <Form.Label htmlFor="avatar">Chat Avatar</Form.Label>
+                {formValues.avatar && (
                   <div className="mb-2">
                     <img
                       className="chat-bubble__left"
-                      src={photoUrl}
+                      src={formValues.avatar}
                       alt="user avatar"
                       referrerPolicy="no-referrer"
                     />
@@ -325,7 +340,8 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
                   id="avatar"
                   name="avatar"
                   type="text"
-                  defaultValue={photoUrl}
+                  value={formValues.avatar}
+                  onChange={(event) => setFormValues((values) => ({ ...values, avatar: event.target.value }))}
                   title="URL to avatar"
                   autoComplete="photo"
                 />
@@ -338,20 +354,28 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
                 id="emailme"
                 type="checkbox"
                 name="emailme"
-                defaultChecked={notificationEnabled}
+                checked={formValues.notificationEmailEnabled}
+                onChange={(event) => setFormValues((values) => ({
+                  ...values,
+                  notificationEmailEnabled: event.target.checked,
+                }))}
                 label="Email Me"
               />
             </Col>
 
             <Col xs={12}>
               <Form.Group>
-                <Form.Label>Email Address</Form.Label>
+                <Form.Label htmlFor="email">Email Address</Form.Label>
                 <Form.Control
                   id="email"
                   type="text"
                   name="email"
                   title="The email address to use"
-                  defaultValue={notificationEmail}
+                  value={formValues.notificationEmail}
+                  onChange={(event) => setFormValues((values) => ({
+                    ...values,
+                    notificationEmail: event.target.value,
+                  }))}
                   autoComplete="email"
                 />
               </Form.Group>
@@ -362,7 +386,11 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
                 id="votes_visible"
                 type="checkbox"
                 name="votes_visible"
-                defaultChecked={votesVisible}
+                checked={formValues.votesVisible}
+                onChange={(event) => setFormValues((values) => ({
+                  ...values,
+                  votesVisible: event.target.checked,
+                }))}
                 label="Votes Visible to Known Users"
               />
             </Col>
@@ -372,19 +400,27 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
                 id="open_poll_email"
                 type="checkbox"
                 name="open_poll_email"
-                defaultChecked={openPollEmail}
+                checked={formValues.openPollEmailEnabled}
+                onChange={(event) => setFormValues((values) => ({
+                  ...values,
+                  openPollEmailEnabled: event.target.checked,
+                }))}
                 label="Email me when a poll opens"
               />
             </Col>
 
             <Col xs={12}>
               <Form.Group>
-                <Form.Label>Default arrival time (ETA)</Form.Label>
+                <Form.Label htmlFor="default_arrival_time">Default arrival time (ETA)</Form.Label>
                 <Form.Control
                   id="default_arrival_time"
                   type="time"
                   name="default_arrival_time"
-                  defaultValue={defaultArrivalTime}
+                  value={formValues.defaultArrivalTime}
+                  onChange={(event) => setFormValues((values) => ({
+                    ...values,
+                    defaultArrivalTime: event.target.value,
+                  }))}
                   title="Default time to prefill when adding ETA"
                 />
               </Form.Group>
