@@ -23,7 +23,39 @@ var (
 	ErrNoRecipients      = errors.New("email has no recipients")
 )
 
-type SendCallback func(emailAddress, message string, headers map[string]string) error
+// Response is the simulated provider's answer for one recipient. The zero
+// value is an acceptance, so a callback that models a healthy service can
+// return Response{}. A Status outside 2xx (other than the unset 0) is a
+// refusal, mirroring a real provider answering with a non-2xx status.
+type Response struct {
+	Status int
+	Body   string
+	PMUID  string
+}
+
+// SendCallback models the provider call for a single recipient. A non-nil
+// error is a transport fault (no answer); a refusing Response is an answer.
+type SendCallback func(emailAddress, message string, headers map[string]string) (Response, error)
+
+// RefusedError reports that the simulated service answered and declined the
+// recipient.
+type RefusedError struct {
+	Recipient string
+	Status    int
+	Body      string
+}
+
+func (e *RefusedError) Error() string {
+	body := strings.TrimSpace(e.Body)
+	if body == "" {
+		return fmt.Sprintf("dummy email service refused %q: HTTP %d", e.Recipient, e.Status)
+	}
+	return fmt.Sprintf("dummy email service refused %q: HTTP %d: %s", e.Recipient, e.Status, body)
+}
+
+func (r Response) refused() bool {
+	return r.Status != 0 && (r.Status < 200 || r.Status >= 300)
+}
 
 type callbackMessage struct {
 	emailAddress string
@@ -138,12 +170,20 @@ func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.
 		if err := ctx.Err(); err != nil {
 			return clients.SendResult{}, err
 		}
-		if err := c.callback(message.emailAddress, message.message, cloneHeaders(message.headers)); err != nil {
+		response, err := c.callback(message.emailAddress, message.message, cloneHeaders(message.headers))
+		if err != nil {
 			return clients.SendResult{}, fmt.Errorf("send email to %q: %w", message.emailAddress, err)
 		}
-		pmuid, err := newPMUID()
-		if err != nil {
-			return clients.SendResult{}, err
+		if response.refused() {
+			return clients.SendResult{}, &RefusedError{Recipient: message.emailAddress, Status: response.Status, Body: response.Body}
+		}
+		pmuid := response.PMUID
+		if pmuid == "" {
+			generated, err := newPMUID()
+			if err != nil {
+				return clients.SendResult{}, err
+			}
+			pmuid = generated
 		}
 		result.Recipients[index].PMUID = pmuid
 		c.record(message.headers[clients.CorrelationHeader], message.emailAddress, pmuid)

@@ -27,16 +27,29 @@ it with a callback that receives each recipient address, rendered message, and
 application headers:
 
 ```go
-client := dummy.NewClient(func(emailAddress, message string, headers map[string]string) error {
+client := dummy.NewClient(func(emailAddress, message string, headers map[string]string) (dummy.Response, error) {
   log.Printf("email=%s message=%q headers=%v", emailAddress, message, headers)
-  return nil
+  return dummy.Response{}, nil
 })
 ```
 
 `Send` invokes the callback synchronously once per recipient, in request order.
-It stops at the first callback error; otherwise it returns one `SendResult`
-with a distinct PMUID for each recipient. Each callback receives its own copy
-of `Email.Headers`.
+Each callback receives its own copy of `Email.Headers`.
+
+The callback models a provider call and can answer in three ways:
+
+- Accepted: a `dummy.Response` with an unset or 2xx `Status`. The zero value is
+  an acceptance.
+- Refused: a `dummy.Response` with any other `Status`, modelling a service that
+  answered and declined the request. `Send` stops at that recipient and returns
+  an empty `SendResult` with a `*dummy.RefusedError` carrying the recipient,
+  status, and body. Recover it with `errors.As`.
+- Faulted: a non-nil `error`, modelling no answer at all. `Send` stops and
+  wraps it. A timeout is modelled by cancelling the context passed to `Send`.
+
+An accepted response may supply its own `PMUID` to mimic a provider-assigned
+ID; when it is empty the client generates one. Every accepted recipient gets a
+distinct PMUID.
 
 Register named bulk templates with `AddTemplate` before sending:
 
@@ -54,11 +67,11 @@ error. All recipients are rendered before the first callback is invoked.
 Plain-text messages without a configured template are passed to the callback
 unchanged.
 
-`Client` also implements `clients.EmailVerifier`. Every recipient whose
-callback succeeds is recorded against the correlation ID carried in
+`Client` also implements `clients.EmailVerifier`. Every accepted recipient is
+recorded against the correlation ID carried in
 `Email.Headers[clients.CorrelationHeader]`. `Verify` looks up a record by exact
 correlation ID and case-insensitive recipient address; a recipient with no
-correlation header, an unmatched correlation ID, or a failed callback is never
+correlation header, an unmatched correlation ID, a refusal, or a fault is never
 found. This version does not persist records beyond the process and has no
 search-window concept, since it holds exact records rather than provider logs.
 
