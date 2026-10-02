@@ -8,10 +8,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/truths"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -32,7 +33,7 @@ type StepPayload struct {
 // NewCellRequest builds the 3-step Sequence which establishes idempotency for the
 // given identity and, once established, emits the Truth.
 func NewCellRequest(listener, eventKey string, truth truths.Envelope) (cellar.CellRequest, error) {
-	owner := cellar.CellID(fmt.Sprintf("firebase-idempotency:%s:%s:%d", listener, eventKey, time.Now().UTC().UnixNano()))
+	owner := cellar.CellID(fmt.Sprintf("firebase-idempotency:%s:%s:%s", listener, eventKey, uuid.NewString()))
 	payload, err := cellar.JSONCodec[StepPayload]().Marshal(StepPayload{Listener: listener, EventKey: eventKey, Owner: string(owner), Truth: truth})
 	if err != nil {
 		return cellar.CellRequest{}, err

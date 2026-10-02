@@ -96,6 +96,7 @@ func TestAuthenticatedEmailHistoryEndToEnd(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- application.Run(ctx) }()
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
 	for _, token := range []string{"", "bad-token", "valid-token"} {
 		request, err := http.NewRequest(http.MethodPost, "http://"+application.HTTPAddr()+"/api/email-history", strings.NewReader(`{"request_id":"bca1207e-0519-4512-b9b5-c1b8a1d6fd00"}`))
 		if err != nil {
@@ -106,7 +107,7 @@ func TestAuthenticatedEmailHistoryEndToEnd(t *testing.T) {
 		if token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)
 		}
-		response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,6 +165,7 @@ func TestAuthenticatedPingEndToEnd(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- application.Run(ctx) }()
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
 	requestID := "bca1207e-0519-4512-b9b5-c1b8a1d6fd00"
 	previewOrigin := "https://pubnightpicker--pr141-bug-test-build-ie5jywxw.web.app"
 	successfulPings := 0
@@ -199,7 +201,6 @@ func TestAuthenticatedPingEndToEnd(t *testing.T) {
 		if test.token != "" {
 			request.Header.Set("Authorization", "Bearer "+test.token)
 		}
-		client := &http.Client{Timeout: 5 * time.Second}
 		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)

@@ -100,15 +100,17 @@ func TestPollPushBudgetDefersEndpointsAndKeepsActionPending(t *testing.T) {
 	if err := enqueueNewPoll(t, application, "push-budget"); err != nil {
 		t.Fatal(err)
 	}
-	runFor(t, application, 400*time.Millisecond)
 	db := openSQLite(t, dbPath)
 	var accepted, pending int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Accepted'`).Scan(&accepted); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Pending' AND attempts = 0`).Scan(&pending); err != nil {
-		t.Fatal(err)
-	}
+	runUntil(t, application, func() bool {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Accepted'`).Scan(&accepted); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Pending' AND attempts = 0`).Scan(&pending); err != nil {
+			t.Fatal(err)
+		}
+		return accepted == 1 && pending == 1
+	})
 	if accepted != 1 || pending != 1 || strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 {
 		t.Fatalf("accepted %d, untouched pending %d; logs %s", accepted, pending, logs.String())
 	}

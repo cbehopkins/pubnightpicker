@@ -269,15 +269,26 @@ func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	runFor(t, application, 400*time.Millisecond)
 	db := openSQLite(t, dbPath)
 	var accepted, pending int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Accepted'`).Scan(&accepted); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Pending' AND submitted_at IS NULL`).Scan(&pending); err != nil {
-		t.Fatal(err)
-	}
+	runUntil(t, application, func() bool {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Accepted'`).Scan(&accepted); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Pending' AND submitted_at IS NULL`).Scan(&pending); err != nil {
+			t.Fatal(err)
+		}
+		ack, acknowledged := source.Ack("diagnostics")
+		if accepted != 1 || pending != 1 || !acknowledged || ack != "req-budget" {
+			return false
+		}
+		for _, cell := range activeWorkCells(t, application.CellarStore()) {
+			if cell.Steps[cell.CurrentStep].HandlerName == durableemail.HandlerPost && cell.NotBefore != nil && cell.NotBefore.After(time.Now()) {
+				return true
+			}
+		}
+		return false
+	})
 	if accepted != 1 || pending != 1 {
 		t.Fatalf("poll emails: accepted %d, untouched pending %d", accepted, pending)
 	}

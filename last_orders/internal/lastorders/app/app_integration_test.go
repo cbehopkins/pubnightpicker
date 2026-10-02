@@ -116,7 +116,7 @@ func TestTruthFanoutDeliversToRegisteredPollHandler(t *testing.T) {
 		t.Fatalf("enqueue new poll: %v", err)
 	}
 
-	runFor(t, a, 300*time.Millisecond)
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
 
 	logged := output.String()
 	if !strings.Contains(logged, "poll opened processed") || !strings.Contains(logged, "poll-fanout") {
@@ -144,7 +144,7 @@ func TestIdempotencyDuplicateObservationSuppressed(t *testing.T) {
 		t.Fatalf("enqueue new poll (2nd): %v", err)
 	}
 
-	runFor(t, a, 300*time.Millisecond)
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
 
 	logged := output.String()
 	if count := strings.Count(logged, "poll opened processed"); count != 1 {
@@ -166,7 +166,7 @@ func TestIdempotencyObservedRemoteDoesNotEmitTruth(t *testing.T) {
 		t.Fatalf("enqueue new poll: %v", err)
 	}
 
-	runFor(t, a, 300*time.Millisecond)
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
 
 	if strings.Contains(output.String(), "poll opened processed") {
 		t.Fatal("a Truth already established remotely must not be re-emitted")
@@ -260,7 +260,7 @@ func TestRestartRecoversClaimedCells(t *testing.T) {
 	a2 := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
 	defer a2.Close()
 
-	runFor(t, a2, 300*time.Millisecond)
+	runUntil(t, a2, func() bool { return len(activeWorkCells(t, a2.CellarStore())) == 0 })
 
 	active := activeWorkCells(t, a2.CellarStore())
 	if len(active) != 0 {
@@ -389,6 +389,39 @@ func runFor(t *testing.T, application *app.App, dur time.Duration) {
 	defer cancel()
 	if err := application.Run(ctx); err != nil {
 		t.Fatalf("run app: %v", err)
+	}
+}
+
+func runUntil(t *testing.T, application *app.App, ready func() bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = application.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+			if runErr != nil {
+				t.Errorf("run app: %v", runErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("app did not stop after cancellation")
+		}
+	}()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for !ready() {
+		select {
+		case <-done:
+			t.Fatalf("app stopped before the expected state: %v", runErr)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for the expected app state")
+		case <-ticker.C:
+		}
 	}
 }
 
