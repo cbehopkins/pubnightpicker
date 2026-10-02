@@ -20,12 +20,13 @@ import (
 
 func main() {
 	var (
-		dbPath          = flag.String("db-path", "./last-orders.db", "path to SQLite database")
-		runFor          = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
-		pollDelay       = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
-		reevaluateEvery = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
-		httpAddr        = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
-		pushClient      = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
+		dbPath            = flag.String("db-path", "./last-orders.db", "path to SQLite database")
+		runFor            = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
+		pollDelay         = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
+		reevaluateEvery   = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
+		httpAddr          = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
+		allowAuthEmulator = flag.Bool("allow-auth-emulator", false, "allow unsigned Firebase Auth tokens from a loopback emulator (development only)")
+		pushClient        = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
 	)
 	flag.Parse()
 
@@ -66,15 +67,41 @@ func main() {
 		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
 	}
 
+	authProjectID := strings.TrimSpace(os.Getenv("FIREBASE_AUTH_PROJECT_ID"))
+	if authProjectID == "" {
+		authProjectID = strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT"))
+	}
+	var allowedAPIOrigins []string
+	if rawOrigins, configured := os.LookupEnv("LAST_ORDERS_ALLOWED_ORIGINS"); configured {
+		allowedAPIOrigins = []string{}
+		for _, origin := range strings.Split(rawOrigins, ",") {
+			if origin = strings.TrimSpace(origin); origin != "" {
+				allowedAPIOrigins = append(allowedAPIOrigins, origin)
+			}
+		}
+	}
+	var allowedAPIPreviewSites []string
+	for _, site := range strings.Split(os.Getenv("LAST_ORDERS_ALLOWED_PREVIEW_SITES"), ",") {
+		if site = strings.TrimSpace(site); site != "" {
+			allowedAPIPreviewSites = append(allowedAPIPreviewSites, site)
+		}
+	}
+	if *allowAuthEmulator && os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "" {
+		logger.Warn("Firebase Auth emulator enabled: unsigned tokens accepted for local development only")
+	}
 	application, err := app.New(app.Config{
-		DBPath:               *dbPath,
-		PollDelay:            *pollDelay,
-		Logger:               logger,
-		EnableFirestore:      true,
-		FirestoreProjectID:   firestoreProjectID,
-		EventReevaluateEvery: *reevaluateEvery,
-		HTTPAddr:             *httpAddr,
-		Email:                emailOptions,
+		DBPath:                 *dbPath,
+		PollDelay:              *pollDelay,
+		Logger:                 logger,
+		EnableFirestore:        true,
+		FirestoreProjectID:     firestoreProjectID,
+		EventReevaluateEvery:   *reevaluateEvery,
+		HTTPAddr:               *httpAddr,
+		AuthProjectID:          authProjectID,
+		AllowAuthEmulator:      *allowAuthEmulator,
+		AllowedAPIOrigins:      allowedAPIOrigins,
+		AllowedAPIPreviewSites: allowedAPIPreviewSites,
+		Email:                  emailOptions,
 		Push: pushplugin.Options{
 			Client:          pushplugin.ClientKind(*pushClient),
 			VAPIDPrivateKey: os.Getenv("WEB_PUSH_VAPID_PRIVATE_KEY"),

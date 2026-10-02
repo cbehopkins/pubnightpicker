@@ -319,6 +319,7 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 
 	return app.Config{
 		DBPath:                    dbPath,
+		AuthVerifier:              testAuthVerifier{},
 		PollDelay:                 5 * time.Millisecond,
 		IdempotencyRemote:         remote,
 		RecurrenceService:         recurrenceService,

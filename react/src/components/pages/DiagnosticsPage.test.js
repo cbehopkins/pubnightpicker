@@ -51,6 +51,18 @@ vi.mock("../../firebase", () => ({
     db: {},
 }));
 
+vi.mock("react-redux", () => ({
+    useSelector: (select) => select({ auth: { uid: null } }),
+}));
+
+vi.mock("../ProtectedRoute", () => ({
+    default: (Component) => Component,
+}));
+
+vi.mock("../UI/BackendPingPanel", () => ({
+    default: () => <section aria-label="Last Orders API">Last Orders API</section>,
+}));
+
 vi.mock("../../hooks/usePolls", () => ({
     default: usePollsMock,
 }));
@@ -59,7 +71,14 @@ vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
     default: useAutopopulateVenueSelectorMock,
 }));
 
-import { AutopopulateCandidateListsPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+import DiagnosticsPage, { AutopopulateCandidateListsPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+
+it("includes the direct Last Orders API panel on diagnostics", () => {
+    onSnapshotMock.mockImplementation(() => () => { });
+    render(<DiagnosticsPage />);
+    expect(screen.getByRole("region", { name: "Last Orders API" })).toBeInTheDocument();
+    cleanup();
+});
 
 describe("AutopopulateCandidateListsPanel", () => {
     beforeEach(() => {

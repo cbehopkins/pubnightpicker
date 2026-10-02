@@ -14,7 +14,9 @@ import (
 	"cellar/pkg/cellar"
 	publicsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/apicors"
 	"last_orders/internal/lastorders/components/completionactions"
+	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/notificationprofile"
@@ -33,6 +35,7 @@ import (
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
+	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	"last_orders/internal/lastorders/plugins/polls"
@@ -71,7 +74,12 @@ type Config struct {
 	EventReevaluateEvery   time.Duration
 	StartupComponentChecks []func(*basestore.Store) error
 	// HTTPAddr is the address to serve HTTP endpoints on. An empty value disables HTTP entirely.
-	HTTPAddr string
+	HTTPAddr               string
+	AuthProjectID          string
+	AuthVerifier           firebaseauth.Verifier
+	AllowAuthEmulator      bool
+	AllowedAPIOrigins      []string
+	AllowedAPIPreviewSites []string
 	// EmailClient selects the provider used for durable email delivery.
 	EmailClient emailplugin.ClientKind
 	// Email contains provider credentials and options. EmailClient remains as a
@@ -142,6 +150,20 @@ func New(cfg Config) (application *App, err error) {
 	}
 	if cfg.EnableFirestore && cfg.FirestoreProjectID == "" {
 		cfg.FirestoreProjectID = "last-orders-emulator"
+	}
+	if cfg.HTTPAddr != "" {
+		if err := firebaseauth.CheckEmulator(cfg.AllowAuthEmulator); err != nil {
+			return nil, err
+		}
+		if cfg.AuthVerifier == nil {
+			cfg.AuthVerifier, err = firebaseauth.New(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if cfg.AllowedAPIOrigins == nil {
+			cfg.AllowedAPIOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+		}
 	}
 
 	db, err := sql.Open("sqlite", sqliteDSN(cfg.DBPath))
@@ -641,14 +663,21 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	if cfg.HTTPAddr != "" {
+		apiMux := http.NewServeMux()
+		apiMux.Handle("POST /api/ping", &pingendpoint.Endpoint{Logger: cfg.Logger})
+		apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, firebaseauth.Middleware(cfg.AuthVerifier, apiMux), cfg.AllowedAPIPreviewSites...)
+		if err != nil {
+			return nil, err
+		}
 		listener, err := net.Listen("tcp", cfg.HTTPAddr)
 		if err != nil {
 			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
 		}
 		mux := http.NewServeMux()
 		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
+		mux.Handle("/api/", apiHandler)
 		application.httpListener = listener
-		application.httpServer = &http.Server{Handler: mux}
+		application.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 		cleanup.Add(listener.Close)
 	}
 

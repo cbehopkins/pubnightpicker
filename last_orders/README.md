@@ -53,4 +53,25 @@ Email uses the dummy client by default. To enable Sweego, provide both
 `SWEEGO_TOKEN` and `SWEEGO_PROVIDER`; `SWEEGO_BASE_URL` is optional and defaults
 to `https://api.sweego.io`.
 
+## Authenticated frontend API
+
+`POST /api/ping` accepts a Firebase ID token, logs the verified UID and responds
+synchronously without Firestore transport or Cellar work. Configure
+`FIREBASE_AUTH_PROJECT_ID` to match the frontend and `LAST_ORDERS_ALLOWED_ORIGINS`
+with the deployed frontend's exact HTTPS origin. Auth initialisation is skipped
+when `-http-addr` is empty.
+
+Optionally set `LAST_ORDERS_ALLOWED_PREVIEW_SITES=pubnightpicker` to allow HTTPS
+Firebase Hosting preview origins such as `pubnightpicker--pr141-abc.web.app`.
+This does not allow unrelated Hosting sites or bypass Firebase authentication.
+Permanent origins remain configured through `LAST_ORDERS_ALLOWED_ORIGINS`.
+
+For local emulator development use HTTP port 8081 and explicitly opt in with
+`-allow-auth-emulator`; Firestore already uses 8080. Auth emulator acceptance is
+not permitted implicitly. The existing `/log` route remains unauthenticated.
+
+See [docs/authenticated-api.md](docs/authenticated-api.md) for the API contract,
+local commands, security boundaries and deployment requirements. This API is
+implemented only in Last Orders, not the Python backend.
+
 See `docs/cellar-findings.md` for integration notes discovered while adopting Cellar.
