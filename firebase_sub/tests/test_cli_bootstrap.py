@@ -55,7 +55,9 @@ class _FakeDb:
 
 
 @pytest.mark.parametrize("apply_changes", [False, True])
-def test_reactivate_push_endpoints_only_changes_explicit_false(monkeypatch, apply_changes):
+def test_reactivate_push_endpoints_only_changes_explicit_false(
+    monkeypatch, apply_changes
+):
     import firebase_sub.cli.bootstrap as module
 
     payloads = [

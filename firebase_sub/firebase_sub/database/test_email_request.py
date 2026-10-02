@@ -43,7 +43,9 @@ class TestEmailRequestHandler:
     def handle_request_document(self, document: DocumentSnapshot | None) -> None:
         if document is None:
             return
-        user_ref = cast(Any, self._db.collection(USERS_COLLECTION).document(document.id))
+        user_ref = cast(
+            Any, self._db.collection(USERS_COLLECTION).document(document.id)
+        )
         # Re-read so rapid repeat requests coalesce onto the latest value.
         payload = cast(dict[str, Any] | None, user_ref.get().to_dict()) or {}
 
