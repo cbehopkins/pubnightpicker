@@ -37,7 +37,7 @@ func TestCompletionContentMatchesPythonPubLayout(t *testing.T) {
 	venue := venuecache.VenueProjection{Name: "Red Lion", Website: "https://lion.test", Address: "1 High St", Map: "https://map.test"}
 	restaurant := venuecache.VenueProjection{Name: "Bistro", VenueType: "restaurant", Website: "https://bistro.test"}
 
-	content := newCompletionContent(venue, &restaurant, "2026-10-02", "18:30", false, true)
+	content := newCompletionContent(venue, &restaurant, "2026-10-02", "18:30", "https://app.example", false, true)
 	variables := map[string]any{"uid": "u1"}
 	for name, value := range content.Variables {
 		variables[name] = value
@@ -50,7 +50,7 @@ func TestCompletionContentMatchesPythonPubLayout(t *testing.T) {
 		"\nPub Web Site https://lion.test\n" +
 		"\n1 High St\n" +
 		"\n\nMap to pub https://map.test" +
-		"\n\nUnsubscribe at https://pubnightpicker.web.app/preferences/u1"
+		"\n\nUnsubscribe at https://app.example/preferences/u1"
 	want = strings.Replace(want, "Pub Web Site https://bistro.test", "Restaurant Web Site https://bistro.test", 1)
 	if got := render(content.Text, variables); got != want {
 		t.Fatalf("text =\n%s\nwant\n%s", got, want)
@@ -61,7 +61,7 @@ func TestCompletionContentMatchesPythonPubLayout(t *testing.T) {
 }
 
 func TestCompletionContentMarksReschedulesAndNonPubVenues(t *testing.T) {
-	content := newCompletionContent(venuecache.VenueProjection{Name: "Gig", VenueType: "event"}, nil, "2026-10-02", "", true, false)
+	content := newCompletionContent(venuecache.VenueProjection{Name: "Gig", VenueType: "event"}, nil, "2026-10-02", "", "https://app.example", true, false)
 	text := render(content.Text, content.Variables)
 	if !strings.HasPrefix(text, "This week's event has been rescheduled\n\nEvery week") || !strings.Contains(text, "we will be attending Gig.") {
 		t.Fatalf("text = %q", text)
@@ -78,6 +78,7 @@ func completedHandler(actions completionactions.Store, recipients []notification
 	return PollCompletedEmailHandler{
 		Actions: actions,
 		Venues:  venueMap{"pub-1": {ID: "pub-1", Name: "Red Lion"}},
+		BaseURL: "https://app.example",
 		Recipients: recipientSourceFunc(func(context.Context, notificationprofile.EmailKind) ([]notificationprofile.EmailRecipient, error) {
 			return recipients, nil
 		}),

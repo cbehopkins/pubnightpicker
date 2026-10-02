@@ -27,7 +27,7 @@ This week the destination is a restaurant.
 On {{event_date}} we will be visiting {{venue_name}}.`
 
 	completionRescheduled = "This week's event has been rescheduled\n\n"
-	completionUnsubscribe = "\n\nUnsubscribe at https://pubnightpicker.web.app/preferences/{{uid}}"
+	completionUnsubscribe = "\n\nUnsubscribe at "
 )
 
 // completionContent is a provider-variable template plus its common variables.
@@ -38,7 +38,7 @@ type completionContent struct {
 }
 
 // newCompletionContent mirrors firebase_sub send_email.build_notification_text.
-func newCompletionContent(venue venuecache.VenueProjection, restaurant *venuecache.VenueProjection, eventDate, restaurantTime string, rescheduled, personal bool) completionContent {
+func newCompletionContent(venue venuecache.VenueProjection, restaurant *venuecache.VenueProjection, eventDate, restaurantTime, baseURL string, rescheduled, personal bool) completionContent {
 	variables := map[string]any{"venue_name": venue.Name, "event_date": eventDate}
 	var text strings.Builder
 	if rescheduled {
@@ -67,6 +67,8 @@ func newCompletionContent(venue venuecache.VenueProjection, restaurant *venuecac
 	writeVenueDetails(&text, variables, "venue", venue)
 	if personal {
 		text.WriteString(completionUnsubscribe)
+		text.WriteString(baseURL)
+		text.WriteString("/preferences/{{uid}}")
 	}
 
 	subject := "Pub Night @ {{venue_name}}"
@@ -86,15 +88,25 @@ func writeVenueDetails(text *strings.Builder, variables map[string]any, prefix s
 	}
 	if venue.Website != "" {
 		variables[prefix+"_website"] = venue.Website
-		text.WriteString("\n" + siteLabel + " {{" + prefix + "_website}}\n")
+		text.WriteString("\n")
+		text.WriteString(siteLabel)
+		text.WriteString(" {{")
+		text.WriteString(prefix)
+		text.WriteString("_website}}\n")
 	}
 	if venue.Address != "" {
 		variables[prefix+"_address"] = venue.Address
-		text.WriteString("\n{{" + prefix + "_address}}\n")
+		text.WriteString("\n{{")
+		text.WriteString(prefix)
+		text.WriteString("_address}}\n")
 	}
 	if venue.Map != "" {
 		variables[prefix+"_map"] = venue.Map
-		text.WriteString("\n\n" + mapLabel + " {{" + prefix + "_map}}")
+		text.WriteString("\n\n")
+		text.WriteString(mapLabel)
+		text.WriteString(" {{")
+		text.WriteString(prefix)
+		text.WriteString("_map}}")
 	}
 }
 

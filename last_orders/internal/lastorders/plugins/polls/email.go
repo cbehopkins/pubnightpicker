@@ -2,6 +2,7 @@ package polls
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"cellar/pkg/cellar"
@@ -18,7 +19,7 @@ const (
 	pollEmailSenderName  = "ampubnight notification emails"
 	pollOpenedSubject    = "Pub Night voting opened"
 	pollOpenedBody       = `Voting has opened for this week's pub night.
-Please visit https://pubnightpicker.web.app/active_polls
+Please visit %s/active_polls
 to participate in the voting.
 `
 )
@@ -32,6 +33,7 @@ type EmailRecipientSource interface {
 type PollOpenedEmailHandler struct {
 	Actions    completionactions.Store
 	Recipients EmailRecipientSource
+	BaseURL    string
 	Logger     *slog.Logger
 }
 
@@ -63,7 +65,7 @@ func (h PollOpenedEmailHandler) Handle(ctx context.Context, payload truths.PollO
 			SenderEmail:      pollEmailSenderEmail,
 			SenderName:       pollEmailSenderName,
 			Subject:          pollOpenedSubject,
-			Text:             pollOpenedBody,
+			Text:             fmt.Sprintf(pollOpenedBody, h.BaseURL),
 			Recipients:       make([]durableemail.SendRecipient, 0, len(recipients)),
 		}
 		for _, recipient := range recipients {

@@ -450,7 +450,10 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(polls.HandlerPollOpened, polls.PollOpenedHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(polls.HandlerPollOpenedEmail, polls.PollOpenedEmailHandler{Actions: cfg.CompletionActions, Recipients: notificationProfileService, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(polls.HandlerPollOpenedEmail, polls.PollOpenedEmailHandler{
+		Actions: cfg.CompletionActions, Recipients: notificationProfileService,
+		BaseURL: pushPlugin.BaseURL(), Logger: cfg.Logger,
+	}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(polls.HandlerPollOpenedPush, polls.PollOpenedPushHandler{
@@ -468,6 +471,7 @@ func New(cfg Config) (application *App, err error) {
 		Actions:    cfg.CompletionActions,
 		Venues:     venueCacheService,
 		Recipients: notificationProfileService,
+		BaseURL:    pushPlugin.BaseURL(),
 		Logger:     cfg.Logger,
 	}); err != nil {
 		return nil, err

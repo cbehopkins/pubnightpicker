@@ -32,6 +32,7 @@ type PollCompletedEmailHandler struct {
 	Actions    completionactions.Store
 	Venues     VenueSource
 	Recipients EmailRecipientSource
+	BaseURL    string
 	Logger     *slog.Logger
 }
 
@@ -121,7 +122,7 @@ func (h PollCompletedEmailHandler) actionCell(ctx context.Context, payload truth
 
 	steps := []cellar.Step{mark}
 	if len(recipients) > 0 {
-		content := newCompletionContent(venue, restaurant, payload.PollDate, payload.SelectedRestaurantTime, rescheduled, personal)
+		content := newCompletionContent(venue, restaurant, payload.PollDate, payload.SelectedRestaurantTime, h.BaseURL, rescheduled, personal)
 		request := durableemail.SendRequest{
 			IdempotencyToken: "poll-completed:" + payload.PollID + ":" + string(action) + ":" + key,
 			SenderEmail:      pollEmailSenderEmail,

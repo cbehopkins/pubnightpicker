@@ -22,7 +22,7 @@ func (f recipientSourceFunc) GetEligibleEmailRecipients(ctx context.Context, kin
 
 func TestPollOpenedEmailCreatesOneBatchedSend(t *testing.T) {
 	var requestedKind notificationprofile.EmailKind
-	handler := PollOpenedEmailHandler{Actions: completionactionstest.New(), Recipients: recipientSourceFunc(func(_ context.Context, kind notificationprofile.EmailKind) ([]notificationprofile.EmailRecipient, error) {
+	handler := PollOpenedEmailHandler{Actions: completionactionstest.New(), BaseURL: "https://pubnightpicker.web.app", Recipients: recipientSourceFunc(func(_ context.Context, kind notificationprofile.EmailKind) ([]notificationprofile.EmailRecipient, error) {
 		requestedKind = kind
 		return []notificationprofile.EmailRecipient{
 			{UserID: "alice", Email: "alice@example.com"},
@@ -55,7 +55,11 @@ func TestPollOpenedEmailCreatesOneBatchedSend(t *testing.T) {
 	if request.SenderEmail != pollEmailSenderEmail || request.SenderName != pollEmailSenderName {
 		t.Errorf("sender = %q <%q>", request.SenderName, request.SenderEmail)
 	}
-	if request.Subject != pollOpenedSubject || request.Text != pollOpenedBody {
+	wantBody := `Voting has opened for this week's pub night.
+Please visit https://pubnightpicker.web.app/active_polls
+to participate in the voting.
+`
+	if request.Subject != pollOpenedSubject || request.Text != wantBody {
 		t.Errorf("subject/body = %q / %q", request.Subject, request.Text)
 	}
 	if len(request.Recipients) != 2 || request.Recipients[0].Email != "alice@example.com" || request.Recipients[1].Email != "bob@example.com" {
