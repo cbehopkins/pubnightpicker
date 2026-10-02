@@ -43,8 +43,11 @@ Run the application:
 go run ./cmd/last-orders -db-path=./last-orders.db
 ```
 
-Set `FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`) to enable
-Firestore-backed listeners and idempotency instead of the in-memory stand-in.
+The application always connects to Firestore. For local development set
+`FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`). For production
+leave `FIRESTORE_EMULATOR_HOST` unset and point `GOOGLE_APPLICATION_CREDENTIALS`
+at a service-account JSON (e.g. the same `cred.json` used by `firebase_sub`); the
+project ID is read from that file unless `GOOGLE_CLOUD_PROJECT` is set.
 
 Email uses the dummy client by default. To enable Sweego, provide both
 `SWEEGO_TOKEN` and `SWEEGO_PROVIDER`; `SWEEGO_BASE_URL` is optional and defaults

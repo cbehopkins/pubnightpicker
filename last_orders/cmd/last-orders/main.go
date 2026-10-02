@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/firestore"
+
 	"last_orders/internal/lastorders/app"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
@@ -37,13 +39,20 @@ func main() {
 		defer timeoutCancel()
 	}
 
-	enableFirestore := os.Getenv("FIRESTORE_EMULATOR_HOST") != ""
+	emulatorHost := os.Getenv("FIRESTORE_EMULATOR_HOST")
 	firestoreProjectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if firestoreProjectID == "" {
+	switch {
+	case firestoreProjectID != "":
+	case emulatorHost != "":
 		firestoreProjectID = "last-orders-emulator"
+	default:
+		// Read project_id from the credentials in GOOGLE_APPLICATION_CREDENTIALS.
+		firestoreProjectID = firestore.DetectProjectID
 	}
-	if enableFirestore {
-		logger.Info("firestore emulator enabled", "firestore_emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"), "project_id", firestoreProjectID)
+	if emulatorHost != "" {
+		logger.Info("firestore emulator enabled", "firestore_emulator_host", emulatorHost, "project_id", firestoreProjectID)
+	} else {
+		logger.Info("firestore production enabled", "project_id", firestoreProjectID)
 	}
 
 	emailOptions := emailplugin.Options{Client: emailplugin.ClientDummy, Logger: logger}
@@ -61,7 +70,7 @@ func main() {
 		DBPath:               *dbPath,
 		PollDelay:            *pollDelay,
 		Logger:               logger,
-		EnableFirestore:      enableFirestore,
+		EnableFirestore:      true,
 		FirestoreProjectID:   firestoreProjectID,
 		EventReevaluateEvery: *reevaluateEvery,
 		HTTPAddr:             *httpAddr,
