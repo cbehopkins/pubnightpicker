@@ -158,10 +158,39 @@ func TestEmailGuardDefersPendingRecipientsWithoutAcceptance(t *testing.T) {
 				}
 			}
 			before := time.Now().UTC()
-			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-			defer cancel()
-			if err := runtime.Start(ctx); err != nil {
-				t.Fatal(err)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			var runErr error
+			done := make(chan struct{})
+			go func() {
+				runErr = runtime.Start(ctx)
+				close(done)
+			}()
+			defer func() {
+				cancel()
+				<-done
+			}()
+			ticker := time.NewTicker(5 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				active, err := store.ListActive()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(active) == 2 && active[0].CurrentStep == 2 && active[0].NotBefore != nil && active[1].CurrentStep == 2 && active[1].NotBefore != nil {
+					break
+				}
+				select {
+				case <-done:
+					t.Fatalf("runtime stopped before both cells were deferred: %v; active = %+v", runErr, active)
+				case <-ctx.Done():
+					t.Fatalf("timed out waiting for both cells to be deferred: active = %+v", active)
+				case <-ticker.C:
+				}
+			}
+			cancel()
+			<-done
+			if runErr != nil {
+				t.Fatal(runErr)
 			}
 			if len(test.source.counts) != 2 || test.source.counts[0] != 2 || test.source.counts[1] != 2 {
 				t.Fatalf("acquisitions = %v", test.source.counts)
