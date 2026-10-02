@@ -18,6 +18,7 @@ vi.mock("firebase/auth", () => ({
 }));
 
 import BackendPingPanel from "./BackendPingPanel";
+import EmailHistoryPanel from "./EmailHistoryPanel";
 import { lastOrdersApiURL, requestLastOrders } from "../../utils/lastOrdersApi";
 
 const requestID = "bca1207e-0519-4512-b9b5-c1b8a1d6fd00";
@@ -28,6 +29,88 @@ const jsonResponse = (data, status = 200) => ({
     json: async () => data,
 });
 const success = () => jsonResponse({ status: "ok", uid: "signed-in-user", request_id: requestID });
+
+const historySuccess = (entries = []) => jsonResponse({ status: "ok", uid: "signed-in-user", request_id: requestID, entries });
+
+describe("EmailHistoryPanel", () => {
+    it("loads authenticated history on demand and displays recipient states", async () => {
+        fetchMock.mockResolvedValue(historySuccess([
+            { subject: "Test email", recipient: "me@example.com", state: "Pending", created_at: "2026-10-02T12:00:00Z", submitted_at: null },
+            { subject: "Pub night", recipient: "old@example.com", state: "Delivered", created_at: "2026-10-01T12:00:00Z", submitted_at: "2026-10-01T12:01:00Z" },
+            { subject: "Quiz night", recipient: "me@example.com", state: "Refused", created_at: "2026-09-30T12:00:00Z", submitted_at: null },
+        ]));
+        render(<EmailHistoryPanel />);
+        expect(fetchMock).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        expect(screen.getByRole("status")).toHaveTextContent("Loading email history");
+        await screen.findByText("Delivered");
+        expect(screen.getByText("Pending")).toBeInTheDocument();
+        expect(screen.getByText("Refused")).toBeInTheDocument();
+        expect(screen.getByText("old@example.com")).toBeInTheDocument();
+        expect(fetchMock).toHaveBeenCalledWith("http://localhost:8081/api/email-history", expect.objectContaining({
+            headers: { Authorization: "Bearer firebase-id-token", "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: requestID }),
+        }));
+    });
+
+    it("shows empty history and refreshes only on demand", async () => {
+        fetchMock.mockResolvedValue(historySuccess());
+        render(<EmailHistoryPanel />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        await screen.findByText("No email history found.");
+        fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        await screen.findByText("No email history found.");
+    });
+
+    it.each([401, 503])("shows an error for HTTP %s", async (status) => {
+        fetchMock.mockResolvedValue(jsonResponse({}, status));
+        render(<EmailHistoryPanel />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects another user's response", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ status: "ok", uid: "another-user", request_id: requestID, entries: [] }));
+        render(<EmailHistoryPanel />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("unexpected response");
+    });
+
+    it("cancels on close without displaying a late result", async () => {
+        let resolveResponse;
+        fetchMock.mockReturnValue(new Promise((resolve) => { resolveResponse = resolve; }));
+        render(<EmailHistoryPanel />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+        fireEvent.click(screen.getByText("Close", { selector: "button" }));
+        expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+        await act(async () => { resolveResponse(historySuccess()); });
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("closes and clears history on account change", async () => {
+        fetchMock.mockResolvedValue(historySuccess());
+        render(<EmailHistoryPanel />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        await screen.findByText("No email history found.");
+        await act(async () => {
+            authMock.currentUser = { uid: "another-user", getIdToken: getIdTokenMock };
+            authListeners.forEach((listener) => listener(authMock.currentUser));
+        });
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("times out a stalled request", async () => {
+        vi.useFakeTimers();
+        fetchMock.mockReturnValue(new Promise(() => { }));
+        render(<EmailHistoryPanel timeoutMs={100} />);
+        fireEvent.click(screen.getByRole("button", { name: "Email Status" }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+        expect(screen.getByRole("alert")).toHaveTextContent("within the time limit");
+    });
+});
 
 beforeEach(() => {
     vi.clearAllMocks();

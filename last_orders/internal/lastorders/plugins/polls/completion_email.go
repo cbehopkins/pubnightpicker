@@ -114,6 +114,7 @@ func (h PollCompletedEmailHandler) actionCell(ctx context.Context, payload truth
 		recipients = make([]durableemail.SendRecipient, 0, len(eligible))
 		for _, recipient := range eligible {
 			recipients = append(recipients, durableemail.SendRecipient{
+				UserID:    recipient.UserID,
 				Email:     recipient.Email,
 				Variables: map[string]any{"uid": recipient.UserID},
 			})

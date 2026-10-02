@@ -19,6 +19,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/ratelimit"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
@@ -56,6 +57,7 @@ const (
 
 type Options struct {
 	Client ClientKind
+	Tokens ratelimit.TokenSource
 	// VAPIDPrivateKey is the base64url P-256 private key from `npx web-push generate-vapid-keys`.
 	VAPIDPrivateKey string
 	// VAPIDSubject is an email address, mailto: URI, or https URL.
@@ -86,6 +88,7 @@ type Plugin struct {
 	invalidator EndpointInvalidator
 	baseURL     string
 	logger      *slog.Logger
+	tokens      ratelimit.TokenSource
 }
 
 func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, error) {
@@ -94,6 +97,9 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	}
 	if invalidator == nil {
 		return nil, errors.New("endpoint invalidator is required")
+	}
+	if opts.Tokens == nil {
+		return nil, errors.New("push send token source is required")
 	}
 	logger := opts.Logger
 	if logger == nil {
@@ -133,7 +139,7 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger}, nil
+	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens}, nil
 }
 
 // BaseURL is the web application origin used for notification click targets.
@@ -297,6 +303,17 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 	if remaining <= 0 {
 		h.plugin.logger.Warn("push expired before delivery", "notification_id", request.NotificationID, "user_id", request.UserID)
 		return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateExpired)}}
+	}
+
+	if wait := h.plugin.tokens.Acquire(); wait != 0 {
+		if wait < 0 {
+			return cellar.ErrorResult{Message: "push send token source returned a negative wait"}
+		}
+		notBefore := time.Now().UTC().Add(time.Duration(wait) * time.Second)
+		if notBefore.After(request.ExpiresAt) {
+			notBefore = request.ExpiresAt
+		}
+		return cellar.Retry{NotBefore: &notBefore}
 	}
 
 	subscription := Subscription{Endpoint: request.Endpoint, P256DH: request.P256DH, Auth: request.Auth}

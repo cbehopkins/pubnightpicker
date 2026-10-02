@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
+	cellarsqlite "cellar/pkg/sqlite"
 	durableemail "durable_email"
+	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
@@ -47,7 +49,7 @@ func TestEmailSendSequenceDeliversThroughDummyClient(t *testing.T) {
 	defer a.Close()
 
 	request := durableemail.SendRequest{
-		IdempotencyToken: "send-1",
+		IdempotencyToken: "poll-opened:send-1",
 		SenderEmail:      "sender@example.com",
 		Subject:          "Pub night",
 		Text:             "Hello",
@@ -239,6 +241,80 @@ func TestPollCompletedTruthEmailsAndRecordsCompletionActions(t *testing.T) {
 	for _, want := range []string{"ampubnight@googlegroups.com", "alice@example.com", "visiting Red Lion", "preferences/alice"} {
 		if !strings.Contains(logged, want) {
 			t.Errorf("logs missing %q", want)
+		}
+	}
+}
+
+func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "email-budget.db")
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.EmailDailyLimit = 1
+	source := testemailtest.New()
+	source.Documents = []testemail.Document{{ID: "diagnostics", Data: map[string]any{"testEmailReq": "req-budget", "email": "diagnostics@example.com"}}}
+	cfg.TestEmailSource = source
+	application := newApp(t, cfg)
+	defer application.Close()
+	for _, token := range []string{"poll-opened:budget", "poll-completed:budget:email:key"} {
+		request := durableemail.SendRequest{IdempotencyToken: token, SenderEmail: "sender@example.com", Subject: "Hi", Text: "Hi", Recipients: []durableemail.SendRecipient{{Email: "alice@example.com"}}}
+		sequence, err := cellar.NewSequence(durableemail.NewSendSequence(request)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cell, err := sequence.CellRequest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := application.AddCell(cell); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runFor(t, application, 400*time.Millisecond)
+	db := openSQLite(t, dbPath)
+	var accepted, pending int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Accepted'`).Scan(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-%' AND state = 'Pending' AND submitted_at IS NULL`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if accepted != 1 || pending != 1 {
+		t.Fatalf("poll emails: accepted %d, untouched pending %d", accepted, pending)
+	}
+	if ack, ok := source.Ack("diagnostics"); !ok || ack != "req-budget" {
+		t.Fatalf("diagnostics ack = %s, %t", ack, ok)
+	}
+	store, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := activeWorkCells(t, store)
+	deferred := 0
+	for _, cell := range active {
+		if cell.Steps[cell.CurrentStep].HandlerName == durableemail.HandlerPost {
+			deferred++
+			if cell.CurrentStep != 2 || cell.NotBefore == nil || !cell.NotBefore.After(time.Now()) {
+				t.Fatalf("deferred email = %+v", cell)
+			}
+		}
+	}
+	if deferred != 1 {
+		t.Fatalf("deferred email cells = %d", deferred)
+	}
+}
+
+func TestApplicationRejectsNegativeDailyLimits(t *testing.T) {
+	for _, emailLimit := range []bool{false, true} {
+		cfg := testConfig(t, filepath.Join(t.TempDir(), "invalid-limit.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+		if emailLimit {
+			cfg.EmailDailyLimit = -1
+		} else {
+			cfg.PushDailyLimit = -1
+		}
+		application, err := app.New(cfg)
+		if err == nil {
+			application.Close()
+			t.Fatal("negative daily capacity accepted")
 		}
 	}
 }

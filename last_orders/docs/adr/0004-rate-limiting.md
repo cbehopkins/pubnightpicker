@@ -1,6 +1,6 @@
 # ADR: Application Rate Limiting and Operational Guards
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-11
 
 ## 1. Context
@@ -49,7 +49,8 @@ The V0 backend should retain the useful part of this design without introducing 
 
 # 2. Decision
 
-The backend will provide a **generic, local, concurrency-safe token-bucket rate limiter**.
+The backend provides **generic, local, concurrency-safe daily token sources**,
+as refined by CDD-0010. There is no continuous or fractional refill in V0.
 
 Operations that require protection may be associated with a named rate-limit policy.
 
@@ -79,13 +80,13 @@ The exact response to a rejected operation is determined by the caller.
 
 The V0 implementation will provide:
 
-### 3.1 Token bucket
+### 3.1 Daily token source
 
 Each limiter has:
 
 * a maximum capacity;
 * a current token count;
-* a refill rate;
+* a daily reset in the application timezone;
 * a named identity.
 
 For example:
@@ -93,10 +94,13 @@ For example:
 ```text
 email.send
     capacity: 100
-    refill:   100 tokens/day
+    reset:    local midnight
 ```
 
-The bucket refills according to elapsed time, up to its configured capacity.
+The source resets lazily to its maximum when the local calendar day changes.
+Single acquisitions consume one token; bulk acquisitions consume an explicitly
+requested positive count atomically, or none. A request above maximum capacity
+is distinguished from a temporary shortage.
 
 ---
 
@@ -119,12 +123,15 @@ V0 rate-limit acquisition should be non-blocking.
 Conceptually:
 
 ```go
-type RateLimiter interface {
-    Acquire() bool
+type TokenSource interface {
+    Acquire() int
+    AcquireN(count int) (waitSeconds int, err error)
 }
 ```
 
-If no token is available, the caller immediately learns that the operation cannot currently proceed.
+Zero wait grants the requested tokens. Positive wait refuses the request and
+reports ceiling-rounded seconds until local midnight. Bulk requests with invalid
+counts or counts above capacity return an error without consumption.
 
 The caller may then:
 
@@ -160,25 +167,29 @@ The names provide a useful operational identity for:
 * configuration;
 * troubleshooting.
 
-The precise initial set of policies will be determined as individual services are implemented.
+The initial policies are `email.send` (100 poll recipient attempts/day),
+`push.send` (1,000 endpoint attempts/day) and the separate diagnostics admission
+source `email.test` (10/day). Send capacities are configurable. Other examples
+remain future policies, not implemented guards.
 
 ---
 
 # 5. Logging
 
-When a rate limit is exceeded, V0 will log the event.
+V0 logs the transition into exhaustion once per daily period, not each refused
+acquisition. A refused bulk request with residual tokens is not exhaustion.
 
 The log should identify at least:
 
 * the rate-limit policy;
-* the fact that acquisition failed;
+* the fact that the source is exhausted;
 * sufficient contextual information to identify the affected operation where practical.
 
 For example:
 
 ```text
-WARN rate limit exceeded
-     limit=email.send
+WARN rate limit exhausted
+    source=email.send
 ```
 
 No automatic administrator notification is required in V0.
@@ -227,7 +238,7 @@ Rate limiting is independent of Cellar.
 A Handler may use a rate limiter before performing an operation:
 
 ```go
-if !limits.EmailSend.Acquire() {
+if wait := limits.EmailSend.Acquire(); wait != 0 {
     return ErrRateLimited
 }
 
@@ -239,6 +250,21 @@ The Cell execution model determines what happens after `ErrRateLimited`.
 The limiter does not create Cells, reschedule Cells, or otherwise depend upon Cellar.
 
 This separation allows the same primitive to protect operations performed outside Cell handlers if required.
+
+Poll email protection runs through a generic pre-submission hook in durable_email,
+immediately before recording submission timestamps. It acquires tokens for pending
+recipients on every provider attempt. Ordinary shortages defer the current Post
+step until reset. Oversized batches log an error and defer that step for 24 hours,
+without consuming tokens or changing submission/recovery state. The sequence and
+its later completion marker remain queued in Cellar; no marker runs on refusal.
+Oversized work may remain pending indefinitely until the capacity issue is resolved.
+
+Push protection runs immediately before each endpoint send, after terminal-state
+and expiry checks. Refusal retries at reset or expiry, whichever comes first,
+without incrementing failure counters. Provider recovery queries remain unguarded.
+Diagnostics email retains its independent admission limit and existing drop
+semantics; it does not consume poll email allowance. No batch splitting or stale
+poll-email expiry is introduced.
 
 ---
 
@@ -262,19 +288,10 @@ Failure of the rate-limiting mechanism itself should fail closed where practical
 
 An operation MUST NOT silently bypass a configured protection because the limiter encountered an internal error.
 
-The precise API may therefore eventually distinguish:
-
-```go
-Acquire() (bool, error)
-```
-
-rather than only:
-
-```go
-Acquire() bool
-```
-
-The final Go interface should be selected during implementation, but the architectural requirement is that limiter failure must not accidentally remove the safety guard.
+`AcquireN` reports invalid and oversized requests explicitly. Constructors reject
+missing sources and invalid configuration; unknown email purposes fail closed.
+Temporary shortages and the agreed oversized-batch deferral are normal Retry
+results, not Cellar ErrorResult failures, which would stop the runtime.
 
 ---
 
@@ -341,17 +358,28 @@ The design should not prevent these being added later, but they are unnecessary 
 
 # 11. Example policies
 
-The following are illustrative rather than mandatory initial configuration.
+The following send capacities are initial defaults and may be configured.
 
 ### Email sending
 
 ```text
 Policy:  email.send
 Capacity: 100
-Refill:   100/day
+Reset:    local midnight
 ```
 
-This provides a safety boundary around accidental excessive email generation.
+This counts pending recipient attempts, including retries, rather than bulk API
+requests. A mailing-list address counts as one application recipient.
+
+### Push sending
+
+```text
+Policy:  push.send
+Capacity: 1000
+Reset:    local midnight
+```
+
+Each endpoint attempt consumes one token, regardless of notification purpose.
 
 ### Administrative notification
 

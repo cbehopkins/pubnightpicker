@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -161,6 +162,78 @@ func TestSourceConcurrentFinalTokenHasOneGrant(t *testing.T) {
 	}
 	if grants != 1 {
 		t.Fatalf("grants = %d; want 1", grants)
+	}
+}
+
+func TestSourceBulkAcquisitionIsAllOrNothing(t *testing.T) {
+	now := time.Date(2026, time.October, 2, 12, 0, 0, 0, time.UTC)
+	callbacks := 0
+	source := mustNewTestSource(t, "email.send", 5, time.UTC, func() { callbacks++ }, func() time.Time { return now })
+	if wait, err := source.AcquireN(3); wait != 0 || err != nil {
+		t.Fatalf("first batch = %d, %v", wait, err)
+	}
+	if wait, err := source.AcquireN(3); wait != 12*60*60 || err != nil {
+		t.Fatalf("refused batch = %d, %v", wait, err)
+	}
+	if callbacks != 0 {
+		t.Fatal("refused batch fired exhaustion callback")
+	}
+	if wait, err := source.AcquireN(2); wait != 0 || err != nil || callbacks != 1 {
+		t.Fatalf("remaining batch = %d, %v; callbacks = %d", wait, err, callbacks)
+	}
+	source.Acquire()
+	if callbacks != 1 {
+		t.Fatal("repeated refusal fired callback")
+	}
+	now = now.AddDate(0, 0, 1)
+	if wait, err := source.AcquireN(5); wait != 0 || err != nil || callbacks != 2 {
+		t.Fatalf("reset batch = %d, %v; callbacks = %d", wait, err, callbacks)
+	}
+}
+
+func TestSourceRejectsInvalidAndOversizedBatchesWithoutConsumption(t *testing.T) {
+	source := mustNewTestSource(t, "email.send", 2, time.UTC, nil, time.Now)
+	for _, count := range []int{-1, 0, 3} {
+		wait, err := source.AcquireN(count)
+		if wait != 0 || err == nil {
+			t.Fatalf("AcquireN(%d) = %d, %v", count, wait, err)
+		}
+		if count == 3 {
+			var oversized *RequestExceedsCapacityError
+			if !errors.As(err, &oversized) || oversized.Maximum != 2 || oversized.Count != 3 || oversized.Source != "email.send" {
+				t.Fatalf("oversized error = %v", err)
+			}
+		}
+	}
+	if wait, err := source.AcquireN(2); wait != 0 || err != nil {
+		t.Fatalf("invalid batches consumed tokens: %d, %v", wait, err)
+	}
+}
+
+func TestSourceConcurrentMixedBatchesRespectCapacity(t *testing.T) {
+	source := mustNewTestSource(t, "email.send", 100, time.UTC, nil, time.Now)
+	granted := make(chan int, 100)
+	var group sync.WaitGroup
+	for index := range 100 {
+		count := index%3 + 1
+		group.Go(func() {
+			wait, err := source.AcquireN(count)
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+			}
+			if wait == 0 && err == nil {
+				granted <- count
+			}
+		})
+	}
+	group.Wait()
+	close(granted)
+	total := 0
+	for count := range granted {
+		total += count
+	}
+	if total > 100 || total+source.remaining != 100 {
+		t.Fatalf("granted %d, remaining %d, capacity 100", total, source.remaining)
 	}
 }
 

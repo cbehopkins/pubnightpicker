@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -46,7 +45,6 @@ func (r *FirestoreRemote) CreateKey(ctx context.Context, listener, eventKey, own
 		"eventKey":  eventKey,
 		"owner":     owner,
 		"createdAt": firestore.ServerTimestamp,
-		"ttlAt":     time.Now().UTC().Add(14 * 24 * time.Hour),
 	})
 	if err == nil {
 		return false, true, nil

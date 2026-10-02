@@ -69,7 +69,7 @@ func (h PollOpenedEmailHandler) Handle(ctx context.Context, payload truths.PollO
 			Recipients:       make([]durableemail.SendRecipient, 0, len(recipients)),
 		}
 		for _, recipient := range recipients {
-			request.Recipients = append(request.Recipients, durableemail.SendRecipient{Email: recipient.Email})
+			request.Recipients = append(request.Recipients, durableemail.SendRecipient{UserID: recipient.UserID, Email: recipient.Email})
 		}
 		steps = append(durableemail.NewSendSequence(request), mark)
 	}

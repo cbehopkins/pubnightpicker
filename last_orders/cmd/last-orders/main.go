@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ func main() {
 		httpAddr          = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
 		allowAuthEmulator = flag.Bool("allow-auth-emulator", false, "allow unsigned Firebase Auth tokens from a loopback emulator (development only)")
 		pushClient        = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
+		pollsSince        = flag.String("polls-since", "", "YYYY-MM-DD: ignore polls dated, and chat messages created, before this date; persisted in Firestore and may only move forward (empty uses the stored value)")
 	)
 	flag.Parse()
 
@@ -60,6 +62,14 @@ func main() {
 	if err != nil {
 		fatalf("configure email client: %v", err)
 	}
+	emailDailyLimit, err := dailyLimitFromEnv("LAST_ORDERS_EMAIL_DAILY_LIMIT", app.EmailDailyLimit, os.LookupEnv)
+	if err != nil {
+		fatalf("configure email rate limit: %v", err)
+	}
+	pushDailyLimit, err := dailyLimitFromEnv("LAST_ORDERS_PUSH_DAILY_LIMIT", app.PushDailyLimit, os.LookupEnv)
+	if err != nil {
+		fatalf("configure push rate limit: %v", err)
+	}
 
 	authProjectID := strings.TrimSpace(os.Getenv("FIREBASE_AUTH_PROJECT_ID"))
 	if authProjectID == "" {
@@ -88,6 +98,7 @@ func main() {
 		PollDelay:              *pollDelay,
 		Logger:                 logger,
 		EnableFirestore:        true,
+		PollsSince:             *pollsSince,
 		FirestoreProjectID:     firestoreProjectID,
 		EventReevaluateEvery:   *reevaluateEvery,
 		HTTPAddr:               *httpAddr,
@@ -96,6 +107,8 @@ func main() {
 		AllowedAPIOrigins:      allowedAPIOrigins,
 		AllowedAPIPreviewSites: allowedAPIPreviewSites,
 		Email:                  emailOptions,
+		EmailDailyLimit:        emailDailyLimit,
+		PushDailyLimit:         pushDailyLimit,
 		Push: pushplugin.Options{
 			Client:          pushplugin.ClientKind(*pushClient),
 			VAPIDPrivateKey: os.Getenv("WEB_PUSH_VAPID_PRIVATE_KEY"),
@@ -141,6 +154,18 @@ func emailOptionsFromEnv(logger *slog.Logger, getenv func(string) string) (email
 		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
 	}
 	return options, nil
+}
+
+func dailyLimitFromEnv(name string, fallback int, lookup func(string) (string, bool)) (int, error) {
+	raw, configured := lookup(name)
+	if !configured {
+		return fallback, nil
+	}
+	maximum, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || maximum <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return maximum, nil
 }
 
 func fatalf(format string, args ...any) {

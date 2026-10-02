@@ -54,6 +54,33 @@ or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
 both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
+## Delivery rate limits
+
+Poll emails share `email.send`, defaulting to 100 recipient attempts per day.
+All push notifications share `push.send`, defaulting to 1,000 endpoint attempts
+per day. Configure positive integer capacities with
+`LAST_ORDERS_EMAIL_DAILY_LIMIT` and `LAST_ORDERS_PUSH_DAILY_LIMIT`; explicitly
+empty, zero, negative or non-integer values reject startup. A mailing-list address
+counts as one recipient, not the number of subscribers behind it.
+
+Tokens reset at midnight in the application's timezone. Bulk email acquisition
+is all-or-nothing; failed acquisitions consume nothing. Each provider retry
+requires new tokens for the recipients still pending. Poll emails wait until the
+daily reset when insufficient tokens remain. A batch larger than the daily
+capacity logs an error and retries in 24 hours, remaining queued until its
+capacity issue is resolved. Batches are not split. Mailtrap's separate maximum of
+500 recipients per submission still applies, even if the daily capacity is higher.
+
+Push delivery waits until reset or notification expiry, whichever comes first.
+Provider recovery queries are not limited. Diagnostics email retains its separate
+10-per-day admission allowance and existing drop-without-ack behaviour; its
+submission retries do not consume poll email tokens.
+
+Cellar persists deferred work and scheduling in SQLite, but token counts are
+local process state: a restart restores the allowances, and separate processes
+have independent limits. These are operational guards, not global quota or
+security enforcement. See [docs/cdd/0010-rate-limiting.md](docs/cdd/0010-rate-limiting.md).
+
 ## Authenticated frontend API
 
 `POST /api/ping` accepts a Firebase ID token, logs the verified UID and responds

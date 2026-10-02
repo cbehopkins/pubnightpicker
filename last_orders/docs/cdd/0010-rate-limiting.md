@@ -1,6 +1,6 @@
 # CDD: Application Token Sources
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-06
 **Related ADR:** Application Rate Limiting and Operational Guards
 
@@ -29,6 +29,7 @@ The caller-facing interface is deliberately minimal:
 ```go
 type TokenSource interface {
     Acquire() int
+    AcquireN(count int) (waitSeconds int, err error)
 }
 ```
 
@@ -58,6 +59,13 @@ return performOperation()
 
 The token source does not block waiting for a token to become available.
 
+`AcquireN(count)` requests a positive number of tokens atomically. With no error,
+zero wait grants the complete request and a positive wait refuses it without
+consuming any tokens. Counts less than one are programming errors. Counts above
+the source's maximum return `RequestExceedsCapacityError`, including the source,
+requested count and capacity: waiting until midnight cannot make such a request
+fit. Invalid and oversized requests do not change source state or call callbacks.
+
 ---
 
 # 3. Token Consumption
@@ -86,6 +94,11 @@ return seconds until daily reset
 ```
 
 A failed acquisition does not consume a token.
+
+Each successful `AcquireN(count)` consumes exactly `count` tokens. If fewer than
+`count` tokens remain, no tokens are consumed and the caller receives the wait
+until the next reset. Other, smaller requests may still consume those residual
+tokens. A refused batch with residual tokens does not trigger exhaustion.
 
 ---
 
@@ -213,7 +226,7 @@ The precise callback signature is an implementation detail, provided these seman
 
 A token source may be accessed concurrently by multiple application goroutines.
 
-`Acquire()` MUST be concurrency-safe.
+`Acquire()` and `AcquireN()` MUST be concurrency-safe, including mixed callers.
 
 In particular, concurrent acquisitions must not be able to consume the same token.
 
@@ -387,13 +400,53 @@ The token source does not:
 
 The Cell execution model determines what happens after an acquisition is refused.
 
+## Initial delivery policies
+
+Application composition creates `email.send` (100 recipient attempts/day) and
+`push.send` (1,000 endpoint attempts/day), resetting in the recurrence service's
+timezone. `Config.EmailDailyLimit` and `Config.PushDailyLimit` use zero for the
+default and reject negative values. The command accepts overrides through
+`LAST_ORDERS_EMAIL_DAILY_LIMIT` and `LAST_ORDERS_PUSH_DAILY_LIMIT`; configured
+values must be positive integers. Email and push plugin options allow injected
+`Tokens` for tests and alternative sources; their constructors reject a missing
+source. Components receive only the source they require.
+
+The email plugin's pre-submission guard uses the existing durable request identity:
+`poll-opened:` and `poll-completed:` consume `AcquireN(pendingRecipientCount)`;
+`test-email:` retains its independent `email.test` admission policy (CDD-0012).
+Unknown request identities fail closed rather than bypassing protection. No new
+policy field or reservation state is persisted. Future email purposes must have
+an explicit policy before they can submit.
+
+The guard runs immediately before durable email records submission timestamps.
+An ordinary shortage returns `cellar.Retry` on the current Post step until reset.
+An oversized batch logs an error with its identity, count and capacity, and retries
+that Post step in 24 hours. This ends the attempt, not the sequence: Cellar retains
+the work and later completion marker in SQLite. No submission timestamp, recovery
+state or acceptance marker is changed on refusal. Oversized work stays queued
+until capacity is increased or another design change makes it sendable. No batch
+splitting or stale-email expiry is provided. Mailtrap's separate 500-recipient
+submission ceiling is not removed by increasing the daily capacity.
+
+Push acquires one token after terminal-state and expiry checks, just before the
+endpoint send. Refusal retries at reset or expiry, whichever comes first, without
+incrementing failure attempts or invalidating the endpoint. All push producers
+share this source, including poll open/complete, manual-completion reminders,
+chat and diagnostics. Existing provider failure backoff and expiry handling remain.
+
+Recovery/verification queries do not consume send tokens. Diagnostics email
+remains admission-only, without double acquisition or changed acknowledgement
+semantics. Exhaustion logs once per transition; oversized configuration errors
+log once per scheduled attempt. No automatic alerts are sent.
+
 ---
 
 # 16. Idempotency
 
 Acquiring a token is an application-local state change.
 
-A successful acquisition consumes one token.
+A successful single acquisition consumes one token; a bulk acquisition consumes
+the requested count.
 
 The token source does not provide distributed idempotency.
 
@@ -412,7 +465,7 @@ Version 0 does not provide:
 * persistent token state;
 * distributed token coordination;
 * hierarchical limits;
-* weighted token consumption;
+* arbitrary operation-specific token weights beyond explicit token counts;
 * blocking acquisition;
 * automatic retries;
 * automatic rescheduling;
@@ -492,6 +545,10 @@ The following invariants apply to Version 0:
 
 10. **Token-source state is local process state and is not authoritative across backend instances.**
 
+11. **A bulk acquisition consumes the entire requested count or none of it.**
+
+12. **A request exceeding daily capacity returns an error, not a misleading reset wait.**
+
 ---
 
 # 20. Summary
@@ -501,6 +558,7 @@ The Version 0 rate-limiting API intentionally consists of a very small abstracti
 ```go
 type TokenSource interface {
     Acquire() int
+    AcquireN(count int) (waitSeconds int, err error)
 }
 ```
 

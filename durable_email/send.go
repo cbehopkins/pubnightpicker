@@ -26,6 +26,7 @@ const MessageIDHeader = "X-Pubnight-Message-ID"
 
 // SendRecipient is the recipient-specific part of a logical Send request.
 type SendRecipient struct {
+	UserID    string         `json:"user_id,omitempty"`
 	Email     string         `json:"email"`
 	Name      string         `json:"name"`
 	Variables map[string]any `json:"variables"`
@@ -58,10 +59,30 @@ type operationRequest struct {
 	IdempotencyToken string `json:"idempotency_token"`
 }
 
+// Submission describes the pending recipients in one provider submission attempt.
+type Submission struct {
+	IdempotencyToken string
+	RecipientCount   int
+}
+
+// SubmissionGuard permits a submission, defers it by a positive delay, or fails closed.
+type SubmissionGuard func(context.Context, Submission) (time.Duration, error)
+
+type RegisterOptions struct {
+	SubmissionGuard SubmissionGuard
+}
+
 // Register binds every durable email handler to runtime; call before Cellar.Start.
-func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, verifier clients.EmailVerifier) error {
+func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, verifier clients.EmailVerifier, options ...RegisterOptions) error {
 	if store == nil || client == nil || verifier == nil {
 		return fmt.Errorf("durable email store, client, and verifier are required")
+	}
+	if len(options) > 1 {
+		return fmt.Errorf("at most one durable email registration option set is allowed")
+	}
+	var guard SubmissionGuard
+	if len(options) == 1 {
+		guard = options[0].SubmissionGuard
 	}
 	if err := runtime.Register(HandlerSetup, SetupHandler{Store: store}); err != nil {
 		return err
@@ -76,7 +97,7 @@ func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, 
 	if err := fanout.Register(runtime); err != nil {
 		return err
 	}
-	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client}); err != nil {
+	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client, Guard: guard}); err != nil {
 		return err
 	}
 	return runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier})
@@ -173,6 +194,7 @@ func NewRecoveryFanout(store *Store) (*cellar.Fanout[operationRequest], error) {
 type PostHandler struct {
 	Store  *Store
 	Client clients.EmailClient
+	Guard  SubmissionGuard
 }
 
 func (h PostHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
@@ -194,6 +216,20 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 	common, err := h.Store.request(ctx, request.IdempotencyToken)
 	if err != nil {
 		return cellar.ErrorResult{Message: "read durable email request", Err: err}
+	}
+
+	if h.Guard != nil {
+		delay, err := h.Guard(ctx, Submission{IdempotencyToken: request.IdempotencyToken, RecipientCount: len(pending)})
+		if err != nil {
+			return cellar.ErrorResult{Message: "guard email submission", Err: err}
+		}
+		if delay < 0 {
+			return cellar.ErrorResult{Message: "email submission guard returned a negative delay"}
+		}
+		if delay > 0 {
+			notBefore := time.Now().UTC().Add(delay)
+			return cellar.Retry{NotBefore: &notBefore}
+		}
 	}
 
 	// Recorded first so an interruption after the provider call remains verifiable.

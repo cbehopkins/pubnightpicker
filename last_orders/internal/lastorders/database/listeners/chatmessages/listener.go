@@ -138,17 +138,23 @@ func (l *Listener) createTruth(message truths.ChatMessagePosted) {
 
 type FirestoreSource struct {
 	client *firestore.Client
+	since  time.Time
 }
 
-func NewFirestoreSource(client *firestore.Client) (*FirestoreSource, error) {
+// NewFirestoreSource watches messages created at or after since.
+func NewFirestoreSource(client *firestore.Client, since time.Time) (*FirestoreSource, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &FirestoreSource{client: client}, nil
+	if since.IsZero() {
+		return nil, fmt.Errorf("messages since time is required")
+	}
+	return &FirestoreSource{client: client, since: since}, nil
 }
 
 func (s *FirestoreSource) Watch(ctx context.Context) (ChangeStream, error) {
-	return &firestoreStream{iterator: s.client.Collection(messagesCollection).Snapshots(ctx)}, nil
+	query := s.client.Collection(messagesCollection).Where("createdAt", ">=", s.since)
+	return &firestoreStream{iterator: query.Snapshots(ctx)}, nil
 }
 
 type firestoreStream struct {

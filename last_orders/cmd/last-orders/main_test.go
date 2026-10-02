@@ -35,6 +35,38 @@ func TestEmailOptionsFromEnvRejectsBothProviderTokens(t *testing.T) {
 	}
 }
 
+func TestDailyLimitFromEnv(t *testing.T) {
+	for _, name := range []string{"LAST_ORDERS_EMAIL_DAILY_LIMIT", "LAST_ORDERS_PUSH_DAILY_LIMIT"} {
+		for _, test := range []struct {
+			raw        string
+			configured bool
+			want       int
+		}{
+			{want: 100},
+			{raw: "250", configured: true, want: 250},
+			{raw: " 250 ", configured: true, want: 250},
+			{raw: "", configured: true},
+			{raw: "0", configured: true},
+			{raw: "-1", configured: true},
+			{raw: "1.5", configured: true},
+			{raw: "bad", configured: true},
+			{raw: "99999999999999999999999999", configured: true},
+		} {
+			t.Run(name+":"+test.raw, func(t *testing.T) {
+				maximum, err := dailyLimitFromEnv(name, 100, func(key string) (string, bool) {
+					if key != name {
+						t.Fatalf("lookup %s; want %s", key, name)
+					}
+					return test.raw, test.configured
+				})
+				if maximum != test.want || (err != nil) != (test.want == 0) {
+					t.Fatalf("limit = %d, %v; want %d", maximum, err, test.want)
+				}
+			})
+		}
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

@@ -28,6 +28,7 @@ func TestAppWiresUpFirestoreCollaboratorsAgainstEmulator(t *testing.T) {
 		PollDelay:          5 * time.Millisecond,
 		Logger:             testLogger(),
 		EnableFirestore:    true,
+		PollsSince:         time.Now().Format(time.DateOnly),
 		FirestoreProjectID: projectID,
 		EmailClient:        emailplugin.ClientDummy,
 		Push:               pushplugin.Options{Client: pushplugin.ClientDummy},

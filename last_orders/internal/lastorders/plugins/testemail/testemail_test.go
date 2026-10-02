@@ -21,6 +21,10 @@ func (t *tokens) Acquire() int {
 	return t.wait
 }
 
+func (t *tokens) AcquireN(count int) (int, error) {
+	return t.Acquire(), nil
+}
+
 type acks struct {
 	err  error
 	user string
@@ -63,7 +67,7 @@ func TestHandlerSendsThenAcks(t *testing.T) {
 	if request.IdempotencyToken != "test-email:u1:r1" || request.Subject != subject || request.Text != body {
 		t.Errorf("request = %+v", request)
 	}
-	if len(request.Recipients) != 1 || request.Recipients[0].Email != "a@example.com" {
+	if len(request.Recipients) != 1 || request.Recipients[0].Email != "a@example.com" || request.Recipients[0].UserID != "u1" {
 		t.Errorf("recipients = %+v", request.Recipients)
 	}
 	assertAckStep(t, steps[len(steps)-1])

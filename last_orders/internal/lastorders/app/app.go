@@ -19,6 +19,7 @@ import (
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
+	"last_orders/internal/lastorders/components/listenerscope"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/ratelimit"
@@ -34,6 +35,7 @@ import (
 	pushtestlistener "last_orders/internal/lastorders/database/listeners/pushtest"
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
+	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
@@ -68,7 +70,9 @@ type Config struct {
 	Logger             *slog.Logger
 	FirestoreProjectID string
 	EnableFirestore    bool
-	IdempotencyRemote  firebaseidempotency.Remote
+	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
+	PollsSince        string
+	IdempotencyRemote firebaseidempotency.Remote
 	// CompletionActions is the durable completed-poll action history shared with Python.
 	CompletionActions      completionactions.Store
 	EventReevaluateEvery   time.Duration
@@ -86,7 +90,9 @@ type Config struct {
 	// compatibility shortcut for callers that only need to select a client kind.
 	Email emailplugin.Options
 	// Push configures Web Push delivery.
-	Push pushplugin.Options
+	Push            pushplugin.Options
+	EmailDailyLimit int
+	PushDailyLimit  int
 
 	// External collaborators. Each is optional; when nil it is built from the
 	// Firestore client, and construction fails if Firestore is disabled.
@@ -108,6 +114,11 @@ type Config struct {
 
 // TestEmailDailyLimit is the default number of diagnostics test emails per day.
 const TestEmailDailyLimit = 10
+
+const (
+	EmailDailyLimit = 100
+	PushDailyLimit  = 1000
+)
 
 type App struct {
 	logger                      *slog.Logger
@@ -144,6 +155,15 @@ func New(cfg Config) (application *App, err error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.EmailDailyLimit < 0 || cfg.PushDailyLimit < 0 {
+		return nil, fmt.Errorf("daily send limits must be positive")
+	}
+	if cfg.EmailDailyLimit == 0 {
+		cfg.EmailDailyLimit = EmailDailyLimit
+	}
+	if cfg.PushDailyLimit == 0 {
+		cfg.PushDailyLimit = PushDailyLimit
 	}
 	if cfg.PollDelay <= 0 {
 		cfg.PollDelay = 50 * time.Millisecond
@@ -217,11 +237,6 @@ func New(cfg Config) (application *App, err error) {
 	if emailOptions.Logger == nil {
 		emailOptions.Logger = cfg.Logger
 	}
-	emailPlugin, err := emailplugin.New(baseStore.DB(), emailOptions)
-	if err != nil {
-		return nil, fmt.Errorf("init email plugin: %w", err)
-	}
-
 	venueSource := cfg.VenueSource
 	if venueSource == nil {
 		if firestoreClient == nil {
@@ -255,11 +270,6 @@ func New(cfg Config) (application *App, err error) {
 	if pushOptions.Logger == nil {
 		pushOptions.Logger = cfg.Logger
 	}
-	pushPlugin, err := pushplugin.New(baseStore.DB(), notificationProfileService, pushOptions)
-	if err != nil {
-		return nil, fmt.Errorf("init push plugin: %w", err)
-	}
-
 	recurrenceService := cfg.RecurrenceService
 	if recurrenceService == nil {
 		if firestoreClient == nil {
@@ -270,6 +280,31 @@ func New(cfg Config) (application *App, err error) {
 			return nil, fmt.Errorf("init recurrence service: %w", err)
 		}
 		recurrenceService = concrete
+	}
+
+	if emailOptions.Tokens == nil {
+		emailOptions.Tokens, err = ratelimit.New("email.send", cfg.EmailDailyLimit, recurrenceService.Location(), func() {
+			cfg.Logger.Warn("rate limit exhausted", "source", "email.send", "maximum", cfg.EmailDailyLimit)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if pushOptions.Tokens == nil {
+		pushOptions.Tokens, err = ratelimit.New("push.send", cfg.PushDailyLimit, recurrenceService.Location(), func() {
+			cfg.Logger.Warn("rate limit exhausted", "source", "push.send", "maximum", cfg.PushDailyLimit)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	emailPlugin, err := emailplugin.New(baseStore.DB(), emailOptions)
+	if err != nil {
+		return nil, fmt.Errorf("init email plugin: %w", err)
+	}
+	pushPlugin, err := pushplugin.New(baseStore.DB(), notificationProfileService, pushOptions)
+	if err != nil {
+		return nil, fmt.Errorf("init push plugin: %w", err)
 	}
 
 	autocompleteSource := cfg.AutocompleteSource
@@ -294,12 +329,27 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 
+	var pollsSince string
+	if cfg.NewPollSource == nil || cfg.CompletedPollSource == nil || cfg.ChatMessageSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("poll and chat message sources are required: supply them in Config or enable firestore")
+		}
+		scope, err := listenerscope.NewFirestoreStore(firestoreClient, "listener_state", "last_orders")
+		if err != nil {
+			return nil, err
+		}
+		resolveCtx, cancelResolve := context.WithTimeout(context.Background(), 30*time.Second)
+		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince)
+		cancelResolve()
+		if err != nil {
+			return nil, fmt.Errorf("resolve polls since: %w", err)
+		}
+		cfg.Logger.Info("listener scope resolved", "polls_since", pollsSince)
+	}
+
 	newPollSource := cfg.NewPollSource
 	if newPollSource == nil {
-		if firestoreClient == nil {
-			return nil, fmt.Errorf("new poll source is required: supply Config.NewPollSource or enable firestore")
-		}
-		newPollSource, err = newpolllistener.NewFirestoreSource(firestoreClient)
+		newPollSource, err = newpolllistener.NewFirestoreSource(firestoreClient, pollsSince)
 		if err != nil {
 			return nil, err
 		}
@@ -307,10 +357,7 @@ func New(cfg Config) (application *App, err error) {
 
 	completedPollSource := cfg.CompletedPollSource
 	if completedPollSource == nil {
-		if firestoreClient == nil {
-			return nil, fmt.Errorf("completed poll source is required: supply Config.CompletedPollSource or enable firestore")
-		}
-		completedPollSource, err = completedpolllistener.NewFirestoreSource(firestoreClient)
+		completedPollSource, err = completedpolllistener.NewFirestoreSource(firestoreClient, pollsSince)
 		if err != nil {
 			return nil, err
 		}
@@ -329,10 +376,11 @@ func New(cfg Config) (application *App, err error) {
 
 	chatMessageSource := cfg.ChatMessageSource
 	if chatMessageSource == nil {
-		if firestoreClient == nil {
-			return nil, fmt.Errorf("chat message source is required: supply Config.ChatMessageSource or enable firestore")
+		messagesSince, err := time.ParseInLocation(time.DateOnly, pollsSince, recurrenceService.Location())
+		if err != nil {
+			return nil, fmt.Errorf("parse polls since: %w", err)
 		}
-		chatMessageSource, err = chatmessagelistener.NewFirestoreSource(firestoreClient)
+		chatMessageSource, err = chatmessagelistener.NewFirestoreSource(firestoreClient, messagesSince)
 		if err != nil {
 			return nil, err
 		}
@@ -375,7 +423,7 @@ func New(cfg Config) (application *App, err error) {
 	if testEmailTokens == nil {
 		logger := cfg.Logger
 		testEmailTokens, err = ratelimit.New("email.test", TestEmailDailyLimit, recurrenceService.Location(), func() {
-			logger.Warn("test email daily limit exhausted", "limit", TestEmailDailyLimit)
+			logger.Warn("test email daily limit exhausted", "source", "email.test", "limit", TestEmailDailyLimit)
 		})
 		if err != nil {
 			return nil, err
@@ -669,6 +717,7 @@ func New(cfg Config) (application *App, err error) {
 	if cfg.HTTPAddr != "" {
 		apiMux := http.NewServeMux()
 		apiMux.Handle("POST /api/ping", &pingendpoint.Endpoint{Logger: cfg.Logger})
+		apiMux.Handle("POST /api/email-history", &emailhistoryendpoint.Endpoint{Store: emailPlugin, Logger: cfg.Logger})
 		apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, firebaseauth.Middleware(cfg.AuthVerifier, apiMux), cfg.AllowedAPIPreviewSites...)
 		if err != nil {
 			return nil, err

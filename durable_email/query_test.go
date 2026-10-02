@@ -208,6 +208,34 @@ func TestQueryProgressAppliesOffsetWithoutLimit(t *testing.T) {
 
 var fixtureSubmittedAt = time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
 
+func TestQueryProgressOwnershipAndRecency(t *testing.T) {
+	store, db := newQueryFixture(t)
+	for _, entry := range []struct {
+		uid, token, recipient string
+		at                    time.Time
+	}{
+		{"alice", "send-1", "alice@example.com", fixtureSubmittedAt},
+		{"alice", "send-2", "alice@example.com", fixtureSubmittedAt.Add(time.Hour)},
+		{"bob", "send-1", "bob@example.com", fixtureSubmittedAt.Add(2 * time.Hour)},
+	} {
+		if _, err := db.Exec(`INSERT INTO email_ownership VALUES (?, ?, ?, ?)`, entry.uid, entry.token, entry.recipient, entry.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := store.QueryProgress(context.Background(), ProgressFilter{UserID: "alice", LatestFirst: true, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTokens(t, rows, []string{"send-2"})
+	if rows[0].CreatedAt == nil || !rows[0].CreatedAt.Equal(fixtureSubmittedAt.Add(time.Hour)) {
+		t.Fatalf("created at = %v", rows[0].CreatedAt)
+	}
+	rows, err = store.QueryProgress(context.Background(), ProgressFilter{UserID: "carol", LatestFirst: true})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("unowned history = %+v, %v", rows, err)
+	}
+}
+
 // newQueryFixture seeds two operations sharing a recipient and spanning both states.
 func newQueryFixture(t *testing.T) (*Store, *sql.DB) {
 	t.Helper()

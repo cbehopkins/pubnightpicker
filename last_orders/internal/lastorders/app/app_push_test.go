@@ -82,6 +82,45 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 	}
 }
 
+func TestPollPushBudgetDefersEndpointsAndKeepsActionPending(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "push-budget.db")
+	logs := &syncBuffer{}
+	actions := completionactionstest.New()
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.PushDailyLimit = 1
+	cfg.CompletionActions = actions
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{
+		UserChanges:    []notificationprofile.Change{userDocument("alice", map[string]any{"webPushEnabled": true})},
+		EndpointChange: []notificationprofile.Change{endpointDocument("alice", "phone"), endpointDocument("alice", "laptop")},
+	}
+	application := newApp(t, cfg)
+	defer application.Close()
+	if err := enqueueNewPoll(t, application, "push-budget"); err != nil {
+		t.Fatal(err)
+	}
+	runFor(t, application, 400*time.Millisecond)
+	db := openSQLite(t, dbPath)
+	var accepted, pending int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Accepted'`).Scan(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Pending' AND attempts = 0`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if accepted != 1 || pending != 1 || strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 {
+		t.Fatalf("accepted %d, untouched pending %d; logs %s", accepted, pending, logs.String())
+	}
+	record, err := actions.Get(context.Background(), completionactions.OpenCollection, "push-budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.NeedsAction(completionactions.ActionPush, "push-budget") {
+		t.Fatal("marked push action before all endpoints became terminal")
+	}
+}
+
 func TestNotificationPingMirrorsRequestIntoAck(t *testing.T) {
 	t.Parallel()
 

@@ -11,3 +11,6 @@ firebase_sub/firestore.indexes.json
 last_orders/cmd/last-orders/*.db
 last_orders/cmd/last-orders/*.db-shm
 last_orders/cmd/last-orders/*.db-wal
+last_orders/last-orders-live-debug.db
+last_orders/last-orders-live-debug.db-shm
+last_orders/last-orders-live-debug.db-wal

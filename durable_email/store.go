@@ -124,6 +124,21 @@ func NewStore(db *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("create email_events recipient index: %w", err)
 	}
 
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS email_ownership (
+			user_id TEXT NOT NULL,
+			idempotency_token TEXT NOT NULL,
+			recipient TEXT NOT NULL,
+			created_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, idempotency_token, recipient),
+			UNIQUE (idempotency_token, recipient)
+		);
+		CREATE INDEX IF NOT EXISTS email_ownership_recent
+			ON email_ownership (user_id, created_at DESC);
+	`); err != nil {
+		return nil, fmt.Errorf("create email ownership schema: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit durable email schema: %w", err)
 	}
@@ -261,6 +276,7 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 	}
 
 	type recipientRow struct {
+		userID    string
 		email     string
 		name      string
 		variables string
@@ -275,7 +291,7 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 		if _, exists := wanted[recipient.Email]; exists {
 			return nil, fmt.Errorf("duplicate recipient %q", recipient.Email)
 		}
-		row := recipientRow{email: recipient.Email, name: recipient.Name, variables: variables}
+		row := recipientRow{userID: recipient.UserID, email: recipient.Email, name: recipient.Name, variables: variables}
 		rows = append(rows, row)
 		wanted[recipient.Email] = row
 	}
@@ -293,21 +309,23 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 				return fmt.Errorf("conflicting request for idempotency token %q", request.IdempotencyToken)
 			}
 			storedRows, err := tx.Query(`
-				SELECT recipient, recipient_name, variables FROM email_progress
-				WHERE idempotency_token = ?
+				SELECT p.recipient, p.recipient_name, p.variables,
+					COALESCE((SELECT o.user_id FROM email_ownership o
+						WHERE o.idempotency_token = p.idempotency_token AND o.recipient = p.recipient), '')
+				FROM email_progress p WHERE p.idempotency_token = ?
 			`, request.IdempotencyToken)
 			if err != nil {
 				return err
 			}
 			seen := 0
 			for storedRows.Next() {
-				var email, name, variables string
-				if err := storedRows.Scan(&email, &name, &variables); err != nil {
+				var email, name, variables, userID string
+				if err := storedRows.Scan(&email, &name, &variables, &userID); err != nil {
 					storedRows.Close()
 					return err
 				}
 				row, exists := wanted[email]
-				if !exists || row.name != name || !sameJSON(row.variables, variables) {
+				if !exists || row.userID != userID || row.name != name || !sameJSON(row.variables, variables) {
 					storedRows.Close()
 					return fmt.Errorf("conflicting recipients for idempotency token %q", request.IdempotencyToken)
 				}
@@ -343,6 +361,14 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 				) VALUES (?, ?, ?, ?, ?)
 			`, request.IdempotencyToken, row.email, row.name, StatePending, row.variables); err != nil {
 				return fmt.Errorf("insert progress for %q: %w", row.email, err)
+			}
+			if row.userID != "" {
+				if err := tx.Exec(`
+					INSERT INTO email_ownership (user_id, idempotency_token, recipient, created_at)
+					VALUES (?, ?, ?, ?)
+				`, row.userID, request.IdempotencyToken, row.email, time.Now().UTC()); err != nil {
+					return fmt.Errorf("insert email ownership: %w", err)
+				}
 			}
 		}
 		return nil

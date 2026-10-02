@@ -14,6 +14,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/ratelimit"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	_ "modernc.org/sqlite"
@@ -89,7 +90,11 @@ func newTestPlugin(t *testing.T, sender Sender, invalidator *fakeInvalidator) *P
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	plugin, err := New(db, invalidator, Options{Client: ClientDummy, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	tokens, err := ratelimit.New("push.send", 1000, time.UTC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin, err := New(db, invalidator, Options{Client: ClientDummy, Tokens: tokens, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatalf("new plugin: %v", err)
 	}
@@ -166,6 +171,84 @@ func TestPopulateWithoutEndpointsRunsFollowUpDirectly(t *testing.T) {
 	}
 	if len(result.NewCells) != 1 || result.NewCells[0].Steps[0].HandlerName != "test.after" {
 		t.Fatalf("new cells = %+v, want only the follow-up", result.NewCells)
+	}
+}
+
+type deliveryTokens struct {
+	wait  int
+	calls int
+}
+
+func (source *deliveryTokens) Acquire() int                    { source.calls++; return source.wait }
+func (source *deliveryTokens) AcquireN(count int) (int, error) { return source.Acquire(), nil }
+
+func TestDeliverRateLimitDefersWithoutAttemptOrInvalidation(t *testing.T) {
+	for _, wait := range []int{30, 86400} {
+		t.Run(time.Duration(wait).String(), func(t *testing.T) {
+			sender := &fakeSender{status: http.StatusGone}
+			invalidator := &fakeInvalidator{}
+			plugin := newTestPlugin(t, sender, invalidator)
+			source := &deliveryTokens{wait: wait}
+			plugin.tokens = source
+			request := firstDelivery(t, populate(t, plugin))
+			before := time.Now()
+			result := (deliverHandler{plugin: plugin}).Handle(context.Background(), request)
+			retry, ok := result.(cellar.Retry)
+			if !ok || retry.NotBefore == nil || !retry.NotBefore.After(before) || retry.NotBefore.After(request.ExpiresAt) || len(retry.ApplicationWork) != 0 {
+				t.Fatalf("retry = %#v", result)
+			}
+			if wait == 86400 && !retry.NotBefore.Equal(request.ExpiresAt) {
+				t.Fatal("retry not capped at expiry")
+			}
+			applyWork(t, plugin.db, retry.ApplicationWork)
+			var attempts int
+			if err := plugin.db.QueryRow(`SELECT attempts FROM push_deliveries WHERE notification_id = 'n1' AND user_id = 'alice'`).Scan(&attempts); err != nil {
+				t.Fatal(err)
+			}
+			if sender.sent != 0 || len(invalidator.invalidated) != 0 || attempts != 0 || source.calls != 1 || deliveryState(t, plugin, "alice") != StatePending {
+				t.Fatalf("sent %d, invalidated %v, attempts %d, acquisitions %d", sender.sent, invalidator.invalidated, attempts, source.calls)
+			}
+			request.ExpiresAt = time.Now().Add(-time.Second)
+			expired := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Complete)
+			applyWork(t, plugin.db, expired.ApplicationWork)
+			if source.calls != 1 || deliveryState(t, plugin, "alice") != StateExpired {
+				t.Fatal("expiry acquired tokens or did not finish")
+			}
+		})
+	}
+}
+
+func TestDeliverSharesBudgetAndChargesProviderRetries(t *testing.T) {
+	sender := &fakeSender{err: errors.New("network failure")}
+	plugin := newTestPlugin(t, sender, &fakeInvalidator{})
+	source, err := ratelimit.New("push.send", 1, time.UTC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin.tokens = source
+	population := populate(t, plugin)
+	request := firstDelivery(t, population)
+	failed := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry)
+	applyWork(t, plugin.db, failed.ApplicationWork)
+	for _, cell := range population.NewCells[:2] {
+		var request deliveryRequest
+		if err := decode(cell.Steps[0].Payload, &request); err != nil {
+			t.Fatal(err)
+		}
+		limited := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry)
+		if len(limited.ApplicationWork) != 0 {
+			t.Fatal("rate limit counted as failure")
+		}
+	}
+	if sender.sent != 1 {
+		t.Fatalf("sent = %d; want only first attempt", sender.sent)
+	}
+}
+
+func TestNewRequiresPushTokenSource(t *testing.T) {
+	plugin := newTestPlugin(t, &fakeSender{}, &fakeInvalidator{})
+	if _, err := New(plugin.db, &fakeInvalidator{}, Options{Client: ClientDummy}); err == nil {
+		t.Fatal("missing source accepted")
 	}
 }
 

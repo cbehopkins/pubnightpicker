@@ -39,18 +39,24 @@ type Source interface {
 }
 
 type FirestoreSource struct {
-	client *firestore.Client
+	client     *firestore.Client
+	pollsSince string
 }
 
-func NewFirestoreSource(client *firestore.Client) (*FirestoreSource, error) {
+// NewFirestoreSource watches open polls dated on or after pollsSince (YYYY-MM-DD), matching Python's scope.
+func NewFirestoreSource(client *firestore.Client, pollsSince string) (*FirestoreSource, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &FirestoreSource{client: client}, nil
+	if pollsSince == "" {
+		return nil, fmt.Errorf("polls since date is required")
+	}
+	return &FirestoreSource{client: client, pollsSince: pollsSince}, nil
 }
 
 func (s *FirestoreSource) Watch(ctx context.Context) (ChangeStream, error) {
-	return &firestoreChangeStream{iterator: s.client.Collection(pollCollection).Snapshots(ctx)}, nil
+	query := s.client.Collection(pollCollection).Where("completed", "==", false).Where("date", ">=", s.pollsSince)
+	return &firestoreChangeStream{iterator: query.Snapshots(ctx)}, nil
 }
 
 type firestoreChangeStream struct {

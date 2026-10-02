@@ -60,7 +60,7 @@ func (h Handler) Handle(_ context.Context, request truths.TestEmailRequested) ce
 			SenderName:       senderName,
 			Subject:          subject,
 			Text:             body,
-			Recipients:       []durableemail.SendRecipient{{Email: request.Email}},
+			Recipients:       []durableemail.SendRecipient{{UserID: request.UserID, Email: request.Email}},
 		}
 		steps = append(durableemail.NewSendSequence(send), ack)
 	}

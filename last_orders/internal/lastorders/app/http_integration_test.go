@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -58,6 +59,92 @@ func TestHTTPInvalidPreviewSite(t *testing.T) {
 	cfg.AllowedAPIPreviewSites = []string{"*.web.app"}
 	if _, err := app.New(cfg); err == nil {
 		t.Fatal("accepted wildcard preview site")
+	}
+}
+
+func TestAuthenticatedEmailHistoryEndToEnd(t *testing.T) {
+	dbPath := t.TempDir() + "/email-history.db"
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.AllowedAPIOrigins = []string{"http://localhost:3000"}
+	application, err := app.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.Close()
+	db := openSQLite(t, dbPath)
+	for index := range 24 {
+		token := fmt.Sprintf("send-%02d", index)
+		if _, err := db.Exec(`INSERT INTO email_requests VALUES (?, ?, '', '', ?, '', '', '{}', '{}')`, token, token, token); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO email_progress (idempotency_token, recipient, recipient_name, state, variables) VALUES (?, 'shared@example.com', '', 'Pending', '{}')`, token); err != nil {
+			t.Fatal(err)
+		}
+		if index == 23 {
+			continue
+		}
+		uid := "verified-user"
+		if index == 22 {
+			uid = "another-user"
+		}
+		if _, err := db.Exec(`INSERT INTO email_ownership VALUES (?, ?, 'shared@example.com', ?)`, uid, token, time.Date(2026, 10, 1, index, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- application.Run(ctx) }()
+	for _, token := range []string{"", "bad-token", "valid-token"} {
+		request, err := http.NewRequest(http.MethodPost, "http://"+application.HTTPAddr()+"/api/email-history", strings.NewReader(`{"request_id":"bca1207e-0519-4512-b9b5-c1b8a1d6fd00"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "http://localhost:3000")
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "valid-token" {
+			response.Body.Close()
+			if response.StatusCode != 401 {
+				t.Fatalf("unauthenticated status = %d", response.StatusCode)
+			}
+			continue
+		}
+		var body struct {
+			UID     string `json:"uid"`
+			Entries []struct {
+				Subject string `json:"subject"`
+			} `json:"entries"`
+		}
+		err = json.NewDecoder(response.Body).Decode(&body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != 200 || body.UID != "verified-user" || len(body.Entries) != 20 {
+			t.Fatalf("status=%d body=%+v", response.StatusCode, body)
+		}
+		for index, entry := range body.Entries {
+			if entry.Subject != fmt.Sprintf("send-%02d", 21-index) {
+				t.Fatalf("entry %d = %+v", index, entry)
+			}
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("app did not stop")
 	}
 }
 

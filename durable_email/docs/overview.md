@@ -65,13 +65,34 @@ is responsible for querying provider-side records to determine whether an ambigu
 
 ---
 
+## 2.2 Pre-submission guard
+
+Registration may supply a `SubmissionGuard` through optional `RegisterOptions`.
+The guard receives the immutable idempotency token and the number of recipients
+still pending for this provider attempt. It is independent of application policy.
+
+Post invokes the guard after recovery and empty-recipient checks, immediately
+before recording submission timestamps. Zero delay permits submission; a positive
+delay retries the current Post step at that future time. Errors and negative
+delays fail closed. Refusal does not call the provider, change recipient state or
+submission timestamps, create recovery work, or run later sequence steps.
+
+The guard runs again on each submission attempt, including attempts involving
+only a subset of the original recipients after recovery. Token reservations and
+refunds are not part of this component. Omitting the guard preserves existing
+standalone behaviour. Deferred Cell scheduling is persisted by Cellar; no new
+email schema or persisted guard state is required. Verification is not guarded.
+
+---
+
 # 3. Durable Request and Progress
 
-The durable email component maintains three related tables:
+The durable email component maintains four related tables:
 
 * `email_requests` contains one row per logical Send operation;
 * `email_progress` contains one row per recipient of that operation;
-* `email_events` records provider events for each recipient.
+* `email_events` records provider events for each recipient;
+* `email_ownership` associates a recipient send with its application user and creation time for private reporting.
 
 Together the tables contain the provider-neutral request data and per-recipient
 progress required to execute and recover the delivery operation. They are not
@@ -113,7 +134,28 @@ CREATE TABLE email_events (
     event             TEXT NOT NULL,
     recorded_at       DATETIME NOT NULL
 );
+
+CREATE TABLE email_ownership (
+    user_id           TEXT NOT NULL,
+    idempotency_token TEXT NOT NULL,
+    recipient         TEXT NOT NULL,
+    created_at        DATETIME NOT NULL,
+    PRIMARY KEY (user_id, idempotency_token, recipient),
+    UNIQUE (idempotency_token, recipient)
+);
 ```
+
+`SendRecipient.UserID` is optional application-supplied ownership metadata, not
+a provider template variable. Setup persists ownership atomically with the send;
+retries cannot change the owner or creation time. Application callers must derive
+it from trusted user identities. Unowned sends remain valid for delivery but are
+excluded from UID-filtered reporting. Existing databases gain an empty ownership
+table; ownership is never inferred from an email address or backfilled.
+
+`ProgressFilter.UserID` filters `QueryProgress` by recorded ownership.
+`LatestFirst` orders by creation time descending with recipient row ID as a stable
+tie-breaker, before applying the limit. The default primary-key order remains
+unchanged. `ProgressRow.CreatedAt` is absent for unowned sends.
 
 The exact SQLite declaration may be adjusted to match the final database migration conventions, but the logical fields and constraints are normative. `email_events` is an append-only record of provider events; `recorded_at` is when the durable layer received the event, not a claim about provider event time. Repeated opens and clicks remain separate records. Existing databases gain the new table on `NewStore` without changing their progress rows.
 

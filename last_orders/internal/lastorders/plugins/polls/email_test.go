@@ -62,7 +62,7 @@ to participate in the voting.
 	if request.Subject != pollOpenedSubject || request.Text != wantBody {
 		t.Errorf("subject/body = %q / %q", request.Subject, request.Text)
 	}
-	if len(request.Recipients) != 2 || request.Recipients[0].Email != "alice@example.com" || request.Recipients[1].Email != "bob@example.com" {
+	if len(request.Recipients) != 2 || request.Recipients[0].Email != "alice@example.com" || request.Recipients[1].Email != "bob@example.com" || request.Recipients[0].UserID != "alice" || request.Recipients[1].UserID != "bob" {
 		t.Errorf("recipients = %+v", request.Recipients)
 	}
 	assertOpenMark(t, steps[len(steps)-1], completionactions.ActionEmail)

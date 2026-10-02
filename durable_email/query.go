@@ -11,6 +11,8 @@ import (
 // ProgressFilter narrows a progress query. The zero value selects every row,
 // and populated fields combine conjunctively.
 type ProgressFilter struct {
+	UserID           string
+	LatestFirst      bool
 	IdempotencyToken string
 	Recipient        string
 	States           []string
@@ -26,6 +28,7 @@ type ProgressRow struct {
 	State            string
 	PMUID            string
 	SubmittedAt      *time.Time
+	CreatedAt        *time.Time
 	Subject          string
 	SenderEmail      string
 	SenderName       string
@@ -65,15 +68,25 @@ func (s *Store) QueryProgress(ctx context.Context, filter ProgressFilter) ([]Pro
 			r.subject,
 			r.sender_email,
 			r.sender_name,
-			r.template_id
+			r.template_id,
+			o.created_at
 		FROM email_progress p
 		JOIN email_requests r ON r.idempotency_token = p.idempotency_token
+		LEFT JOIN email_ownership o ON o.idempotency_token = p.idempotency_token AND o.recipient = p.recipient
 	`
+	if filter.UserID != "" {
+		conditions = append(conditions, "o.user_id = ?")
+		args = append(args, filter.UserID)
+	}
 	if len(conditions) > 0 {
 		query += "WHERE " + strings.Join(conditions, " AND ") + "\n"
 	}
 	// Primary key order, so pages of an unchanged table are disjoint.
-	query += "ORDER BY p.idempotency_token, p.recipient\n"
+	if filter.LatestFirst {
+		query += "ORDER BY o.created_at DESC, p.rowid DESC\n"
+	} else {
+		query += "ORDER BY p.idempotency_token, p.recipient\n"
+	}
 
 	if filter.Limit > 0 {
 		query += "LIMIT ?\n"
@@ -98,6 +111,7 @@ func (s *Store) QueryProgress(ctx context.Context, filter ProgressFilter) ([]Pro
 		var row ProgressRow
 		var pmuid sql.NullString
 		var submittedAt sql.NullTime
+		var createdAt sql.NullTime
 		if err := rows.Scan(
 			&row.IdempotencyToken,
 			&row.Recipient,
@@ -109,6 +123,7 @@ func (s *Store) QueryProgress(ctx context.Context, filter ProgressFilter) ([]Pro
 			&row.SenderEmail,
 			&row.SenderName,
 			&row.TemplateID,
+			&createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan email progress: %w", err)
 		}
@@ -116,6 +131,10 @@ func (s *Store) QueryProgress(ctx context.Context, filter ProgressFilter) ([]Pro
 		if submittedAt.Valid {
 			value := submittedAt.Time.UTC()
 			row.SubmittedAt = &value
+		}
+		if createdAt.Valid {
+			value := createdAt.Time.UTC()
+			row.CreatedAt = &value
 		}
 		results = append(results, row)
 	}
@@ -134,6 +153,9 @@ type EventRow struct {
 // QueryEvents reports webhook history in receipt order. State filters apply to
 // current progress, not to historical events.
 func (s *Store) QueryEvents(ctx context.Context, filter ProgressFilter) ([]EventRow, error) {
+	if filter.UserID != "" || filter.LatestFirst {
+		return nil, fmt.Errorf("event history does not support ownership or latest-first filters")
+	}
 	if len(filter.States) != 0 {
 		return nil, fmt.Errorf("event history cannot be filtered by progress state")
 	}

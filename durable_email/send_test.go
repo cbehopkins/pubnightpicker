@@ -29,6 +29,45 @@ type sentEmail struct {
 	headers   map[string]string
 }
 
+func TestSetupPersistsImmutableOwnership(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{
+		IdempotencyToken: "owned-send", Subject: "Hello",
+		Recipients: []SendRecipient{{UserID: "alice", Email: "old@example.com"}, {Email: "list@example.com"}},
+	}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.QueryProgress(context.Background(), ProgressFilter{UserID: "alice", LatestFirst: true})
+	if err != nil || len(rows) != 1 || rows[0].Recipient != "old@example.com" || rows[0].CreatedAt == nil || rows[0].State != StatePending {
+		t.Fatalf("owned progress = %+v, %v", rows, err)
+	}
+	createdAt := *rows[0].CreatedAt
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = store.QueryProgress(context.Background(), ProgressFilter{UserID: "alice"})
+	if err != nil || len(rows) != 1 || !rows[0].CreatedAt.Equal(createdAt) {
+		t.Fatalf("retried progress = %+v, %v", rows, err)
+	}
+	request.Recipients[0].UserID = "bob"
+	if err := applySetup(t, cellarStore, store, request); err == nil {
+		t.Fatal("ownership change accepted")
+	}
+	rows, err = store.QueryProgress(context.Background(), ProgressFilter{UserID: "bob"})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("other user's progress = %+v, %v", rows, err)
+	}
+}
+
 // countingClient records how many provider requests the handler issued.
 type countingClient struct {
 	inner clients.EmailClient
@@ -50,6 +89,136 @@ func (verify verifyClientFunc) Verify(ctx context.Context, request clients.Verif
 func (c *countingClient) Send(ctx context.Context, email clients.Email) (clients.SendResult, error) {
 	c.calls.Add(1)
 	return c.inner.Send(ctx, email)
+}
+
+func TestPostGuardDefersWithoutSubmissionAndSurvivesStoreRestart(t *testing.T) {
+	for _, delay := range []time.Duration{time.Hour, 24 * time.Hour} {
+		t.Run(delay.String(), func(t *testing.T) {
+			db := openTestDB(t)
+			cellarStore, err := cellarsqlite.NewStore(db, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewStore(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := SendRequest{IdempotencyToken: "guarded", Recipients: []SendRecipient{{Email: "alice@example.com"}, {Email: "bob@example.com"}}}
+			steps := append(NewSendSequence(request), cellar.Step{HandlerName: "test.marker", Payload: struct{}{}})
+			sequence, err := cellar.NewSequence(steps...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cellRequest, err := sequence.CellRequest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cellarStore.Add([]cellar.CellRequest{cellRequest}); err != nil {
+				t.Fatal(err)
+			}
+			setup, ok, err := cellarStore.ClaimNext(time.Now())
+			if err != nil || !ok {
+				t.Fatalf("claim setup: %t, %v", ok, err)
+			}
+			if err := cellarStore.ApplyResult(setup, (SetupHandler{Store: store}).Handle(context.Background(), request)); err != nil {
+				t.Fatal(err)
+			}
+			recovery, ok, err := cellarStore.ClaimNext(time.Now())
+			if err != nil || !ok {
+				t.Fatalf("claim recovery: %t, %v", ok, err)
+			}
+			if err := cellarStore.ApplyResult(recovery, cellar.Complete{}); err != nil {
+				t.Fatal(err)
+			}
+			post, ok, err := cellarStore.ClaimNext(time.Now())
+			if err != nil || !ok {
+				t.Fatalf("claim post: %t, %v", ok, err)
+			}
+			client := &countingClient{inner: sendClientFunc(func(_ context.Context, email clients.Email) (clients.SendResult, error) {
+				return clients.SendResult{Recipients: []clients.RecipientResult{{PMUID: "alice-accepted"}, {PMUID: "bob-accepted"}}}, nil
+			})}
+			var submission Submission
+			before := time.Now().UTC()
+			result := (PostHandler{Store: store, Client: client, Guard: func(_ context.Context, attempt Submission) (time.Duration, error) {
+				submission = attempt
+				return delay, nil
+			}}).Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken})
+			retry, ok := result.(cellar.Retry)
+			if !ok || retry.NotBefore == nil || retry.NotBefore.Before(before.Add(delay)) || len(retry.ApplicationWork) != 0 || len(retry.NewCells) != 0 {
+				t.Fatalf("guard result = %#v", result)
+			}
+			if submission != (Submission{IdempotencyToken: "guarded", RecipientCount: 2}) || client.calls.Load() != 0 {
+				t.Fatalf("submission = %+v; provider calls = %d", submission, client.calls.Load())
+			}
+			if err := cellarStore.ApplyResult(post, result); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RecoverSubmissions(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			for _, recipient := range request.Recipients {
+				state, pmuid, submitted := progressRow(t, db, "guarded", recipient.Email)
+				if state != StatePending || pmuid.Valid || submitted.Valid {
+					t.Fatalf("refused recipient: %s, %v, %v", state, pmuid, submitted)
+				}
+			}
+			reopened, err := cellarsqlite.NewStore(db, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := reopened.Recover(); err != nil {
+				t.Fatal(err)
+			}
+			if _, claimed, err := reopened.ClaimNext(before); err != nil || claimed {
+				t.Fatalf("early claim = %t, %v", claimed, err)
+			}
+			resumed, claimed, err := reopened.ClaimNext(retry.NotBefore.Add(time.Second))
+			if err != nil || !claimed || resumed.CurrentStep != 2 || len(resumed.Steps) != 4 {
+				t.Fatalf("resumed cell = %+v, %t, %v", resumed, claimed, err)
+			}
+			accepted := (PostHandler{Store: store, Client: client}).Handle(context.Background(), operationRequest{IdempotencyToken: "guarded"})
+			if _, ok := accepted.(cellar.Complete); !ok {
+				t.Fatalf("acceptance = %#v", accepted)
+			}
+			if err := reopened.ApplyResult(resumed, accepted); err != nil {
+				t.Fatal(err)
+			}
+			marker, claimed, err := reopened.ClaimNext(retry.NotBefore.Add(time.Second))
+			if err != nil || !claimed || marker.CurrentStep != 3 || marker.Steps[3].HandlerName != "test.marker" {
+				t.Fatalf("marker = %+v, %t, %v", marker, claimed, err)
+			}
+		})
+	}
+}
+
+func TestPostGuardFailuresFailClosed(t *testing.T) {
+	for _, guard := range []SubmissionGuard{
+		func(context.Context, Submission) (time.Duration, error) { return 0, errors.New("guard unavailable") },
+		func(context.Context, Submission) (time.Duration, error) { return -time.Second, nil },
+	} {
+		db := openTestDB(t)
+		cellarStore, err := cellarsqlite.NewStore(db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store, err := NewStore(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := SendRequest{IdempotencyToken: "guard-failure", Recipients: []SendRecipient{{Email: "alice@example.com"}}}
+		if err := applySetup(t, cellarStore, store, request); err != nil {
+			t.Fatal(err)
+		}
+		client := &countingClient{inner: dummy.NewClient(nil)}
+		result := (PostHandler{Store: store, Client: client, Guard: guard}).Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken})
+		if _, ok := result.(cellar.ErrorResult); !ok || client.calls.Load() != 0 {
+			t.Fatalf("result = %#v, calls = %d", result, client.calls.Load())
+		}
+		state, _, submitted := progressRow(t, db, request.IdempotencyToken, "alice@example.com")
+		if state != StatePending || submitted.Valid {
+			t.Fatalf("state = %s, submitted = %v", state, submitted)
+		}
+	}
 }
 
 func TestSendSequenceWithMailtrap(t *testing.T) {
@@ -494,7 +663,13 @@ func TestRecoveryVerifiesRecipientsBeforeResubmitting(t *testing.T) {
 	})
 	verifier := &stubVerifier{found: map[string]string{"alice@example.com": "pmuid-alice"}}
 	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
-	registerSendHandlers(t, runtime, store, client, verifier)
+	var guardedCounts []int
+	if err := Register(runtime, store, client, verifier, RegisterOptions{SubmissionGuard: func(_ context.Context, attempt Submission) (time.Duration, error) {
+		guardedCounts = append(guardedCounts, attempt.RecipientCount)
+		return 0, nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	request := SendRequest{
 		IdempotencyToken: "send-1", SenderEmail: "sender@example.com", Subject: "Pub night",
 		Recipients: []SendRecipient{{Email: "alice@example.com"}, {Email: "bob@example.com"}},
@@ -508,6 +683,9 @@ func TestRecoveryVerifiesRecipientsBeforeResubmitting(t *testing.T) {
 
 	if len(submissions) != 2 || len(submissions[0]) != 2 || len(submissions[1]) != 1 || submissions[1][0] != "bob@example.com" {
 		t.Errorf("submissions = %v, want [alice bob], then [bob]", submissions)
+	}
+	if len(guardedCounts) != 2 || guardedCounts[0] != 2 || guardedCounts[1] != 1 {
+		t.Errorf("guarded recipient counts = %v; want [2 1]", guardedCounts)
 	}
 	if requests := verifier.requests.Load(); requests != 2 {
 		t.Errorf("verification requests = %d, want 2", requests)

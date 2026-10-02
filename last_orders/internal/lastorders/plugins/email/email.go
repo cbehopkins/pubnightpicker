@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"email_clients/clients/mailtrap"
 	"email_clients/clients/sweego"
 	sweegologs "email_clients/clients/sweego/logs"
+	"last_orders/internal/lastorders/components/ratelimit"
 
 	sdk "github.com/mailtrap/mailtrap-go"
 )
@@ -34,6 +36,7 @@ const (
 
 type Options struct {
 	Client                  ClientKind
+	Tokens                  ratelimit.TokenSource
 	Logger                  *slog.Logger
 	MailtrapToken           string
 	MailtrapTimeout         time.Duration
@@ -50,9 +53,14 @@ type Plugin struct {
 	store    *durableemail.Store
 	client   clients.EmailClient
 	verifier clients.EmailVerifier
+	tokens   ratelimit.TokenSource
+	logger   *slog.Logger
 }
 
 func New(db *sql.DB, opts Options) (*Plugin, error) {
+	if opts.Tokens == nil {
+		return nil, fmt.Errorf("email send token source is required")
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -120,11 +128,40 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init durable email store: %w", err)
 	}
-	return &Plugin{store: store, client: client, verifier: verifier}, nil
+	return &Plugin{store: store, client: client, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
 }
 
 func (p *Plugin) Register(runtime *cellar.Cellar) error {
-	return durableemail.Register(runtime, p.store, p.client, p.verifier)
+	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission})
+}
+
+func (p *Plugin) guardSubmission(_ context.Context, submission durableemail.Submission) (time.Duration, error) {
+	switch {
+	case strings.HasPrefix(submission.IdempotencyToken, "test-email:"):
+		return 0, nil
+	case strings.HasPrefix(submission.IdempotencyToken, "poll-opened:"), strings.HasPrefix(submission.IdempotencyToken, "poll-completed:"):
+		wait, err := p.tokens.AcquireN(submission.RecipientCount)
+		var oversized *ratelimit.RequestExceedsCapacityError
+		if errors.As(err, &oversized) {
+			p.logger.Error("email batch exceeds daily capacity; deferring for 24 hours",
+				"source", "email.send", "idempotency_token", submission.IdempotencyToken,
+				"recipient_count", submission.RecipientCount, "maximum", oversized.Maximum, "err", err)
+			return 24 * time.Hour, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		if wait < 0 {
+			return 0, fmt.Errorf("email send token source returned a negative wait")
+		}
+		return time.Duration(wait) * time.Second, nil
+	default:
+		return 0, fmt.Errorf("email request %q has no rate limit policy", submission.IdempotencyToken)
+	}
+}
+
+func (p *Plugin) QueryProgress(ctx context.Context, filter durableemail.ProgressFilter) ([]durableemail.ProgressRow, error) {
+	return p.store.QueryProgress(ctx, filter)
 }
 
 // RecoverSubmissions must run before Cellar starts, while no email workers exist.

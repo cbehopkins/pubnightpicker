@@ -74,6 +74,38 @@ Failures use `{"error":{"code":"...","message":"..."}}`:
 Authentication occurs before payload processing. Invalid requests do not produce
 a successful ping log. Infrastructure details are not returned to clients.
 
+## Email History
+
+`POST /api/email-history` uses the same authentication, strict `request_id` JSON
+payload, size limit, correlation and no-store headers as ping. No UID, recipient,
+state filter or pagination arguments are accepted from the caller.
+
+The endpoint returns the latest 20 recipient sends owned by the verified UID,
+ordered by the time the durable send was created, newest first. The success
+envelope contains `status`, `uid`, `request_id` and an `entries` array. Each entry
+contains `subject`, `recipient`, `state`, `created_at` and nullable `submitted_at`.
+Timestamps use UTC RFC 3339. Provider IDs and internal idempotency tokens are not
+exposed. An empty history returns `entries: []`; a database failure returns HTTP
+503 with code `history_unavailable` without internal details. Queries have a
+five-second deadline and do not create durable work or send email.
+
+Ownership is recorded from trusted UIDs when new test, poll-open and personal
+poll-completion sends are created. Mailing-list sends and historical records
+without ownership are excluded. Changing an address does not change ownership
+of previous sends; setting somebody else's address cannot reveal their history.
+
+Preferences offers **Email Status**, with a modal showing history and a manual
+refresh command. Closing, navigation, sign-out and account changes cancel pending
+requests; the ten-second frontend deadline includes token acquisition. States are
+the durable backend's current observations, not an independent delivery probe.
+
+Focused verification includes:
+
+```powershell
+go test ./internal/lastorders/endpoints/emailhistory
+go test ./internal/lastorders/app -run TestAuthenticatedEmailHistoryEndToEnd
+```
+
 ## Configuration
 
 | Setting | Behaviour |
@@ -217,4 +249,4 @@ connection message covers both.
 Before production rollout, verify a real matching-project token succeeds, missing
 and altered tokens fail, wrong-project tokens fail, the HTTPS origin is allowed,
 and emulator acceptance is disabled. Provisioning hosting/TLS and adding future
-logging or email-status operations are outside this feature.
+logging operations are outside this feature.
