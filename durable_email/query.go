@@ -122,3 +122,59 @@ func (s *Store) QueryProgress(ctx context.Context, filter ProgressFilter) ([]Pro
 
 	return results, rows.Err()
 }
+
+// EventRow reports one recorded provider event for a recipient.
+type EventRow struct {
+	IdempotencyToken string
+	Recipient        string
+	Event            DeliveryEvent
+	RecordedAt       time.Time
+}
+
+// QueryEvents reports webhook history in receipt order. State filters apply to
+// current progress, not to historical events.
+func (s *Store) QueryEvents(ctx context.Context, filter ProgressFilter) ([]EventRow, error) {
+	if len(filter.States) != 0 {
+		return nil, fmt.Errorf("event history cannot be filtered by progress state")
+	}
+	var conditions []string
+	var args []any
+	if filter.IdempotencyToken != "" {
+		conditions = append(conditions, "idempotency_token = ?")
+		args = append(args, filter.IdempotencyToken)
+	}
+	if filter.Recipient != "" {
+		conditions = append(conditions, "recipient = ?")
+		args = append(args, filter.Recipient)
+	}
+	query := `SELECT idempotency_token, recipient, event, recorded_at FROM email_events` + "\n"
+	if len(conditions) > 0 {
+		query += "WHERE " + strings.Join(conditions, " AND ") + "\n"
+	}
+	query += "ORDER BY id\n"
+	if filter.Limit > 0 {
+		query += "LIMIT ?\n"
+		args = append(args, filter.Limit)
+	} else if filter.Offset > 0 {
+		query += "LIMIT -1\n"
+	}
+	if filter.Offset > 0 {
+		query += "OFFSET ?\n"
+		args = append(args, filter.Offset)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query email events: %w", err)
+	}
+	defer rows.Close()
+	results := []EventRow{}
+	for rows.Next() {
+		var row EventRow
+		if err := rows.Scan(&row.IdempotencyToken, &row.Recipient, &row.Event, &row.RecordedAt); err != nil {
+			return nil, fmt.Errorf("scan email event: %w", err)
+		}
+		row.RecordedAt = row.RecordedAt.UTC()
+		results = append(results, row)
+	}
+	return results, rows.Err()
+}

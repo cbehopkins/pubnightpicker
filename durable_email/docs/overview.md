@@ -67,10 +67,11 @@ is responsible for querying provider-side records to determine whether an ambigu
 
 # 3. Durable Request and Progress
 
-The durable email component maintains two related tables:
+The durable email component maintains three related tables:
 
 * `email_requests` contains one row per logical Send operation;
-* `email_progress` contains one row per recipient of that operation.
+* `email_progress` contains one row per recipient of that operation;
+* `email_events` records provider events for each recipient.
 
 Together the tables contain the provider-neutral request data and per-recipient
 progress required to execute and recover the delivery operation. They are not
@@ -104,9 +105,17 @@ CREATE TABLE email_progress (
 
     PRIMARY KEY (idempotency_token, recipient)
 );
+
+CREATE TABLE email_events (
+    id                INTEGER PRIMARY KEY,
+    idempotency_token TEXT NOT NULL,
+    recipient         TEXT NOT NULL,
+    event             TEXT NOT NULL,
+    recorded_at       DATETIME NOT NULL
+);
 ```
 
-The exact SQLite declaration may be adjusted to match the final database migration conventions, but the logical fields and constraints are normative.
+The exact SQLite declaration may be adjusted to match the final database migration conventions, but the logical fields and constraints are normative. `email_events` is an append-only record of provider events; `recorded_at` is when the durable layer received the event, not a claim about provider event time. Repeated opens and clicks remain separate records. Existing databases gain the new table on `NewStore` without changing their progress rows.
 
 ## 3.2 Request fields
 
@@ -212,44 +221,11 @@ request row.
 
 # 4. Progress State Machine
 
-Each progress row follows the following state machine:
-
-```text
-                         ┌──────────────┐
-                         │    Pending   │
-                         └──────┬───────┘
-                                │
-                         EmailClient.Send
-                                │
-                    ┌───────────┴───────────┐
-                    │                       │
-             usable result             error /
-             containing PMUID          uncertain outcome
-                    │                       │
-                    ▼                       ▼
-               Accepted                 Recovery
-                    │                       │
-                    │                 Recovery handler
-                    │                       │
-                    │                       ▼
-                    │                RecoveryWaiting
-                    │                       │
-                    │                    Verify
-                    │                       │
-                    │              ┌────────┴────────┐
-                    │              │                 │
-                    │            Found           Not Found
-                    │              │                 │
-                    │              ▼                 ▼
-                    └──────────► Accepted          Pending
-                                   │
-                              provider webhook
-                                   │
-                         ┌─────────┴─────────┐
-                         │                   │
-                         ▼                   ▼
-                       Sent               Rejected
-```
+Each recipient has a current progress state and a separate history of provider
+events. The state answers what is currently known; the event history preserves
+repeated opens and clicks and reports events that must not replace a stronger
+state. Neither tracking nor a delivery event makes a recipient eligible for
+another Post.
 
 ## 4.1 States
 
@@ -271,15 +247,40 @@ An Accepted row awaits the provider's eventual delivery result.
 
 ### `Sent`
 
-The provider has reported successful delivery through its webhook mechanism.
+Sweego reports that it has dispatched the message. This is not proof of
+delivery and is not terminal.
 
-`Sent` is a terminal state.
+### `Delivered`
 
-### `Rejected`
+Sweego reports delivery. A human open, click or spam complaint may supersede
+this state.
 
-The provider has reported that delivery failed through its webhook mechanism.
+### `Opened` and `Clicked`
 
-`Rejected` is a terminal state.
+A human open or click respectively has been reported. Proxy opens do not imply
+a human open and do not set `Opened`. A click implies the message was opened;
+neither outcome can be downgraded by a late delivery event.
+
+### `SpamComplaint`
+
+The recipient has complained about the message. This overrides even a prior
+delivery, open or click. It is terminal.
+
+### `HardBounced`
+
+The provider reports a permanent delivery failure. It is terminal; a soft
+bounce is not and is recorded as an event without a terminal state change.
+
+### `Refused`
+
+The provider definitively and permanently refused the recipient at Post,
+before acceptance. It is terminal. A temporary refusal requires an explicit
+retry policy; an ambiguous response requires recovery, not `Refused`.
+
+The provider-neutral `EmailClient` result does not yet classify a refusal as
+permanent. Until that contract and provider-specific classification are added,
+Post must not infer `Refused` from an error or a missing PMUID. The state is
+reserved for a definitive permanent refusal, not for all provider errors.
 
 ### `Recovery`
 
@@ -308,21 +309,36 @@ The following transitions are permitted.
 | ----------------- | ------------------------------------------ | ----------------- |
 | —                 | New Send creates recipient                 | `Pending`         |
 | `Pending`         | `Send` returns usable PMUID                | `Accepted`        |
+| `Pending`         | Definitive permanent refusal              | `Refused`         |
 | `Pending`         | `Send` returns an error / no usable result | `Recovery`        |
 | `Recovery`        | Recovery handler schedules verification    | `RecoveryWaiting` |
 | `RecoveryWaiting` | Verification finds provider message        | `Accepted`        |
 | `RecoveryWaiting` | Verification finds no provider message     | `Pending`         |
-| `Accepted`        | Successful provider webhook                | `Sent`            |
-| `Accepted`        | Failed provider webhook                    | `Rejected`        |
+| `Accepted`        | Sweego Sent                                | `Sent`            |
+| `Accepted`, `Sent` | Sweego Delivered                           | `Delivered`       |
+| `Accepted`, `Sent`, `Delivered` | Human open                | `Opened`          |
+| `Accepted`, `Sent`, `Delivered`, `Opened` | Click          | `Clicked`         |
+| `Accepted`, `Sent` | Hard bounce                                | `HardBounced`     |
+| `Accepted`, `Sent`, `Delivered`, `Opened`, `Clicked` | Spam complaint | `SpamComplaint` |
+| `Accepted`, `Sent`, `Delivered`, `Opened`, `Clicked` | Soft bounce or proxy open | unchanged |
 
-No other state transitions are valid.
+Webhook events are recorded even when their state transition is unchanged.
+Late lower-priority events cannot undo `Delivered`, `Opened`, `Clicked` or
+`SpamComplaint`. Repeated events do not change an already reached state.
+Delivery and tracking events may arrive before earlier webhook events; a human
+open or click can therefore advance directly from `Accepted`. A correlated
+webhook may also precede the Post result: it is evidence of submission and
+advances a `Pending`, `Recovery`, or `RecoveryWaiting` row to its reported
+state. A soft bounce or proxy open in that situation advances it to `Sent`,
+so it cannot be resent while the provider has already seen it. Post and Verify
+may not downgrade such a row. `Refused` and
+`HardBounced` do not change in response to subsequent delivery or tracking
+events. No other transitions are valid.
 
 In particular:
 
-* `Sent` cannot return to `Pending`;
-* `Sent` cannot return to `Accepted`;
-* `Rejected` cannot return to `Pending`;
-* `Rejected` cannot return to `Accepted`;
+* no provider event can return a recipient to `Pending` or `Accepted`;
+* `Refused` and `SpamComplaint` cannot return to a sending state;
 * `Recovery` does not directly perform another provider submission;
 * `RecoveryWaiting` does not directly perform another provider submission.
 
@@ -542,6 +558,8 @@ Post also checks for unresolved recovery rows before sending, since Cellar may
 resume an interrupted Cell directly at Post.
 
 The provider PMUID returned by `SendResult` is stored in the progress row when the result is usable.
+If a correlated webhook has advanced the row before Post or Verify commits,
+record the PMUID without downgrading the webhook state.
 
 The correlation/message ID stored in the request row is supplied to the provider through:
 
@@ -565,9 +583,10 @@ This ensures that durable application progress cannot be committed without the c
 
 # 13. Webhook Processing
 
-Provider webhooks report the eventual delivery result.
-
-The webhook processing path is deliberately simple.
+The Sweego webhook adapter authenticates and parses provider payloads, then
+calls the durable layer's provider-neutral method. The durable layer does not
+implement an HTTP endpoint or parse Sweego payloads. Mailtrap webhooks are out
+of scope.
 
 The provider webhook supplies the email headers, including:
 
@@ -578,23 +597,32 @@ X-Pubnight-Message-ID
 The message ID identifies the Send operation. Combined with the recipient
 address reported by the event, it identifies the corresponding progress row.
 
-The webhook handler locates that row and updates its state according to the provider's delivery result:
+The webhook adapter calls:
 
-```text
-Accepted → Sent
-Accepted → Rejected
+```go
+func (s *Store) RecordEvent(ctx context.Context, messageID, recipient string, event DeliveryEvent) error
 ```
+
+`DeliveryEvent` is one of `Sent`, `Delivered`, `SoftBounce`, `HardBounce`,
+`ProxyOpen`, `HumanOpen`, `Click`, or `SpamComplaint`. List-unsubscribe is
+deliberately ignored. Unknown event types and unknown `(messageID, recipient)`
+pairs return errors. The method atomically appends a provider event and updates
+the recipient's state using Section 5. Tracking events are retained even if
+they do not change the current state. Once `SpamComplaint` has been recorded,
+subsequent provider events cannot conceal it. Duplicate webhook deliveries
+may produce duplicate event records until the provider's event identity and
+deduplication rules are established; state changes remain idempotent.
 
 This assumes the provider event reports the recipient address. If a provider
 does not, the recorded `pmuid` is used as the correlation key instead. The
 Sweego event payload has not yet been inspected, so this remains an assumption
 rather than an established fact.
 
-The webhook handler does not need to understand the complete email workflow.
+The webhook adapter does not need to understand the complete email workflow.
 
 The progress row is the durable correlation point between the original submission and the asynchronous provider event.
 
-Provider-specific event terminology is translated into the generic durable states.
+Provider-specific event terminology is translated into these generic events.
 
 ---
 
@@ -770,6 +798,15 @@ type ProgressRow struct {
 }
 
 func (s *Store) QueryProgress(context.Context, ProgressFilter) ([]ProgressRow, error)
+
+type EventRow struct {
+    IdempotencyToken string
+    Recipient        string
+    Event            DeliveryEvent
+    RecordedAt       time.Time
+}
+
+func (s *Store) QueryEvents(context.Context, ProgressFilter) ([]EventRow, error)
 ```
 
 A `ProgressRow` is one recipient of one logical Send operation. The request
@@ -780,6 +817,13 @@ reporting material.
 
 `PMUID` is empty while the provider message identifier is NULL. `SubmittedAt` is
 nil before the first submission attempt.
+
+`QueryProgress` exposes all new states through `State` and `States` filtering.
+`QueryEvents` returns event history using the same token, recipient, limit, and
+offset filters; `States` is not applicable to history and must be empty. Events
+are ordered by insertion ID, so repeated opens and clicks remain visible.
+An index on `(idempotency_token, recipient, id)` supports recipient-history
+lookups; the insertion ID supplies global history ordering.
 
 ## 18.3 Filter semantics
 

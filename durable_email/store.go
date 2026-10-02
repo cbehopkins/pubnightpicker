@@ -20,6 +20,27 @@ const (
 	StateAccepted        = "Accepted"
 	StateRecovery        = "Recovery"
 	StateRecoveryWaiting = "RecoveryWaiting"
+	StateRefused         = "Refused"
+	StateSent            = "Sent"
+	StateDelivered       = "Delivered"
+	StateOpened          = "Opened"
+	StateClicked         = "Clicked"
+	StateSpamComplaint   = "SpamComplaint"
+	StateHardBounced     = "HardBounced"
+)
+
+// DeliveryEvent is a provider-neutral event reported by a delivery webhook.
+type DeliveryEvent string
+
+const (
+	EventSent          DeliveryEvent = "Sent"
+	EventDelivered     DeliveryEvent = "Delivered"
+	EventSoftBounce    DeliveryEvent = "SoftBounce"
+	EventHardBounce    DeliveryEvent = "HardBounce"
+	EventProxyOpen     DeliveryEvent = "ProxyOpen"
+	EventHumanOpen     DeliveryEvent = "HumanOpen"
+	EventClick         DeliveryEvent = "Click"
+	EventSpamComplaint DeliveryEvent = "SpamComplaint"
 )
 
 // Store owns durable email data stored in a caller-owned database.
@@ -70,6 +91,18 @@ func NewStore(db *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("create email_progress schema: %w", err)
 	}
 
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS email_events (
+			id INTEGER PRIMARY KEY,
+			idempotency_token TEXT NOT NULL,
+			recipient TEXT NOT NULL,
+			event TEXT NOT NULL,
+			recorded_at DATETIME NOT NULL
+		);
+	`); err != nil {
+		return nil, fmt.Errorf("create email_events schema: %w", err)
+	}
+
 	// The progress primary key cannot serve queries that do not lead with the token.
 	if _, err := tx.Exec(`
 		CREATE INDEX IF NOT EXISTS email_progress_recipient
@@ -83,6 +116,12 @@ func NewStore(db *sql.DB) (*Store, error) {
 			ON email_progress (state);
 	`); err != nil {
 		return nil, fmt.Errorf("create email_progress state index: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS email_events_recipient
+			ON email_events (idempotency_token, recipient, id);
+	`); err != nil {
+		return nil, fmt.Errorf("create email_events recipient index: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -99,6 +138,92 @@ func (s *Store) RecoverSubmissions(ctx context.Context) error {
 		WHERE state = ? AND submitted_at IS NOT NULL
 	`, StateRecovery, StatePending)
 	return err
+}
+
+// RecordEvent stores a correlated webhook event and advances recipient progress.
+func (s *Store) RecordEvent(ctx context.Context, messageID, recipient string, event DeliveryEvent) error {
+	if !validDeliveryEvent(event) {
+		return fmt.Errorf("unknown delivery event %q", event)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delivery event: %w", err)
+	}
+	defer tx.Rollback()
+
+	var token, state string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT p.idempotency_token, p.state FROM email_progress p
+		JOIN email_requests r ON r.idempotency_token = p.idempotency_token
+		WHERE r.message_id = ? AND p.recipient = ?
+	`, messageID, recipient).Scan(&token, &state); err != nil {
+		return fmt.Errorf("find delivery recipient: %w", err)
+	}
+
+	next := eventState(state, event)
+	if next != state {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE email_progress SET state = ?
+			WHERE idempotency_token = ? AND recipient = ?
+		`, next, token, recipient); err != nil {
+			return fmt.Errorf("update delivery progress: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO email_events (idempotency_token, recipient, event, recorded_at)
+		VALUES (?, ?, ?, ?)
+	`, token, recipient, event, time.Now().UTC()); err != nil {
+		return fmt.Errorf("record delivery event: %w", err)
+	}
+	return tx.Commit()
+}
+
+func validDeliveryEvent(event DeliveryEvent) bool {
+	switch event {
+	case EventSent, EventDelivered, EventSoftBounce, EventHardBounce,
+		EventProxyOpen, EventHumanOpen, EventClick, EventSpamComplaint:
+		return true
+	}
+	return false
+}
+
+func eventState(state string, event DeliveryEvent) string {
+	if state == StateRefused || state == StateHardBounced || state == StateSpamComplaint {
+		return state
+	}
+	advance := func(target string) string {
+		if state == StatePending || state == StateRecovery || state == StateRecoveryWaiting || state == StateAccepted {
+			return target
+		}
+		return state
+	}
+	switch event {
+	case EventSent, EventSoftBounce, EventProxyOpen:
+		return advance(StateSent)
+	case EventDelivered:
+		if state == StateSent {
+			return StateDelivered
+		}
+		return advance(StateDelivered)
+	case EventHumanOpen:
+		if state == StateSent || state == StateDelivered {
+			return StateOpened
+		}
+		return advance(StateOpened)
+	case EventClick:
+		if state == StateSent || state == StateDelivered || state == StateOpened {
+			return StateClicked
+		}
+		return advance(StateClicked)
+	case EventSpamComplaint:
+		return StateSpamComplaint
+	case EventHardBounce:
+		if state == StateClicked || state == StateOpened || state == StateDelivered {
+			return state
+		}
+		return StateHardBounced
+	}
+	return state
 }
 
 // durableRequest is the operation-wide data needed to rebuild a provider request.
@@ -392,18 +517,23 @@ func (s *Store) acceptWork(token, recipient, pmuid string) cellar.ApplicationWor
 	return func(tx cellar.ApplicationTx) error {
 		return tx.Exec(`
 			UPDATE email_progress
-			SET state = ?, pmuid = ?
-			WHERE idempotency_token = ? AND recipient = ? AND state = ?
-		`, StateAccepted, pmuid, token, recipient, StatePending)
+			SET state = CASE WHEN state = ? THEN ? ELSE state END,
+			    pmuid = COALESCE(pmuid, ?)
+			WHERE idempotency_token = ? AND recipient = ? AND state IN (?, ?, ?, ?, ?, ?, ?, ?)
+		`, StatePending, StateAccepted, pmuid, token, recipient,
+			StatePending, StateSent, StateDelivered, StateOpened, StateClicked, StateSpamComplaint, StateHardBounced, StateAccepted)
 	}
 }
 
 func (s *Store) acceptRecoveredWork(token, recipient, pmuid string) cellar.ApplicationWork {
 	return func(tx cellar.ApplicationTx) error {
 		return tx.Exec(`
-			UPDATE email_progress SET state = ?, pmuid = ?
-			WHERE idempotency_token = ? AND recipient = ? AND state = ?
-		`, StateAccepted, pmuid, token, recipient, StateRecoveryWaiting)
+			UPDATE email_progress
+			SET state = CASE WHEN state = ? THEN ? ELSE state END,
+			    pmuid = COALESCE(pmuid, ?)
+			WHERE idempotency_token = ? AND recipient = ? AND state IN (?, ?, ?, ?, ?, ?, ?, ?)
+		`, StateRecoveryWaiting, StateAccepted, pmuid, token, recipient,
+			StateRecoveryWaiting, StateSent, StateDelivered, StateOpened, StateClicked, StateSpamComplaint, StateHardBounced, StateAccepted)
 	}
 }
 

@@ -16,8 +16,11 @@ import (
 	cellarsqlite "cellar/pkg/sqlite"
 	"email_clients/clients"
 	"email_clients/clients/dummy"
+	"email_clients/clients/mailtrap"
 	"email_clients/clients/sweego"
 	"email_clients/clients/sweego/logs"
+
+	sdk "github.com/mailtrap/mailtrap-go"
 )
 
 type sentEmail struct {
@@ -47,6 +50,128 @@ func (verify verifyClientFunc) Verify(ctx context.Context, request clients.Verif
 func (c *countingClient) Send(ctx context.Context, email clients.Email) (clients.SendResult, error) {
 	c.calls.Add(1)
 	return c.inner.Send(ctx, email)
+}
+
+func TestSendSequenceWithMailtrap(t *testing.T) {
+	var calls atomic.Int32
+	var sent sdk.BatchSendRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.Method != http.MethodPost || request.URL.Path != "/api/batch" {
+			t.Errorf("provider request = %s %s, want POST /api/batch", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&sent); err != nil {
+			t.Errorf("decode provider request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(sdk.BatchSendResponse{Success: true, Responses: []sdk.BatchSendResponseItem{
+			{Success: true, MessageIDs: []string{"uid-a"}},
+			{Success: true, MessageIDs: []string{"uid-b"}},
+		}})
+	}))
+	t.Cleanup(server.Close)
+
+	sdkClient, err := sdk.NewClient("test-token", sdk.WithHTTPClient(&http.Client{Timeout: time.Second}), sdk.WithBaseURL(sdk.HostSend, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mailtrap.NewClient(sdkClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
+	registerSendHandlers(t, runtime, store, client, mailtrap.NewVerifier(client, time.Minute))
+	request := SendRequest{
+		IdempotencyToken: "mailtrap-send", SenderEmail: "sender@example.com",
+		Subject: "Hello {{name}}", Text: "See you {{name}}",
+		Recipients: []SendRecipient{
+			{Email: "alice@example.com", Variables: map[string]any{"name": "Alice"}},
+			{Email: "bob@example.com", Variables: map[string]any{"name": "Bob"}},
+		},
+	}
+	if _, err := runtime.AddSequence(NewSendSequence(request)...); err != nil {
+		t.Fatal(err)
+	}
+	stop := startRuntime(t, runtime)
+	waitForIdle(t, cellarStore)
+	stop()
+
+	if calls.Load() != 1 || len(sent.Requests) != 2 {
+		t.Fatalf("provider calls = %d, messages = %d; want 1 and 2", calls.Load(), len(sent.Requests))
+	}
+	messageID := requestMessageID(t, db, request.IdempotencyToken)
+	for index, want := range []struct{ recipient, name, pmuid string }{
+		{"alice@example.com", "Alice", "uid-a"}, {"bob@example.com", "Bob", "uid-b"},
+	} {
+		message := sent.Requests[index]
+		if len(message.To) != 1 || message.To[0].Email != want.recipient ||
+			message.Subject != "Hello "+want.name || message.Text != "See you "+want.name ||
+			message.Headers[MessageIDHeader] != messageID || message.CustomVariables[mailtrap.CorrelationVariable] != messageID {
+			t.Errorf("provider message %d = %+v", index, message)
+		}
+		state, pmuid, _ := progressRow(t, db, request.IdempotencyToken, want.recipient)
+		if state != StateAccepted || pmuid.String != want.pmuid {
+			t.Errorf("%s: state = %q, PMUID = %q; want Accepted, %q", want.recipient, state, pmuid.String, want.pmuid)
+		}
+	}
+}
+
+func TestMailtrapPartialBatchWaitsForVerification(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(sdk.BatchSendResponse{Success: true, Responses: []sdk.BatchSendResponseItem{
+			{Success: true, MessageIDs: []string{"uid-a"}},
+			{Success: false, Errors: []string{"refused"}},
+		}})
+	}))
+	t.Cleanup(server.Close)
+	sdkClient, err := sdk.NewClient("test-token", sdk.WithHTTPClient(&http.Client{Timeout: time.Second}), sdk.WithBaseURL(sdk.HostSend, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mailtrap.NewClient(sdkClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
+	registerSendHandlers(t, runtime, store, client, mailtrap.NewVerifier(client, time.Minute))
+	request := SendRequest{
+		IdempotencyToken: "mailtrap-partial", SenderEmail: "sender@example.com", Subject: "Hello", Text: "Hello",
+		Recipients: []SendRecipient{{Email: "alice@example.com"}, {Email: "bob@example.com"}},
+	}
+	if _, err := runtime.AddSequence(NewSendSequence(request)...); err != nil {
+		t.Fatal(err)
+	}
+	stop := startRuntime(t, runtime)
+	waitForRecoveryFanout(t, cellarStore)
+	stop()
+	if calls.Load() != 1 {
+		t.Errorf("provider requests = %d, want 1 before verification", calls.Load())
+	}
+	for _, recipient := range request.Recipients {
+		state, pmuid, submittedAt := progressRow(t, db, request.IdempotencyToken, recipient.Email)
+		if state != StateRecoveryWaiting || pmuid.Valid || !submittedAt.Valid {
+			t.Errorf("%s: state = %q, PMUID = %v, submitted = %v; want recovery waiting", recipient.Email, state, pmuid, submittedAt)
+		}
+	}
 }
 
 func TestSendSequenceWithSweego(t *testing.T) {
@@ -106,6 +231,38 @@ func TestSendSequenceWithSweego(t *testing.T) {
 		if state != StateAccepted || pmuid.String != want {
 			t.Errorf("%s: state = %q, PMUID = %q; want Accepted, %q", recipient, state, pmuid.String, want)
 		}
+	}
+}
+
+func TestWebhookBeforePostCompletionDoesNotDowngradeStatus(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{IdempotencyToken: "early-event", SenderEmail: "sender@example.com", Subject: "Hi", Text: "Hi",
+		Recipients: []SendRecipient{{Email: "alice@example.com"}}}
+	client := sendClientFunc(func(ctx context.Context, email clients.Email) (clients.SendResult, error) {
+		if err := store.RecordEvent(ctx, email.Headers[MessageIDHeader], "alice@example.com", EventSpamComplaint); err != nil {
+			return clients.SendResult{}, err
+		}
+		return clients.SendResult{Recipients: []clients.RecipientResult{{PMUID: "uid-a"}}}, nil
+	})
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
+	registerSendHandlers(t, runtime, store, client, &stubVerifier{})
+	if _, err := runtime.AddSequence(NewSendSequence(request)...); err != nil {
+		t.Fatal(err)
+	}
+	stop := startRuntime(t, runtime)
+	waitForIdle(t, cellarStore)
+	stop()
+	state, pmuid, _ := progressRow(t, db, request.IdempotencyToken, "alice@example.com")
+	if state != StateSpamComplaint || pmuid.String != "uid-a" {
+		t.Errorf("state = %q, PMUID = %q; want SpamComplaint, uid-a", state, pmuid.String)
 	}
 }
 
@@ -480,17 +637,22 @@ func TestFailedVerifyKeepsPostBlockedUntilRestart(t *testing.T) {
 	}
 	aliceState, alicePMUID, _ := progressRow(t, db, request.IdempotencyToken, "alice@example.com")
 	bobState, _, _ := progressRow(t, db, request.IdempotencyToken, "bob@example.com")
-	if aliceState != StateAccepted || alicePMUID.String != "pmuid-alice" || bobState != StateRecoveryWaiting {
+	if (aliceState != StateAccepted && aliceState != StateRecoveryWaiting) ||
+		(aliceState == StateAccepted && alicePMUID.String != "pmuid-alice") || bobState != StateRecoveryWaiting {
 		t.Errorf("states after failed Verify: alice = %q (%q), bob = %q", aliceState, alicePMUID.String, bobState)
 	}
 
 	restarted := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
-	registerSendHandlers(t, restarted, store, client, &stubVerifier{})
+	registerSendHandlers(t, restarted, store, client, &stubVerifier{found: map[string]string{"alice@example.com": "pmuid-alice"}})
 	stop := startRuntime(t, restarted)
 	waitForIdle(t, cellarStore)
 	stop()
 	if calls := client.calls.Load(); calls != 1 {
 		t.Errorf("provider calls after verification = %d, want 1", calls)
+	}
+	aliceState, alicePMUID, _ = progressRow(t, db, request.IdempotencyToken, "alice@example.com")
+	if aliceState != StateAccepted || alicePMUID.String != "pmuid-alice" {
+		t.Errorf("alice after restart: state = %q, PMUID = %q", aliceState, alicePMUID.String)
 	}
 	bobState, bobPMUID, _ := progressRow(t, db, request.IdempotencyToken, "bob@example.com")
 	if bobState != StateAccepted || bobPMUID.String != "pmuid-bob" {

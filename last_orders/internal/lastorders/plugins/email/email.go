@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -12,8 +13,11 @@ import (
 	durableemail "durable_email"
 	"email_clients/clients"
 	"email_clients/clients/dummy"
+	"email_clients/clients/mailtrap"
 	"email_clients/clients/sweego"
 	sweegologs "email_clients/clients/sweego/logs"
+
+	sdk "github.com/mailtrap/mailtrap-go"
 )
 
 // ClientKind selects the email provider the plugin sends through.
@@ -22,18 +26,23 @@ type ClientKind string
 const (
 	// ClientDummy logs each email instead of sending it.
 	ClientDummy ClientKind = "dummy"
+	// ClientMailtrap sends and verifies email through Mailtrap.
+	ClientMailtrap ClientKind = "mailtrap"
 	// ClientSweego sends email through Sweego and verifies delivery through its logs API.
 	ClientSweego ClientKind = "sweego"
 )
 
 type Options struct {
-	Client                ClientKind
-	Logger                *slog.Logger
-	SweegoToken           string
-	SweegoProvider        string
-	SweegoBaseURL         string
-	SweegoTimeout         time.Duration
-	SweegoVerifyTolerance time.Duration
+	Client                  ClientKind
+	Logger                  *slog.Logger
+	MailtrapToken           string
+	MailtrapTimeout         time.Duration
+	MailtrapVerifyTolerance time.Duration
+	SweegoToken             string
+	SweegoProvider          string
+	SweegoBaseURL           string
+	SweegoTimeout           time.Duration
+	SweegoVerifyTolerance   time.Duration
 }
 
 // Plugin adapts durable email delivery to the last_orders application.
@@ -51,12 +60,38 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 
 	var client clients.EmailClient
 	var verifier clients.EmailVerifier
+	mailtrapToken := strings.TrimSpace(opts.MailtrapToken)
+	sweegoToken := strings.TrimSpace(opts.SweegoToken)
+	if mailtrapToken != "" && sweegoToken != "" {
+		return nil, fmt.Errorf("Mailtrap and Sweego tokens are mutually exclusive")
+	}
 	switch opts.Client {
 	case ClientDummy:
 		dummyClient := newDummyClient(logger)
 		client, verifier = dummyClient, dummyClient
+	case ClientMailtrap:
+		if mailtrapToken == "" {
+			return nil, fmt.Errorf("Mailtrap requires a token")
+		}
+		timeout := opts.MailtrapTimeout
+		if timeout <= 0 {
+			timeout = 30 * time.Second
+		}
+		sdkClient, err := sdk.NewClient(mailtrapToken, sdk.WithHTTPClient(&http.Client{Timeout: timeout}))
+		if err != nil {
+			return nil, fmt.Errorf("init Mailtrap client: %w", err)
+		}
+		mailtrapClient, err := mailtrap.NewClient(sdkClient)
+		if err != nil {
+			return nil, fmt.Errorf("init Mailtrap client: %w", err)
+		}
+		tolerance := opts.MailtrapVerifyTolerance
+		if tolerance <= 0 {
+			tolerance = 5 * time.Minute
+		}
+		client, verifier = mailtrapClient, mailtrap.NewVerifier(mailtrapClient, tolerance)
 	case ClientSweego:
-		token := strings.TrimSpace(opts.SweegoToken)
+		token := sweegoToken
 		provider := strings.TrimSpace(opts.SweegoProvider)
 		if token == "" || provider == "" {
 			return nil, fmt.Errorf("Sweego requires both token and provider")

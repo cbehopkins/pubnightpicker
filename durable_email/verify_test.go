@@ -11,9 +11,51 @@ import (
 
 	"cellar/pkg/cellar"
 	cellarsqlite "cellar/pkg/sqlite"
+	"email_clients/clients/mailtrap"
 	"email_clients/clients/sweego"
 	"email_clients/clients/sweego/logs"
+
+	sdk "github.com/mailtrap/mailtrap-go"
 )
+
+func TestVerifyWithMailtrapLogs(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, store := seedSubmittedRecipient(t, db, "alice@example.com")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/email_logs" ||
+			request.URL.Query().Get("filters[to][value]") != "alice@example.com" {
+			t.Errorf("provider query = %s %s", request.Method, request.URL)
+		}
+		_ = json.NewEncoder(w).Encode(sdk.EmailLogsList{Messages: []*sdk.EmailLogMessage{{
+			MessageID: "uid-a", To: "alice@example.com",
+			CustomVariables: map[string]any{mailtrap.CorrelationVariable: "message-1"},
+		}}})
+	}))
+	t.Cleanup(server.Close)
+	sdkClient, err := sdk.NewClient("test-token", sdk.WithHTTPClient(&http.Client{Timeout: time.Second}), sdk.WithBaseURL(sdk.HostGeneral, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mailtrap.NewClient(sdkClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Millisecond})
+	if err := runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: mailtrap.NewVerifier(client, time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Add(HandlerVerify, verifyRequest{IdempotencyToken: "send-1", Recipient: "alice@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	stop := startRuntime(t, runtime)
+	waitForIdle(t, cellarStore)
+	stop()
+
+	state, pmuid, _ := progressRow(t, db, "send-1", "alice@example.com")
+	if state != StateAccepted || pmuid.String != "uid-a" {
+		t.Errorf("state = %q, PMUID = %q; want Accepted, uid-a", state, pmuid.String)
+	}
+}
 
 func TestVerifyWithSweegoLogs(t *testing.T) {
 	db := openTestDB(t)

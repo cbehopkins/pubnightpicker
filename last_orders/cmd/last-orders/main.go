@@ -56,15 +56,9 @@ func main() {
 		logger.Info("firestore production enabled", "project_id", firestoreProjectID)
 	}
 
-	emailOptions := emailplugin.Options{Client: emailplugin.ClientDummy, Logger: logger}
-	sweegoToken := strings.TrimSpace(os.Getenv("SWEEGO_TOKEN"))
-	sweegoProvider := strings.TrimSpace(os.Getenv("SWEEGO_PROVIDER"))
-	if sweegoToken != "" || sweegoProvider != "" {
-		emailOptions.Client = emailplugin.ClientSweego
-		emailOptions.SweegoToken = sweegoToken
-		emailOptions.SweegoProvider = sweegoProvider
-		emailOptions.SweegoBaseURL = os.Getenv("SWEEGO_BASE_URL")
-		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
+	emailOptions, err := emailOptionsFromEnv(logger, os.Getenv)
+	if err != nil {
+		fatalf("configure email client: %v", err)
 	}
 
 	authProjectID := strings.TrimSpace(os.Getenv("FIREBASE_AUTH_PROJECT_ID"))
@@ -123,6 +117,30 @@ func main() {
 	}
 
 	logger.Info("last-orders stopped")
+}
+
+func emailOptionsFromEnv(logger *slog.Logger, getenv func(string) string) (emailplugin.Options, error) {
+	options := emailplugin.Options{Client: emailplugin.ClientDummy, Logger: logger}
+	mailtrapToken := strings.TrimSpace(getenv("MAILTRAP_TOKEN"))
+	sweegoToken := strings.TrimSpace(getenv("SWEEGO_TOKEN"))
+	if mailtrapToken != "" && sweegoToken != "" {
+		return emailplugin.Options{}, fmt.Errorf("MAILTRAP_TOKEN and SWEEGO_TOKEN are mutually exclusive")
+	}
+	if mailtrapToken != "" {
+		options.Client = emailplugin.ClientMailtrap
+		options.MailtrapToken = mailtrapToken
+		logger.Info("Mailtrap email client enabled")
+		return options, nil
+	}
+	sweegoProvider := strings.TrimSpace(getenv("SWEEGO_PROVIDER"))
+	if sweegoToken != "" || sweegoProvider != "" {
+		options.Client = emailplugin.ClientSweego
+		options.SweegoToken = sweegoToken
+		options.SweegoProvider = sweegoProvider
+		options.SweegoBaseURL = getenv("SWEEGO_BASE_URL")
+		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
+	}
+	return options, nil
 }
 
 func fatalf(format string, args ...any) {

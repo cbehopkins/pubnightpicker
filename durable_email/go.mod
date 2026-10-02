@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	cellar v0.0.0
 	email_clients v0.0.0
+	github.com/mailtrap/mailtrap-go v0.3.0
 )
 
 require (

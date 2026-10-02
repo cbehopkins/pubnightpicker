@@ -44,6 +44,36 @@ func TestNewSweegoAcceptsCredentials(t *testing.T) {
 	}
 }
 
+func TestNewMailtrapRequiresToken(t *testing.T) {
+	if _, err := emailplugin.New(openDB(t), emailplugin.Options{Client: emailplugin.ClientMailtrap}); err == nil {
+		t.Fatal("Mailtrap without a token returned nil error")
+	}
+}
+
+func TestNewMailtrapAcceptsToken(t *testing.T) {
+	plugin, err := emailplugin.New(openDB(t), emailplugin.Options{
+		Client:        emailplugin.ClientMailtrap,
+		MailtrapToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("new Mailtrap plugin: %v", err)
+	}
+	if plugin == nil {
+		t.Fatal("new Mailtrap plugin returned nil plugin")
+	}
+}
+
+func TestNewRejectsBothProviderTokens(t *testing.T) {
+	_, err := emailplugin.New(openDB(t), emailplugin.Options{
+		Client:        emailplugin.ClientMailtrap,
+		MailtrapToken: "mailtrap-token",
+		SweegoToken:   "sweego-token",
+	})
+	if err == nil {
+		t.Fatal("both provider tokens returned nil error")
+	}
+}
+
 func TestDummyPluginRegistersEveryDurableEmailHandler(t *testing.T) {
 	db := openDB(t)
 	cellarStore, err := cellarsqlite.NewStore(db, nil)

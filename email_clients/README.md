@@ -1,7 +1,7 @@
 # Email clients prototype
 
-This is a small Go CLI for inspecting email provider integrations, starting
-with Sweego's sending and log behaviour. It is an experiment, not a
+This is a small Go CLI prototype for inspecting Sweego and Mailtrap email
+provider integrations. It is an experiment, not a
 production sending library. Relevant raw log and template responses are
 intentionally printed; email submission exposes provider message IDs through
 the provider-neutral client API.
@@ -18,7 +18,138 @@ the provider-neutral client API.
   `clients/`.
 - `clients/sweego/logs` owns the raw logs API, verification, matching, and
   bulk log recovery.
+- `clients/mailtrap` wraps the official Go SDK for batch-first sending and
+  production log verification.
+- `cmd/mailtrap-client` and `internal/mailtrapcli` provide a separate Mailtrap
+  inspection tool without changing the Sweego CLI.
+- `internal/texttemplate` contains the simple placeholder renderer shared by
+  dummy and Mailtrap raw-text sends.
 - `examples` contains runnable request documents and template sources.
+
+## Mailtrap client
+
+Mailtrap uses the official `github.com/mailtrap/mailtrap-go` SDK, pinned to
+`v0.3.0`. Configure the SDK with an API token and a bounded HTTP client, then
+wrap it:
+
+```go
+sdkClient, err := sdk.NewClient(token,
+  sdk.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}),
+)
+if err != nil {
+  return err
+}
+client, err := mailtrap.NewClient(sdkClient)
+if err != nil {
+  return err
+}
+client = client.WithSendOptions(mailtrap.SendOptions{Category: "Pub notification"})
+```
+
+Here `sdk` is the import alias for `github.com/mailtrap/mailtrap-go`; `mailtrap`
+is `email_clients/clients/mailtrap`. The SDK's own options configure sandbox,
+HTTP transport, host overrides and stream choice. No Sweego provider or client
+UUID is needed. The wrapper has no automatic retries or durable state.
+
+One recipient uses `/api/send`; 2-500 recipients use **one** `/api/batch`
+request, with one independently addressed message per recipient. Other
+recipients are not exposed in `To`. Batching uses the transactional stream by
+default; Mailtrap's separate Bulk Stream is not required for batching and can
+be selected programmatically with `sdk.WithBulk(true)`. Above 500 recipients,
+`Send` fails before contacting the provider. Any partitioning belongs to the
+caller, as separate submissions with separate correlation IDs.
+
+### Content and partial results
+
+Raw sends require `Subject` and `Text`. Both are rendered for every recipient
+using `{{name}}` or `{{ name }}`, common variables plus recipient overrides.
+All messages are rendered before the first provider request. Values use
+`fmt.Sprint`, with no HTML escaping; missing variables and unsupported syntax
+fail locally. This preserves the dummy client's renderer, not full Handlebars
+semantics. Literal surrounding braces retain the renderer's existing behaviour.
+
+Hosted sends use `TemplateID` as a Mailtrap template UUID and pass merged
+variables to Mailtrap. `Subject` and `Text` must both be empty because the
+stored template owns that content. Template administration and inline HTML are
+not implemented. Venue wording, unsubscribe-link construction, sender policy
+and application rate limits remain the application's responsibility.
+
+A Mailtrap batch can partially succeed even with HTTP 200. Always consume the
+result before handling the error:
+
+```go
+result, sendErr := client.Send(ctx, email)
+for index, recipient := range result.Recipients {
+  if recipient.PMUID != "" {
+    // Persist the ID for email.To[index], even when sendErr != nil.
+    recordProviderID(index, recipient.PMUID)
+  }
+}
+if sendErr != nil {
+  var batchErr *mailtrap.BatchError
+  if errors.As(sendErr, &batchErr) {
+    // Refusals are explicit; InvalidResults need verification, not blind retry.
+    handleBatchFailure(batchErr)
+  }
+  return sendErr
+}
+```
+
+The recording/failure functions above belong to the caller, not this package.
+Result indices always refer to input recipients, including duplicate addresses.
+`BatchError` separates explicit `Refusals` from `InvalidResults` and batch-level
+`Messages`. An empty ID is not itself evidence of refusal. SDK API errors retain
+their typed status, rate-limit advice and raw error body through `errors.As`;
+successful response bodies are decoded by the SDK, not retained as raw bytes.
+
+### Mailtrap commands
+
+Set `MAILTRAP_TOKEN`. Optional `MAILTRAP_USE_SANDBOX=true` additionally requires
+a positive `MAILTRAP_SANDBOX_ID`. Sandbox captures messages rather than
+delivering them; it is not Sweego's dry-run mode. The CLI defaults to production
+transactional sending, with a 15-second HTTP timeout. Help needs no token.
+
+```text
+go run ./cmd/mailtrap-client send --from "Sender <sender@example.com>" --to alice@example.com,bob@example.com --subject Test --text "Hello" --category "Test email"
+go run ./cmd/mailtrap-client batch-send-json --category "Pub notification" examples/mailtrap_bulk_request.json
+```
+
+Batch documents use `from`, `subject`, `variables` (common values), and `targets`
+with each `dest` and `vars`. Exactly one of `body` (a text-file path relative to
+the document) or `template` (Mailtrap UUID) supplies content. Raw sends require
+a subject; hosted sends require an empty/omitted subject. Unknown fields and
+trailing JSON are rejected. `--from` overrides the document's sender. Flags
+must precede the file argument; empty targets are a no-op with no provider call.
+`--category` and `--message-id` apply to both send commands. The CLI prints
+accepted IDs even on failure and exits nonzero if any send error occurs.
+
+### Mailtrap verification
+
+`mailtrap.NewVerifier(client, 5*time.Minute)` implements `clients.EmailVerifier`.
+The adapter preserves the application correlation header and also mirrors it
+into Mailtrap's `custom_variables.correlation_id`, not template variables.
+Verification queries production logs by recipient and the time window, follows
+all cursor pages, and matches recipient plus correlation locally. Multiple
+different IDs for one pairing return `ErrAmbiguousVerification`.
+
+Both send commands print a correlation ID and submission timestamp before
+calling the provider. Record those values for a later query:
+
+```text
+go run ./cmd/mailtrap-client verify --to alice@example.com --message-id <printed-id> --sent-at <printed-RFC3339-timestamp> --verify-tolerance 5m
+```
+
+Verification returns success only when a matching log/ID is found. It does not
+prove delivery. Missing logs are not proof of refusal or an instruction to
+resend; ingestion lag, retention and token domain access affect visibility.
+Query failures remain errors. Sandbox verification is explicitly unavailable
+because production email logs are a different API from sandbox messages.
+
+Tests use local HTTP servers and never send real Mailtrap email. Before
+deployment, separately check a two-recipient sandbox batch for personalisation,
+then authorise a controlled production batch to confirm correlation metadata,
+message IDs, token log access and observed log visibility delay. Do not infer
+production recovery behaviour from sandbox captures.
 
 ## Dummy client
 

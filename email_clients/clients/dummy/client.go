@@ -7,17 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"email_clients/clients"
+	"email_clients/internal/texttemplate"
 )
-
-// placeholder matches Sweego's observed substitution syntax: {{name}} or {{ name }}.
-var placeholder = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
 var (
 	ErrNilCallback       = errors.New("dummy email client callback is nil")
@@ -141,7 +138,7 @@ func (c *Client) AddTemplate(name, source string) error {
 		return ErrTemplateNameEmpty
 	}
 
-	if err := validatePlaceholders(source); err != nil {
+	if err := texttemplate.Validate(source); err != nil {
 		return fmt.Errorf("parse dummy email template %q: %w", name, err)
 	}
 
@@ -203,34 +200,7 @@ func (c *Client) render(templateID, message string, variables map[string]any) (s
 		}
 		source = registered
 	}
-	return substitute(source, variables)
-}
-
-func validatePlaceholders(source string) error {
-	remaining := placeholder.ReplaceAllString(source, "")
-	if strings.Contains(remaining, "{{") || strings.Contains(remaining, "}}") {
-		return errors.New("placeholders must use {{name}} or {{ name }} syntax")
-	}
-	return nil
-}
-
-func substitute(source string, variables map[string]any) (string, error) {
-	if err := validatePlaceholders(source); err != nil {
-		return "", err
-	}
-	var missing error
-	rendered := placeholder.ReplaceAllStringFunc(source, func(match string) string {
-		name := placeholder.FindStringSubmatch(match)[1]
-		value, ok := variables[name]
-		if !ok {
-			if missing == nil {
-				missing = fmt.Errorf("missing variable %q", name)
-			}
-			return match
-		}
-		return fmt.Sprint(value)
-	})
-	return rendered, missing
+	return texttemplate.Render(source, variables)
 }
 
 func (c *Client) send(ctx context.Context, messages []callbackMessage) (clients.SendResult, error) {

@@ -11,6 +11,7 @@ require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
+	github.com/mailtrap/mailtrap-go v0.3.0
 	google.golang.org/api v0.293.0
 	google.golang.org/grpc v1.83.2
 	modernc.org/sqlite v1.57.0

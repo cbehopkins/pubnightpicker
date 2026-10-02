@@ -113,6 +113,35 @@ func TestQueryProgressFiltersByStates(t *testing.T) {
 	}
 }
 
+func TestQueryEventsAndNewProgressStates(t *testing.T) {
+	store, db := newQueryFixture(t)
+	var messageID string
+	if err := db.QueryRow(`SELECT message_id FROM email_requests WHERE idempotency_token = ?`, "send-1").Scan(&messageID); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []DeliveryEvent{EventDelivered, EventProxyOpen, EventHumanOpen, EventHumanOpen, EventSpamComplaint} {
+		if err := store.RecordEvent(context.Background(), messageID, "alice@example.com", event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	progress, err := store.QueryProgress(context.Background(), ProgressFilter{States: []string{StateSpamComplaint}})
+	if err != nil || len(progress) != 1 || progress[0].Recipient != "alice@example.com" {
+		t.Fatalf("spam progress = %+v, error = %v", progress, err)
+	}
+	page, err := store.QueryEvents(context.Background(), ProgressFilter{IdempotencyToken: "send-1", Recipient: "alice@example.com", Offset: 1, Limit: 3})
+	if err != nil || len(page) != 3 {
+		t.Fatalf("event page = %+v, error = %v", page, err)
+	}
+	for index, want := range []DeliveryEvent{EventProxyOpen, EventHumanOpen, EventHumanOpen} {
+		if page[index].Event != want || page[index].RecordedAt.IsZero() {
+			t.Errorf("event %d = %+v, want %s", index, page[index], want)
+		}
+	}
+	if _, err := store.QueryEvents(context.Background(), ProgressFilter{States: []string{StateOpened}}); err == nil {
+		t.Error("event history accepted a current-state filter")
+	}
+}
+
 func TestQueryProgressCombinesFiltersConjunctively(t *testing.T) {
 	store, _ := newQueryFixture(t)
 

@@ -3,6 +3,7 @@ package durableemail
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestNewStoreInitialisesSchemaAlongsideCellar(t *testing.T) {
 		t.Fatalf("initialise durable email store: %v", err)
 	}
 
-	for _, table := range []string{"cells", "email_requests", "email_progress"} {
+	for _, table := range []string{"cells", "email_requests", "email_progress", "email_events"} {
 		assertTableExists(t, db, table)
 	}
 
@@ -57,9 +58,123 @@ func TestNewStoreInitialisesSchemaAlongsideCellar(t *testing.T) {
 		{name: "variables", typeName: "TEXT", notNull: 1},
 		{name: "submitted_at", typeName: "DATETIME"},
 	})
+	assertColumns(t, db, "email_events", []schemaColumn{
+		{name: "id", typeName: "INTEGER", primaryKeyPosition: 1},
+		{name: "idempotency_token", typeName: "TEXT", notNull: 1},
+		{name: "recipient", typeName: "TEXT", notNull: 1},
+		{name: "event", typeName: "TEXT", notNull: 1},
+		{name: "recorded_at", typeName: "DATETIME", notNull: 1},
+	})
 	assertUniqueIndex(t, db, "email_requests", "message_id")
 	assertIndexedColumn(t, db, "email_progress", "recipient")
 	assertIndexedColumn(t, db, "email_progress", "state")
+	assertIndexedColumn(t, db, "email_events", "idempotency_token")
+}
+
+func TestRecordEventPreservesStrongerStatuses(t *testing.T) {
+	store, db := newQueryFixture(t)
+	var messageID string
+	if err := db.QueryRow(`SELECT message_id FROM email_requests WHERE idempotency_token = ?`, "send-1").Scan(&messageID); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		event DeliveryEvent
+		want  string
+	}{
+		{EventProxyOpen, StateSent},
+		{EventSoftBounce, StateSent},
+		{EventDelivered, StateDelivered},
+		{EventHumanOpen, StateOpened},
+		{EventSent, StateOpened},
+		{EventClick, StateClicked},
+		{EventSpamComplaint, StateSpamComplaint},
+		{EventDelivered, StateSpamComplaint},
+	} {
+		if err := store.RecordEvent(context.Background(), messageID, "bob@example.com", step.event); err != nil {
+			t.Fatalf("record %s: %v", step.event, err)
+		}
+		state, _, _ := progressRow(t, db, "send-1", "bob@example.com")
+		if state != step.want {
+			t.Errorf("after %s: state = %q, want %q", step.event, state, step.want)
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_events WHERE idempotency_token = ? AND recipient = ?`, "send-1", "bob@example.com").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 8 {
+		t.Errorf("recorded events = %d, want 8", count)
+	}
+}
+
+func TestRecordEventRejectsUnknownTargetAndEvent(t *testing.T) {
+	store, db := newQueryFixture(t)
+	if err := store.RecordEvent(context.Background(), "missing", "alice@example.com", EventDelivered); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("unknown message: %v, want sql.ErrNoRows", err)
+	}
+	if err := store.RecordEvent(context.Background(), "missing", "alice@example.com", "ListUnsubscribe"); err == nil {
+		t.Error("unsupported event succeeded")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_events`).Scan(&count); err != nil || count != 0 {
+		t.Errorf("recorded events = %d, error = %v; want zero", count, err)
+	}
+}
+
+func TestRecordEventAdvancesRecoveryWithoutResubmitting(t *testing.T) {
+	store, db := newQueryFixture(t)
+	if _, err := db.Exec(`UPDATE email_progress SET state = ?, submitted_at = ? WHERE idempotency_token = ? AND recipient = ?`,
+		StateRecoveryWaiting, time.Now().UTC(), "send-1", "bob@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var messageID string
+	if err := db.QueryRow(`SELECT message_id FROM email_requests WHERE idempotency_token = ?`, "send-1").Scan(&messageID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordEvent(context.Background(), messageID, "bob@example.com", EventSoftBounce); err != nil {
+		t.Fatal(err)
+	}
+	state, _, _ := progressRow(t, db, "send-1", "bob@example.com")
+	if state != StateSent {
+		t.Errorf("state = %q, want Sent", state)
+	}
+}
+
+func TestTerminalStatusesRemainExcludedFromResubmission(t *testing.T) {
+	store, db := newQueryFixture(t)
+	var messageID string
+	if err := db.QueryRow(`SELECT message_id FROM email_requests WHERE idempotency_token = ?`, "send-1").Scan(&messageID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE email_progress SET state = ?, submitted_at = ? WHERE idempotency_token = ? AND recipient = ?`,
+		StateRefused, time.Now().UTC(), "send-1", "bob@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordEvent(context.Background(), messageID, "alice@example.com", EventHardBounce); err != nil {
+		t.Fatal(err)
+	}
+	for _, recipient := range []string{"alice@example.com", "bob@example.com"} {
+		if err := store.RecordEvent(context.Background(), messageID, recipient, EventDelivered); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.RecoverSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for recipient, want := range map[string]string{"alice@example.com": StateHardBounced, "bob@example.com": StateRefused} {
+		state, _, _ := progressRow(t, db, "send-1", recipient)
+		if state != want {
+			t.Errorf("%s state = %q, want %q", recipient, state, want)
+		}
+		rows, err := store.QueryProgress(context.Background(), ProgressFilter{Recipient: recipient, States: []string{want}})
+		if err != nil || len(rows) != 1 {
+			t.Errorf("query %s in %s: rows = %+v, error = %v", recipient, want, rows, err)
+		}
+	}
+	pending, err := store.pendingRecipients(context.Background(), "send-1")
+	if err != nil || len(pending) != 0 {
+		t.Errorf("pending recipients = %+v, error = %v", pending, err)
+	}
 }
 
 func TestSchemaStoresReconstructableRequestData(t *testing.T) {

@@ -71,6 +71,14 @@ For a recipient, the effective template variables are the common `Email.Variable
 
 `TemplateID` and `Text` may both be present. A templated email can therefore use a provider-hosted template for its rich content while supplying its plain-text alternative through `Text`.
 
+Provider capabilities can restrict this combination. Mailtrap hosted templates
+own the subject and both body formats: its adapter requires empty `Subject` and
+`Text` whenever `TemplateID` is set, and rejects conflicting content before
+sending. It never silently drops content or retrieves templates to render them
+locally. Without `TemplateID`, Mailtrap renders `Subject` and `Text` using the
+dummy client's simple `{{name}}` / `{{ name }}` placeholders. This is not a
+Handlebars engine; hosted Mailtrap templates use the provider's own rendering.
+
 The API deliberately does not expose:
 
 * template engines
@@ -99,7 +107,10 @@ A single invocation of `Send` represents one logical email operation and may res
 
 The client must not silently split one `Send` into multiple provider requests.
 
-This is important because the durable layer relies on the external operation being a single atomic submission from the application's perspective.
+This is important because the durable layer relies on the external operation
+being a single submission from the application's perspective. A single HTTP
+request does not imply all-or-nothing acceptance: providers can accept some
+messages and refuse others in the same batch.
 
 If a provider cannot support the requested operation with a single external request, that provider implementation must return an error rather than implementing its own fan-out.
 
@@ -122,6 +133,24 @@ type RecipientResult struct {
 `Recipients` is positionally aligned with `Email.To`: the result at each index
 describes the submitted recipient at the same index.
 
+When `Send` succeeds, every input recipient has a non-empty `PMUID`. A client
+can also return a partial `SendResult` together with an error. Such a result
+retains all input indices: accepted recipients have their provider IDs, and
+entries without a confirmed ID are empty. Callers must inspect and preserve
+these results even when `err != nil`; they must not blindly retry the batch.
+
+An empty `PMUID` alone is not proof of refusal. Mailtrap's `*mailtrap.BatchError`
+exposes `Refusals` (explicit provider refusal), `InvalidResults` (unusable or
+contradictory item responses), and batch-level `Messages`. Per-recipient
+diagnostics carry the original `Index`, `Recipient`, and provider messages.
+`errors.Is(err, mailtrap.ErrInvalidResponse)` identifies invalid item responses.
+If the response count is wrong or the request/response cannot be decoded, the
+adapter returns no guessed mapping. Whole-request SDK errors remain accessible
+through `errors.As`, and context errors through `errors.Is`.
+
+Existing clients may still return an empty result on failure. No client is
+required to invent provider IDs or submission state when evidence is absent.
+
 `PMUID` means **provider message UID**.
 
 It is the provider-neutral representation of the unique identifier assigned by the external email service to an individual message.
@@ -131,7 +160,7 @@ Examples:
 ```text
 Sweego swg_uid       -> PMUID
 Dummy generated ID   -> PMUID
-Future provider ID   -> PMUID
+Mailtrap message_id  -> PMUID
 ```
 
 The provider-specific identifier must not leak through the generic API.

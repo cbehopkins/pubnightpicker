@@ -49,9 +49,10 @@ leave `FIRESTORE_EMULATOR_HOST` unset and point `GOOGLE_APPLICATION_CREDENTIALS`
 at a service-account JSON (e.g. the same `cred.json` used by `firebase_sub`); the
 project ID is read from that file unless `GOOGLE_CLOUD_PROJECT` is set.
 
-Email uses the dummy client by default. To enable Sweego, provide both
-`SWEEGO_TOKEN` and `SWEEGO_PROVIDER`; `SWEEGO_BASE_URL` is optional and defaults
-to `https://api.sweego.io`.
+Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
+or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
+`SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
+both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
 ## Authenticated frontend API
 
