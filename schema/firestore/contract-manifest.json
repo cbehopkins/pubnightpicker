@@ -1,0 +1,58 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Pubnightpicker Firestore Contract Manifest",
+    "generatedAt": "2026-08-11",
+    "scope": {
+        "included": [
+            "react",
+            "firebase_sub"
+        ],
+        "excludedUntilPromoted": [
+            "cellar",
+            "last_orders",
+            "sweego_client"
+        ]
+    },
+    "collections": [
+        {
+            "name": "polls",
+            "status": "authoritative",
+            "schemaFile": "collections/polls.schema.json"
+        },
+        {
+            "name": "votes",
+            "status": "authoritative",
+            "schemaFile": "collections/votes.schema.json"
+        },
+        {
+            "name": "attendance",
+            "status": "authoritative",
+            "schemaFile": "collections/attendance.schema.json"
+        },
+        {
+            "name": "pubs",
+            "status": "authoritative",
+            "schemaFile": "collections/pubs.schema.json"
+        },
+        {
+            "name": "roles",
+            "status": "authoritative",
+            "schemaFile": "collections/roles.schema.json"
+        },
+        {
+            "name": "users",
+            "status": "authoritative",
+            "schemaFile": "collections/users.schema.json"
+        },
+        {
+            "name": "user-public",
+            "status": "authoritative",
+            "schemaFile": "collections/user-public.schema.json"
+        },
+        {
+            "name": "messages",
+            "status": "authoritative",
+            "schemaFile": "collections/messages.schema.json"
+        }
+    ]
+}

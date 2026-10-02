@@ -284,7 +284,14 @@ service cloud.firestore {
     // Users collection - private data, restricted to self and admins
     match /users/{userId} {
       allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
-      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      // testEmailAck is backend-owned (Admin SDK bypasses rules).
+      allow create: if request.auth != null
+                    && (request.auth.uid == userId || isAdmin())
+                    && (isAdmin() || !('testEmailAck' in request.resource.data));
+      allow update: if request.auth != null
+                    && (request.auth.uid == userId || isAdmin())
+                    && (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['testEmailAck']));
+      allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
 
       match /push_endpoints/{endpointId} {
         allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());

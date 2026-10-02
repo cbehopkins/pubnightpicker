@@ -1,0 +1,452 @@
+package app_test
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/app"
+	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
+	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
+	"last_orders/internal/lastorders/components/pushsources/pushsourcestest"
+	"last_orders/internal/lastorders/components/recurrence/recurrencetest"
+	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
+	"last_orders/internal/lastorders/database/listeners/chatmessages/chatmessagestest"
+	"last_orders/internal/lastorders/database/listeners/completedpolls/completedpollstest"
+	"last_orders/internal/lastorders/database/listeners/eventvenues/eventvenuestest"
+	"last_orders/internal/lastorders/database/listeners/newpolls/newpollstest"
+	"last_orders/internal/lastorders/database/listeners/notificationmirror/notificationmirrortest"
+	"last_orders/internal/lastorders/database/listeners/pushtest/pushtesttest"
+	"last_orders/internal/lastorders/database/listeners/testemail/testemailtest"
+	emailplugin "last_orders/internal/lastorders/plugins/email"
+	pushplugin "last_orders/internal/lastorders/plugins/push"
+	"last_orders/internal/lastorders/services/autocomplete/autocompletetest"
+	"last_orders/internal/lastorders/truths"
+
+	_ "modernc.org/sqlite"
+)
+
+func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "backend.db")
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-1"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	mustTable(t, db, "cells")
+	mustTable(t, db, "firebase_idempotency_records")
+
+	var cells int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cells WHERE id NOT LIKE 'timer:%'`).Scan(&cells); err != nil {
+		t.Fatalf("count cells: %v", err)
+	}
+	if cells != 1 {
+		t.Fatalf("expected one cellar row in shared db, got %d", cells)
+	}
+}
+
+func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "atomic.db")
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-atomic"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+
+	store := a.CellarStore()
+	claimed, ok, err := store.ClaimNext(time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim next failed: ok=%v err=%v", ok, err)
+	}
+
+	err = store.Complete(claimed.ID, []cellar.CellRequest{{}}, func(tx cellar.ApplicationTx) error {
+		return tx.Exec(`INSERT INTO firebase_idempotency_records(listener, event_key) VALUES(?, ?)`, "rollback-listener", "rollback-key")
+	})
+	if err == nil {
+		t.Fatal("expected complete to fail")
+	}
+
+	exists, err := a.IdempotencyClaimed(context.Background(), "rollback-listener", "rollback-key")
+	if err != nil {
+		t.Fatalf("idempotency state: %v", err)
+	}
+	if exists {
+		t.Fatal("application work must roll back with failed completion")
+	}
+
+	active := activeWorkCells(t, store)
+	if len(active) != 1 || active[0].ID != claimed.ID || active[0].State != cellar.CellStateClaimed {
+		t.Fatalf("expected claimed parent cell to remain after rollback, got %+v", active)
+	}
+}
+
+func TestTruthFanoutDeliversToRegisteredPollHandler(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	dbPath := filepath.Join(t.TempDir(), "fanout.db")
+	a := mustNewAppWithLogger(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil, &output)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-fanout"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
+
+	logged := output.String()
+	if !strings.Contains(logged, "poll opened processed") || !strings.Contains(logged, "poll-fanout") {
+		t.Fatalf("expected truth to be delivered to the registered poll handler, got log: %s", logged)
+	}
+
+	active := activeWorkCells(t, a.CellarStore())
+	if len(active) != 0 {
+		t.Fatalf("expected no active cells after truth delivery, got %d", len(active))
+	}
+}
+
+func TestIdempotencyDuplicateObservationSuppressed(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	dbPath := filepath.Join(t.TempDir(), "idem-duplicate.db")
+	a := mustNewAppWithLogger(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil, &output)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-dup"); err != nil {
+		t.Fatalf("enqueue new poll (1st): %v", err)
+	}
+	if err := enqueueNewPoll(t, a, "poll-dup"); err != nil {
+		t.Fatalf("enqueue new poll (2nd): %v", err)
+	}
+
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
+
+	logged := output.String()
+	if count := strings.Count(logged, "poll opened processed"); count != 1 {
+		t.Fatalf("expected the duplicate observation to be suppressed, got %d deliveries: %s", count, logged)
+	}
+}
+
+func TestIdempotencyObservedRemoteDoesNotEmitTruth(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	remote := firebaseidempotencytest.NewInMemoryRemoteStandIn(true)
+	remote.SeedExisting("PollOpened", "poll-observed", true)
+	dbPath := filepath.Join(t.TempDir(), "idem-observed.db")
+	a := mustNewAppWithLogger(t, dbPath, remote, nil, &output)
+	defer a.Close()
+
+	if err := enqueueNewPoll(t, a, "poll-observed"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+
+	runUntil(t, a, func() bool { return len(activeWorkCells(t, a.CellarStore())) == 0 })
+
+	if strings.Contains(output.String(), "poll opened processed") {
+		t.Fatal("a Truth already established remotely must not be re-emitted")
+	}
+
+	exists, err := a.IdempotencyClaimed(context.Background(), "PollOpened", "poll-observed")
+	if err != nil {
+		t.Fatalf("idempotency state: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected identity cached after observing remote establishment, got exists=%v", exists)
+	}
+
+	active := activeWorkCells(t, a.CellarStore())
+	if len(active) != 0 {
+		t.Fatalf("expected the sequence to terminate immediately at Step 1, got %d active cells", len(active))
+	}
+}
+
+func TestNewRequiresIdempotencyRemoteWhenFirestoreDisabled(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "no-remote.db")
+	_, err := app.New(app.Config{
+		DBPath:      dbPath,
+		PollDelay:   5 * time.Millisecond,
+		Logger:      testLogger(),
+		EmailClient: emailplugin.ClientDummy,
+	})
+	if err == nil {
+		t.Fatal("expected app.New to fail fast without a durable idempotency remote")
+	}
+}
+
+func TestStartupFailureBlocksListeners(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "startup-fail.db")
+	_, err := app.New(app.Config{
+		DBPath:            dbPath,
+		PollDelay:         5 * time.Millisecond,
+		Logger:            testLogger(),
+		IdempotencyRemote: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
+		CompletionActions: completionactionstest.New(),
+		EmailClient:       emailplugin.ClientDummy,
+		Push:              pushplugin.Options{Client: pushplugin.ClientDummy},
+		StartupComponentChecks: []func(*basestore.Store) error{
+			func(*basestore.Store) error { return errors.New("synthetic startup failure") },
+		},
+	})
+	if err == nil {
+		t.Fatal("expected startup failure")
+	}
+
+	db, openErr := sql.Open("sqlite", dbPath)
+	if openErr != nil {
+		t.Fatalf("open db: %v", openErr)
+	}
+	defer db.Close()
+
+	mustTable(t, db, "cells")
+	var cells int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM cells`).Scan(&cells); err != nil {
+		t.Fatalf("count cells: %v", err)
+	}
+	if cells != 0 {
+		t.Fatalf("expected no listener-created cells after startup failure, got %d", cells)
+	}
+}
+
+func TestRestartRecoversClaimedCells(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "restart.db")
+	a1 := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+
+	if err := enqueueNewPoll(t, a1, "poll-restart"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+
+	claimed, ok, err := a1.CellarStore().ClaimNext(time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim cell before crash simulation: ok=%v err=%v", ok, err)
+	}
+	if claimed.State != cellar.CellStateClaimed {
+		t.Fatalf("expected claimed state, got %s", claimed.State)
+	}
+	if err := a1.Close(); err != nil {
+		t.Fatalf("close first app: %v", err)
+	}
+
+	a2 := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+	defer a2.Close()
+
+	runUntil(t, a2, func() bool { return len(activeWorkCells(t, a2.CellarStore())) == 0 })
+
+	active := activeWorkCells(t, a2.CellarStore())
+	if len(active) != 0 {
+		t.Fatalf("expected recovered claimed cell to be fully processed, got %d active cells", len(active))
+	}
+}
+
+func TestCloseStopsSchedulerBeforeClosingSQLite(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "shutdown.db")
+	a := mustNewApp(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- a.Run(runCtx)
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	if err := a.Close(); err != nil {
+		t.Fatalf("close app: %v", err)
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not return after close")
+	}
+}
+
+func mustNewApp(
+	t *testing.T,
+	dbPath string,
+	remote firebaseidempotency.Remote,
+	startupChecks []func(*basestore.Store) error,
+) *app.App {
+	t.Helper()
+	return mustNewAppWithLogger(t, dbPath, remote, startupChecks, nil)
+}
+
+// testConfig supplies every external collaborator as a stand-in, so the app wires up
+// without Firestore. Durable Timers are always scheduled, so assertions about
+// application work must use activeWorkCells.
+func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) app.Config {
+	t.Helper()
+
+	recurrenceService, err := recurrencetest.New(time.Now())
+	if err != nil {
+		t.Fatalf("new recurrence stand-in: %v", err)
+	}
+
+	return app.Config{
+		DBPath:                    dbPath,
+		AuthVerifier:              testAuthVerifier{},
+		PollDelay:                 5 * time.Millisecond,
+		IdempotencyRemote:         remote,
+		RecurrenceService:         recurrenceService,
+		VenueSource:               venuecachetest.New(),
+		NotificationProfileSource: notificationprofiletest.New(),
+		EventVenueSource:          eventvenuestest.New(),
+		NewPollSource:             newpollstest.New(),
+		CompletedPollSource:       completedpollstest.New(),
+		AutocompleteSource:        autocompletetest.New(),
+		PushSources:               pushsourcestest.New(),
+		ChatMessageSource:         chatmessagestest.New(),
+		PushTestSource:            pushtesttest.New(),
+		NotificationMirrorSource:  notificationmirrortest.New(),
+		TestEmailSource:           testemailtest.New(),
+		CompletionActions:         completionactionstest.New(),
+		EmailClient:               emailplugin.ClientDummy,
+		Push:                      pushplugin.Options{Client: pushplugin.ClientDummy},
+	}
+}
+
+// activeWorkCells lists active cells excluding the durable Timers the application
+// always schedules.
+func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
+	t.Helper()
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	work := make([]cellar.Cell, 0, len(active))
+	for _, cell := range active {
+		if strings.HasPrefix(string(cell.ID), "timer:") {
+			continue
+		}
+		work = append(work, cell)
+	}
+	return work
+}
+
+func mustNewAppWithLogger(
+	t *testing.T,
+	dbPath string,
+	remote firebaseidempotency.Remote,
+	startupChecks []func(*basestore.Store) error,
+	logOutput io.Writer,
+) *app.App {
+	t.Helper()
+
+	logger := testLogger()
+	if logOutput != nil {
+		logger = slog.New(slog.NewJSONHandler(logOutput, nil))
+	}
+
+	cfg := testConfig(t, dbPath, remote)
+	cfg.Logger = logger
+	cfg.StartupComponentChecks = startupChecks
+
+	a, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	return a
+}
+
+func runFor(t *testing.T, application *app.App, dur time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), dur)
+	defer cancel()
+	if err := application.Run(ctx); err != nil {
+		t.Fatalf("run app: %v", err)
+	}
+}
+
+func runUntil(t *testing.T, application *app.App, ready func() bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = application.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+			if runErr != nil {
+				t.Errorf("run app: %v", runErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("app did not stop after cancellation")
+		}
+	}()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for !ready() {
+		select {
+		case <-done:
+			t.Fatalf("app stopped before the expected state: %v", runErr)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for the expected app state")
+		case <-ticker.C:
+		}
+	}
+}
+
+func enqueueNewPoll(t *testing.T, application *app.App, pollID string) error {
+	t.Helper()
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID})
+	if err != nil {
+		return err
+	}
+	request, err := firebaseidempotency.NewCellRequest("PollOpened", pollID, envelope)
+	if err != nil {
+		return err
+	}
+	return application.AddCell(request)
+}
+
+func mustTable(t *testing.T, db *sql.DB, tableName string) {
+	t.Helper()
+	var name string
+	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, tableName).Scan(&name)
+	if err != nil {
+		t.Fatalf("expected table %s: %v", tableName, err)
+	}
+}
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}

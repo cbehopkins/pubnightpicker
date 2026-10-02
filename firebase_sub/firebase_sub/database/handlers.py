@@ -324,6 +324,16 @@ class DbHandler:
         """Return a query for admin delete requests."""
         return cast(Query, self.db.collection("admin_delete_requests"))
 
+    @property
+    def query_test_email_requests(self) -> Query:
+        """Return a query for users that have ever requested a test email."""
+        return _query_where(
+            cast(Query, self.db.collection("users")),
+            field="testEmailReq",
+            op="!=",
+            value="",
+        )
+
     @staticmethod
     def wrapped_callback(
         doc_snapshot: Sequence[DocumentSnapshot],

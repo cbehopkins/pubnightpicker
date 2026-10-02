@@ -1,0 +1,529 @@
+# ADR: Application Rate Limiting and Operational Guards
+
+**Status:** Accepted
+**Date:** 2026-08-11
+
+## 1. Context
+
+The backend performs operations where an unexpected increase in call frequency could be undesirable or dangerous.
+
+Examples include:
+
+* sending email;
+* sending push notifications;
+* calling external APIs;
+* performing privileged operations;
+* future operations where an application bug could cause excessive activity.
+
+Some of these operations are subject to external quotas. Others are simply operations where excessive repetition is a useful indication that something has gone wrong.
+
+The backend therefore requires a generic mechanism for placing a limit on the frequency of selected operations.
+
+The existing backend has successfully used a token-bucket mechanism for this purpose.
+
+For example:
+
+```text
+Email sending:
+    capacity: 100
+    refill:   100/day
+```
+
+The mechanism has also previously been used to ensure that an operational alert is itself rate-limited:
+
+```text
+Email limit exceeded
+        │
+        ▼
+Alert limiter
+capacity: 1
+refill:   1/day
+        │
+        ▼
+Administrator notification
+```
+
+The V0 backend should retain the useful part of this design without introducing unnecessary operational complexity.
+
+---
+
+# 2. Decision
+
+The backend provides **generic, local, concurrency-safe daily token sources**,
+as refined by CDD-0010. There is no continuous or fractional refill in V0.
+
+Operations that require protection may be associated with a named rate-limit policy.
+
+The rate limiter is an application infrastructure component and is independent of:
+
+* the operation being protected;
+* Cellar;
+* individual Handlers;
+* external service implementations;
+* alerting.
+
+A protected operation conceptually performs:
+
+```text
+Acquire token
+     │
+     ├── token available ──► perform operation
+     │
+     └── no token ─────────► reject/defer operation
+```
+
+The exact response to a rejected operation is determined by the caller.
+
+---
+
+# 3. V0 Scope
+
+The V0 implementation will provide:
+
+### 3.1 Daily token source
+
+Each limiter has:
+
+* a maximum capacity;
+* a current token count;
+* a daily reset in the application timezone;
+* a named identity.
+
+For example:
+
+```text
+email.send
+    capacity: 100
+    reset:    local midnight
+```
+
+The source resets lazily to its maximum when the local calendar day changes.
+Single acquisitions consume one token; bulk acquisitions consume an explicitly
+requested positive count atomically, or none. A request above maximum capacity
+is distinguished from a temporary shortage.
+
+---
+
+### 3.2 Concurrency safety
+
+Multiple Cells may execute concurrently.
+
+The rate limiter MUST therefore guarantee that two concurrent acquisitions cannot consume the same token.
+
+The implementation may use an in-process mutex or equivalent concurrency primitive.
+
+The V0 implementation does not require SQLite transactions or another persistent coordination mechanism for token acquisition.
+
+---
+
+### 3.3 Non-blocking acquisition
+
+V0 rate-limit acquisition should be non-blocking.
+
+Conceptually:
+
+```go
+type TokenSource interface {
+    Acquire() int
+    AcquireN(count int) (waitSeconds int, err error)
+}
+```
+
+Zero wait grants the requested tokens. Positive wait refuses the request and
+reports ceiling-rounded seconds until local midnight. Bulk requests with invalid
+counts or counts above capacity return an error without consumption.
+
+The caller may then:
+
+* return a rate-limited result;
+* cause the Cell to retry;
+* skip the operation;
+* perform another appropriate application-specific action.
+
+The rate limiter itself does not decide how the failed acquisition should be handled.
+
+Cells should not normally sit blocked waiting for a token to become available.
+
+---
+
+# 4. Named policies
+
+Rate limits should have stable names rather than being anonymous configuration attached to arbitrary code.
+
+Examples include:
+
+```text
+email.send
+push.send
+sweego.send
+firebase.auth_delete
+webhook.accept
+```
+
+The names provide a useful operational identity for:
+
+* logging;
+* future metrics;
+* configuration;
+* troubleshooting.
+
+The initial policies are `email.send` (100 poll recipient attempts/day),
+`push.send` (1,000 endpoint attempts/day) and the separate diagnostics admission
+source `email.test` (10/day). Send capacities are configurable. Other examples
+remain future policies, not implemented guards.
+
+---
+
+# 5. Logging
+
+V0 logs the transition into exhaustion once per daily period, not each refused
+acquisition. A refused bulk request with residual tokens is not exhaustion.
+
+The log should identify at least:
+
+* the rate-limit policy;
+* the fact that the source is exhausted;
+* sufficient contextual information to identify the affected operation where practical.
+
+For example:
+
+```text
+WARN rate limit exhausted
+    source=email.send
+```
+
+No automatic administrator notification is required in V0.
+
+This is deliberately simpler than the previous backend.
+
+---
+
+# 6. Separation of concerns
+
+The rate limiter MUST NOT be responsible for alerting.
+
+In particular, the limiter should not contain logic such as:
+
+```text
+if exhausted:
+    email administrator
+```
+
+Instead, the architecture leaves room for a future operational layer:
+
+```text
+Rate limiter
+     │
+     ▼
+Limit exceeded
+     │
+     ▼
+Operational alerting
+     │
+     ▼
+Alert rate limiter
+     │
+     ▼
+Administrator notification
+```
+
+This allows the same rate-limiting primitive to be reused for both ordinary operations and future alert suppression.
+
+---
+
+# 7. Relationship to Cellar
+
+Rate limiting is independent of Cellar.
+
+A Handler may use a rate limiter before performing an operation:
+
+```go
+if wait := limits.EmailSend.Acquire(); wait != 0 {
+    return ErrRateLimited
+}
+
+return sender.Send(ctx, message)
+```
+
+The Cell execution model determines what happens after `ErrRateLimited`.
+
+The limiter does not create Cells, reschedule Cells, or otherwise depend upon Cellar.
+
+This separation allows the same primitive to protect operations performed outside Cell handlers if required.
+
+Poll email protection runs through a generic pre-submission hook in durable_email,
+immediately before recording submission timestamps. It acquires tokens for pending
+recipients on every provider attempt. Ordinary shortages defer the current Post
+step until reset. Oversized batches log an error and defer that step for 24 hours,
+without consuming tokens or changing submission/recovery state. The sequence and
+its later completion marker remain queued in Cellar; no marker runs on refusal.
+Oversized work may remain pending indefinitely until the capacity issue is resolved.
+
+Push protection runs immediately before each endpoint send, after terminal-state
+and expiry checks. Refusal retries at reset or expiry, whichever comes first,
+without incrementing failure counters. Provider recovery queries remain unguarded.
+Diagnostics email retains its independent admission limit and existing drop
+semantics; it does not consume poll email allowance. No batch splitting or stale
+poll-email expiry is introduced.
+
+---
+
+# 8. Restart semantics
+
+V0 rate-limit state is local process state.
+
+Consequently, restarting the backend resets the token buckets.
+
+This is acceptable for V0.
+
+The rate limiter is intended primarily as a guard against application mistakes and unexpected activity, rather than as a security boundary or authoritative quota enforcement mechanism.
+
+If persistent or externally coordinated limits are required in the future, that can be introduced independently.
+
+---
+
+# 9. Failure semantics
+
+Failure of the rate-limiting mechanism itself should fail closed where practical.
+
+An operation MUST NOT silently bypass a configured protection because the limiter encountered an internal error.
+
+`AcquireN` reports invalid and oversized requests explicitly. Constructors reject
+missing sources and invalid configuration; unknown email purposes fail closed.
+Temporary shortages and the agreed oversized-batch deferral are normal Retry
+results, not Cellar ErrorResult failures, which would stop the runtime.
+
+---
+
+# 10. Non-goals for V0
+
+The following are explicitly deferred.
+
+### 10.1 Circuit breakers
+
+V0 will not automatically stop calling a dependency because repeated calls are failing.
+
+A future circuit breaker may distinguish:
+
+```text
+healthy
+degraded
+open
+half-open
+```
+
+but this is not part of the V0 rate-limiting mechanism.
+
+---
+
+### 10.2 Automatic alerting
+
+V0 will log rate-limit exhaustion.
+
+It will not automatically email or otherwise notify an administrator.
+
+A future alerting system may itself use rate limiting to prevent notification storms.
+
+---
+
+### 10.3 Persistent rate limits
+
+Token-bucket state will not be persisted in SQLite.
+
+Restarting the backend resets the buckets.
+
+---
+
+### 10.4 Distributed rate limiting
+
+The V0 limiter is local to one backend process.
+
+No coordination between multiple backend instances is required.
+
+---
+
+### 10.5 Hierarchical limits
+
+V0 does not require combinations such as:
+
+```text
+per-provider: 10/minute
+per-endpoint: 2/minute
+global:       100/minute
+```
+
+The design should not prevent these being added later, but they are unnecessary for the initial implementation.
+
+---
+
+# 11. Example policies
+
+The following send capacities are initial defaults and may be configured.
+
+### Email sending
+
+```text
+Policy:  email.send
+Capacity: 100
+Reset:    local midnight
+```
+
+This counts pending recipient attempts, including retries, rather than bulk API
+requests. A mailing-list address counts as one application recipient.
+
+### Push sending
+
+```text
+Policy:  push.send
+Capacity: 1000
+Reset:    local midnight
+```
+
+Each endpoint attempt consumes one token, regardless of notification purpose.
+
+### Administrative notification
+
+This is a future example rather than a V0 requirement:
+
+```text
+Policy:  alert.email
+Capacity: 1
+Refill:   1/day
+```
+
+This would allow an alerting system to report a problem without generating repeated administrator notifications.
+
+---
+
+# 12. Consequences
+
+## Positive
+
+* Provides a single reusable protection mechanism.
+* Protects the backend against accidental excessive operations.
+* Helps keep external-service usage within expected quotas.
+* Works naturally with concurrent Cell execution.
+* Keeps rate limiting independent of individual Handlers.
+* Provides named limits that can later become useful metrics and operational controls.
+* Keeps V0 implementation small.
+
+## Negative
+
+* Limits reset when the process restarts.
+* Limits are not globally enforced across multiple backend processes.
+* Rate-limit exhaustion initially produces only logs.
+* Callers must decide how to handle rejected operations.
+
+These limitations are intentional V0 trade-offs.
+
+---
+
+# 13. Future extensions
+
+The architecture leaves room for:
+
+* persistent token buckets;
+* distributed rate limiting;
+* hierarchical limits;
+* circuit breakers;
+* automatic operational alerts;
+* alert-specific rate limiting;
+* metrics and dashboards;
+* dynamic runtime configuration.
+
+None of these are required for V0.
+
+---
+
+# 14. Architectural invariant
+
+The key invariant established by this ADR is:
+
+> **Operations which have an explicit application safety or quota requirement may be protected by a named, concurrency-safe local token bucket. Exceeding the limit must never silently result in the protected operation proceeding.**
+
+V0 deliberately stops there.
+# ADR Amendment: Version 0 Daily Token Sources
+
+**Date:** 2026-09-06
+**Status:** Proposed
+
+## Decision
+
+The Version 0 implementation of the application rate-limiting mechanism will use **daily token sources** rather than a general continuously-refilling token bucket.
+
+A token source is configured with:
+
+* a maximum number of tokens per day;
+* an optional exhaustion callback.
+
+Tokens are consumed by successful acquisitions.
+
+The source resets to its maximum token count at midnight.
+
+The caller-facing interface is:
+
+```go
+type TokenSource interface {
+    Acquire() int
+}
+```
+
+The return value has the following meaning:
+
+```text
+0       token granted
+
+>0      token unavailable; number of seconds until the
+        caller should try again
+```
+
+Acquisition is non-blocking and concurrency-safe.
+
+## Rationale
+
+The current Version 0 use cases require daily limits such as:
+
+```text
+email.send
+    maximum: 100/day
+```
+
+They do not currently require continuously refilling limits such as:
+
+```text
+10/minute
+100/hour
+```
+
+A daily quota therefore provides the required safety behaviour with substantially less implementation complexity.
+
+The architecture does not prevent a future implementation from supporting more general token-bucket refill policies if the application requires them.
+
+## Terminology
+
+The generic architectural concept remains **rate limiting**.
+
+The Version 0 implementation is specifically a **daily token source**.
+
+The existing ADR statement describing the mechanism as a "token bucket" should therefore be understood as the general architectural model; the V0 implementation deliberately uses the simpler discrete daily-reset form.
+
+## Consequences
+
+The V0 implementation does not support continuous refill.
+
+For example, a source configured for 100 tokens/day does not regain tokens throughout the day. Once its 100 tokens have been consumed, it remains exhausted until the next daily reset.
+
+This is intentional.
+
+All other architectural decisions in the original ADR remain unchanged, including:
+
+* local process state;
+* concurrency safety;
+* non-blocking acquisition;
+* separation from Cellar;
+* separation from alerting;
+* no distributed coordination;
+* no persistent rate-limit state;
+* no circuit-breaker behaviour.
+
+The detailed API and behavioural contract is defined by the **Token Source CDD**.

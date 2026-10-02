@@ -48,7 +48,6 @@ def test_yearly_third_wednesday_from_frontend_value_materializes_wednesday_date(
             "venueType": "event",
             "recurrence": {
                 "frequency": "yearly",
-                "start_date": "2026-01-01",
                 "month": 5,
                 "nth": 3,
                 # Frontend currently posts Wednesday as 2.

@@ -1,0 +1,22 @@
+{
+    "from": "Sender <sender@example.com>",
+    "subject": "Pub night for {{name}}",
+    "body": "template.txt",
+    "variables": {
+        "date": "Friday"
+    },
+    "targets": [
+        {
+            "dest": "Alice <alice@example.com>",
+            "vars": {
+                "name": "Alice"
+            }
+        },
+        {
+            "dest": "Bob <bob@example.com>",
+            "vars": {
+                "name": "Bob"
+            }
+        }
+    ]
+}

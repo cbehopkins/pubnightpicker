@@ -15,6 +15,7 @@ const {
     getAuthMock,
     updatePasswordMock,
     navigateMock,
+    useTestEmailRequestMock,
 } = vi.hoisted(() => {
     return {
         useAuthStateMock: vi.fn(),
@@ -26,6 +27,7 @@ const {
         getAuthMock: vi.fn(),
         updatePasswordMock: vi.fn(async () => undefined),
         navigateMock: vi.fn(),
+        useTestEmailRequestMock: vi.fn(),
     };
 });
 
@@ -55,6 +57,10 @@ vi.mock("firebase/auth", () => {
         updatePassword: updatePasswordMock,
     };
 });
+
+vi.mock("../../hooks/useTestEmailRequest", () => ({
+    default: useTestEmailRequestMock,
+}));
 
 vi.mock("../../utils/notify", () => {
     return {
@@ -152,6 +158,11 @@ describe("Preferences login email change flow", () => {
         getAuthMock.mockReset();
         updatePasswordMock.mockReset();
         navigateMock.mockReset();
+        useTestEmailRequestMock.mockReturnValue({
+            status: "idle",
+            address: "notifications@example.com",
+            sendTestEmail: vi.fn(),
+        });
 
         useSelectorMock.mockReturnValue({});
 
@@ -245,5 +256,13 @@ describe("Preferences login email change flow", () => {
         renderPreferences();
 
         expect(screen.queryByRole("button", { name: "Change Login Email" })).toBeNull();
+    });
+
+    it("shows the test email action on the preferences page", () => {
+        renderPreferences();
+
+        expect(screen.getByRole("heading", { name: "Test Email" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Send Test Email" })).toBeTruthy();
+        expect(useTestEmailRequestMock).toHaveBeenCalledWith("user-1", 60000);
     });
 });

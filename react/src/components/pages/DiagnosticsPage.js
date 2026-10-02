@@ -17,6 +17,7 @@ import {
     NOTIFICATION_PUSH_TEST_DOC,
 } from "../../dbtools/notificationPings";
 import NotificationPingPanel from "../UI/NotificationPingPanel";
+import BackendPingPanel from "../UI/BackendPingPanel";
 import {
     POLL_ACTION_ADD_VENUE,
     POLL_ACTION_AUDIT_COLLECTION,
@@ -424,6 +425,8 @@ function DiagnosticsPage() {
             <p className="text-body-secondary mb-4">
                 Admin-only tools for validating notification and push messaging.
             </p>
+
+            <BackendPingPanel />
 
             <NotificationPingPanel
                 title="Admin Diagnostics"

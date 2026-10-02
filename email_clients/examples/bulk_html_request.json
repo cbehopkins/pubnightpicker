@@ -1,0 +1,21 @@
+{
+    "template": "83926cfe-5097-4718-816a-eca608d74e3e",
+    "subject": "Pub night for {{name}}",
+    "from": "Me <chris@email.cbeh.uk>",
+    "targets": [
+        {
+            "dest": "test1@cbeh.uk",
+            "vars": {
+                "name": "Alice",
+                "date": "Friday"
+            }
+        },
+        {
+            "dest": "test2@cbeh.uk",
+            "vars": {
+                "name": "Bob",
+                "date": "Saturday"
+            }
+        }
+    ]
+}

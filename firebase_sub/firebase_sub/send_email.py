@@ -69,6 +69,21 @@ MAIL_SEND_BUCKET = TokenBucket(
 )
 
 
+def _skip_test_mail_send() -> None:
+    raise SkipCall(return_value=False)
+
+
+# Kept separate from MAIL_SEND_BUCKET so test emails cannot starve poll emails.
+TEST_MAIL_SEND_BUCKET = TokenBucket(
+    refill_amount=int(os.getenv("TEST_MAIL_SEND_REFILL_AMOUNT", "10")),
+    max_tokens=int(os.getenv("TEST_MAIL_SEND_MAX_TOKENS", "10")),
+    refill_interval_seconds=float(
+        os.getenv("TEST_MAIL_SEND_REFILL_INTERVAL_SECONDS", str(SECONDS_IN_DAY))
+    ),
+    on_stall=_skip_test_mail_send,
+)
+
+
 class VenueLookup(Protocol):
     def __getitem__(self, key: str, /) -> VenueDocument: ...
 
@@ -101,6 +116,9 @@ OPEN_TEMPLATE = textwrap.dedent("""\
     Voting has opened for this week's pub night.
     Please visit https://pubnightpicker.web.app/active_polls
     to participate in the voting.""")
+TEST_EMAIL_TEMPLATE = textwrap.dedent("""\
+    This is a test email from Pub Night Picker, requested from the Diagnostics page.
+    If you are reading this, notification emails are reaching you.""")
 
 
 def _escape(value: str | None) -> str | None:
@@ -292,6 +310,23 @@ def send_poll_open_email(
         )
         result = client.send(mail)
         _log.info(f"Mail send result for {email}: {result}")
+
+
+@rate_limited(TEST_MAIL_SEND_BUCKET)
+def send_test_email(email: EmailAddr, *, dummy_run: bool = False) -> bool:
+    """Send a diagnostics test email. Returns False if rate limited."""
+    client = _mail_client(dummy_run)
+    _log.info(f"Test email to send to {email}")
+    mail = mailtrap.Mail(
+        sender=SELF_EMAIL,
+        to=[mailtrap.Address(email=email)],
+        subject="Pub Night Picker test email",
+        text=TEST_EMAIL_TEMPLATE,
+        category="Test email",
+    )
+    result = client.send(mail)
+    _log.info(f"Mail send result for {email}: {result}")
+    return True
 
 
 @rate_limited(MAIL_SEND_BUCKET)

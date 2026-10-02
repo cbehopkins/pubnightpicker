@@ -89,6 +89,30 @@ VITE_USE_FIREBASE_EMULATORS="false"
 Deployment is now handled by the github runners.
 PRs get a temp URL generated that allows you to test it
 
+## Last Orders API Diagnostics
+
+The admin diagnostics page includes **Ping Last Orders**, which contacts the Go
+backend directly using the signed-in user's Firebase ID token. It displays the
+UID verified by the backend, authentication refusal, timeout or connection errors.
+It does not use Firestore as the request/response transport or contact the Python
+backend.
+
+Set `VITE_LAST_ORDERS_API_BASE_URL` before building. It defaults to
+`http://localhost:8081` for development; production must set the deployed backend's
+HTTPS URL. The value is public configuration, not a secret. Keep backend
+service-account credentials out of frontend environment variables.
+
+The backend's Firebase project must match `VITE_FIREBASE_PROJECT_ID`, and its
+origin allowlist must include this frontend's exact origin. Local Vite uses port
+3000. See [the authenticated API guide](../last_orders/docs/authenticated-api.md)
+for emulator commands, production configuration and token-verification limits.
+
+For GitHub-hosted builds, set the repository Actions variable
+`VITE_LAST_ORDERS_API_BASE_URL` to the backend HTTPS URL. Both live and preview
+hosting workflows pass it into the build. Allow preview origins individually or
+set `LAST_ORDERS_ALLOWED_PREVIEW_SITES=pubnightpicker` on the backend to allow this
+Hosting site's HTTPS previews. An unset API URL retains the localhost default.
+
 ## Firestore Index Drift Check
 
 To catch index drift before deploys, run:

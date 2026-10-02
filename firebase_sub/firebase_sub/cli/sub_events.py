@@ -127,6 +127,7 @@ def sub_events(
         event_producer.build_chat_message_manager(),
         event_producer.build_notification_request_manager(),
         event_producer.build_admin_delete_request_manager(),
+        event_producer.build_test_email_request_manager(),
         event_producer.build_new_poll_manager(),
         event_producer.build_complete_poll_manager(),
         PluginRuntime(
