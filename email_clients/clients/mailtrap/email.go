@@ -22,7 +22,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 		return clients.SendResult{}, err
 	}
 	if c == nil || c.sdk == nil {
-		return clients.SendResult{}, errors.New("Mailtrap client is not configured")
+		return clients.SendResult{}, errors.New("mailtrap client is not configured")
 	}
 	requests, err := c.requests(ctx, email)
 	if err != nil {
@@ -31,7 +31,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 	if len(requests) == 1 {
 		response, _, err := c.sdk.Send(ctx, &requests[0])
 		if err != nil {
-			return clients.SendResult{}, fmt.Errorf("Mailtrap send: %w", err)
+			return clients.SendResult{}, fmt.Errorf("mailtrap send: %w", err)
 		}
 		if !response.Success || !validMessageID(response.MessageIDs) {
 			return clients.SendResult{}, fmt.Errorf("%w: single send must report success and exactly one message ID", ErrInvalidResponse)
@@ -40,7 +40,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 	}
 	response, _, err := c.sdk.SendBatch(ctx, &sdk.BatchSendRequest{Requests: requests})
 	if err != nil {
-		return clients.SendResult{}, fmt.Errorf("Mailtrap batch send: %w", err)
+		return clients.SendResult{}, fmt.Errorf("mailtrap batch send: %w", err)
 	}
 	return batchResult(email.To, response)
 }
@@ -50,17 +50,17 @@ func (c *Client) requests(ctx context.Context, email clients.Email) ([]sdk.SendR
 		return nil, ErrNoRecipients
 	}
 	if len(email.To) > MaxBatchRecipients {
-		return nil, fmt.Errorf("Mailtrap supports at most %d recipients per Send", MaxBatchRecipients)
+		return nil, fmt.Errorf("mailtrap supports at most %d recipients per Send", MaxBatchRecipients)
 	}
 	if err := validateAddress(email.From.Email); err != nil {
 		return nil, fmt.Errorf("invalid sender: %w", err)
 	}
 	if email.TemplateID != "" {
 		if strings.TrimSpace(email.TemplateID) == "" || email.Subject != "" || email.Text != "" {
-			return nil, errors.New("Mailtrap hosted templates require a non-empty TemplateID and empty Subject and Text")
+			return nil, errors.New("mailtrap hosted templates require a non-empty TemplateID and empty Subject and Text")
 		}
 	} else if strings.TrimSpace(email.Subject) == "" || strings.TrimSpace(email.Text) == "" {
-		return nil, errors.New("Mailtrap raw sends require Subject and Text")
+		return nil, errors.New("mailtrap raw sends require Subject and Text")
 	}
 	correlationID, err := correlationHeader(email.Headers)
 	if err != nil {
@@ -123,10 +123,10 @@ func correlationHeader(headers map[string]string) (string, error) {
 			continue
 		}
 		if strings.TrimSpace(current) == "" {
-			return "", errors.New("Mailtrap correlation header must not be empty")
+			return "", errors.New("mailtrap correlation header must not be empty")
 		}
 		if value != "" && value != current {
-			return "", errors.New("Mailtrap correlation headers contain conflicting values")
+			return "", errors.New("mailtrap correlation headers contain conflicting values")
 		}
 		value = current
 	}

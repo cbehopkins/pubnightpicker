@@ -27,7 +27,7 @@ func CheckEmulator(allow bool) error {
 	hostname, _, err := net.SplitHostPort(host)
 	address := net.ParseIP(hostname)
 	if err != nil || (hostname != "localhost" && (address == nil || !address.IsLoopback())) {
-		return fmt.Errorf("Firebase Auth emulator must use a loopback host:port")
+		return fmt.Errorf("the Firebase Auth emulator must use a loopback host:port")
 	}
 	return nil
 }
@@ -38,7 +38,7 @@ func New(ctx context.Context, projectID string, allowEmulator bool) (*FirebaseVe
 	}
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "*detect-project-id*" {
-		return nil, fmt.Errorf("Firebase Auth requires a concrete project ID, not the Firestore detection sentinel")
+		return nil, fmt.Errorf("a concrete project ID is required for Firebase Auth, not the Firestore detection sentinel")
 	}
 	var options []option.ClientOption
 	if os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "" {

@@ -20,7 +20,7 @@ type SendOptions struct {
 
 func NewClient(client *sdk.Client) (*Client, error) {
 	if client == nil {
-		return nil, errors.New("Mailtrap SDK client is nil")
+		return nil, errors.New("mailtrap SDK client is nil")
 	}
 	return &Client{sdk: client}, nil
 }

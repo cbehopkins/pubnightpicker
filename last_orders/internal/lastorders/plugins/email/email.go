@@ -71,7 +71,7 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	mailtrapToken := strings.TrimSpace(opts.MailtrapToken)
 	sweegoToken := strings.TrimSpace(opts.SweegoToken)
 	if mailtrapToken != "" && sweegoToken != "" {
-		return nil, fmt.Errorf("Mailtrap and Sweego tokens are mutually exclusive")
+		return nil, fmt.Errorf("tokens for Mailtrap and Sweego are mutually exclusive")
 	}
 	switch opts.Client {
 	case ClientDummy:
@@ -79,7 +79,7 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 		client, verifier = dummyClient, dummyClient
 	case ClientMailtrap:
 		if mailtrapToken == "" {
-			return nil, fmt.Errorf("Mailtrap requires a token")
+			return nil, fmt.Errorf("a token is required for Mailtrap")
 		}
 		timeout := opts.MailtrapTimeout
 		if timeout <= 0 {
@@ -102,7 +102,7 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 		token := sweegoToken
 		provider := strings.TrimSpace(opts.SweegoProvider)
 		if token == "" || provider == "" {
-			return nil, fmt.Errorf("Sweego requires both token and provider")
+			return nil, fmt.Errorf("both token and provider are required for Sweego")
 		}
 		baseURL := strings.TrimRight(strings.TrimSpace(opts.SweegoBaseURL), "/")
 		if baseURL == "" {

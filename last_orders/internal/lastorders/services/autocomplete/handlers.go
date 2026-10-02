@@ -115,7 +115,7 @@ func (handler CloseHandler) Handle(ctx context.Context, payload CompletionCloseP
 }
 
 func (handler CloseHandler) writeAudit(ctx context.Context, payload CompletionClosePayload) {
-	entry := AuditEntry{PollID: payload.PollID, PollDate: payload.PollDate, SelectedVenueID: payload.SelectedVenueID}
+	entry := AuditEntry(payload)
 	if err := handler.Source.WriteCompletionAudit(ctx, entry); err != nil && handler.Logger != nil {
 		handler.Logger.Warn("poll auto-completion audit failed", "poll_id", payload.PollID, "err", err)
 	}

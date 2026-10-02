@@ -16,7 +16,9 @@ func TestEventVenueObservedIdentityIncludesEvidenceAndDate(t *testing.T) {
 		ObservedOn: "2030-01-01",
 	}
 
-	if baseline.Identity() != baseline.Identity() {
+	equivalent := baseline
+	equivalent.Venue.Recurrence = map[string]any{"interval": 2, "frequency": "weekly"}
+	if baseline.Identity() != equivalent.Identity() {
 		t.Fatal("identity must be stable")
 	}
 	changedDate := baseline

@@ -7,7 +7,7 @@ import (
 )
 
 var ErrNoRecipients = errors.New("email has no recipients")
-var ErrInvalidResponse = errors.New("Mailtrap response is unusable")
+var ErrInvalidResponse = errors.New("mailtrap response is unusable")
 
 type RecipientError struct {
 	Index     int
@@ -29,7 +29,7 @@ func (e *BatchError) Error() string {
 	for _, invalid := range e.InvalidResults {
 		parts = append(parts, fmt.Sprintf("recipient %d %q has an unusable result: %s", invalid.Index, invalid.Recipient, strings.Join(invalid.Messages, "; ")))
 	}
-	return "Mailtrap batch: " + strings.Join(parts, "; ")
+	return "mailtrap batch: " + strings.Join(parts, "; ")
 }
 
 func (e *BatchError) Unwrap() error {

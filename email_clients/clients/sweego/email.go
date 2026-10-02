@@ -32,7 +32,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 		return clients.SendResult{}, err
 	}
 	if response.Status < http.StatusOK || response.Status >= http.StatusMultipleChoices {
-		return clients.SendResult{}, fmt.Errorf("Sweego send returned HTTP %d: %s", response.Status, strings.TrimSpace(string(response.Body)))
+		return clients.SendResult{}, fmt.Errorf("sweego send returned HTTP %d: %s", response.Status, strings.TrimSpace(string(response.Body)))
 	}
 
 	pmuids, err := parsePMUIDs(response.Body)
@@ -49,7 +49,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 			}
 		}
 		if pmuid == "" {
-			return clients.SendResult{}, fmt.Errorf("Sweego response has no swg_uid for recipient %q", recipient.Email)
+			return clients.SendResult{}, fmt.Errorf("sweego response has no swg_uid for recipient %q", recipient.Email)
 		}
 		result.Recipients[index].PMUID = pmuid
 	}
@@ -108,7 +108,7 @@ func parsePMUIDs(body []byte) (map[string]string, error) {
 	pmuids := make(map[string]string)
 	collectPMUIDs(root, pmuids)
 	if len(pmuids) == 0 {
-		return nil, errors.New("Sweego send response contains no swg_uid")
+		return nil, errors.New("sweego send response contains no swg_uid")
 	}
 	return pmuids, nil
 }

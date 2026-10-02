@@ -30,10 +30,10 @@ func (v *Verifier) Verify(ctx context.Context, request clients.VerifyRequest) (c
 		return clients.VerifyResult{}, err
 	}
 	if v == nil || v.Client == nil || v.Client.sdk == nil {
-		return clients.VerifyResult{}, errors.New("Mailtrap verifier is not configured")
+		return clients.VerifyResult{}, errors.New("mailtrap verifier is not configured")
 	}
 	if v.Tolerance < 0 || request.SentAt.IsZero() || strings.TrimSpace(request.CorrelationID) == "" {
-		return clients.VerifyResult{}, errors.New("Mailtrap verification requires a correlation ID, SentAt and non-negative tolerance")
+		return clients.VerifyResult{}, errors.New("mailtrap verification requires a correlation ID, SentAt and non-negative tolerance")
 	}
 	if err := validateAddress(request.Recipient); err != nil {
 		return clients.VerifyResult{}, fmt.Errorf("invalid verification recipient: %w", err)
@@ -48,7 +48,7 @@ func (v *Verifier) Verify(ctx context.Context, request clients.VerifyRequest) (c
 	result := clients.VerifyResult{}
 	for message, err := range v.Client.sdk.EmailLogs.All(ctx, options) {
 		if err != nil {
-			return clients.VerifyResult{}, fmt.Errorf("Mailtrap verify: %w", err)
+			return clients.VerifyResult{}, fmt.Errorf("mailtrap verify: %w", err)
 		}
 		if message == nil {
 			return clients.VerifyResult{}, fmt.Errorf("%w: null email log record", ErrInvalidResponse)

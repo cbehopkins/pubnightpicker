@@ -106,11 +106,6 @@ func completedPayload(change Change) truths.PollObservedPayload {
 	}
 }
 
-type eventIdentity struct {
-	PollID          string `json:"poll_id"`
-	SelectedVenueID string `json:"selected_venue_id"`
-}
-
 func (l *Listener) createTruth(payload truths.PollObservedPayload) {
 	pollID := payload.PollID
 	envelope, err := truths.NewEnvelope(truths.PollCompletedFanout, payload)
