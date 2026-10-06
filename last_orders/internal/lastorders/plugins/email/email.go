@@ -106,7 +106,7 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 			return nil, err
 		}
 		if opts.MailtrapSandboxID < 0 {
-			return nil, fmt.Errorf("Mailtrap sandbox ID must be positive")
+			return nil, fmt.Errorf("sandbox ID for Mailtrap must be positive")
 		}
 		if opts.MailtrapSandboxID > 0 {
 			token := strings.TrimSpace(opts.MailtrapSandboxToken)
