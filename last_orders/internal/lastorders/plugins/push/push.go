@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/ratelimit"
 
@@ -58,7 +59,7 @@ const (
 type Options struct {
 	Client               ClientKind
 	Tokens               ratelimit.TokenSource
-	SilenceNotifications func() (bool, bool)
+	NotificationSettings func() (diagnosticsconfig.Settings, bool)
 	// VAPIDPrivateKey is the base64url P-256 private key from `npx web-push generate-vapid-keys`.
 	VAPIDPrivateKey string
 	// VAPIDSubject is an email address, mailto: URI, or https URL.
@@ -90,7 +91,7 @@ type Plugin struct {
 	baseURL              string
 	logger               *slog.Logger
 	tokens               ratelimit.TokenSource
-	silenceNotifications func() (bool, bool)
+	notificationSettings func() (diagnosticsconfig.Settings, bool)
 }
 
 func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, error) {
@@ -141,7 +142,7 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens, silenceNotifications: opts.SilenceNotifications}, nil
+	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens, notificationSettings: opts.NotificationSettings}, nil
 }
 
 // BaseURL is the web application origin used for notification click targets.
@@ -167,6 +168,8 @@ func (p *Plugin) Register(runtime *cellar.Cellar) error {
 
 // Notification is one push message with a stable identity.
 type Notification struct {
+	Purpose   string
+	ActorUID  string
 	ID        string
 	Message   []byte
 	Topic     string
@@ -174,6 +177,8 @@ type Notification struct {
 }
 
 type deliveryRequest struct {
+	Purpose        string    `json:"purpose,omitempty"`
+	ActorUID       string    `json:"actor_uid,omitempty"`
 	NotificationID string    `json:"notification_id"`
 	UserID         string    `json:"user_id"`
 	EndpointID     string    `json:"endpoint_id"`
@@ -205,6 +210,8 @@ func (p *Plugin) Populate(ctx context.Context, notification Notification, endpoi
 	cells := make([]cellar.CellRequest, 0, len(endpoints)+1)
 	for _, endpoint := range endpoints {
 		cell, err := cellRequest(cellar.Step{HandlerName: HandlerDeliver, Payload: deliveryRequest{
+			Purpose:        notification.Purpose,
+			ActorUID:       notification.ActorUID,
 			NotificationID: notification.ID,
 			UserID:         endpoint.UserID,
 			EndpointID:     endpoint.EndpointID,
@@ -307,8 +314,8 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 		return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateExpired)}}
 	}
 
-	if h.plugin.silenceNotifications != nil {
-		silenced, known := h.plugin.silenceNotifications()
+	if h.plugin.notificationSettings != nil {
+		settings, known := h.plugin.notificationSettings()
 		if !known {
 			notBefore := time.Now().UTC().Add(time.Second)
 			if notBefore.After(request.ExpiresAt) {
@@ -316,7 +323,7 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 			}
 			return cellar.Retry{NotBefore: &notBefore}
 		}
-		if silenced {
+		if !settings.AllowsLive(request.Purpose, request.ActorUID, request.UserID) {
 			h.plugin.logger.Info("push silenced; handled without sending", "notification_id", request.NotificationID, "user_id", request.UserID, "endpoint_id", request.EndpointID)
 			return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateAccepted)}}
 		}

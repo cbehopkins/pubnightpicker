@@ -75,7 +75,7 @@ func TestAuthenticatedEmailHistoryEndToEnd(t *testing.T) {
 	db := openSQLite(t, dbPath)
 	for index := range 24 {
 		token := fmt.Sprintf("send-%02d", index)
-		if _, err := db.Exec(`INSERT INTO email_requests VALUES (?, ?, '', '', ?, '', '', '{}', '{}')`, token, token, token); err != nil {
+		if _, err := db.Exec(`INSERT INTO email_requests (idempotency_token, message_id, sender_email, sender_name, subject, template_id, text, variables, headers) VALUES (?, ?, '', '', ?, '', '', '{}', '{}')`, token, token, token); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO email_progress (idempotency_token, recipient, recipient_name, state, variables) VALUES (?, 'shared@example.com', '', 'Pending', '{}')`, token); err != nil {

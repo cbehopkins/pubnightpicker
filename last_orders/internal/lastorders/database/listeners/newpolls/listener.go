@@ -89,13 +89,14 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 				continue
 			}
 			pollDate, _ := change.Doc.Data["date"].(string)
-			l.createTruth(change.Doc.ID, pollDate)
+			createdByUID, _ := change.Doc.Data["createdByUid"].(string)
+			l.createTruth(change.Doc.ID, pollDate, createdByUID)
 		}
 	}
 }
 
-func (l *Listener) createTruth(pollID, pollDate string) {
-	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID, PollDate: pollDate})
+func (l *Listener) createTruth(pollID, pollDate, createdByUID string) {
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: pollID, PollDate: pollDate, CreatedByUID: createdByUID})
 	if err != nil {
 		l.logger.Error("marshal new poll payload", "poll_id", pollID, "err", err)
 		return

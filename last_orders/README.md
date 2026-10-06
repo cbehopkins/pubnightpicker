@@ -62,11 +62,32 @@ An absent document or field defaults to false. Invalid values or initial read
 failures defer email and push submission; later watch failures retain the last known value
 and retry. In-memory settings are thread-safe and selected once per attempt.
 
+Two optional booleans in the same document default to false:
+
+- `NotifyPollActorWhenSilenced`: permits live poll-opening email/push to the human
+  creator and initial completion email/push to the human completer only.
+- `KeepChatNotificationsWhenSilenced`: permits normal global/event-chat pushes.
+
+They are ignored when silence is off. Actor delivery respects existing personal
+preferences, addresses and active endpoints; chat preserves membership, mute and
+author-exclusion rules. Mailing-list emails and diagnostic tests remain silenced.
+Live exceptions consume normal delivery quota and retain provider failure/recovery
+behaviour. Actors have distinct personal email operations, preventing duplicate
+personal delivery when the setting changes. Opening and completion actors may
+be different users, and all eligible devices belonging to the actor are included.
+
+React writes `createdByUid` with initial poll creation and `completedByUid` with
+human completion. Rules bind these to the authenticated actor and keep creator
+attribution immutable. Rescheduling and automatic completion clear completion
+attribution. Legacy/automatic polls with no human actor and rescheduled completion
+notifications have no actor exception. Attribution is carried in the durable
+Truth, rather than inferred from the best-effort audit trail.
+
 When enabled, Sweego uses dry-run, Mailtrap uses its sandbox and dummy sends remain
 dummy. Suppressed emails include test emails and bypass the poll-email delivery
 allowance. The separate 10-per-day test-email request throttle is unchanged.
 
-Push suppression covers poll, chat and diagnostic pushes. Each eligible endpoint
+Push suppression covers notifications not permitted by those exceptions. Each eligible endpoint
 is marked handled using the existing `Accepted` state atomically with delivery
 cell completion, without calling the push service, consuming push tokens or
 invalidating endpoints. Follow-up actions and test-push acknowledgements still
@@ -91,7 +112,12 @@ The switch requires manual clearing and does not cancel already-selected live
 sends. The old Python backend remains active. A GUI save confirms the
 Firestore write, not observation by every backend instance. Deploy canonical
 Firestore rules, updated Last Orders and then the GUI before relying on this
-feature. No initial configuration document, migration or index is required.
+feature. Deploy rules first, the metadata-aware backend second and the actor-writing
+GUI last. Enable exceptions only after all active Last Orders instances support
+them. Durable email automatically adds a JSON metadata column to existing SQLite
+databases; old requests default to no exception. No Firestore backfill, initial
+configuration document or new index is required. Completed suppressed work is
+never replayed by enabling an exception.
 
 ## Delivery rate limits
 

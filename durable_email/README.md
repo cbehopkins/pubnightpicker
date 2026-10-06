@@ -21,6 +21,13 @@ design is in `docs/overview.md`.
 
 ## Best-effort submissions
 
+`SendRequest.Metadata` is immutable, application-owned `map[string]string`
+context exposed to the submission guard/policy. It is stored as JSON in
+`email_requests.metadata`, preserved through recovery and never sent as provider
+headers or template variables. Changing it under an existing idempotency token
+is rejected. Initialisation adds this column with an empty-object default to
+older SQLite databases; legacy queued requests have no metadata.
+
 `RegisterOptions.SubmissionPolicy` can select a provider client and best-effort
 handling once per attempt. Without it, existing durable submission and recovery
 behaviour is unchanged. Delays and errors fail closed before submission.

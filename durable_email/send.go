@@ -43,6 +43,7 @@ type SendRequest struct {
 	Text             string            `json:"text"`
 	Variables        map[string]any    `json:"variables"`
 	Headers          map[string]string `json:"headers"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 	Recipients       []SendRecipient   `json:"recipients"`
 }
 
@@ -64,6 +65,7 @@ type operationRequest struct {
 type Submission struct {
 	IdempotencyToken string
 	RecipientCount   int
+	Metadata         map[string]string
 }
 
 // SubmissionGuard permits a submission, defers it by a positive delay, or fails closed.
@@ -231,7 +233,7 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		return cellar.ErrorResult{Message: "read durable email request", Err: err}
 	}
 
-	submission := Submission{IdempotencyToken: request.IdempotencyToken, RecipientCount: len(pending)}
+	submission := Submission{IdempotencyToken: request.IdempotencyToken, RecipientCount: len(pending), Metadata: maps.Clone(common.metadata)}
 	decision := SubmissionDecision{Client: h.Client}
 	if h.Policy != nil {
 		decision, err = h.Policy(ctx, submission)

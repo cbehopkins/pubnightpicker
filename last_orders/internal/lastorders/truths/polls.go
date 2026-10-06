@@ -21,6 +21,8 @@ var PollCompletedRegistry = NewRegistry[PollObservedPayload](PollCompletedFanout
 // PollOpened and PollCompleted are distinct Truths which currently share this
 // payload shape (see ADR-0009 §15).
 type PollObservedPayload struct {
+	CreatedByUID           string `json:"created_by_uid,omitempty"`
+	CompletedByUID         string `json:"completed_by_uid,omitempty"`
 	PollID                 string `json:"poll_id"`
 	ChangeKind             string `json:"change_kind,omitempty"`
 	SelectedVenueID        string `json:"selected_venue_id,omitempty"`

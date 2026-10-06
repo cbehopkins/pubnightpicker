@@ -10,6 +10,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/completionactions"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/plugins/push"
@@ -137,7 +138,7 @@ func (h PollOpenedPushHandler) Handle(ctx context.Context, payload truths.PollOb
 		Tag:       "poll-open:" + payload.PollID,
 	}
 	return populate(ctx, h.Push, message, now, payload.PollDate, "poll-opened:"+payload.PollID, endpoints,
-		openedMark(payload.PollID, completionactions.ActionPush))
+		openedMark(payload.PollID, completionactions.ActionPush), payload.CreatedByUID)
 }
 
 // PollCompletedPushHandler mirrors Python's send_poll_complete_push.
@@ -201,7 +202,7 @@ func (h PollCompletedPushHandler) Handle(ctx context.Context, payload truths.Pol
 	mark := cellar.Step{HandlerName: HandlerCompletionMarked, Payload: completionMark{
 		Collection: completionactions.CompletionCollection, PollID: payload.PollID, Action: completionactions.ActionPush, Key: key,
 	}}
-	return populate(ctx, h.Push, message, clock(h.Now), payload.PollDate, "poll-completed:"+payload.PollID+":"+key, endpoints, mark)
+	return populate(ctx, h.Push, message, clock(h.Now), payload.PollDate, "poll-completed:"+payload.PollID+":"+key, endpoints, mark, payload.CompletedByUID)
 }
 
 func completedPushBody(date, venue, restaurant, restaurantTime string) string {
@@ -215,13 +216,27 @@ func completedPushBody(date, venue, restaurant, restaurantTime string) string {
 	return strings.TrimSpace(body)
 }
 
-func populate(ctx context.Context, populator PushPopulator, message pushPayload, now time.Time, pollDate, notificationID string, endpoints []notificationprofile.Endpoint, mark cellar.Step) cellar.Result {
+func populate(ctx context.Context, populator PushPopulator, message pushPayload, now time.Time, pollDate, notificationID string, endpoints []notificationprofile.Endpoint, mark cellar.Step, actorUID ...string) cellar.Result {
 	message.SentAt = now.UTC().Format(time.RFC3339Nano)
 	encoded, err := json.Marshal(message)
 	if err != nil {
 		return cellar.ErrorResult{Message: "encode push payload", Err: err}
 	}
+	var purpose, actor string
+	switch message.EventType {
+	case "poll_opened":
+		purpose = diagnosticsconfig.PurposePollOpened
+	case "poll_completed":
+		purpose = diagnosticsconfig.PurposePollCompleted
+	case "poll_rescheduled":
+		purpose = diagnosticsconfig.PurposePollRescheduled
+	}
+	if len(actorUID) == 1 {
+		actor = actorUID[0]
+	}
 	result, err := populator.Populate(ctx, push.Notification{
+		Purpose:   purpose,
+		ActorUID:  actor,
 		ID:        notificationID,
 		Message:   encoded,
 		Topic:     push.Topic(message.PollID),

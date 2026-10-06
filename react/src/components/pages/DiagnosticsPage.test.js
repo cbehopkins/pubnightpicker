@@ -74,16 +74,19 @@ vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
 const { watchSilenceMock, setSilenceMock } = vi.hoisted(() => ({ watchSilenceMock: vi.fn(() => () => { }), setSilenceMock: vi.fn() }));
 
 vi.mock("../../dbtools/diagnosticsConfig", () => ({
-    watchSilenceNotifications: watchSilenceMock,
-    setSilenceNotifications: setSilenceMock,
+    DEFAULT_NOTIFICATION_SETTINGS: { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false },
+    watchNotificationSettings: watchSilenceMock,
+    setNotificationSetting: setSilenceMock,
 }));
 
 import DiagnosticsPage, { AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
 
 describe("EmailSuppressionPanel", () => {
+    const defaults = { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false };
+    const mainCheckbox = () => screen.getByRole("checkbox", { name: "Silence notifications" });
     beforeEach(() => {
         watchSilenceMock.mockReset();
-        watchSilenceMock.mockImplementation((onValue) => { onValue(false); return () => { }; });
+        watchSilenceMock.mockImplementation((onValue) => { onValue(defaults); return () => { }; });
         setSilenceMock.mockReset();
         setSilenceMock.mockResolvedValue(undefined);
     });
@@ -93,7 +96,7 @@ describe("EmailSuppressionPanel", () => {
         const unsubscribe = vi.fn();
         watchSilenceMock.mockImplementation(() => unsubscribe);
         const { unmount } = render(<EmailSuppressionPanel />);
-        expect(screen.getByRole("checkbox")).toBeDisabled();
+        expect(mainCheckbox()).toBeDisabled();
         expect(screen.getByRole("status")).toHaveTextContent("Loading");
         unmount();
         expect(unsubscribe).toHaveBeenCalledOnce();
@@ -101,45 +104,62 @@ describe("EmailSuppressionPanel", () => {
 
     it("writes both directions and follows subscription changes", async () => {
         let deliver;
-        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue(false); return () => { }; });
+        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue(defaults); return () => { }; });
         render(<EmailSuppressionPanel />);
-        fireEvent.click(screen.getByRole("checkbox"));
-        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith(true));
-        await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeDisabled());
-        act(() => deliver(true));
-        expect(screen.getByRole("checkbox")).toBeChecked();
-        expect(screen.getByRole("status")).toHaveTextContent("email and push notifications silenced, including test notifications");
+        fireEvent.click(mainCheckbox());
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("SilenceNotifications", true));
+        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
+        act(() => deliver({ ...defaults, SilenceNotifications: true }));
+        expect(mainCheckbox()).toBeChecked();
+        expect(screen.getByRole("status")).toHaveTextContent("Test notifications remain silenced");
         expect(screen.getByRole("checkbox", { name: "Silence notifications" })).toBeChecked();
         expect(screen.getByText("Test notification acknowledgements confirm handling, not live delivery.")).toBeTruthy();
-        fireEvent.click(screen.getByRole("checkbox"));
-        await waitFor(() => expect(setSilenceMock).toHaveBeenLastCalledWith(false));
+        fireEvent.click(mainCheckbox());
+        await waitFor(() => expect(setSilenceMock).toHaveBeenLastCalledWith("SilenceNotifications", false));
     });
 
     it("disables the control while saving", async () => {
         let finish;
         setSilenceMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
         render(<EmailSuppressionPanel />);
-        fireEvent.click(screen.getByRole("checkbox"));
-        expect(screen.getByRole("checkbox")).toBeDisabled();
+        fireEvent.click(mainCheckbox());
+        expect(mainCheckbox()).toBeDisabled();
         expect(screen.getByRole("status")).toHaveTextContent("Saving");
         finish();
-        await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeDisabled());
+        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
     });
 
     it("reports failed writes without changing the database-backed checkbox", async () => {
         setSilenceMock.mockRejectedValue(new Error("Write denied"));
         render(<EmailSuppressionPanel />);
-        fireEvent.click(screen.getByRole("checkbox"));
+        fireEvent.click(mainCheckbox());
         await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Write denied"));
-        expect(screen.getByRole("checkbox")).not.toBeChecked();
+        expect(mainCheckbox()).not.toBeChecked();
     });
 
     it("does not present a read error as notifications enabled", () => {
         watchSilenceMock.mockImplementation((_onValue, onError) => { onError(new Error("Read denied")); return () => { }; });
         render(<EmailSuppressionPanel />);
-        expect(screen.getByRole("checkbox")).toBeDisabled();
+        expect(mainCheckbox()).toBeDisabled();
         expect(screen.getByRole("status")).toHaveTextContent("unavailable");
         expect(screen.getByRole("alert")).toHaveTextContent("Read denied");
+    });
+
+    it("retains dormant exceptions and writes each flag independently", async () => {
+        let deliver;
+        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue({ ...defaults, NotifyPollActorWhenSilenced: true }); return () => { }; });
+        render(<EmailSuppressionPanel />);
+        const actor = screen.getByRole("checkbox", { name: "Notify poll actor while silenced" });
+        const chat = screen.getByRole("checkbox", { name: "Keep chat notifications while silenced" });
+        expect(actor).toBeChecked();
+        expect(actor).toBeDisabled();
+        expect(chat).toBeDisabled();
+        act(() => deliver({ ...defaults, SilenceNotifications: true, NotifyPollActorWhenSilenced: true }));
+        fireEvent.click(chat);
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("KeepChatNotificationsWhenSilenced", true));
+        await waitFor(() => expect(chat).not.toBeDisabled());
+        fireEvent.click(actor);
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("NotifyPollActorWhenSilenced", false));
     });
 });
 

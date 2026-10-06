@@ -10,6 +10,7 @@ import (
 	"cellar/pkg/cellar"
 	durableemail "durable_email"
 	"last_orders/internal/lastorders/components/completionactions"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/truths"
@@ -134,7 +135,11 @@ func (h PollCompletedEmailHandler) actionCell(ctx context.Context, payload truth
 			Recipients:       recipients,
 		}
 		// The marker follows Post, so history is written only after provider acceptance.
-		steps = append(durableemail.NewSendSequence(request), mark)
+		if personal && !rescheduled {
+			steps = append(personalSendSteps(request, diagnosticsconfig.PurposePollCompleted, payload.CompletedByUID, h.Logger), mark)
+		} else {
+			steps = append(durableemail.NewSendSequence(request), mark)
+		}
 	}
 	sequence, err := cellar.NewSequence(steps...)
 	if err != nil {

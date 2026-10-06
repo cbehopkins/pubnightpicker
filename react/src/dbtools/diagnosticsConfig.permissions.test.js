@@ -31,6 +31,15 @@ describe("diagnostics configuration rules", () => {
         await assertSucceeds(getDoc(ref));
     });
 
+    it("allows exception flags and rejects invalid exception values", async () => {
+        const ref = doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "diagnostics");
+        await assertSucceeds(setDoc(ref, { SilenceNotifications: true, NotifyPollActorWhenSilenced: true, KeepChatNotificationsWhenSilenced: true }));
+        for (const field of ["NotifyPollActorWhenSilenced", "KeepChatNotificationsWhenSilenced"]) {
+            await assertSucceeds(updateDoc(ref, { [field]: false }));
+            for (const value of ["true", 1, null]) await assertFails(updateDoc(ref, { [field]: value }));
+        }
+    });
+
     it("supports an absent field default", async () => {
         const ref = doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "diagnostics");
         await assertSucceeds(setDoc(ref, {}));
@@ -62,5 +71,40 @@ describe("diagnostics configuration rules", () => {
         await assertFails(deleteDoc(ref));
         await assertFails(getDoc(doc(db, "config", "other")));
         await assertFails(setDoc(doc(db, "config", "other"), { SilenceNotifications: true }));
+    });
+});
+
+describe("poll notification actor rules", () => {
+    beforeEach(async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            for (const role of ["canCreatePoll", "canCompletePoll"]) {
+                await setDoc(doc(context.firestore(), "roles", role), { "actor-user": true });
+            }
+        });
+    });
+
+    it("binds creator identity and keeps it immutable", async () => {
+        const ref = doc(testEnv.authenticatedContext("actor-user").firestore(), "polls", "actor-poll");
+        await assertFails(setDoc(ref, { date: "2026-10-10", completed: false, createdByUid: "other-user" }));
+        await assertSucceeds(setDoc(ref, { date: "2026-10-10", completed: false, createdByUid: "actor-user" }));
+        await assertFails(updateDoc(ref, { createdByUid: "other-user" }));
+    });
+
+    it("binds completion and requires clearing attribution on reschedule", async () => {
+        const ref = doc(testEnv.authenticatedContext("actor-user").firestore(), "polls", "actor-poll");
+        await setDoc(ref, { date: "2026-10-10", completed: false, createdByUid: "actor-user" });
+        await assertFails(updateDoc(ref, { completed: true, selected: "pub-a", completedByUid: "other-user" }));
+        await assertSucceeds(updateDoc(ref, { completed: true, selected: "pub-a", completedByUid: "actor-user" }));
+        await assertFails(updateDoc(ref, { selected: "pub-b" }));
+        await assertSucceeds(setDoc(ref, { date: "2026-10-10", completed: true, createdByUid: "actor-user", selected: "pub-b" }));
+        await assertFails(updateDoc(ref, { completedByUid: "actor-user" }));
+    });
+
+    it("preserves legacy writes without granting creator attribution later", async () => {
+        const ref = doc(testEnv.authenticatedContext("actor-user").firestore(), "polls", "legacy-poll");
+        await assertSucceeds(setDoc(ref, { date: "2026-10-10", completed: false }));
+        await assertFails(updateDoc(ref, { createdByUid: "actor-user" }));
+        await assertSucceeds(updateDoc(ref, { completed: true, selected: "pub-a" }));
+        await assertSucceeds(updateDoc(ref, { selected: "pub-b" }));
     });
 });

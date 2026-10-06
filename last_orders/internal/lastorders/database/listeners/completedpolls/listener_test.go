@@ -13,6 +13,7 @@ func TestCompletedPayloadCarriesSelectionAndDate(t *testing.T) {
 		"restaurant":      "restaurant-1",
 		"restaurant_time": "18:30",
 		"completed":       true,
+		"completedByUid":  "alice",
 	}}})
 	want := truths.PollObservedPayload{
 		PollID:                 "poll-1",
@@ -21,6 +22,7 @@ func TestCompletedPayloadCarriesSelectionAndDate(t *testing.T) {
 		PollDate:               "2026-10-02",
 		SelectedRestaurantID:   "restaurant-1",
 		SelectedRestaurantTime: "18:30",
+		CompletedByUID:         "alice",
 	}
 	if got != want {
 		t.Fatalf("completedPayload() = %+v, want %+v", got, want)

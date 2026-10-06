@@ -3,6 +3,7 @@ package diagnosticsconfig
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -20,8 +21,44 @@ func TestDecode(t *testing.T) {
 		{map[string]any{SilenceField: nil}, false, true},
 	} {
 		got, err := Decode(test.data)
-		if got != test.want || (err != nil) != test.invalid {
+		if got.SilenceNotifications != test.want || (err != nil) != test.invalid {
 			t.Fatalf("Decode(%v) = %t, %v", test.data, got, err)
+		}
+	}
+	for _, field := range []string{SilenceField, "NotifyPollActorWhenSilenced", "KeepChatNotificationsWhenSilenced"} {
+		if _, err := Decode(map[string]any{field: "true"}); err == nil {
+			t.Fatalf("invalid %s accepted", field)
+		}
+	}
+}
+
+func TestExceptionMatrix(t *testing.T) {
+	for _, silence := range []bool{false, true} {
+		for _, actor := range []bool{false, true} {
+			for _, chat := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%t/%t/%t", silence, actor, chat), func(t *testing.T) {
+					settings := Settings{SilenceNotifications: silence, NotifyPollActorWhenSilenced: actor, KeepChatNotificationsWhenSilenced: chat}
+					for _, test := range []struct {
+						purpose, actorUID, recipientUID string
+						actorAllowed, chatAllowed       bool
+					}{
+						{PurposePollOpened, "alice", "alice", true, false},
+						{PurposePollCompleted, "bob", "bob", true, false},
+						{PurposePollOpened, "alice", "bob", false, false},
+						{PurposePollCompleted, "", "", false, false},
+						{PurposePollRescheduled, "alice", "alice", false, false},
+						{PurposeGlobalChat, "", "bob", false, true},
+						{PurposeEventChat, "", "bob", false, true},
+						{"diagnostic", "alice", "alice", false, false},
+						{"", "alice", "alice", false, false},
+					} {
+						want := !silence || actor && test.actorAllowed || chat && test.chatAllowed
+						if got := settings.AllowsLive(test.purpose, test.actorUID, test.recipientUID); got != want {
+							t.Fatalf("%+v: live=%t want=%t", test, got, want)
+						}
+					}
+				})
+			}
 		}
 	}
 }
@@ -29,10 +66,10 @@ func TestDecode(t *testing.T) {
 func TestReadinessRetentionAndCancellation(t *testing.T) {
 	updates := make(chan bool)
 	failed := make(chan struct{})
-	service := New(func(ctx context.Context, update func(bool)) error {
+	service := New(func(ctx context.Context, update func(Settings)) error {
 		select {
 		case value := <-updates:
-			update(value)
+			update(Settings{SilenceNotifications: value})
 			close(failed)
 			return errors.New("disconnected")
 		case <-ctx.Done():
@@ -53,7 +90,7 @@ func TestReadinessRetentionAndCancellation(t *testing.T) {
 		t.Fatal("not ready")
 	}
 	<-failed
-	if value, known := service.Snapshot(); !known || !value {
+	if value, known := service.Snapshot(); !known || !value.SilenceNotifications {
 		t.Fatal("lost last known value")
 	}
 }
@@ -61,11 +98,11 @@ func TestReadinessRetentionAndCancellation(t *testing.T) {
 func TestRuntimeUpdates(t *testing.T) {
 	updates := make(chan bool)
 	applied := make(chan struct{})
-	service := New(func(ctx context.Context, update func(bool)) error {
+	service := New(func(ctx context.Context, update func(Settings)) error {
 		for {
 			select {
 			case value := <-updates:
-				update(value)
+				update(Settings{SilenceNotifications: value})
 				applied <- struct{}{}
 			case <-ctx.Done():
 				return ctx.Err()
@@ -79,7 +116,7 @@ func TestRuntimeUpdates(t *testing.T) {
 	for _, value := range []bool{false, true, false} {
 		updates <- value
 		<-applied
-		if got, known := service.Snapshot(); got != value || !known {
+		if got, known := service.Snapshot(); got.SilenceNotifications != value || !known {
 			t.Fatalf("snapshot = %t, %t", got, known)
 		}
 	}
@@ -87,7 +124,10 @@ func TestRuntimeUpdates(t *testing.T) {
 
 func TestInitialFailureDoesNotEstablishReadiness(t *testing.T) {
 	called := make(chan struct{})
-	service := New(func(ctx context.Context, update func(bool)) error { close(called); return errors.New("unavailable") }, nil)
+	service := New(func(ctx context.Context, update func(Settings)) error {
+		close(called)
+		return errors.New("unavailable")
+	}, nil)
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

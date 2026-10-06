@@ -70,10 +70,20 @@ func NewStore(db *sql.DB) (*Store, error) {
 			template_id TEXT NOT NULL,
 			text TEXT NOT NULL,
 			variables TEXT NOT NULL,
-			headers TEXT NOT NULL
+			headers TEXT NOT NULL,
+			metadata TEXT NOT NULL DEFAULT '{}'
 		);
 	`); err != nil {
 		return nil, fmt.Errorf("create email_requests schema: %w", err)
+	}
+	var hasMetadata int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('email_requests') WHERE name = 'metadata'`).Scan(&hasMetadata); err != nil {
+		return nil, fmt.Errorf("inspect email request metadata schema: %w", err)
+	}
+	if hasMetadata == 0 {
+		if _, err := tx.Exec(`ALTER TABLE email_requests ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return nil, fmt.Errorf("add email request metadata: %w", err)
+		}
 	}
 
 	if _, err := tx.Exec(`
@@ -251,6 +261,7 @@ type durableRequest struct {
 	text        string
 	variables   map[string]any
 	headers     map[string]string
+	metadata    map[string]string
 }
 
 // durableRecipient is the recipient-specific data needed to rebuild a provider request.
@@ -273,6 +284,10 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 	headers, err := marshalObject(request.Headers)
 	if err != nil {
 		return nil, fmt.Errorf("encode request headers: %w", err)
+	}
+	metadata, err := marshalObject(request.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("encode request metadata: %w", err)
 	}
 
 	type recipientRow struct {
@@ -297,15 +312,15 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 	}
 
 	return func(tx cellar.ApplicationTx) error {
-		var senderEmail, senderName, subject, templateID, text, storedVariables, storedHeaders string
+		var senderEmail, senderName, subject, templateID, text, storedVariables, storedHeaders, storedMetadata string
 		err := tx.QueryRow(`
-			SELECT sender_email, sender_name, subject, template_id, text, variables, headers
+			SELECT sender_email, sender_name, subject, template_id, text, variables, headers, metadata
 			FROM email_requests WHERE idempotency_token = ?
-		`, request.IdempotencyToken).Scan(&senderEmail, &senderName, &subject, &templateID, &text, &storedVariables, &storedHeaders)
+		`, request.IdempotencyToken).Scan(&senderEmail, &senderName, &subject, &templateID, &text, &storedVariables, &storedHeaders, &storedMetadata)
 		if err == nil {
 			if senderEmail != request.SenderEmail || senderName != request.SenderName || subject != request.Subject ||
 				templateID != request.TemplateID || text != request.Text ||
-				!sameJSON(storedVariables, commonVariables) || !sameJSON(storedHeaders, headers) {
+				!sameJSON(storedVariables, commonVariables) || !sameJSON(storedHeaders, headers) || !sameJSON(storedMetadata, metadata) {
 				return fmt.Errorf("conflicting request for idempotency token %q", request.IdempotencyToken)
 			}
 			storedRows, err := tx.Query(`
@@ -347,10 +362,10 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 		if err := tx.Exec(`
 			INSERT INTO email_requests (
 				idempotency_token, message_id, sender_email, sender_name, subject,
-				template_id, text, variables, headers
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				template_id, text, variables, headers, metadata
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, request.IdempotencyToken, messageID, request.SenderEmail, request.SenderName, request.Subject,
-			request.TemplateID, request.Text, commonVariables, headers); err != nil {
+			request.TemplateID, request.Text, commonVariables, headers, metadata); err != nil {
 			return fmt.Errorf("insert email request: %w", err)
 		}
 
@@ -385,12 +400,12 @@ func sameJSON(first, second string) bool {
 // request reads the operation-wide data for a Send operation.
 func (s *Store) request(ctx context.Context, token string) (durableRequest, error) {
 	var found durableRequest
-	var variables, headers string
+	var variables, headers, metadata string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT message_id, sender_email, sender_name, subject, template_id, text, variables, headers
+		SELECT message_id, sender_email, sender_name, subject, template_id, text, variables, headers, metadata
 		FROM email_requests
 		WHERE idempotency_token = ?
-	`, token).Scan(&found.messageID, &found.senderEmail, &found.senderName, &found.subject, &found.templateID, &found.text, &variables, &headers); err != nil {
+	`, token).Scan(&found.messageID, &found.senderEmail, &found.senderName, &found.subject, &found.templateID, &found.text, &variables, &headers, &metadata); err != nil {
 		return durableRequest{}, err
 	}
 
@@ -399,6 +414,9 @@ func (s *Store) request(ctx context.Context, token string) (durableRequest, erro
 	}
 	if err := json.Unmarshal([]byte(headers), &found.headers); err != nil {
 		return durableRequest{}, fmt.Errorf("decode request headers: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metadata), &found.metadata); err != nil {
+		return durableRequest{}, fmt.Errorf("decode request metadata: %w", err)
 	}
 	return found, nil
 }

@@ -70,6 +70,12 @@ is responsible for querying provider-side records to determine whether an ambigu
 Registration may supply a `SubmissionGuard` through optional `RegisterOptions`.
 The guard receives the immutable idempotency token and the number of recipients
 still pending for this provider attempt. It is independent of application policy.
+The guard and policy also receive immutable request metadata. `SendRequest.Metadata`
+is application-owned string metadata persisted in `email_requests.metadata`,
+compared during idempotent Setup and cloned into submission context. It is not
+part of the provider message. Old databases are upgraded with a non-null JSON
+column defaulting to `{}`; legacy requests therefore retain ordinary policy
+defaults. Metadata survives restart, recovery and subset retry attempts.
 
 Post invokes the guard after recovery and empty-recipient checks, immediately
 before recording submission timestamps. Zero delay permits submission; a positive
@@ -135,7 +141,8 @@ CREATE TABLE email_requests (
     template_id       TEXT NOT NULL,
     text              TEXT NOT NULL,
     variables         TEXT NOT NULL,
-    headers           TEXT NOT NULL
+    headers           TEXT NOT NULL,
+    metadata          TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE email_progress (

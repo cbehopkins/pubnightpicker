@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/plugins/push"
@@ -117,7 +118,12 @@ func (h ChatPushHandler) Handle(ctx context.Context, message truths.ChatMessageP
 		return cellar.ErrorResult{Message: "encode chat push payload", Err: err}
 	}
 	// Python's chat topic exceeds the 32-character Web Push limit, so use the safe helper.
+	purpose := diagnosticsconfig.PurposeGlobalChat
+	if scopeType == "event" {
+		purpose = diagnosticsconfig.PurposeEventChat
+	}
 	result, err := h.Push.Populate(ctx, push.Notification{
+		Purpose:   purpose,
 		ID:        "chat:" + message.MessageID,
 		Message:   encoded,
 		Topic:     push.Topic("chat-" + payload.Tag),

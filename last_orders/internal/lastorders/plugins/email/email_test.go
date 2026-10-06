@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"cellar/pkg/cellar"
 	cellarsqlite "cellar/pkg/sqlite"
 	durableemail "durable_email"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/ratelimit"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 
@@ -286,7 +288,9 @@ func TestRuntimePolicyDefersUnknownAndSwitchesProviderMode(t *testing.T) {
 	}))
 	defer server.Close()
 	tokens := &countedTokens{}
-	plugin, err := emailplugin.New(db, emailplugin.Options{Client: emailplugin.ClientSweego, Tokens: tokens, SweegoToken: "token", SweegoProvider: "example.test", SweegoBaseURL: server.URL, SilenceNotifications: func() (bool, bool) { return silenced.Load(), known.Load() }})
+	plugin, err := emailplugin.New(db, emailplugin.Options{Client: emailplugin.ClientSweego, Tokens: tokens, SweegoToken: "token", SweegoProvider: "example.test", SweegoBaseURL: server.URL, NotificationSettings: func() (diagnosticsconfig.Settings, bool) {
+		return diagnosticsconfig.Settings{SilenceNotifications: silenced.Load()}, known.Load()
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,6 +369,130 @@ func TestRuntimePolicyDefersUnknownAndSwitchesProviderMode(t *testing.T) {
 	})
 	if tokens.calls.Load() != 1 {
 		t.Fatalf("live acquisitions = %d", tokens.calls.Load())
+	}
+}
+
+func TestEmailExceptionMatrix(t *testing.T) {
+	for _, silence := range []bool{false, true} {
+		for _, actor := range []bool{false, true} {
+			for _, chat := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%t/%t/%t", silence, actor, chat), func(t *testing.T) {
+					db := openDB(t)
+					db.SetMaxOpenConns(1)
+					store, err := cellarsqlite.NewStore(db, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					requests := make(chan bool, 8)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+						var body map[string]any
+						if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+							t.Error(err)
+						}
+						dryRun, _ := body["dry-run"].(bool)
+						requests <- dryRun
+						_, _ = w.Write([]byte(`{"swg_uids":{"alice@example.com":"provider-id"}}`))
+					}))
+					defer server.Close()
+					tokens := &countedTokens{}
+					plugin, err := emailplugin.New(db, emailplugin.Options{Client: emailplugin.ClientSweego, Tokens: tokens, SweegoToken: "token", SweegoProvider: "example.test", SweegoBaseURL: server.URL, NotificationSettings: func() (diagnosticsconfig.Settings, bool) {
+						return diagnosticsconfig.Settings{SilenceNotifications: silence, NotifyPollActorWhenSilenced: actor, KeepChatNotificationsWhenSilenced: chat}, true
+					}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
+					if err := plugin.Register(runtime); err != nil {
+						t.Fatal(err)
+					}
+					cases := []struct {
+						purpose, actorUID, recipientUID string
+						allowActor                      bool
+					}{
+						{diagnosticsconfig.PurposePollOpened, "alice", "alice", true},
+						{diagnosticsconfig.PurposePollCompleted, "alice", "alice", true},
+						{diagnosticsconfig.PurposePollCompleted, "alice", "bob", false},
+						{diagnosticsconfig.PurposePollRescheduled, "alice", "alice", false},
+						{"", "", "", false},
+					}
+					for index, test := range cases {
+						request := durableemail.SendRequest{IdempotencyToken: fmt.Sprintf("poll-completed:matrix:%d", index), SenderEmail: "sender@example.com", Subject: "Hi", Text: "Hi", Metadata: map[string]string{"purpose": test.purpose, "actor_uid": test.actorUID, "recipient_uid": test.recipientUID}, Recipients: []durableemail.SendRecipient{{UserID: test.recipientUID, Email: "alice@example.com"}}}
+						if _, err := runtime.AddSequence(durableemail.NewSendSequence(request)...); err != nil {
+							t.Fatal(err)
+						}
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					done := make(chan error, 1)
+					go func() { done <- runtime.Start(ctx) }()
+					wantQuota := int64(0)
+					for _, test := range cases {
+						wantDryRun := silence && !(actor && test.allowActor)
+						select {
+						case dryRun := <-requests:
+							if dryRun != wantDryRun {
+								cancel()
+								<-done
+								t.Fatalf("purpose=%s dry-run=%t want=%t", test.purpose, dryRun, wantDryRun)
+							}
+						case <-ctx.Done():
+							cancel()
+							<-done
+							t.Fatal("provider request missing")
+						}
+						if !wantDryRun {
+							wantQuota++
+						}
+					}
+					cancel()
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+					if tokens.calls.Load() != wantQuota {
+						t.Fatalf("quota=%d want=%d", tokens.calls.Load(), wantQuota)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestSuppressedDummyLogsDryRunAndProviderSelection(t *testing.T) {
+	db := openDB(t)
+	db.SetMaxOpenConns(1)
+	store, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	plugin, err := emailplugin.New(db, emailplugin.Options{
+		Client: emailplugin.ClientDummy, Tokens: emailTokens(t), Logger: slog.New(slog.NewJSONHandler(&output, nil)),
+		NotificationSettings: func() (diagnosticsconfig.Settings, bool) {
+			return diagnosticsconfig.Settings{SilenceNotifications: true}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
+	if err := plugin.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	request := durableemail.SendRequest{IdempotencyToken: "poll-opened:dummy-diagnostic", SenderEmail: "sender@example.com", Subject: "Hi", Text: "Hi", Recipients: []durableemail.SendRecipient{{Email: "recipient@example.com"}}}
+	if _, err := runtime.AddSequence(durableemail.NewSendSequence(request)...); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"client":"dummy"`, `"mode":"dummy-dry-run"`, `"msg":"dummy email suppressed (dry-run)"`, `"dry_run":true`} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %s: %s", want, output.String())
+		}
+	}
+	if strings.Contains(output.String(), `"msg":"dummy email sent"`) {
+		t.Fatal("suppressed dummy made a live-send claim")
 	}
 }
 

@@ -11,6 +11,10 @@ in the manifest. Its schema applies only to that document, not every document
 in `config`. It does not introduce Python backend support or promote other
 rewrite assumptions. `SilenceNotifications` is an optional boolean, defaulting
 to false when the document or field is absent.
+`NotifyPollActorWhenSilenced` and `KeepChatNotificationsWhenSilenced` are optional
+boolean exceptions with the same default, effective only while silence is on.
+The optional poll fields `createdByUid` and `completedByUid` capture human actor
+identity at the originating write. Legacy documents require no backfill.
 
 Why this exists:
 - Firestore has no built-in central schema registry.

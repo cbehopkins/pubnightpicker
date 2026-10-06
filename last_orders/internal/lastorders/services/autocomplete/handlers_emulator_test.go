@@ -152,7 +152,7 @@ func TestCloseCompletesPollAndWritesAuditAgainstEmulator(t *testing.T) {
 	client := emulatorClient(t, ctx)
 	pollID := fmt.Sprintf("autocomplete-success-%d", time.Now().UnixNano())
 	seedAutoCompletePoll(t, ctx, client, pollID, false, map[string]any{"venue-1": map[string]any{}})
-	if _, err := client.Collection("polls").Doc(pollID).Update(ctx, []firestore.Update{{Path: "keep", Value: "unchanged"}}); err != nil {
+	if _, err := client.Collection("polls").Doc(pollID).Update(ctx, []firestore.Update{{Path: "keep", Value: "unchanged"}, {Path: "completedByUid", Value: "stale-actor"}}); err != nil {
 		t.Fatalf("seed unrelated field: %v", err)
 	}
 
@@ -172,6 +172,9 @@ func TestCloseCompletesPollAndWritesAuditAgainstEmulator(t *testing.T) {
 	}
 	if got := poll.Data()["keep"]; got != "unchanged" {
 		t.Fatalf("keep = %v, want unrelated field retained", got)
+	}
+	if _, exists := poll.Data()["completedByUid"]; exists {
+		t.Fatal("automatic completion retained a human actor")
 	}
 	audits, err := client.Collection("poll_action_audit").Where("pollId", "==", pollID).Documents(ctx).GetAll()
 	if err != nil {

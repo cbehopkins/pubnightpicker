@@ -10,6 +10,7 @@ import (
 
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
@@ -268,7 +269,11 @@ func TestSharedConfigurationSilencesPollChatAndDiagnosticPush(t *testing.T) {
 	cfg.PushSources = pushSources
 	cfg.ChatMessageSource = chatSource
 	cfg.PushTestSource = pushTestSource
-	cfg.DiagnosticsSource = func(ctx context.Context, update func(bool)) error { update(true); <-ctx.Done(); return ctx.Err() }
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(diagnosticsconfig.Settings)) error {
+		update(diagnosticsconfig.Settings{SilenceNotifications: true})
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	cfg.NotificationProfileSource = &notificationprofiletest.Source{
 		UserChanges:    []notificationprofile.Change{userDocument("alice", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"globalChat": true}})},
 		EndpointChange: []notificationprofile.Change{endpointDocument("alice", "phone")},
@@ -296,6 +301,36 @@ func TestSharedConfigurationSilencesPollChatAndDiagnosticPush(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), `"msg":"dummy push sent"`) || strings.Count(logs.String(), `"msg":"push silenced; handled without sending"`) != 3 {
 		t.Fatalf("push was not suppressed: %s", logs.String())
+	}
+}
+
+func TestChatExceptionRetainsPreferencesAndAuthorExclusion(t *testing.T) {
+	logs := &syncBuffer{}
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "chat-exception.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(diagnosticsconfig.Settings)) error {
+		update(diagnosticsconfig.Settings{SilenceNotifications: true, KeepChatNotificationsWhenSilenced: true})
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	source := pushsourcestest.New()
+	cfg.PushSources = source
+	chatSource := chatmessagestest.New()
+	chatSource.Documents = []chatmessages.Document{{ID: "live-chat", Data: map[string]any{"uid": "author", "text": "hello"}}}
+	cfg.ChatMessageSource = chatSource
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{
+		UserChanges: []notificationprofile.Change{
+			userDocument("author", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"globalChat": true}}),
+			userDocument("reader", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"globalChat": true}}),
+			userDocument("muted", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"globalChat": false}}),
+		},
+		EndpointChange: []notificationprofile.Change{endpointDocument("author", "author-phone"), endpointDocument("reader", "reader-phone"), endpointDocument("muted", "muted-phone")},
+	}
+	application := newApp(t, cfg)
+	defer application.Close()
+	runUntil(t, application, func() bool { return source.Processed("live-chat") })
+	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 || !strings.Contains(logs.String(), "reader-phone") || strings.Contains(logs.String(), "author-phone") || strings.Contains(logs.String(), "muted-phone") {
+		t.Fatalf("unexpected chat recipients: %s", logs.String())
 	}
 }
 

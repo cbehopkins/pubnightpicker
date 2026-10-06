@@ -43,6 +43,7 @@ vi.mock("../permissions", () => {
 vi.mock("../firebase", () => {
     return {
         db: {},
+        auth: { currentUser: { uid: "actor-user" } },
     };
 });
 
@@ -107,6 +108,7 @@ describe("poll dbtools permission guards", () => {
             {
                 previous_pubs: "arrayUnion:pub-1",
                 selected: "pub-2",
+                completedByUid: "deleteField",
                 restaurant: "restaurant-1",
                 restaurant_time: "18:30",
             },
@@ -120,6 +122,7 @@ describe("poll dbtools permission guards", () => {
             { id: "doc-ref" },
             {
                 selected: "pub-1",
+                completedByUid: "deleteField",
                 restaurant: "deleteField",
                 restaurant_time: "deleteField",
             },
@@ -140,6 +143,7 @@ describe("poll dbtools permission guards", () => {
             {
                 completed: true,
                 selected: "pub-2",
+                completedByUid: "actor-user",
                 restaurant: "pub-restaurant-1",
                 restaurant_time: "18:30",
             },
@@ -161,6 +165,7 @@ describe("poll dbtools permission guards", () => {
             {
                 completed: true,
                 selected: "pub-2",
+                completedByUid: "actor-user",
             },
         );
     });

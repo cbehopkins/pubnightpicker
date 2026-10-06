@@ -192,19 +192,47 @@ service cloud.firestore {
         && (!("restaurantTime" in request.resource.data) || request.resource.data.restaurantTime is string || request.resource.data.restaurantTime == null);
     }
     
+    function isValidPollActorCreate() {
+      return (!('createdByUid' in request.resource.data)
+          || request.resource.data.createdByUid == request.auth.uid)
+        && !('completedByUid' in request.resource.data);
+    }
+
+    function isValidPollActorUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      let changed = after.diff(before).affectedKeys();
+      let completing = before.get('completed', false) == false && after.get('completed', false) == true;
+      let rescheduling = before.get('completed', false) == true
+        && changed.hasAny(['selected', 'restaurant', 'restaurant_time']);
+      return !changed.hasAny(['createdByUid'])
+        && (!changed.hasAny(['completedByUid'])
+          || (canCompletePoll()
+            && (!('completedByUid' in after)
+              || (completing && after.completedByUid == request.auth.uid))))
+        && (!completing || !('completedByUid' in after) || after.completedByUid == request.auth.uid)
+        && (!rescheduling || !('completedByUid' in after))
+        && (after.get('completed', false) == true || !('completedByUid' in after));
+    }
+
     match /config/diagnostics {
       allow get: if isAdmin();
       allow create, update: if isAdmin()
-        && request.resource.data.keys().hasOnly(["SilenceNotifications"])
+        && request.resource.data.keys().hasOnly(["SilenceNotifications", "NotifyPollActorWhenSilenced", "KeepChatNotificationsWhenSilenced"])
         && (!('SilenceNotifications' in request.resource.data)
-          || request.resource.data.SilenceNotifications is bool);
+          || request.resource.data.SilenceNotifications is bool)
+        && (!('NotifyPollActorWhenSilenced' in request.resource.data)
+          || request.resource.data.NotifyPollActorWhenSilenced is bool)
+        && (!('KeepChatNotificationsWhenSilenced' in request.resource.data)
+          || request.resource.data.KeepChatNotificationsWhenSilenced is bool);
     }
 
     // Polls collection - read for all, update for canAddPubToPoll/canCompletePoll, create/delete for canCreatePoll
     match /polls/{poll} {
       allow read: if true;
-      allow update: if canAddPubToPoll() || canCompletePoll();
-      allow create, delete: if canCreatePoll();
+      allow update: if (canAddPubToPoll() || canCompletePoll()) && isValidPollActorUpdate();
+      allow create: if canCreatePoll() && isValidPollActorCreate();
+      allow delete: if canCreatePoll();
     }
     
     // Votes collection - read/update for logged in users, full access for admins

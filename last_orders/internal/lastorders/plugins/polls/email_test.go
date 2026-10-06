@@ -1,9 +1,12 @@
 package polls
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"cellar/pkg/cellar"
@@ -66,6 +69,39 @@ to participate in the voting.
 		t.Errorf("recipients = %+v", request.Recipients)
 	}
 	assertOpenMark(t, steps[len(steps)-1], completionactions.ActionEmail)
+}
+
+func TestPollActorEmailPartition(t *testing.T) {
+	request := durableemail.SendRequest{IdempotencyToken: "poll-opened:actor", Recipients: []durableemail.SendRecipient{{UserID: "alice", Email: "alice@example.com"}, {UserID: "bob", Email: "bob@example.com"}}}
+	steps := personalSendSteps(request, "poll-opened", "alice", nil)
+	if len(steps) != 6 {
+		t.Fatalf("steps = %d", len(steps))
+	}
+	var others, actor durableemail.SendRequest
+	others = steps[0].Payload.(durableemail.SendRequest)
+	actor = steps[3].Payload.(durableemail.SendRequest)
+	if len(others.Recipients) != 1 || others.Recipients[0].UserID != "bob" || len(others.Metadata) != 0 {
+		t.Fatalf("others = %+v", others)
+	}
+	if len(actor.Recipients) != 1 || actor.Recipients[0].UserID != "alice" || actor.Metadata["actor_uid"] != "alice" || actor.IdempotencyToken == others.IdempotencyToken {
+		t.Fatalf("actor = %+v", actor)
+	}
+	if len(personalSendSteps(request, "poll-opened", "unknown", nil)) != 3 {
+		t.Fatal("missing actor gained separate delivery")
+	}
+}
+
+func TestIneligibleActorIsLoggedWithoutRedirectingTheirEmail(t *testing.T) {
+	var output bytes.Buffer
+	request := durableemail.SendRequest{IdempotencyToken: "poll-opened:admin", Recipients: []durableemail.SendRecipient{{UserID: "chris", Email: "chris@example.com"}}}
+	steps := personalSendSteps(request, "poll-opened", "admin", slog.New(slog.NewJSONHandler(&output, nil)))
+	found := steps[0].Payload.(durableemail.SendRequest)
+	if len(steps) != 3 || len(found.Metadata) != 0 || found.Recipients[0].UserID != "chris" {
+		t.Fatal("ineligible actor was redirected to another user")
+	}
+	if !strings.Contains(output.String(), "not an eligible recipient") || !strings.Contains(output.String(), `"actor_uid":"admin"`) {
+		t.Fatalf("missing eligibility diagnostic: %s", output.String())
+	}
 }
 
 func assertOpenMark(t *testing.T, step cellar.CellStep, action completionactions.ActionType) {

@@ -105,7 +105,7 @@ func (s *FirestoreSource) CompletePoll(ctx context.Context, pollID, selectedVenu
 		if current, _ := doc.Data()["completed"].(bool); current {
 			return nil
 		}
-		if err := transaction.Set(pollRef, map[string]any{"completed": true, "selected": selectedVenueID}, firestore.MergeAll); err != nil {
+		if err := transaction.Set(pollRef, map[string]any{"completed": true, "selected": selectedVenueID, "completedByUid": firestore.Delete}, firestore.MergeAll); err != nil {
 			return err
 		}
 		completed = true

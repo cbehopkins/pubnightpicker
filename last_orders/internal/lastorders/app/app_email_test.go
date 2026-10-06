@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,12 +18,17 @@ import (
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
+	"last_orders/internal/lastorders/database/listeners/completedpolls"
+	"last_orders/internal/lastorders/database/listeners/completedpolls/completedpollstest"
+	"last_orders/internal/lastorders/database/listeners/newpolls"
+	"last_orders/internal/lastorders/database/listeners/newpolls/newpollstest"
 	"last_orders/internal/lastorders/database/listeners/testemail"
 	"last_orders/internal/lastorders/database/listeners/testemail/testemailtest"
 	"last_orders/internal/lastorders/truths"
@@ -101,7 +107,11 @@ func TestRuntimeSuppressionHandlesMissingSandboxAndTestEmails(t *testing.T) {
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
 	cfg.Email.Client = "mailtrap"
 	cfg.Email.MailtrapToken = "unused-token"
-	cfg.DiagnosticsSource = func(ctx context.Context, update func(bool)) error { update(true); <-ctx.Done(); return ctx.Err() }
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(diagnosticsconfig.Settings)) error {
+		update(diagnosticsconfig.Settings{SilenceNotifications: true})
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	a := newApp(t, cfg)
 	defer a.Close()
 	for _, token := range []string{"poll-opened:suppressed", "test-email:suppressed"} {
@@ -282,6 +292,68 @@ func TestPollCompletedTruthEmailsAndRecordsCompletionActions(t *testing.T) {
 		if !strings.Contains(logged, want) {
 			t.Errorf("logs missing %q", want)
 		}
+	}
+}
+
+type exceptionTokens struct{ calls atomic.Int64 }
+
+func (s *exceptionTokens) Acquire() int                    { s.calls.Add(1); return 0 }
+func (s *exceptionTokens) AcquireN(count int) (int, error) { s.calls.Add(int64(count)); return 0, nil }
+
+func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "actor-exceptions.db")
+	logs := &syncBuffer{}
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(diagnosticsconfig.Settings)) error {
+		update(diagnosticsconfig.Settings{SilenceNotifications: true, NotifyPollActorWhenSilenced: true})
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	date := time.Now().Add(48 * time.Hour).Format(time.DateOnly)
+	cfg.NewPollSource = &newpollstest.Source{Changes: []newpolls.Change{{Kind: newpolls.ChangeAdded, Doc: newpolls.Document{ID: "opened-actor", Data: map[string]any{"date": date, "createdByUid": "alice"}}}}}
+	cfg.CompletedPollSource = &completedpollstest.Source{Changes: []completedpolls.Change{{Kind: completedpolls.ChangeAdded, Doc: completedpolls.Document{ID: "completed-actor", Data: map[string]any{"date": date, "selected": "pub-1", "completedByUid": "bob"}}}}}
+	venues := venuecachetest.New()
+	venues.Changes = []venuecache.Change{{Kind: venuecache.ChangeAdded, Doc: venuecache.Document{ID: "pub-1", Data: map[string]any{"name": "Red Lion"}}}}
+	cfg.VenueSource = venues
+	users := []notificationprofile.Change{}
+	for _, uid := range []string{"alice", "bob", "observer"} {
+		users = append(users, userDocument(uid, map[string]any{"notificationEmail": uid + "@example.com", "openPollEmailEnabled": true, "notificationEmailEnabled": true, "webPushEnabled": true}))
+	}
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{UserChanges: users, EndpointChange: []notificationprofile.Change{endpointDocument("alice", "phone"), endpointDocument("alice", "laptop"), endpointDocument("bob", "phone"), endpointDocument("observer", "phone")}}
+	emailQuota, pushQuota := &exceptionTokens{}, &exceptionTokens{}
+	cfg.Email.Tokens, cfg.Push.Tokens = emailQuota, pushQuota
+	application := newApp(t, cfg)
+	defer application.Close()
+	db := openSQLite(t, dbPath)
+	runUntil(t, application, func() bool {
+		var emails, pushes int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE state = 'Accepted'`).Scan(&emails); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(`SELECT COUNT(*) FROM push_deliveries WHERE state = 'Accepted'`).Scan(&pushes); err != nil {
+			t.Fatal(err)
+		}
+		return emails == 7 && pushes == 8
+	})
+	var live int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE pmuid NOT LIKE 'suppressed:%'`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 2 || emailQuota.calls.Load() != 2 || pushQuota.calls.Load() != 3 {
+		t.Fatalf("live emails=%d email quota=%d push quota=%d", live, emailQuota.calls.Load(), pushQuota.calls.Load())
+	}
+	for _, expected := range []struct{ token, uid string }{{"poll-opened:opened-actor:actor:alice", "alice"}, {"poll-completed:completed-actor:pemail:pub-1:actor:bob", "bob"}} {
+		var email string
+		if err := db.QueryRow(`SELECT recipient FROM email_progress WHERE idempotency_token = ? AND pmuid NOT LIKE 'suppressed:%'`, expected.token).Scan(&email); err != nil {
+			t.Fatal(err)
+		}
+		if email != expected.uid+"@example.com" {
+			t.Fatalf("live recipient = %s", email)
+		}
+	}
+	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 3 {
+		t.Fatalf("live pushes: %s", logs.String())
 	}
 }
 

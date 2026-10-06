@@ -9,6 +9,16 @@
         "completed"
     ],
     "properties": {
+        "createdByUid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Authenticated human creator; immutable after creation. Absent on legacy or automatically created polls."
+        },
+        "completedByUid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Authenticated human completing the initial selection. Cleared on rescheduling or automatic completion."
+        },
         "date": {
             "type": "string",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"

@@ -147,7 +147,7 @@ func TestPostGuardDefersWithoutSubmissionAndSurvivesStoreRestart(t *testing.T) {
 			if !ok || retry.NotBefore == nil || retry.NotBefore.Before(before.Add(delay)) || len(retry.ApplicationWork) != 0 || len(retry.NewCells) != 0 {
 				t.Fatalf("guard result = %#v", result)
 			}
-			if submission != (Submission{IdempotencyToken: "guarded", RecipientCount: 2}) || client.calls.Load() != 0 {
+			if submission.IdempotencyToken != "guarded" || submission.RecipientCount != 2 || len(submission.Metadata) != 0 || client.calls.Load() != 0 {
 				t.Fatalf("submission = %+v; provider calls = %d", submission, client.calls.Load())
 			}
 			if err := cellarStore.ApplyResult(post, result); err != nil {
@@ -218,6 +218,51 @@ func TestPostGuardFailuresFailClosed(t *testing.T) {
 		if state != StatePending || submitted.Valid {
 			t.Fatalf("state = %s, submitted = %v", state, submitted)
 		}
+	}
+}
+
+func TestPolicyMetadataSurvivesLiveFailureWithoutEnteringProviderMessage(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{IdempotencyToken: "live-actor", Metadata: map[string]string{"purpose": "poll-completed", "actor_uid": "alice"}, Recipients: []SendRecipient{{UserID: "alice", Email: "alice@example.com"}}}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	client := sendClientFunc(func(_ context.Context, email clients.Email) (clients.SendResult, error) {
+		if email.Headers["actor_uid"] != "" || email.Variables["actor_uid"] != nil {
+			t.Fatal("internal metadata leaked to provider")
+		}
+		return clients.SendResult{}, errors.New("live provider unavailable")
+	})
+	policyCalls := 0
+	result := (PostHandler{Store: store, Client: client, Policy: func(_ context.Context, submission Submission) (SubmissionDecision, error) {
+		policyCalls++
+		if submission.Metadata["actor_uid"] != "alice" {
+			t.Fatal("policy metadata missing")
+		}
+		submission.Metadata["actor_uid"] = "changed-local-copy"
+		return SubmissionDecision{Client: client}, nil
+	}}).Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken})
+	if _, ok := result.(cellar.RetrySequence); !ok || policyCalls != 1 {
+		t.Fatalf("live failure result = %#v", result)
+	}
+	if err := store.RecoverSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state, _, _ := progressRow(t, db, request.IdempotencyToken, "alice@example.com")
+	if state != StateRecovery {
+		t.Fatalf("state=%s", state)
+	}
+	found, err := store.request(context.Background(), request.IdempotencyToken)
+	if err != nil || found.metadata["actor_uid"] != "alice" {
+		t.Fatal("policy mutated durable metadata")
 	}
 }
 

@@ -92,6 +92,7 @@ func (s *Source) CompletePoll(_ context.Context, pollID, selectedVenueID string)
 	}
 	data["completed"] = true
 	data["selected"] = selectedVenueID
+	delete(data, "completedByUid")
 	return true, nil
 }
 

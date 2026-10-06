@@ -5,9 +5,17 @@
     "type": "object",
     "x-schemaVersion": 1,
     "x-documentId": "diagnostics",
-    "description": "Global Last Orders email and push suppression, including test notifications. An absent document or field defaults to false. This does not affect the Python backend.",
+    "description": "Last Orders email/push suppression with optional human poll-actor and chat exceptions. Missing booleans default false. Exceptions apply only while silenced; mailing-list and diagnostic notifications remain suppressed. This does not affect the Python backend.",
     "properties": {
         "SilenceNotifications": {
+            "type": "boolean",
+            "default": false
+        },
+        "NotifyPollActorWhenSilenced": {
+            "type": "boolean",
+            "default": false
+        },
+        "KeepChatNotificationsWhenSilenced": {
             "type": "boolean",
             "default": false
         }

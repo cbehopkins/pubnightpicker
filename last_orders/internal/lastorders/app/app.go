@@ -247,7 +247,7 @@ func New(cfg Config) (application *App, err error) {
 	var diagnosticsConfiguration *diagnosticsconfig.Service
 	if diagnosticsSource != nil {
 		diagnosticsConfiguration = diagnosticsconfig.New(diagnosticsSource, cfg.Logger)
-		emailOptions.SilenceNotifications = diagnosticsConfiguration.Snapshot
+		emailOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
 	}
 	venueSource := cfg.VenueSource
 	if venueSource == nil {
@@ -283,7 +283,7 @@ func New(cfg Config) (application *App, err error) {
 		pushOptions.Logger = cfg.Logger
 	}
 	if diagnosticsConfiguration != nil {
-		pushOptions.SilenceNotifications = diagnosticsConfiguration.Snapshot
+		pushOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
 	}
 	recurrenceService := cfg.RecurrenceService
 	if recurrenceService == nil {

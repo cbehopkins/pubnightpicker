@@ -96,6 +96,7 @@ func completedPayload(change Change) truths.PollObservedPayload {
 	pollDate, _ := change.Doc.Data["date"].(string)
 	selectedRestaurantID, _ := change.Doc.Data["restaurant"].(string)
 	selectedRestaurantTime, _ := change.Doc.Data["restaurant_time"].(string)
+	completedByUID, _ := change.Doc.Data["completedByUid"].(string)
 	return truths.PollObservedPayload{
 		PollID:                 change.Doc.ID,
 		ChangeKind:             changeKind(change.Kind),
@@ -103,6 +104,7 @@ func completedPayload(change Change) truths.PollObservedPayload {
 		PollDate:               pollDate,
 		SelectedRestaurantID:   selectedRestaurantID,
 		SelectedRestaurantTime: selectedRestaurantTime,
+		CompletedByUID:         completedByUID,
 	}
 }
 

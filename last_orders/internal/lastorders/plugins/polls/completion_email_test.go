@@ -134,6 +134,33 @@ func TestPollCompletedEmailSendsMailingListAndPersonalThenMarks(t *testing.T) {
 	}
 }
 
+func TestCompletionActorMetadataNeverAppliesToMailingListOrReschedule(t *testing.T) {
+	actions := completionactionstest.New()
+	handler := completedHandler(actions, []notificationprofile.EmailRecipient{{UserID: "alice", Email: "alice@example.com"}, {UserID: "bob", Email: "bob@example.com"}})
+	payload := completedPoll
+	payload.CompletedByUID = "alice"
+	result := handler.Handle(context.Background(), payload).(cellar.Complete)
+	if len(setupRequest(t, result.NewCells[0]).Metadata) != 0 {
+		t.Fatal("mailing list gained an actor exception")
+	}
+	personal := result.NewCells[1]
+	if len(personal.Steps) != 7 {
+		t.Fatalf("personal steps = %d", len(personal.Steps))
+	}
+	var actor durableemail.SendRequest
+	if err := json.Unmarshal(personal.Steps[3].Payload, &actor); err != nil {
+		t.Fatal(err)
+	}
+	if actor.Metadata["actor_uid"] != "alice" || len(actor.Recipients) != 1 {
+		t.Fatalf("actor = %+v", actor)
+	}
+	_ = actions.Mark(context.Background(), completionactions.CompletionCollection, payload.PollID, completionactions.ActionPersonalEmail, "old-selection")
+	rescheduled := handler.Handle(context.Background(), payload).(cellar.Complete)
+	if request := setupRequest(t, rescheduled.NewCells[1]); len(request.Metadata) != 0 || len(request.Recipients) != 2 {
+		t.Fatal("reschedule retained actor exception")
+	}
+}
+
 func TestPollCompletedEmailUsesPythonRescheduleAndDedupeRules(t *testing.T) {
 	actions := completionactionstest.New()
 	ctx := context.Background()

@@ -160,6 +160,8 @@ func emailOptionsFromEnv(logger *slog.Logger, getenv func(string) string) (email
 		options.SweegoProvider = sweegoProvider
 		options.SweegoBaseURL = getenv("SWEEGO_BASE_URL")
 		logger.Info("Sweego email client enabled", "provider", sweegoProvider)
+	} else {
+		logger.Warn("dummy email client enabled; no Mailtrap or Sweego requests will be made")
 	}
 	return options, nil
 }

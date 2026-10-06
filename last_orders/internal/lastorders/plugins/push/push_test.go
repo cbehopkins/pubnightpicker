@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/ratelimit"
 
@@ -189,7 +191,9 @@ func TestSuppressedPushIsHandledWithoutQuotaInvalidationOrReplay(t *testing.T) {
 	tokens := &deliveryTokens{wait: 86400}
 	plugin.tokens = tokens
 	silenced := true
-	plugin.silenceNotifications = func() (bool, bool) { return silenced, true }
+	plugin.notificationSettings = func() (diagnosticsconfig.Settings, bool) {
+		return diagnosticsconfig.Settings{SilenceNotifications: silenced}, true
+	}
 	population := populate(t, plugin)
 	for _, cell := range population.NewCells[:2] {
 		var request deliveryRequest
@@ -232,7 +236,7 @@ func TestPushUnknownConfigurationDefersAndResumesLive(t *testing.T) {
 	tokens := &deliveryTokens{}
 	plugin.tokens = tokens
 	known := false
-	plugin.silenceNotifications = func() (bool, bool) { return false, known }
+	plugin.notificationSettings = func() (diagnosticsconfig.Settings, bool) { return diagnosticsconfig.Settings{}, known }
 	request := firstDelivery(t, populate(t, plugin))
 	request.ExpiresAt = time.Now().Add(100 * time.Millisecond)
 	result, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry)
@@ -251,6 +255,69 @@ func TestPushUnknownConfigurationDefersAndResumesLive(t *testing.T) {
 	applyWork(t, plugin.db, complete.ApplicationWork)
 	if sender.sent != 1 || tokens.calls != 1 || deliveryState(t, plugin, "alice") != StateAccepted {
 		t.Fatal("live sending did not resume")
+	}
+}
+
+func TestPushExceptionMatrix(t *testing.T) {
+	for _, silence := range []bool{false, true} {
+		for _, actor := range []bool{false, true} {
+			for _, chat := range []bool{false, true} {
+				for _, test := range []struct {
+					purpose, actorUID         string
+					actorAllowed, chatAllowed bool
+				}{
+					{diagnosticsconfig.PurposePollOpened, "alice", true, false},
+					{diagnosticsconfig.PurposePollCompleted, "alice", true, false},
+					{diagnosticsconfig.PurposePollCompleted, "bob", false, false},
+					{diagnosticsconfig.PurposePollRescheduled, "alice", false, false},
+					{diagnosticsconfig.PurposeGlobalChat, "", false, true},
+					{diagnosticsconfig.PurposeEventChat, "", false, true},
+					{"diagnostic", "alice", false, false},
+					{"", "", false, false},
+				} {
+					t.Run(fmt.Sprintf("%t/%t/%t/%s/%s", silence, actor, chat, test.purpose, test.actorUID), func(t *testing.T) {
+						sender := &fakeSender{status: http.StatusCreated}
+						plugin := newTestPlugin(t, sender, &fakeInvalidator{})
+						tokens := &deliveryTokens{}
+						plugin.tokens = tokens
+						plugin.notificationSettings = func() (diagnosticsconfig.Settings, bool) {
+							return diagnosticsconfig.Settings{SilenceNotifications: silence, NotifyPollActorWhenSilenced: actor, KeepChatNotificationsWhenSilenced: chat}, true
+						}
+						population, err := plugin.Populate(context.Background(), Notification{ID: "n1", Purpose: test.purpose, ActorUID: test.actorUID, ExpiresAt: time.Now().Add(time.Hour)}, testEndpoints[:1])
+						if err != nil {
+							t.Fatal(err)
+						}
+						applyWork(t, plugin.db, population.ApplicationWork)
+						request := firstDelivery(t, population)
+						result, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Complete)
+						if !ok {
+							t.Fatal("delivery did not complete")
+						}
+						applyWork(t, plugin.db, result.ApplicationWork)
+						want := 0
+						if !silence || actor && test.actorAllowed || chat && test.chatAllowed {
+							want = 1
+						}
+						if sender.sent != want || tokens.calls != want {
+							t.Fatalf("sent=%d quota=%d want=%d", sender.sent, tokens.calls, want)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestLiveActorPushFailureRetainsRetry(t *testing.T) {
+	sender := &fakeSender{err: errors.New("provider unavailable")}
+	plugin := newTestPlugin(t, sender, &fakeInvalidator{})
+	plugin.notificationSettings = func() (diagnosticsconfig.Settings, bool) {
+		return diagnosticsconfig.Settings{SilenceNotifications: true, NotifyPollActorWhenSilenced: true}, true
+	}
+	request := firstDelivery(t, populate(t, plugin))
+	request.Purpose, request.ActorUID = diagnosticsconfig.PurposePollCompleted, request.UserID
+	if _, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry); !ok || sender.sent != 1 {
+		t.Fatal("live exception failure was swallowed")
 	}
 }
 

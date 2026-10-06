@@ -48,6 +48,7 @@ func TestNewStoreInitialisesSchemaAlongsideCellar(t *testing.T) {
 		{name: "text", typeName: "TEXT", notNull: 1},
 		{name: "variables", typeName: "TEXT", notNull: 1},
 		{name: "headers", typeName: "TEXT", notNull: 1},
+		{name: "metadata", typeName: "TEXT", notNull: 1},
 	})
 	assertColumns(t, db, "email_progress", []schemaColumn{
 		{name: "idempotency_token", typeName: "TEXT", notNull: 1, primaryKeyPosition: 1},
@@ -69,6 +70,48 @@ func TestNewStoreInitialisesSchemaAlongsideCellar(t *testing.T) {
 	assertIndexedColumn(t, db, "email_progress", "recipient")
 	assertIndexedColumn(t, db, "email_progress", "state")
 	assertIndexedColumn(t, db, "email_events", "idempotency_token")
+}
+
+func TestMetadataMigrationAndImmutability(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.Exec(`CREATE TABLE email_requests (
+		idempotency_token TEXT NOT NULL PRIMARY KEY, message_id TEXT NOT NULL UNIQUE,
+		sender_email TEXT NOT NULL, sender_name TEXT NOT NULL, subject TEXT NOT NULL,
+		template_id TEXT NOT NULL, text TEXT NOT NULL, variables TEXT NOT NULL, headers TEXT NOT NULL
+	); INSERT INTO email_requests VALUES ('legacy', 'legacy-id', '', '', '', '', '', '{}', '{}');`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.request(context.Background(), "legacy")
+	if err != nil || len(legacy.metadata) != 0 {
+		t.Fatalf("legacy metadata = %v, %v", legacy.metadata, err)
+	}
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{IdempotencyToken: "actor", Metadata: map[string]string{"purpose": "poll-opened", "actor_uid": "alice"}, Recipients: []SendRecipient{{UserID: "alice", Email: "alice@example.com"}}}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := reopened.request(context.Background(), "actor")
+	if err != nil || found.metadata["actor_uid"] != "alice" {
+		t.Fatalf("metadata = %v, %v", found.metadata, err)
+	}
+	if err := applySetup(t, cellarStore, reopened, request); err != nil {
+		t.Fatal(err)
+	}
+	request.Metadata["actor_uid"] = "bob"
+	if err := applySetup(t, cellarStore, reopened, request); err == nil {
+		t.Fatal("metadata mutation accepted")
+	}
 }
 
 func TestRecordEventPreservesStrongerStatuses(t *testing.T) {

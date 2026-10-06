@@ -17,6 +17,7 @@ import (
 	"email_clients/clients/mailtrap"
 	"email_clients/clients/sweego"
 	sweegologs "email_clients/clients/sweego/logs"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/ratelimit"
 
 	sdk "github.com/mailtrap/mailtrap-go"
@@ -36,7 +37,7 @@ const (
 
 type Options struct {
 	Client                  ClientKind
-	SilenceNotifications    func() (bool, bool)
+	NotificationSettings    func() (diagnosticsconfig.Settings, bool)
 	MailtrapSandboxToken    string
 	MailtrapSandboxID       int64
 	Tokens                  ratelimit.TokenSource
@@ -53,10 +54,11 @@ type Options struct {
 
 // Plugin adapts durable email delivery to the last_orders application.
 type Plugin struct {
+	clientKind           ClientKind
 	store                *durableemail.Store
 	client               clients.EmailClient
 	suppressedClient     clients.EmailClient
-	silenceNotifications func() (bool, bool)
+	notificationSettings func() (diagnosticsconfig.Settings, bool)
 	verifier             clients.EmailVerifier
 	tokens               ratelimit.TokenSource
 	logger               *slog.Logger
@@ -166,25 +168,44 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init durable email store: %w", err)
 	}
-	return &Plugin{store: store, client: client, suppressedClient: suppressedClient, silenceNotifications: opts.SilenceNotifications, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
+	logger.Info("email plugin configured", "client", opts.Client, "sandbox_configured", opts.Client == ClientMailtrap && opts.MailtrapSandboxID > 0)
+	return &Plugin{clientKind: opts.Client, store: store, client: client, suppressedClient: suppressedClient, notificationSettings: opts.NotificationSettings, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
 }
 
 func (p *Plugin) Register(runtime *cellar.Cellar) error {
 	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission, SubmissionPolicy: p.submissionPolicy, Logger: p.logger})
 }
 
-func (p *Plugin) submissionPolicy(_ context.Context, _ durableemail.Submission) (durableemail.SubmissionDecision, error) {
-	if p.silenceNotifications == nil {
-		return durableemail.SubmissionDecision{Client: p.client}, nil
+func (p *Plugin) submissionPolicy(_ context.Context, submission durableemail.Submission) (durableemail.SubmissionDecision, error) {
+	var settings diagnosticsconfig.Settings
+	if p.notificationSettings != nil {
+		var known bool
+		settings, known = p.notificationSettings()
+		if !known {
+			return durableemail.SubmissionDecision{Delay: time.Second}, nil
+		}
 	}
-	silenced, known := p.silenceNotifications()
-	if !known {
-		return durableemail.SubmissionDecision{Delay: time.Second}, nil
+	actorException := settings.SilenceNotifications && submission.RecipientCount == 1 &&
+		(submission.Metadata["purpose"] == diagnosticsconfig.PurposePollOpened || submission.Metadata["purpose"] == diagnosticsconfig.PurposePollCompleted) &&
+		settings.AllowsLive(submission.Metadata["purpose"], submission.Metadata["actor_uid"], submission.Metadata["recipient_uid"])
+	decision := durableemail.SubmissionDecision{Client: p.client}
+	mode := "live"
+	if p.clientKind == ClientDummy {
+		mode = "dummy"
 	}
-	if silenced {
-		return durableemail.SubmissionDecision{Client: p.suppressedClient, BestEffort: true}, nil
+	if settings.SilenceNotifications && !actorException {
+		decision = durableemail.SubmissionDecision{Client: p.suppressedClient, BestEffort: true}
+		switch p.clientKind {
+		case ClientMailtrap:
+			mode = "sandbox"
+		case ClientSweego:
+			mode = "dry-run"
+		case ClientDummy:
+			mode = "dummy-dry-run"
+		}
 	}
-	return durableemail.SubmissionDecision{Client: p.client}, nil
+	p.logger.Info("email submission selected", "client", p.clientKind, "mode", mode, "actor_exception", actorException, "idempotency_token", submission.IdempotencyToken, "recipient_count", submission.RecipientCount)
+	return decision, nil
 }
 
 func (p *Plugin) guardSubmission(_ context.Context, submission durableemail.Submission) (time.Duration, error) {
@@ -223,7 +244,13 @@ func (p *Plugin) RecoverSubmissions(ctx context.Context) error {
 
 func newDummyClient(logger *slog.Logger) *dummy.Client {
 	client := dummy.NewClient(func(emailAddress, message string, headers map[string]string) (dummy.Response, error) {
-		logger.Info("dummy email sent",
+		dryRun := headers[clients.DryRunHeader] == "true"
+		logMessage := "dummy email sent"
+		if dryRun {
+			logMessage = "dummy email suppressed (dry-run)"
+		}
+		logger.Info(logMessage,
+			"dry_run", dryRun,
 			"recipient", emailAddress,
 			"message_id", headers[durableemail.MessageIDHeader],
 			"message", message,

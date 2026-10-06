@@ -8,6 +8,7 @@ import (
 	"cellar/pkg/cellar"
 	durableemail "durable_email"
 	"last_orders/internal/lastorders/components/completionactions"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/truths"
 )
@@ -71,7 +72,7 @@ func (h PollOpenedEmailHandler) Handle(ctx context.Context, payload truths.PollO
 		for _, recipient := range recipients {
 			request.Recipients = append(request.Recipients, durableemail.SendRecipient{UserID: recipient.UserID, Email: recipient.Email})
 		}
-		steps = append(durableemail.NewSendSequence(request), mark)
+		steps = append(personalSendSteps(request, diagnosticsconfig.PurposePollOpened, payload.CreatedByUID, h.Logger), mark)
 	}
 
 	sequence, err := cellar.NewSequence(steps...)
@@ -83,6 +84,42 @@ func (h PollOpenedEmailHandler) Handle(ctx context.Context, payload truths.PollO
 		return cellar.ErrorResult{Message: "build poll-opened email send", Err: err}
 	}
 	return cellar.Complete{NewCells: []cellar.CellRequest{send}}
+}
+
+func personalSendSteps(request durableemail.SendRequest, purpose, actorUID string, logger *slog.Logger) []cellar.Step {
+	if actorUID == "" {
+		if logger != nil {
+			logger.Info("poll email has no actor attribution; no actor exception", "idempotency_token", request.IdempotencyToken, "purpose", purpose)
+		}
+		return durableemail.NewSendSequence(request)
+	}
+	var actor []durableemail.SendRecipient
+	var others []durableemail.SendRecipient
+	for _, recipient := range request.Recipients {
+		if recipient.UserID == actorUID {
+			actor = append(actor, recipient)
+		} else {
+			others = append(others, recipient)
+		}
+	}
+	if len(actor) != 1 {
+		if logger != nil {
+			logger.Info("poll email actor is not an eligible recipient; no actor exception", "idempotency_token", request.IdempotencyToken, "actor_uid", actorUID, "purpose", purpose, "eligible_recipient_count", len(request.Recipients))
+		}
+		return durableemail.NewSendSequence(request)
+	}
+	var steps []cellar.Step
+	if len(others) > 0 {
+		remainder := request
+		remainder.IdempotencyToken += ":others"
+		remainder.Recipients = others
+		steps = append(steps, durableemail.NewSendSequence(remainder)...)
+	}
+	actorRequest := request
+	actorRequest.IdempotencyToken += ":actor:" + actorUID
+	actorRequest.Recipients = actor
+	actorRequest.Metadata = map[string]string{"purpose": purpose, "actor_uid": actorUID, "recipient_uid": actorUID}
+	return append(steps, durableemail.NewSendSequence(actorRequest)...)
 }
 
 // openedMark records an open action using Python's bare poll ID key.

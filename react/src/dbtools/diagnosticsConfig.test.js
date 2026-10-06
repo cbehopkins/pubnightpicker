@@ -5,7 +5,7 @@ const { docMock, snapshotMock, setDocMock } = vi.hoisted(() => ({
 }));
 vi.mock("firebase/firestore", () => ({ doc: docMock, onSnapshot: snapshotMock, setDoc: setDocMock }));
 vi.mock("../firebase", () => ({ db: {} }));
-import { setSilenceNotifications, watchSilenceNotifications } from "./diagnosticsConfig";
+import { DEFAULT_NOTIFICATION_SETTINGS, setNotificationSetting, setSilenceNotifications, watchNotificationSettings, watchSilenceNotifications } from "./diagnosticsConfig";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -31,4 +31,20 @@ it("defaults missing data to false, rejects invalid data, and ignores pending wr
     expect(onError).toHaveBeenCalledOnce();
     deliver({ data: () => ({ SilenceNotifications: false }), metadata: { hasPendingWrites: true } });
     expect(onValue).toHaveBeenCalledTimes(2);
+});
+
+it("subscribes to an atomic settings value and merge-writes exception flags", async () => {
+    const onValue = vi.fn();
+    const onError = vi.fn();
+    watchNotificationSettings(onValue, onError);
+    const deliver = snapshotMock.mock.calls[0][2];
+    deliver({ data: () => undefined });
+    expect(onValue).toHaveBeenLastCalledWith(DEFAULT_NOTIFICATION_SETTINGS);
+    deliver({ data: () => ({ SilenceNotifications: true, KeepChatNotificationsWhenSilenced: true }) });
+    expect(onValue).toHaveBeenLastCalledWith({ ...DEFAULT_NOTIFICATION_SETTINGS, SilenceNotifications: true, KeepChatNotificationsWhenSilenced: true });
+    deliver({ data: () => ({ NotifyPollActorWhenSilenced: "true" }) });
+    expect(onError).toHaveBeenCalledOnce();
+    await setNotificationSetting("NotifyPollActorWhenSilenced", true);
+    expect(setDocMock).toHaveBeenCalledWith("config/diagnostics", { NotifyPollActorWhenSilenced: true }, { merge: true });
+    expect(() => setNotificationSetting("unexpected", true)).toThrow(TypeError);
 });

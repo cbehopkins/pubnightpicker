@@ -80,6 +80,9 @@ func TestEventChatFiltersMembersMutedAuthorAndDeliveredEndpoints(t *testing.T) {
 		MessageID: "msg-1", ScopeType: "event", ScopeID: "poll-1", AuthorUserID: "author", SenderName: "Ann", Text: "hello",
 	})
 
+	if pusher.notification.Purpose != "event-chat" {
+		t.Fatal("event chat lacked policy context")
+	}
 	if profiles.selector.Kind != notificationprofile.KindEventChat {
 		t.Errorf("kind = %q", profiles.selector.Kind)
 	}
@@ -114,6 +117,9 @@ func TestGlobalChatMatchesPythonPayload(t *testing.T) {
 		long += "é"
 	}
 	handler.Handle(context.Background(), truths.ChatMessagePosted{MessageID: "msg-1", AuthorUserID: "author", Text: long})
+	if pusher.notification.Purpose != "global-chat" {
+		t.Fatal("global chat lacked policy context")
+	}
 
 	var raw map[string]any
 	if err := json.Unmarshal(pusher.notification.Message, &raw); err != nil {

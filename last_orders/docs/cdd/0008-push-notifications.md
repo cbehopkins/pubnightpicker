@@ -97,6 +97,16 @@ acquisition and sending. Unknown initial configuration defers the delivery witho
 consuming quota, capped at notification expiry. After a valid snapshot, watch
 failures retain the last known value.
 
+The same atomic settings snapshot contains two optional exceptions. With
+`NotifyPollActorWhenSilenced`, a recognised initial poll-opened/completed delivery
+may go live only when its durable actor UID matches the endpoint's user UID.
+With `KeepChatNotificationsWhenSilenced`, recognised global/event-chat deliveries
+remain live for their existing eligible audiences. The notification purpose and
+actor UID travel in the durable endpoint payload. Legacy payloads with no purpose,
+rescheduled notifications and diagnostic tests have no exception. Personal
+preferences and endpoint eligibility remain unchanged. Live exceptions retain
+normal quota, retry and invalidation behaviour.
+
 When silenced, an eligible delivery completes with its existing `Accepted` state
 committed atomically with cell completion. There is no push service call, quota
 charge, endpoint invalidation or new attempt count. This state means handled,
