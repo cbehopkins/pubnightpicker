@@ -89,6 +89,26 @@ The delivery unit should contain sufficient durable information to perform its d
 
 The delivery mechanism is **idempotent per notification/endpoint pair**.
 
+### Runtime suppression
+
+Last Orders applies `config/diagnostics.SilenceNotifications` at endpoint delivery,
+using the same watched setting as email. The mode is sampled once before token
+acquisition and sending. Unknown initial configuration defers the delivery without
+consuming quota, capped at notification expiry. After a valid snapshot, watch
+failures retain the last known value.
+
+When silenced, an eligible delivery completes with its existing `Accepted` state
+committed atomically with cell completion. There is no push service call, quota
+charge, endpoint invalidation or new attempt count. This state means handled,
+not necessarily accepted by the service. Waiters, action completion and test-push
+acknowledgements consequently continue normally. Once committed, silenced
+deliveries are terminal and never replayed live when suppression is cleared.
+
+Suppression covers poll, chat and diagnostic pushes; it does not change endpoint
+eligibility, expiry, already-selected live attempts or the old Python backend.
+No new delivery state, schema field or migration is required. Normal live retries
+and endpoint invalidation retain their existing behaviour.
+
 ### Delivery outcomes
 
 A delivery attempt has three fundamental outcomes:

@@ -16,6 +16,7 @@ import (
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/apicors"
 	"last_orders/internal/lastorders/components/completionactions"
+	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/idempotency"
@@ -88,7 +89,8 @@ type Config struct {
 	EmailClient emailplugin.ClientKind
 	// Email contains provider credentials and options. EmailClient remains as a
 	// compatibility shortcut for callers that only need to select a client kind.
-	Email emailplugin.Options
+	Email             emailplugin.Options
+	DiagnosticsSource diagnosticsconfig.Source
 	// Push configures Web Push delivery.
 	Push            pushplugin.Options
 	EmailDailyLimit int
@@ -133,6 +135,7 @@ type App struct {
 	firestoreClient             *firestore.Client
 	cellarRuntime               *cellar.Cellar
 	emailPlugin                 *emailplugin.Plugin
+	diagnosticsConfiguration    *diagnosticsconfig.Service
 	eventVenueListener          *eventvenuelistener.Listener
 	newPollListener             *newpolllistener.Listener
 	completedPollListener       *completedpolllistener.Listener
@@ -237,6 +240,15 @@ func New(cfg Config) (application *App, err error) {
 	if emailOptions.Logger == nil {
 		emailOptions.Logger = cfg.Logger
 	}
+	diagnosticsSource := cfg.DiagnosticsSource
+	if diagnosticsSource == nil && firestoreClient != nil {
+		diagnosticsSource = diagnosticsconfig.FirestoreSource(firestoreClient)
+	}
+	var diagnosticsConfiguration *diagnosticsconfig.Service
+	if diagnosticsSource != nil {
+		diagnosticsConfiguration = diagnosticsconfig.New(diagnosticsSource, cfg.Logger)
+		emailOptions.SilenceNotifications = diagnosticsConfiguration.Snapshot
+	}
 	venueSource := cfg.VenueSource
 	if venueSource == nil {
 		if firestoreClient == nil {
@@ -269,6 +281,9 @@ func New(cfg Config) (application *App, err error) {
 	pushOptions := cfg.Push
 	if pushOptions.Logger == nil {
 		pushOptions.Logger = cfg.Logger
+	}
+	if diagnosticsConfiguration != nil {
+		pushOptions.SilenceNotifications = diagnosticsConfiguration.Snapshot
 	}
 	recurrenceService := cfg.RecurrenceService
 	if recurrenceService == nil {
@@ -703,6 +718,7 @@ func New(cfg Config) (application *App, err error) {
 		firestoreClient:             firestoreClient,
 		cellarRuntime:               cellarRuntime,
 		emailPlugin:                 emailPlugin,
+		diagnosticsConfiguration:    diagnosticsConfiguration,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
@@ -768,6 +784,12 @@ func (a *App) Run(ctx context.Context) error {
 		a.runMu.Unlock()
 		close(runDone)
 	}()
+
+	if a.diagnosticsConfiguration != nil {
+		if err := a.diagnosticsConfiguration.Start(runCtx); err != nil {
+			return fmt.Errorf("start diagnostics configuration: %w", err)
+		}
+	}
 
 	// Recipient and venue reads must see complete projections before any work runs.
 	for _, projection := range []interface {
@@ -877,6 +899,9 @@ func (a *App) Close() error {
 
 func (a *App) closeListeners() error {
 	var closeErrs []error
+	if a.diagnosticsConfiguration != nil {
+		closeErrs = append(closeErrs, a.diagnosticsConfiguration.Close())
+	}
 	if a.eventVenueListener != nil {
 		closeErrs = append(closeErrs, a.eventVenueListener.Close())
 	}

@@ -16,9 +16,20 @@ var _ clients.EmailClient = (*Client)(nil)
 var ErrNoRecipients = errors.New("email has no recipients")
 
 func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendResult, error) {
+	if err := ctx.Err(); err != nil {
+		return clients.SendResult{}, err
+	}
 	if len(email.To) == 0 {
 		return clients.SendResult{}, ErrNoRecipients
 	}
+	dryRun := c.sendOptions.DryRun
+	if c.dryRunCallback != nil {
+		dryRun = c.dryRunCallback() || dryRun
+	}
+	options := c.sendOptions
+	options.DryRun = dryRun
+	c = c.WithSendOptions(options)
+	email = clients.PrepareDryRun(email, dryRun)
 
 	path := "/send"
 	var request any = c.singleRequest(email)

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -252,6 +256,115 @@ func TestEmailGuardKeepsDiagnosticsSeparateAndFailsClosed(t *testing.T) {
 				t.Fatalf("unprotected send: state %s, submitted %v, err %v", state, submitted, err)
 			}
 		})
+	}
+}
+
+type countedTokens struct{ calls atomic.Int64 }
+
+func (source *countedTokens) Acquire() int              { panic("expected AcquireN") }
+func (source *countedTokens) AcquireN(int) (int, error) { source.calls.Add(1); return 0, nil }
+
+func TestRuntimePolicyDefersUnknownAndSwitchesProviderMode(t *testing.T) {
+	db := openDB(t)
+	db.SetMaxOpenConns(1)
+	store, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var known, silenced atomic.Bool
+	silenced.Store(true)
+	requests := make(chan bool, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		dryRun, _ := body["dry-run"].(bool)
+		requests <- dryRun
+		silenced.Store(false)
+		_, _ = w.Write([]byte(`{"swg_uids":{"alice@example.com":"provider-id"}}`))
+	}))
+	defer server.Close()
+	tokens := &countedTokens{}
+	plugin, err := emailplugin.New(db, emailplugin.Options{Client: emailplugin.ClientSweego, Tokens: tokens, SweegoToken: "token", SweegoProvider: "example.test", SweegoBaseURL: server.URL, SilenceNotifications: func() (bool, bool) { return silenced.Load(), known.Load() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
+	if err := plugin.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	add := func(token string) {
+		t.Helper()
+		request := durableemail.SendRequest{IdempotencyToken: token, SenderEmail: "sender@example.com", Subject: "Hi", Text: "Hi", Recipients: []durableemail.SendRecipient{{Email: "alice@example.com"}}}
+		if _, err := runtime.AddSequence(durableemail.NewSendSequence(request)...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("poll-opened:unknown")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	done := make(chan struct{})
+	var runErr error
+	go func() { runErr = runtime.Start(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	wait := func(predicate func() bool) {
+		t.Helper()
+		for !predicate() {
+			select {
+			case <-done:
+				t.Fatalf("runtime stopped: %v", runErr)
+			case <-ctx.Done():
+				t.Fatal("timed out")
+			case <-ticker.C:
+			}
+		}
+	}
+	wait(func() bool {
+		active, err := store.ListActive()
+		return err == nil && len(active) == 1 && active[0].CurrentStep == 2 && active[0].NotBefore != nil
+	})
+	if tokens.calls.Load() != 0 || len(requests) != 0 {
+		t.Fatal("unknown configuration submitted email")
+	}
+	known.Store(true)
+	select {
+	case dryRun := <-requests:
+		if !dryRun {
+			t.Fatal("suppressed attempt went live")
+		}
+	case <-done:
+		t.Fatalf("runtime stopped: %v", runErr)
+	case <-ctx.Done():
+		t.Fatal("suppressed send never ran")
+	}
+	wait(func() bool {
+		var count int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE state = ?`, durableemail.StateAccepted).Scan(&count)
+		return count == 1
+	})
+	if tokens.calls.Load() != 0 {
+		t.Fatal("suppressed attempt consumed quota")
+	}
+	add("poll-opened:live")
+	select {
+	case dryRun := <-requests:
+		if dryRun {
+			t.Fatal("live attempt stayed suppressed")
+		}
+	case <-done:
+		t.Fatalf("runtime stopped: %v", runErr)
+	case <-ctx.Done():
+		t.Fatal("live send never ran")
+	}
+	wait(func() bool {
+		var count int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE state = ?`, durableemail.StateAccepted).Scan(&count)
+		return count == 2
+	})
+	if tokens.calls.Load() != 1 {
+		t.Fatalf("live acquisitions = %d", tokens.calls.Load())
 	}
 }
 

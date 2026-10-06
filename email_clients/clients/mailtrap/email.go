@@ -24,12 +24,30 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 	if c == nil || c.sdk == nil {
 		return clients.SendResult{}, errors.New("mailtrap client is not configured")
 	}
+	dryRun := c.dryRunCallback != nil && c.dryRunCallback()
+	provider := c.sdk
+	if dryRun {
+		if c.sandboxSDK == nil {
+			return clients.SendResult{}, ErrSandboxNotConfigured
+		}
+		provider = c.sandboxSDK
+	}
+	subject := email.Subject
+	email = clients.PrepareDryRun(email, dryRun)
+	email.Subject = subject
 	requests, err := c.requests(ctx, email)
 	if err != nil {
 		return clients.SendResult{}, err
 	}
+	if dryRun && email.TemplateID == "" {
+		for index := range requests {
+			if !strings.HasPrefix(requests[index].Subject, clients.DryRunSubjectPrefix) {
+				requests[index].Subject = clients.DryRunSubjectPrefix + requests[index].Subject
+			}
+		}
+	}
 	if len(requests) == 1 {
-		response, _, err := c.sdk.Send(ctx, &requests[0])
+		response, _, err := provider.Send(ctx, &requests[0])
 		if err != nil {
 			return clients.SendResult{}, fmt.Errorf("mailtrap send: %w", err)
 		}
@@ -38,7 +56,7 @@ func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendRes
 		}
 		return clients.SendResult{Recipients: []clients.RecipientResult{{PMUID: response.MessageIDs[0]}}}, nil
 	}
-	response, _, err := c.sdk.SendBatch(ctx, &sdk.BatchSendRequest{Requests: requests})
+	response, _, err := provider.SendBatch(ctx, &sdk.BatchSendRequest{Requests: requests})
 	if err != nil {
 		return clients.SendResult{}, fmt.Errorf("mailtrap batch send: %w", err)
 	}

@@ -431,6 +431,31 @@ func (s *Store) pendingRecipients(ctx context.Context, token string) ([]durableR
 	return pending, rows.Err()
 }
 
+func (s *Store) acceptBestEffort(ctx context.Context, token, messageID string, pending []durableRecipient) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for index, recipient := range pending {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE email_progress SET state = ?, pmuid = ?, submitted_at = NULL
+			WHERE idempotency_token = ? AND recipient = ? AND state = ? AND submitted_at IS NULL
+		`, StateAccepted, fmt.Sprintf("suppressed:%s:%d", messageID, index), token, recipient.email, StatePending)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("best-effort recipient is no longer pending")
+		}
+	}
+	return tx.Commit()
+}
+
 // markSubmitted records the submission time of every pending recipient.
 func (s *Store) markSubmitted(ctx context.Context, token string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `

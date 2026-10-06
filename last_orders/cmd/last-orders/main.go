@@ -142,6 +142,14 @@ func emailOptionsFromEnv(logger *slog.Logger, getenv func(string) string) (email
 	if mailtrapToken != "" {
 		options.Client = emailplugin.ClientMailtrap
 		options.MailtrapToken = mailtrapToken
+		options.MailtrapSandboxToken = strings.TrimSpace(getenv("MAILTRAP_SANDBOX_TOKEN"))
+		if raw := strings.TrimSpace(getenv("MAILTRAP_SANDBOX_ID")); raw != "" {
+			inboxID, parseErr := strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil || inboxID <= 0 {
+				return emailplugin.Options{}, fmt.Errorf("MAILTRAP_SANDBOX_ID must be a positive integer")
+			}
+			options.MailtrapSandboxID = inboxID
+		}
 		logger.Info("Mailtrap email client enabled")
 		return options, nil
 	}

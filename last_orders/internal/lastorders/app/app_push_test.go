@@ -253,6 +253,52 @@ func TestPushTestListenerAcknowledgesAndDeletesRequest(t *testing.T) {
 	}
 }
 
+func TestSharedConfigurationSilencesPollChatAndDiagnosticPush(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "silenced-push.db")
+	logs := &syncBuffer{}
+	actions := completionactionstest.New()
+	pushSources := pushsourcestest.New()
+	chatSource := chatmessagestest.New()
+	chatSource.Documents = []chatmessages.Document{{ID: "silenced-message", Data: map[string]any{"uid": "author", "displayName": "Ann", "text": "hello"}}}
+	pushTestSource := pushtesttest.New()
+	pushTestSource.Requests["alice"] = "silenced-check"
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.CompletionActions = actions
+	cfg.PushSources = pushSources
+	cfg.ChatMessageSource = chatSource
+	cfg.PushTestSource = pushTestSource
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(bool)) error { update(true); <-ctx.Done(); return ctx.Err() }
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{
+		UserChanges:    []notificationprofile.Change{userDocument("alice", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"globalChat": true}})},
+		EndpointChange: []notificationprofile.Change{endpointDocument("alice", "phone")},
+	}
+	application := newApp(t, cfg)
+	defer application.Close()
+	if err := enqueueNewPoll(t, application, "silenced-poll"); err != nil {
+		t.Fatal(err)
+	}
+	runUntil(t, application, func() bool {
+		record, err := actions.Get(context.Background(), completionactions.OpenCollection, "silenced-poll")
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, acknowledged := pushSources.Ack("alice")
+		return !record.NeedsAction(completionactions.ActionPush, "silenced-poll") && pushSources.Processed("silenced-message") && acknowledged && value == "silenced-check"
+	})
+	db := openSQLite(t, dbPath)
+	var accepted, attempts int
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(attempts), 0) FROM push_deliveries WHERE state = 'Accepted'`).Scan(&accepted, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if accepted != 3 || attempts != 0 {
+		t.Fatalf("handled = %d, attempts = %d; logs: %s", accepted, attempts, logs.String())
+	}
+	if strings.Contains(logs.String(), `"msg":"dummy push sent"`) || strings.Count(logs.String(), `"msg":"push silenced; handled without sending"`) != 3 {
+		t.Fatalf("push was not suppressed: %s", logs.String())
+	}
+}
+
 func endpointDocument(userID, endpointID string) notificationprofile.Change {
 	return notificationprofile.Change{Kind: notificationprofile.ChangeAdded, Doc: notificationprofile.Document{
 		ID:     endpointID,

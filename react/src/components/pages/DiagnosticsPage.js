@@ -29,6 +29,7 @@ import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 import usePolls from "../../hooks/usePolls";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
+import { setSilenceNotifications, watchSilenceNotifications } from "../../dbtools/diagnosticsConfig";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -416,6 +417,55 @@ export function PollActionAuditPanel() {
     );
 }
 
+export function EmailSuppressionPanel() {
+    const [silenced, setSilenced] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [readError, setReadError] = useState("");
+    const [writeError, setWriteError] = useState("");
+
+    useEffect(() => watchSilenceNotifications((value) => {
+        setSilenced(value);
+        setIsLoading(false);
+        setReadError("");
+    }, (error) => {
+        setReadError(error?.message || "Unable to load notification settings.");
+        setIsLoading(false);
+    }), []);
+
+    async function save(value) {
+        setIsSaving(true);
+        setWriteError("");
+        try {
+            await setSilenceNotifications(value);
+        } catch (error) {
+            setWriteError(error?.message || "Unable to save notification settings.");
+        } finally {
+            setIsSaving(false);
+        }
+    }
+
+    return (
+        <section className="mb-4" aria-labelledby="email-suppression-heading">
+            <h2 id="email-suppression-heading" className="h5 mb-2">Notifications</h2>
+            <div className="form-check mb-2">
+                <input id="silence-email-notifications" type="checkbox" className="form-check-input"
+                    checked={silenced} disabled={isLoading || isSaving || Boolean(readError)}
+                    onChange={(event) => save(event.target.checked)} />
+                <label htmlFor="silence-email-notifications" className="form-check-label">Silence notifications</label>
+            </div>
+            <p role="status" className="small mb-2">
+                {isLoading ? "Loading..." : isSaving ? "Saving..." : readError ? "Notification setting unavailable."
+                    : silenced ? "Last Orders email and push notifications silenced, including test notifications."
+                        : "Last Orders email and push notifications enabled."}
+            </p>
+            <p className="small text-body-secondary mb-2">Legacy backend notifications remain active.</p>
+            {silenced && <p className="small text-body-secondary mb-2">Test notification acknowledgements confirm handling, not live delivery.</p>}
+            {(readError || writeError) && <p role="alert" className="small text-danger mb-0">{readError || writeError}</p>}
+        </section>
+    );
+}
+
 function DiagnosticsPage() {
     const uid = useSelector((state) => state.auth.uid);
 
@@ -427,6 +477,8 @@ function DiagnosticsPage() {
             </p>
 
             <BackendPingPanel />
+
+            <EmailSuppressionPanel />
 
             <NotificationPingPanel
                 title="Admin Diagnostics"

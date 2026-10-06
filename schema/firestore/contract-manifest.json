@@ -7,6 +7,15 @@
             "react",
             "firebase_sub"
         ],
+        "sharedContracts": [
+            {
+                "documentPath": "config/diagnostics",
+                "consumers": [
+                    "react",
+                    "last_orders"
+                ]
+            }
+        ],
         "excludedUntilPromoted": [
             "cellar",
             "last_orders",
@@ -14,6 +23,12 @@
         ]
     },
     "collections": [
+        {
+            "name": "config",
+            "documentId": "diagnostics",
+            "status": "authoritative",
+            "schemaFile": "collections/config.schema.json"
+        },
         {
             "name": "polls",
             "status": "authoritative",

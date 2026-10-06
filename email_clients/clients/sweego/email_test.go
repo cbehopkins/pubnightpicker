@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func TestSendMapsBulkRequestAndPMUIDs(t *testing.T) {
 	}
 	for key, want := range map[string]any{
 		"channel": "email", "provider": "sender.example", "campaign-type": "transac",
-		"dry-run": true, "subject": "Subject", "template-id": "tpl-1", "message-txt": "Text",
+		"dry-run": true, "subject": clients.DryRunSubjectPrefix + "Subject", "template-id": "tpl-1", "message-txt": "Text",
 	} {
 		if body[key] != want {
 			t.Fatalf("field %q = %v, want %v", key, body[key], want)
@@ -123,6 +124,11 @@ func TestSendMapsBulkRequestAndPMUIDs(t *testing.T) {
 	}
 	if bob["variables"].(map[string]any)["name"] != "Common" || bob["variables"].(map[string]any)["event"] != "Pub" {
 		t.Fatalf("Bob mapping = %v", bob)
+	}
+	for _, recipient := range []map[string]any{alice, bob} {
+		if recipient["variables"].(map[string]any)[clients.NotificationPrefixVariable] != clients.DryRunSubjectPrefix {
+			t.Fatalf("template prefix = %v", recipient)
+		}
 	}
 }
 
@@ -156,5 +162,110 @@ func TestParsePMUIDsRejectsMalformedAndMissingIdentifiers(t *testing.T) {
 		if _, err := parsePMUIDs([]byte(body)); err == nil {
 			t.Fatalf("parsePMUIDs(%q) succeeded", body)
 		}
+	}
+}
+
+func TestSendSuppressionCallback(t *testing.T) {
+	for _, bulk := range []bool{false, true} {
+		for _, explicit := range []bool{false, true} {
+			var suppressed atomic.Bool
+			var callbackCalls int
+			var captured map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				wantPath := "/send"
+				if bulk {
+					wantPath = "/send/bulk/email"
+				}
+				if r.URL.Path != wantPath {
+					t.Errorf("path = %s, want %s", r.URL.Path, wantPath)
+				}
+				captured = nil
+				if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+					t.Error(err)
+				}
+				_, _ = io.WriteString(w, `{"swg_uids":{"alice@example.com":"uid-a","bob@example.com":"uid-b"}}`)
+			}))
+			t.Cleanup(server.Close)
+			client := NewClient(server.URL, "token", time.Second)
+			client.SetDryRunCallback(func() bool {
+				callbackCalls++
+				return suppressed.Load()
+			})
+			client = client.WithSendOptions(SendOptions{DryRun: explicit})
+			email := clients.Email{Subject: "Hello", Text: "Text", Headers: map[string]string{clients.CorrelationHeader: "pn-1"}, To: []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}}}
+			if bulk {
+				email.To = append(email.To, clients.Recipient{Address: clients.Address{Email: "bob@example.com"}})
+			}
+			for index, mode := range []bool{false, true, false} {
+				suppressed.Store(mode)
+				if _, err := client.Send(context.Background(), email); err != nil {
+					t.Fatal(err)
+				}
+				dryRun, _ := captured["dry-run"].(bool)
+				wantMode := explicit || mode
+				wantSubject := "Hello"
+				if wantMode {
+					wantSubject = clients.DryRunSubjectPrefix + wantSubject
+				}
+				if dryRun != wantMode || captured["subject"] != wantSubject || callbackCalls != index+1 {
+					t.Fatalf("mode=%v subject=%v callbackCalls=%d", dryRun, captured["subject"], callbackCalls)
+				}
+				headers := captured["headers"].(map[string]any)
+				if wantMode && headers[clients.DryRunHeader] != "true" {
+					t.Fatalf("headers = %v", headers)
+				}
+			}
+			if email.Subject != "Hello" || email.Headers[clients.DryRunHeader] != "" || client.sendOptions.DryRun != explicit {
+				t.Fatal("caller input or client options mutated")
+			}
+			client.SetDryRunCallback(nil)
+			if _, err := client.Send(context.Background(), email); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestSendConcurrentSuppressionSnapshots(t *testing.T) {
+	var suppressed atomic.Bool
+	var callbackCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request sendEmailRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		wantSubject, wantHeader := "Hello", ""
+		if request.DryRun {
+			wantSubject, wantHeader = clients.DryRunSubjectPrefix+"Hello", "true"
+		}
+		if request.Subject != wantSubject || request.Headers[clients.DryRunHeader] != wantHeader {
+			t.Errorf("inconsistent snapshot: %+v", request)
+		}
+		_, _ = io.WriteString(w, `{"swg_uids":{"alice@example.com":"uid"}}`)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(server.URL, "token", 5*time.Second)
+	client.SetDryRunCallback(func() bool {
+		callbackCalls.Add(1)
+		return suppressed.Load()
+	})
+	email := clients.Email{Subject: "Hello", Headers: map[string]string{clients.CorrelationHeader: "pn-1"}, To: []clients.Recipient{{Address: clients.Address{Email: "alice@example.com"}}}}
+	var workers sync.WaitGroup
+	for index := range 20 {
+		workers.Go(func() {
+			suppressed.Store(index%2 == 0)
+			if _, err := client.Send(context.Background(), email); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	workers.Wait()
+	if callbackCalls.Load() != 20 || client.sendOptions.DryRun || email.Subject != "Hello" || email.Headers[clients.DryRunHeader] != "" {
+		t.Fatal("callback count or immutable client/input contract failed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Send(ctx, email); !errors.Is(err, context.Canceled) || callbackCalls.Load() != 20 {
+		t.Fatalf("cancelled send: err=%v callbacks=%d", err, callbackCalls.Load())
 	}
 }

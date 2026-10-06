@@ -283,7 +283,7 @@ func (h PushTestHandler) Handle(ctx context.Context, request truths.PushTestRequ
 	return result
 }
 
-// PushTestCompletedHandler acknowledges a push test only if some endpoint accepted it.
+// PushTestCompletedHandler acknowledges a push test only if some endpoint was accepted or silenced.
 type PushTestCompletedHandler struct {
 	Source pushsources.Source
 	Push   Pusher

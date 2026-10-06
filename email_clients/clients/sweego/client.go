@@ -8,13 +8,16 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"email_clients/clients"
 )
 
 type Client struct {
-	baseURL     string
-	token       string
-	httpClient  *http.Client
-	sendOptions SendOptions
+	baseURL        string
+	token          string
+	httpClient     *http.Client
+	sendOptions    SendOptions
+	dryRunCallback clients.DryRunCallback
 }
 
 type HTTPResult struct {
@@ -43,6 +46,10 @@ func (c *Client) WithSendOptions(options SendOptions) *Client {
 	clone := *c
 	clone.sendOptions = options
 	return &clone
+}
+
+func (c *Client) SetDryRunCallback(callback clients.DryRunCallback) {
+	c.dryRunCallback = callback
 }
 
 // Do sends an authenticated request with payload encoded as JSON. A nil payload

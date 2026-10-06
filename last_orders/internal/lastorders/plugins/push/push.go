@@ -56,8 +56,9 @@ const (
 )
 
 type Options struct {
-	Client ClientKind
-	Tokens ratelimit.TokenSource
+	Client               ClientKind
+	Tokens               ratelimit.TokenSource
+	SilenceNotifications func() (bool, bool)
 	// VAPIDPrivateKey is the base64url P-256 private key from `npx web-push generate-vapid-keys`.
 	VAPIDPrivateKey string
 	// VAPIDSubject is an email address, mailto: URI, or https URL.
@@ -83,12 +84,13 @@ type EndpointInvalidator interface {
 }
 
 type Plugin struct {
-	db          *sql.DB
-	sender      Sender
-	invalidator EndpointInvalidator
-	baseURL     string
-	logger      *slog.Logger
-	tokens      ratelimit.TokenSource
+	db                   *sql.DB
+	sender               Sender
+	invalidator          EndpointInvalidator
+	baseURL              string
+	logger               *slog.Logger
+	tokens               ratelimit.TokenSource
+	silenceNotifications func() (bool, bool)
 }
 
 func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, error) {
@@ -139,7 +141,7 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens}, nil
+	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens, silenceNotifications: opts.SilenceNotifications}, nil
 }
 
 // BaseURL is the web application origin used for notification click targets.
@@ -147,7 +149,7 @@ func (p *Plugin) BaseURL() string {
 	return p.baseURL
 }
 
-// Accepted counts the push service acceptances recorded for notificationID.
+// Accepted counts accepted or silenced deliveries handled for notificationID.
 func (p *Plugin) Accepted(ctx context.Context, notificationID string) (int, error) {
 	var accepted int
 	err := p.db.QueryRowContext(ctx, `
@@ -303,6 +305,21 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 	if remaining <= 0 {
 		h.plugin.logger.Warn("push expired before delivery", "notification_id", request.NotificationID, "user_id", request.UserID)
 		return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateExpired)}}
+	}
+
+	if h.plugin.silenceNotifications != nil {
+		silenced, known := h.plugin.silenceNotifications()
+		if !known {
+			notBefore := time.Now().UTC().Add(time.Second)
+			if notBefore.After(request.ExpiresAt) {
+				notBefore = request.ExpiresAt
+			}
+			return cellar.Retry{NotBefore: &notBefore}
+		}
+		if silenced {
+			h.plugin.logger.Info("push silenced; handled without sending", "notification_id", request.NotificationID, "user_id", request.UserID, "endpoint_id", request.EndpointID)
+			return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateAccepted)}}
+		}
 	}
 
 	if wait := h.plugin.tokens.Acquire(); wait != 0 {

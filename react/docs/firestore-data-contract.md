@@ -21,6 +21,7 @@ Scope policy:
 
 - Authoritative now: react and firebase_sub production behaviour.
 - Explicitly excluded until promoted: cellar, last_orders, sweego_client rewrite assumptions.
+- Shared exception: `config/diagnostics` is consumed by React and Last Orders only.
 
 This document remains a human-readable companion and flow guide.
 
@@ -36,6 +37,30 @@ Key implementation references:
 - firestore.rules
 
 ## Collections and Document Shapes
+
+### config/diagnostics
+
+Global runtime configuration, readable and writable only by admins through the
+client SDK. Other `config` documents are not granted access by this contract.
+
+- `SilenceNotifications`: optional boolean; absent document/field means false.
+- Client deletion and unknown fields are denied.
+
+Diagnostics uses merge writes and a document subscription. Last Orders watches
+the document and samples its value once per email or push attempt. An initial read
+or validation failure defers submission; subsequent watch failures retain the
+last known value and retry. Suppressed email and push notifications, including
+test notifications, are handled without live delivery or later replay. Email
+sandbox failures are logged and ignored. Push delivery skips the service call,
+quota consumption and endpoint invalidation, and commits its existing accepted
+state atomically with cell completion. Test acknowledgements confirm handling,
+not delivery; eligibility rules remain unchanged.
+
+The switch persists until manually cleared. The Python backend is unaffected.
+Already-selected live sends cannot be cancelled, and a GUI write
+acknowledgement does not confirm observation by every backend instance. No new
+Firestore index or document migration is required. Deploy rules and the updated
+Last Orders backend before relying on the GUI control.
 
 ### pubs collection
 Document id: venue id (historical collection name retained).

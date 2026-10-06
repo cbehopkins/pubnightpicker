@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -55,6 +56,85 @@ func TestSendInvokesCallbacksAndReturnsDistinctPMUIDs(t *testing.T) {
 	}
 	if len(result.Recipients) != 2 || result.Recipients[0].PMUID == "" || result.Recipients[1].PMUID == "" || result.Recipients[0].PMUID == result.Recipients[1].PMUID {
 		t.Fatalf("invalid PMUID results: %#v", result)
+	}
+}
+
+func TestSendSuppressionSnapshotsBatchAndPreservesSimulation(t *testing.T) {
+	for _, hosted := range []bool{false, true} {
+		var suppressed atomic.Bool
+		var callbackCalls, sendCalls, hookCalls int
+		var messages []string
+		var headers []map[string]string
+		client := NewClient(func(_ string, message string, header map[string]string) (Response, error) {
+			sendCalls++
+			messages = append(messages, message)
+			headers = append(headers, maps.Clone(header))
+			suppressed.Store(!suppressed.Load())
+			return Response{}, nil
+		})
+		client.SetDryRunCallback(func() bool {
+			callbackCalls++
+			return suppressed.Load()
+		})
+		client.OnAccepted(client.RecordAccepted)
+		client.OnAccepted(func(accepted Accepted) {
+			hookCalls++
+			if accepted.Headers[clients.DryRunHeader] != headers[len(headers)-1][clients.DryRunHeader] {
+				t.Error("hook lost dry-run marker")
+			}
+		})
+		email := clients.Email{
+			Subject: "Hello", Text: "Hello {{name}}", Variables: map[string]any{"name": "Guest"},
+			Headers: map[string]string{},
+			To: []clients.Recipient{
+				{Address: clients.Address{Email: "alice@example.com"}, Variables: map[string]any{"name": "Alice", clients.NotificationPrefixVariable: "wrong"}},
+				{Address: clients.Address{Email: "bob@example.com"}},
+			},
+		}
+		if hosted {
+			email.TemplateID = "greeting"
+			if err := client.AddTemplate("greeting", "{{notification_prefix}}Hello {{name}}"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for index, mode := range []bool{false, true, false} {
+			suppressed.Store(mode)
+			messages, headers = nil, nil
+			email.Headers[clients.CorrelationHeader] = []string{"normal", "dry", "again"}[index]
+			result, err := client.Send(context.Background(), email)
+			if err != nil || len(result.Recipients) != 2 {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			if callbackCalls != index+1 || sendCalls != (index+1)*2 || hookCalls != sendCalls {
+				t.Fatalf("mode callbacks=%d send callbacks=%d hooks=%d", callbackCalls, sendCalls, hookCalls)
+			}
+			prefix, marker := "", ""
+			if mode {
+				marker = "true"
+				if hosted {
+					prefix = clients.DryRunSubjectPrefix
+				}
+			}
+			if !reflect.DeepEqual(messages, []string{prefix + "Hello Alice", prefix + "Hello Guest"}) || headers[0][clients.DryRunHeader] != marker || headers[1][clients.DryRunHeader] != marker {
+				t.Fatalf("messages=%v headers=%v", messages, headers)
+			}
+			verified, err := client.Verify(context.Background(), clients.VerifyRequest{CorrelationID: email.Headers[clients.CorrelationHeader], Recipient: "alice@example.com"})
+			if err != nil || !verified.Found || verified.PMUID != result.Recipients[0].PMUID {
+				t.Fatalf("verification=%+v err=%v", verified, err)
+			}
+		}
+		if email.Headers[clients.DryRunHeader] != "" || email.Subject != "Hello" || email.To[0].Variables[clients.NotificationPrefixVariable] != "wrong" {
+			t.Fatal("caller input mutated")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := client.Send(ctx, email); !errors.Is(err, context.Canceled) || callbackCalls != 3 || sendCalls != 6 {
+			t.Fatalf("cancelled send: err=%v callbacks=%d sendCalls=%d", err, callbackCalls, sendCalls)
+		}
+		client.SetDryRunCallback(nil)
+		if _, err := client.Send(context.Background(), email); err != nil || callbackCalls != 3 {
+			t.Fatalf("nil callback: err=%v callbackCalls=%d", err, callbackCalls)
+		}
 	}
 }
 

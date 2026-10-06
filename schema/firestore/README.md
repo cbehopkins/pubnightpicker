@@ -6,6 +6,12 @@ Scope:
 - Included: active production contract consumed by React and firebase_sub.
 - Excluded: rewrite-only assumptions in cellar, last_orders, and sweego_client until promoted.
 
+Exception: `config/diagnostics` is a shared React/Last Orders contract recorded
+in the manifest. Its schema applies only to that document, not every document
+in `config`. It does not introduce Python backend support or promote other
+rewrite assumptions. `SilenceNotifications` is an optional boolean, defaulting
+to false when the document or field is absent.
+
 Why this exists:
 - Firestore has no built-in central schema registry.
 - Rules, app code, and backend code can drift.

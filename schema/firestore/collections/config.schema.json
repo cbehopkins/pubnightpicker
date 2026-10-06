@@ -1,0 +1,16 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/config/diagnostics",
+    "title": "config/diagnostics",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "x-documentId": "diagnostics",
+    "description": "Global Last Orders email and push suppression, including test notifications. An absent document or field defaults to false. This does not affect the Python backend.",
+    "properties": {
+        "SilenceNotifications": {
+            "type": "boolean",
+            "default": false
+        }
+    },
+    "additionalProperties": false
+}

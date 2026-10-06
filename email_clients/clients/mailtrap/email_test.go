@@ -161,6 +161,153 @@ func TestSendHostedTemplates(t *testing.T) {
 	}
 }
 
+func TestSendSuppressionRouting(t *testing.T) {
+	for _, count := range []int{1, 2} {
+		for _, hosted := range []bool{false, true} {
+			var suppressed atomic.Bool
+			var callbackCalls, liveCalls, sandboxCalls int
+			var requests []sdk.SendRequest
+			var capturedCategory string
+			handler := func(sandbox bool) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					path := "/api/send"
+					if count > 1 {
+						path = "/api/batch"
+					}
+					if sandbox {
+						sandboxCalls++
+						path += "/123"
+					} else {
+						liveCalls++
+					}
+					if r.URL.Path != path {
+						t.Errorf("path = %s, want %s", r.URL.Path, path)
+					}
+					if count == 1 {
+						var request sdk.SendRequest
+						if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+							t.Error(err)
+						}
+						requests = []sdk.SendRequest{request}
+						_, _ = io.WriteString(w, `{"success":true,"message_ids":["uid"]}`)
+					} else {
+						var request sdk.BatchSendRequest
+						if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+							t.Error(err)
+						}
+						requests = request.Requests
+						_, _ = io.WriteString(w, `{"success":true,"responses":[{"success":true,"message_ids":["a"]},{"success":true,"message_ids":["b"]}]}`)
+					}
+					capturedCategory = requests[0].Category
+				}
+			}
+			client := newTestClient(t, handler(false))
+			client.SetDryRunCallback(func() bool {
+				callbackCalls++
+				return suppressed.Load()
+			})
+			sandbox := newTestClient(t, handler(true), sdk.WithSandbox(true), sdk.WithSandboxID(123))
+			configured, err := client.WithSandboxClient(sandbox.sdk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			configured = configured.WithSendOptions(SendOptions{Category: "Training"})
+			email := testEmail(count)
+			email.Subject = "Hi {{name}}"
+			email.Variables = map[string]any{"name": "Guest", clients.NotificationPrefixVariable: "wrong"}
+			email.To[0].Variables = map[string]any{"name": "Alice", clients.NotificationPrefixVariable: "override"}
+			email.Headers = map[string]string{clients.CorrelationHeader: "pn-1"}
+			if hosted {
+				email.Subject, email.Text, email.TemplateID = "", "", "template"
+			}
+			for index, mode := range []bool{false, true, false} {
+				suppressed.Store(mode)
+				result, err := configured.Send(context.Background(), email)
+				if err != nil || len(result.Recipients) != count {
+					t.Fatalf("result = %+v, err = %v", result, err)
+				}
+				if callbackCalls != index+1 || capturedCategory != "Training" {
+					t.Fatalf("callbackCalls=%d category=%s", callbackCalls, capturedCategory)
+				}
+				prefix := ""
+				if mode {
+					prefix = clients.DryRunSubjectPrefix
+				}
+				for recipientIndex, request := range requests {
+					if hosted {
+						if request.Subject != "" || request.TemplateVariables[clients.NotificationPrefixVariable] != prefix {
+							t.Fatalf("hosted request = %+v", request)
+						}
+					} else {
+						name := "Guest"
+						if recipientIndex == 0 {
+							name = "Alice"
+						}
+						if request.Subject != prefix+"Hi "+name {
+							t.Fatalf("subject = %q", request.Subject)
+						}
+					}
+					if request.Headers[clients.CorrelationHeader] != "pn-1" || (mode && request.Headers[clients.DryRunHeader] != "true") || (!mode && request.Headers[clients.DryRunHeader] != "") {
+						t.Fatalf("headers = %v", request.Headers)
+					}
+				}
+			}
+			if liveCalls != 2 || sandboxCalls != 1 || client.sandboxSDK != nil || email.Headers[clients.DryRunHeader] != "" || email.To[0].Variables[clients.NotificationPrefixVariable] != "override" {
+				t.Fatal("routing, clone isolation or input immutability failed")
+			}
+			configured.SetDryRunCallback(nil)
+			if _, err := configured.Send(context.Background(), email); err != nil || liveCalls != 3 {
+				t.Fatalf("nil callback: err=%v liveCalls=%d", err, liveCalls)
+			}
+		}
+	}
+}
+
+func TestSendSuppressionNeverFallsBackToLive(t *testing.T) {
+	var liveCalls, sandboxCalls atomic.Int32
+	var callbackCalls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { liveCalls.Add(1) })
+	client.SetDryRunCallback(func() bool {
+		callbackCalls.Add(1)
+		return true
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Send(ctx, testEmail(1)); !errors.Is(err, context.Canceled) || callbackCalls.Load() != 0 {
+		t.Fatalf("cancelled send: err=%v callbacks=%d", err, callbackCalls.Load())
+	}
+	if _, err := client.Send(context.Background(), testEmail(1)); !errors.Is(err, ErrSandboxNotConfigured) || liveCalls.Load() != 0 {
+		t.Fatalf("missing sandbox: err=%v calls=%d", err, liveCalls.Load())
+	}
+	if _, err := client.WithSandboxClient(nil); !errors.Is(err, ErrSandboxNotConfigured) {
+		t.Fatal(err)
+	}
+	sandbox := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		sandboxCalls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}, sdk.WithSandbox(true), sdk.WithSandboxID(123))
+	configured, err := client.WithSandboxClient(sandbox.sdk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{1, 2} {
+		if _, err := configured.Send(context.Background(), testEmail(count)); err == nil || liveCalls.Load() != 0 {
+			t.Fatalf("sandbox failure: err=%v liveCalls=%d", err, liveCalls.Load())
+		}
+	}
+	for _, subject := range []string{"", " ", "{{name}}"} {
+		email := testEmail(1)
+		email.Subject = subject
+		email.Variables = map[string]any{"name": ""}
+		if _, err := configured.Send(context.Background(), email); err == nil {
+			t.Fatalf("invalid subject %q accepted", subject)
+		}
+	}
+	if sandboxCalls.Load() != 2 {
+		t.Fatalf("invalid subjects contacted sandbox: %d requests", sandboxCalls.Load())
+	}
+}
+
 func TestSendPreflightNeverContactsProvider(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })

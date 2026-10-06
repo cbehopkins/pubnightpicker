@@ -96,6 +96,46 @@ func TestEmailSendSequenceDeliversThroughDummyClient(t *testing.T) {
 	}
 }
 
+func TestRuntimeSuppressionHandlesMissingSandboxAndTestEmails(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "suppressed.db")
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Email.Client = "mailtrap"
+	cfg.Email.MailtrapToken = "unused-token"
+	cfg.DiagnosticsSource = func(ctx context.Context, update func(bool)) error { update(true); <-ctx.Done(); return ctx.Err() }
+	a := newApp(t, cfg)
+	defer a.Close()
+	for _, token := range []string{"poll-opened:suppressed", "test-email:suppressed"} {
+		request := durableemail.SendRequest{IdempotencyToken: token, SenderEmail: "sender@example.com", Subject: "Hello", Text: "Hello", Recipients: []durableemail.SendRecipient{{Email: "alice@example.com"}}}
+		sequence, err := cellar.NewSequence(durableemail.NewSendSequence(request)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cellRequest, err := sequence.CellRequest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.AddCell(cellRequest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	db := openSQLite(t, dbPath)
+	for _, token := range []string{"poll-opened:suppressed", "test-email:suppressed"} {
+		waitForEmailStates(t, db, token, durableemail.StateAccepted, 1)
+		var pmuid string
+		var submitted sql.NullTime
+		if err := db.QueryRow(`SELECT pmuid, submitted_at FROM email_progress WHERE idempotency_token = ?`, token).Scan(&pmuid, &submitted); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(pmuid, "suppressed:") || submitted.Valid {
+			t.Fatalf("pmuid=%s submitted=%v", pmuid, submitted)
+		}
+	}
+}
+
 func TestRunRecoversInterruptedEmailSubmissionsBeforeStarting(t *testing.T) {
 	t.Parallel()
 

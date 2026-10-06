@@ -54,6 +54,45 @@ or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
 both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
+## Runtime notification suppression
+
+Admins can toggle **Silence notifications** on Diagnostics. The GUI writes
+`config/diagnostics.SilenceNotifications`, a global boolean watched by Last Orders.
+An absent document or field defaults to false. Invalid values or initial read
+failures defer email and push submission; later watch failures retain the last known value
+and retry. In-memory settings are thread-safe and selected once per attempt.
+
+When enabled, Sweego uses dry-run, Mailtrap uses its sandbox and dummy sends remain
+dummy. Suppressed emails include test emails and bypass the poll-email delivery
+allowance. The separate 10-per-day test-email request throttle is unchanged.
+
+Push suppression covers poll, chat and diagnostic pushes. Each eligible endpoint
+is marked handled using the existing `Accepted` state atomically with delivery
+cell completion, without calling the push service, consuming push tokens or
+invalidating endpoints. Follow-up actions and test-push acknowledgements still
+complete; `Accepted` and acknowledgements can therefore mean suppressed handling,
+not actual delivery. Completed suppressed pushes are not replayed when the switch
+is cleared. Existing live delivery and retry behaviour is unchanged.
+
+Optional Mailtrap settings:
+
+- `MAILTRAP_SANDBOX_ID`: positive integer sandbox inbox ID.
+- `MAILTRAP_SANDBOX_TOKEN`: sandbox token; defaults to `MAILTRAP_TOKEN` when an
+  inbox ID is configured. Credentials are never stored in Firestore.
+
+Missing sandbox configuration, provider refusals and other suppressed-send
+failures are logged and treated as handled without live fallback. Durable email
+commits synthetic `suppressed:` acceptance records before the best-effort call,
+so a crash may lose the sandbox send but cannot replay it live on restart. These
+records and test-email acknowledgements do not prove delivery. Database failures
+still prevent sending and are not ignored. Normal live recovery is unchanged.
+
+The switch requires manual clearing and does not cancel already-selected live
+sends. The old Python backend remains active. A GUI save confirms the
+Firestore write, not observation by every backend instance. Deploy canonical
+Firestore rules, updated Last Orders and then the GUI before relying on this
+feature. No initial configuration document, migration or index is required.
+
 ## Delivery rate limits
 
 Poll emails share `email.send`, defaulting to 100 recipient attempts per day.

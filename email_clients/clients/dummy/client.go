@@ -89,8 +89,11 @@ type callbackMessage struct {
 }
 
 type Client struct {
-	callback SendCallback
+	callback       SendCallback
+	dryRunCallback clients.DryRunCallback
 
+	// Hooks are only applicable for Dummy client.
+	// They are intended to be used for testing and simulation purposes only.
 	hooksMu sync.Mutex
 	hooks   []AcceptedHook
 
@@ -114,6 +117,10 @@ var _ clients.EmailVerifier = (*Client)(nil)
 
 func NewClient(callback SendCallback) *Client {
 	return &Client{callback: callback, templates: make(map[string]string)}
+}
+
+func (c *Client) SetDryRunCallback(callback clients.DryRunCallback) {
+	c.dryRunCallback = callback
 }
 
 // OnAccepted appends hook to the hooks run, in registration order, for each
@@ -155,12 +162,17 @@ func (c *Client) AddTemplate(name, source string) error {
 }
 
 func (c *Client) Send(ctx context.Context, email clients.Email) (clients.SendResult, error) {
+	if err := ctx.Err(); err != nil {
+		return clients.SendResult{}, err
+	}
 	if c.callback == nil {
 		return clients.SendResult{}, ErrNilCallback
 	}
 	if len(email.To) == 0 {
 		return clients.SendResult{}, ErrNoRecipients
 	}
+	dryRun := c.dryRunCallback != nil && c.dryRunCallback()
+	email = clients.PrepareDryRun(email, dryRun)
 
 	messages := make([]callbackMessage, 0, len(email.To))
 	for _, recipient := range email.To {

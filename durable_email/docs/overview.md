@@ -85,6 +85,29 @@ email schema or persisted guard state is required. Verification is not guarded.
 
 ---
 
+## 2.3 Best-effort submission policy
+
+An optional `SubmissionPolicy` selects an immutable provider client, delay and
+best-effort handling once per pending submission attempt. A nil selected client
+uses the registered default. Errors and negative delays fail closed; positive
+delays defer Post without touching progress or calling the provider. Ordinary
+decisions retain the existing guard, submission and recovery behaviour.
+
+Best-effort decisions bypass the submission guard. Post first commits every
+pending recipient to `Accepted`, with a synthetic `suppressed:` identifier and
+no submission timestamp, in one SQLite transaction. Only after that commit does
+it call the selected provider. Errors and malformed or partial results are
+logged and ignored. Synthetic identifiers indicate handling, not provider
+acceptance or delivery. No new table, column or persisted mode flag is needed.
+
+A failed local transaction prevents the provider call. A crash after acceptance
+may lose the best-effort provider call, but cannot replay it as an ordinary
+submission on restart. Previously uncertain ordinary sends retain normal
+verification; the policy does not reinterpret their history. Applications must
+choose a genuinely non-live client for a best-effort suppression decision.
+
+---
+
 # 3. Durable Request and Progress
 
 The durable email component maintains four related tables:

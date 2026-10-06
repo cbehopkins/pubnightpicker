@@ -36,6 +36,9 @@ const (
 
 type Options struct {
 	Client                  ClientKind
+	SilenceNotifications    func() (bool, bool)
+	MailtrapSandboxToken    string
+	MailtrapSandboxID       int64
 	Tokens                  ratelimit.TokenSource
 	Logger                  *slog.Logger
 	MailtrapToken           string
@@ -50,11 +53,13 @@ type Options struct {
 
 // Plugin adapts durable email delivery to the last_orders application.
 type Plugin struct {
-	store    *durableemail.Store
-	client   clients.EmailClient
-	verifier clients.EmailVerifier
-	tokens   ratelimit.TokenSource
-	logger   *slog.Logger
+	store                *durableemail.Store
+	client               clients.EmailClient
+	suppressedClient     clients.EmailClient
+	silenceNotifications func() (bool, bool)
+	verifier             clients.EmailVerifier
+	tokens               ratelimit.TokenSource
+	logger               *slog.Logger
 }
 
 func New(db *sql.DB, opts Options) (*Plugin, error) {
@@ -67,6 +72,7 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	}
 
 	var client clients.EmailClient
+	var suppressedClient clients.EmailClient
 	var verifier clients.EmailVerifier
 	mailtrapToken := strings.TrimSpace(opts.MailtrapToken)
 	sweegoToken := strings.TrimSpace(opts.SweegoToken)
@@ -76,7 +82,11 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	switch opts.Client {
 	case ClientDummy:
 		dummyClient := newDummyClient(logger)
+		dummyClient.SetDryRunCallback(func() bool { return false })
 		client, verifier = dummyClient, dummyClient
+		suppressedDummy := newDummyClient(logger)
+		suppressedDummy.SetDryRunCallback(func() bool { return true })
+		suppressedClient = suppressedDummy
 	case ClientMailtrap:
 		if mailtrapToken == "" {
 			return nil, fmt.Errorf("a token is required for Mailtrap")
@@ -89,10 +99,34 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 		if err != nil {
 			return nil, fmt.Errorf("init Mailtrap client: %w", err)
 		}
+		suppressedMailtrap, err := mailtrap.NewClient(sdkClient)
+		if err != nil {
+			return nil, err
+		}
+		if opts.MailtrapSandboxID < 0 {
+			return nil, fmt.Errorf("Mailtrap sandbox ID must be positive")
+		}
+		if opts.MailtrapSandboxID > 0 {
+			token := strings.TrimSpace(opts.MailtrapSandboxToken)
+			if token == "" {
+				token = mailtrapToken
+			}
+			sandboxSDK, err := sdk.NewClient(token, sdk.WithSandbox(true), sdk.WithSandboxID(opts.MailtrapSandboxID), sdk.WithHTTPClient(&http.Client{Timeout: timeout}))
+			if err != nil {
+				return nil, fmt.Errorf("init Mailtrap sandbox: %w", err)
+			}
+			suppressedMailtrap, err = suppressedMailtrap.WithSandboxClient(sandboxSDK)
+			if err != nil {
+				return nil, err
+			}
+		}
+		suppressedMailtrap.SetDryRunCallback(func() bool { return true })
+		suppressedClient = suppressedMailtrap
 		mailtrapClient, err := mailtrap.NewClient(sdkClient)
 		if err != nil {
 			return nil, fmt.Errorf("init Mailtrap client: %w", err)
 		}
+		mailtrapClient.SetDryRunCallback(func() bool { return false })
 		tolerance := opts.MailtrapVerifyTolerance
 		if tolerance <= 0 {
 			tolerance = 5 * time.Minute
@@ -113,6 +147,10 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 			timeout = 30 * time.Second
 		}
 		sweegoClient := sweego.NewClient(baseURL, token, timeout).WithSendOptions(sweego.SendOptions{Provider: provider})
+		sweegoClient.SetDryRunCallback(func() bool { return false })
+		suppressedSweego := sweego.NewClient(baseURL, token, timeout).WithSendOptions(sweego.SendOptions{Provider: provider})
+		suppressedSweego.SetDryRunCallback(func() bool { return true })
+		suppressedClient = suppressedSweego
 		tolerance := opts.SweegoVerifyTolerance
 		if tolerance <= 0 {
 			tolerance = 5 * time.Minute
@@ -128,11 +166,25 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init durable email store: %w", err)
 	}
-	return &Plugin{store: store, client: client, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
+	return &Plugin{store: store, client: client, suppressedClient: suppressedClient, silenceNotifications: opts.SilenceNotifications, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
 }
 
 func (p *Plugin) Register(runtime *cellar.Cellar) error {
-	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission})
+	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission, SubmissionPolicy: p.submissionPolicy, Logger: p.logger})
+}
+
+func (p *Plugin) submissionPolicy(_ context.Context, _ durableemail.Submission) (durableemail.SubmissionDecision, error) {
+	if p.silenceNotifications == nil {
+		return durableemail.SubmissionDecision{Client: p.client}, nil
+	}
+	silenced, known := p.silenceNotifications()
+	if !known {
+		return durableemail.SubmissionDecision{Delay: time.Second}, nil
+	}
+	if silenced {
+		return durableemail.SubmissionDecision{Client: p.suppressedClient, BestEffort: true}, nil
+	}
+	return durableemail.SubmissionDecision{Client: p.client}, nil
 }
 
 func (p *Plugin) guardSubmission(_ context.Context, submission durableemail.Submission) (time.Duration, error) {

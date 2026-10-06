@@ -23,6 +23,34 @@ func TestEmailOptionsFromEnvSelectsMailtrap(t *testing.T) {
 	}
 }
 
+func TestMailtrapSandboxOptions(t *testing.T) {
+	for _, raw := range []string{"", "123", " 123 ", "0", "-1", "bad", "1.5"} {
+		t.Run(raw, func(t *testing.T) {
+			opts, err := emailOptionsFromEnv(testLogger(), func(name string) string {
+				switch name {
+				case "MAILTRAP_TOKEN":
+					return "live-token"
+				case "MAILTRAP_SANDBOX_TOKEN":
+					return "sandbox-token"
+				case "MAILTRAP_SANDBOX_ID":
+					return raw
+				}
+				return ""
+			})
+			valid := raw == "" || raw == "123" || raw == " 123 "
+			if (err == nil) != valid {
+				t.Fatalf("options = %+v, err = %v", opts, err)
+			}
+			if valid && opts.MailtrapSandboxToken != "sandbox-token" {
+				t.Fatal("missing sandbox token")
+			}
+			if valid && raw != "" && opts.MailtrapSandboxID != 123 {
+				t.Fatal("wrong sandbox ID")
+			}
+		})
+	}
+}
+
 func TestEmailOptionsFromEnvRejectsBothProviderTokens(t *testing.T) {
 	_, err := emailOptionsFromEnv(testLogger(), func(name string) string {
 		if name == "MAILTRAP_TOKEN" || name == "SWEEGO_TOKEN" {

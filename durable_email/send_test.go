@@ -221,6 +221,102 @@ func TestPostGuardFailuresFailClosed(t *testing.T) {
 	}
 }
 
+func TestBestEffortCommitsBeforeSendAndNeverRecovers(t *testing.T) {
+	for _, outcome := range []string{"error", "malformed", "accepted"} {
+		t.Run(outcome, func(t *testing.T) {
+			db := openTestDB(t)
+			cellarStore, err := cellarsqlite.NewStore(db, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewStore(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := SendRequest{IdempotencyToken: "silenced", Recipients: []SendRecipient{{Email: "alice@example.com"}, {Email: "bob@example.com"}}}
+			if err := applySetup(t, cellarStore, store, request); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			client := sendClientFunc(func(_ context.Context, email clients.Email) (clients.SendResult, error) {
+				calls++
+				for _, recipient := range request.Recipients {
+					state, pmuid, submitted := progressRow(t, db, request.IdempotencyToken, recipient.Email)
+					if state != StateAccepted || !pmuid.Valid || pmuid.String == "" || submitted.Valid {
+						t.Fatalf("not committed before send: %s, %v, %v", state, pmuid, submitted)
+					}
+				}
+				if outcome == "error" {
+					return clients.SendResult{}, errors.New("sandbox refused")
+				}
+				if outcome == "malformed" {
+					return clients.SendResult{}, nil
+				}
+				return clients.SendResult{Recipients: []clients.RecipientResult{{PMUID: "a"}, {PMUID: "b"}}}, nil
+			})
+			handler := PostHandler{Store: store, Client: client, Guard: func(context.Context, Submission) (time.Duration, error) {
+				t.Fatal("best-effort consumed live quota")
+				return 0, nil
+			}, Policy: func(context.Context, Submission) (SubmissionDecision, error) {
+				return SubmissionDecision{Client: client, BestEffort: true}, nil
+			}}
+			if result := handler.Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken}); result == nil {
+				t.Fatal("nil result")
+			} else if _, ok := result.(cellar.Complete); !ok {
+				t.Fatalf("result = %#v", result)
+			}
+			if err := store.RecoverSubmissions(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			live := PostHandler{Store: store, Client: sendClientFunc(func(context.Context, clients.Email) (clients.SendResult, error) {
+				t.Fatal("replayed suppressed attempt live")
+				return clients.SendResult{}, nil
+			})}
+			if _, ok := live.Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken}).(cellar.Complete); !ok {
+				t.Fatal("not terminal after restart")
+			}
+			if calls != 1 {
+				t.Fatalf("calls = %d", calls)
+			}
+		})
+	}
+}
+
+func TestBestEffortPersistenceFailurePreventsSend(t *testing.T) {
+	db := openTestDB(t)
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SendRequest{IdempotencyToken: "blocked", Recipients: []SendRecipient{{Email: "alice@example.com"}, {Email: "bob@example.com"}}}
+	if err := applySetup(t, cellarStore, store, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_acceptance BEFORE UPDATE ON email_progress WHEN NEW.recipient = 'bob@example.com' BEGIN SELECT RAISE(ABORT, 'write failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	client := sendClientFunc(func(context.Context, clients.Email) (clients.SendResult, error) {
+		t.Fatal("provider called before persistence succeeded")
+		return clients.SendResult{}, nil
+	})
+	result := (PostHandler{Store: store, Client: client, Policy: func(context.Context, Submission) (SubmissionDecision, error) {
+		return SubmissionDecision{BestEffort: true}, nil
+	}}).Handle(context.Background(), operationRequest{IdempotencyToken: request.IdempotencyToken})
+	if _, ok := result.(cellar.ErrorResult); !ok {
+		t.Fatalf("result = %#v", result)
+	}
+	for _, recipient := range request.Recipients {
+		state, pmuid, submitted := progressRow(t, db, request.IdempotencyToken, recipient.Email)
+		if state != StatePending || pmuid.Valid || submitted.Valid {
+			t.Fatalf("partial acceptance survived rollback: %s, %v, %v", state, pmuid, submitted)
+		}
+	}
+}
+
 func TestSendSequenceWithMailtrap(t *testing.T) {
 	var calls atomic.Int32
 	var sent sdk.BatchSendRequest

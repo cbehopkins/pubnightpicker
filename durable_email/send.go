@@ -3,6 +3,7 @@ package durableemail
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"time"
 
@@ -68,8 +69,18 @@ type Submission struct {
 // SubmissionGuard permits a submission, defers it by a positive delay, or fails closed.
 type SubmissionGuard func(context.Context, Submission) (time.Duration, error)
 
+type SubmissionDecision struct {
+	Client     clients.EmailClient
+	BestEffort bool
+	Delay      time.Duration
+}
+
+type SubmissionPolicy func(context.Context, Submission) (SubmissionDecision, error)
+
 type RegisterOptions struct {
-	SubmissionGuard SubmissionGuard
+	SubmissionGuard  SubmissionGuard
+	SubmissionPolicy SubmissionPolicy
+	Logger           *slog.Logger
 }
 
 // Register binds every durable email handler to runtime; call before Cellar.Start.
@@ -80,9 +91,9 @@ func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, 
 	if len(options) > 1 {
 		return fmt.Errorf("at most one durable email registration option set is allowed")
 	}
-	var guard SubmissionGuard
+	var opts RegisterOptions
 	if len(options) == 1 {
-		guard = options[0].SubmissionGuard
+		opts = options[0]
 	}
 	if err := runtime.Register(HandlerSetup, SetupHandler{Store: store}); err != nil {
 		return err
@@ -97,7 +108,7 @@ func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, 
 	if err := fanout.Register(runtime); err != nil {
 		return err
 	}
-	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client, Guard: guard}); err != nil {
+	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client, Guard: opts.SubmissionGuard, Policy: opts.SubmissionPolicy, Logger: opts.Logger}); err != nil {
 		return err
 	}
 	return runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier})
@@ -195,6 +206,8 @@ type PostHandler struct {
 	Store  *Store
 	Client clients.EmailClient
 	Guard  SubmissionGuard
+	Policy SubmissionPolicy
+	Logger *slog.Logger
 }
 
 func (h PostHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
@@ -218,8 +231,26 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		return cellar.ErrorResult{Message: "read durable email request", Err: err}
 	}
 
-	if h.Guard != nil {
-		delay, err := h.Guard(ctx, Submission{IdempotencyToken: request.IdempotencyToken, RecipientCount: len(pending)})
+	submission := Submission{IdempotencyToken: request.IdempotencyToken, RecipientCount: len(pending)}
+	decision := SubmissionDecision{Client: h.Client}
+	if h.Policy != nil {
+		decision, err = h.Policy(ctx, submission)
+		if err != nil {
+			return cellar.ErrorResult{Message: "select email submission policy", Err: err}
+		}
+		if decision.Client == nil {
+			decision.Client = h.Client
+		}
+	}
+	if decision.Delay < 0 {
+		return cellar.ErrorResult{Message: "email submission policy returned a negative delay"}
+	}
+	if decision.Delay > 0 {
+		notBefore := time.Now().UTC().Add(decision.Delay)
+		return cellar.Retry{NotBefore: &notBefore}
+	}
+	if !decision.BestEffort && h.Guard != nil {
+		delay, err := h.Guard(ctx, submission)
 		if err != nil {
 			return cellar.ErrorResult{Message: "guard email submission", Err: err}
 		}
@@ -232,12 +263,41 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		}
 	}
 
+	if decision.BestEffort {
+		if err := h.Store.acceptBestEffort(ctx, request.IdempotencyToken, common.messageID, pending); err != nil {
+			return cellar.ErrorResult{Message: "record best-effort acceptance", Err: err}
+		}
+		result, sendErr := decision.Client.Send(ctx, newEmail(common, pending))
+		if sendErr == nil {
+			if len(result.Recipients) != len(pending) {
+				sendErr = fmt.Errorf("best-effort send returned %d results for %d recipients", len(result.Recipients), len(pending))
+			} else {
+				for _, recipient := range result.Recipients {
+					if recipient.PMUID == "" {
+						sendErr = fmt.Errorf("best-effort send returned an empty provider identifier")
+						break
+					}
+				}
+			}
+		}
+		logger := h.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		if sendErr != nil {
+			logger.Warn("best-effort email failed; already handled without retry", "idempotency_token", request.IdempotencyToken, "err", sendErr)
+		} else {
+			logger.Info("best-effort email handled", "idempotency_token", request.IdempotencyToken, "recipient_count", len(pending))
+		}
+		return cellar.Complete{}
+	}
+
 	// Recorded first so an interruption after the provider call remains verifiable.
 	if err := h.Store.markSubmitted(ctx, request.IdempotencyToken, time.Now().UTC()); err != nil {
 		return cellar.ErrorResult{Message: "record submission time", Err: err}
 	}
 
-	result, err := h.Client.Send(ctx, newEmail(common, pending))
+	result, err := decision.Client.Send(ctx, newEmail(common, pending))
 	if err != nil {
 		return cellar.RetrySequence{ApplicationWork: []cellar.ApplicationWork{h.Store.recoverWork(request.IdempotencyToken)}}
 	}

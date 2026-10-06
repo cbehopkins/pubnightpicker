@@ -192,6 +192,14 @@ service cloud.firestore {
         && (!("restaurantTime" in request.resource.data) || request.resource.data.restaurantTime is string || request.resource.data.restaurantTime == null);
     }
     
+    match /config/diagnostics {
+      allow get: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(["SilenceNotifications"])
+        && (!('SilenceNotifications' in request.resource.data)
+          || request.resource.data.SilenceNotifications is bool);
+    }
+
     // Polls collection - read for all, update for canAddPubToPoll/canCompletePoll, create/delete for canCreatePoll
     match /polls/{poll} {
       allow read: if true;

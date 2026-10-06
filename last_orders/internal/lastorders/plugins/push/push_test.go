@@ -182,6 +182,78 @@ type deliveryTokens struct {
 func (source *deliveryTokens) Acquire() int                    { source.calls++; return source.wait }
 func (source *deliveryTokens) AcquireN(count int) (int, error) { return source.Acquire(), nil }
 
+func TestSuppressedPushIsHandledWithoutQuotaInvalidationOrReplay(t *testing.T) {
+	sender := &fakeSender{status: http.StatusGone}
+	invalidator := &fakeInvalidator{}
+	plugin := newTestPlugin(t, sender, invalidator)
+	tokens := &deliveryTokens{wait: 86400}
+	plugin.tokens = tokens
+	silenced := true
+	plugin.silenceNotifications = func() (bool, bool) { return silenced, true }
+	population := populate(t, plugin)
+	for _, cell := range population.NewCells[:2] {
+		var request deliveryRequest
+		if err := decode(cell.Steps[0].Payload, &request); err != nil {
+			t.Fatal(err)
+		}
+		result, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Complete)
+		if !ok {
+			t.Fatal("suppressed delivery did not complete")
+		}
+		applyWork(t, plugin.db, result.ApplicationWork)
+	}
+	if sender.sent != 0 || tokens.calls != 0 || len(invalidator.invalidated) != 0 {
+		t.Fatal("suppression invoked live side effects")
+	}
+	accepted, err := plugin.Accepted(context.Background(), "n1")
+	if err != nil || accepted != 2 {
+		t.Fatalf("handled deliveries = %d, %v", accepted, err)
+	}
+	if _, ok := (waitHandler{plugin: plugin}).Handle(context.Background(), waitRequest{NotificationID: "n1"}).(cellar.Complete); !ok {
+		t.Fatal("suppressed deliveries blocked follow-up")
+	}
+	silenced = false
+	request := firstDelivery(t, population)
+	if _, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Complete); !ok {
+		t.Fatal("terminal delivery replayed")
+	}
+	if sender.sent != 0 || tokens.calls != 0 {
+		t.Fatal("unsilencing replayed handled push")
+	}
+	var attempts int
+	if err := plugin.db.QueryRow(`SELECT SUM(attempts) FROM push_deliveries`).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("attempts = %d, %v", attempts, err)
+	}
+}
+
+func TestPushUnknownConfigurationDefersAndResumesLive(t *testing.T) {
+	sender := &fakeSender{status: http.StatusCreated}
+	plugin := newTestPlugin(t, sender, &fakeInvalidator{})
+	tokens := &deliveryTokens{}
+	plugin.tokens = tokens
+	known := false
+	plugin.silenceNotifications = func() (bool, bool) { return false, known }
+	request := firstDelivery(t, populate(t, plugin))
+	request.ExpiresAt = time.Now().Add(100 * time.Millisecond)
+	result, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry)
+	if !ok || result.NotBefore == nil || result.NotBefore.After(request.ExpiresAt) || len(result.ApplicationWork) != 0 {
+		t.Fatalf("unknown configuration result = %#v", result)
+	}
+	if sender.sent != 0 || tokens.calls != 0 || deliveryState(t, plugin, "alice") != StatePending {
+		t.Fatal("unknown configuration submitted push")
+	}
+	known = true
+	request.ExpiresAt = time.Now().Add(time.Hour)
+	complete, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Complete)
+	if !ok {
+		t.Fatal("live push did not complete")
+	}
+	applyWork(t, plugin.db, complete.ApplicationWork)
+	if sender.sent != 1 || tokens.calls != 1 || deliveryState(t, plugin, "alice") != StateAccepted {
+		t.Fatal("live sending did not resume")
+	}
+}
+
 func TestDeliverRateLimitDefersWithoutAttemptOrInvalidation(t *testing.T) {
 	for _, wait := range []int{30, 86400} {
 		t.Run(time.Duration(wait).String(), func(t *testing.T) {

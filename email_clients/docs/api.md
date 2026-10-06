@@ -101,6 +101,58 @@ type EmailClient interface {
 }
 ```
 
+### Temporary suppression
+
+Every concrete client additionally provides:
+
+```go
+type DryRunCallback func() bool
+
+func (c *Client) SetDryRunCallback(callback clients.DryRunCallback)
+```
+
+This does not change `EmailClient`, `SendResult` or verification contracts.
+Register the callback before concurrent use; it must safely read application
+state, for example through `sync/atomic.Bool`. Do not replace the callback
+during concurrent sends. Nil or false preserves normal configured behaviour;
+true suppresses delivery using Sweego dry-run, Mailtrap sandbox or dummy
+simulation. An explicitly enabled Sweego dry-run cannot be disabled by the
+callback. Each valid submission evaluates it once before preparing recipients;
+all recipients use that snapshot even if application state changes mid-send.
+
+Cancelled contexts fail before evaluating the callback. Suppression does not
+skip validation, simulate successful production delivery or introduce retries.
+Sweego and Mailtrap still perform at most one provider request.
+
+`clients.PrepareDryRun` prepares a copied email using an already captured mode.
+Suppressed sends carry `clients.DryRunHeader` (`X-Dry-Run`) with value `true` and
+prefix non-empty subjects with `clients.DryRunSubjectPrefix` (`[DRY-RUN] `),
+without duplicating an existing prefix. Mailtrap raw subjects are prefixed after
+rendering and validation. The header and subject marker are metadata, not the
+mechanisms that prevent delivery. Caller-owned content and maps are unchanged.
+
+Hosted templates receive `clients.NotificationPrefixVariable`
+(`notification_prefix`), set to the prefix when suppressed and empty otherwise.
+This is reserved client metadata and overrides any common or recipient value.
+Hosted subjects should use `{{notification_prefix}}` before their usual content.
+Template updates and sandbox template availability remain the caller's
+responsibility. Mailtrap hosted `Subject` and `Text` remain empty. Dummy retains
+its existing body/headers callback API and does not expose subjects through it.
+
+Mailtrap additionally offers
+`WithSandboxClient(*sdk.Client) (*mailtrap.Client, error)`, returning a clone
+configured with a second SDK instance. The caller must construct it using
+`sdk.WithSandbox(true)` and `sdk.WithSandboxID(positiveID)`; the SDK's private
+mode cannot be inspected by the adapter. Suppression without that instance
+returns `mailtrap.ErrSandboxNotConfigured` without sending. A sandbox error
+never falls back to production. SDK selection applies equally to single and
+batch requests and preserves partial-result semantics.
+
+Dummy still invokes its simulation callback, accepted hooks and local records
+in suppression mode. Existing verifier APIs are unchanged: Mailtrap production
+logs cannot verify sandbox captures, and Sweego dry-run log visibility is not
+guaranteed. Suppressed acceptance must not be treated as proof of delivery.
+
 ### One Send = at most one provider request
 
 A single invocation of `Send` represents one logical email operation and may result in **at most one external provider request**.

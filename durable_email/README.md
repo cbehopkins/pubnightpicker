@@ -19,6 +19,20 @@ startup, while no email workers are running. This marks interrupted submissions
 for verification before any recipient can be submitted again. The normative
 design is in `docs/overview.md`.
 
+## Best-effort submissions
+
+`RegisterOptions.SubmissionPolicy` can select a provider client and best-effort
+handling once per attempt. Without it, existing durable submission and recovery
+behaviour is unchanged. Delays and errors fail closed before submission.
+
+Best-effort handling bypasses `SubmissionGuard` and atomically marks all pending
+recipients `Accepted` before contacting the provider. Their `suppressed:` PMUIDs
+are synthetic handling identifiers, not proof of provider acceptance or delivery.
+Provider failures, refusals and malformed results are logged through the optional
+`Logger` and never retried. A restart cannot replay a precommitted best-effort
+attempt live; the diagnostic send may instead be lost. Local persistence failures
+are not ignored. See `docs/overview.md` for the policy contract.
+
 ## Delivery events
 
 An authenticated Sweego webhook adapter can call

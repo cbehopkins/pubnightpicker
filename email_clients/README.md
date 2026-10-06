@@ -26,6 +26,84 @@ the provider-neutral client API.
   dummy and Mailtrap raw-text sends.
 - `examples` contains runnable request documents and template sources.
 
+## Temporary notification suppression
+
+All three clients support `SetDryRunCallback(clients.DryRunCallback)`, where
+`DryRunCallback` is `func() bool`. Configure the callback before concurrent use;
+do not replace it while sends are running. The application owns the toggle:
+
+```go
+var notificationsSuppressed atomic.Bool
+client.SetDryRunCallback(notificationsSuppressed.Load)
+
+notificationsSuppressed.Store(true)
+result, err := client.Send(ctx, email)
+notificationsSuppressed.Store(false)
+```
+
+Here `atomic` is `sync/atomic`. In a GUI, its event handler updates the boolean;
+there is no GUI dependency in the clients. Each `Send` samples the callback once,
+so a change affects the next submission, not a batch already in progress. A nil
+callback or false result preserves the configured sending behaviour. Explicit
+Sweego `SendOptions.DryRun` remains enabled regardless of the callback.
+
+When true, Sweego sends its JSON `dry-run` flag and Mailtrap uses its configured
+sandbox SDK instance. These modes still contact provider APIs and can fail;
+they are not offline mocks. Dummy continues invoking its simulation callback
+and accepted hooks, including local verification records.
+
+Suppressed sends add the custom email header `X-Dry-Run: true` and prefix raw
+subjects with `[DRY-RUN] `. Headers alone do not prevent delivery. Caller-owned
+emails, maps and recipient variables are not changed. Dummy's existing callback
+does not expose a subject; it exposes the header and rendered message instead.
+
+Hosted templates receive the reserved `notification_prefix` variable, empty
+normally and `[DRY-RUN] ` when suppressed. Recipient variables cannot override
+it. Update hosted subjects separately, for example:
+
+```text
+{{notification_prefix}}Pub night for {{name}}
+```
+
+Mailtrap hosted sends must still leave `Subject` and `Text` empty. Configure the
+hosted template in the relevant provider/sandbox environment and deploy the
+template and client updates together. Existing raw examples need no changes.
+The clients do not edit remote templates automatically.
+
+### Mailtrap switching
+
+Supply a second SDK client with sandbox routing, a positive inbox ID and a token
+that can access that inbox:
+
+```go
+sandboxSDK, err := sdk.NewClient(sandboxToken,
+  sdk.WithSandbox(true),
+  sdk.WithSandboxID(sandboxID),
+  sdk.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}),
+)
+if err != nil {
+  return err
+}
+client, err = client.WithSandboxClient(sandboxSDK)
+if err != nil {
+  return err
+}
+client.SetDryRunCallback(notificationsSuppressed.Load)
+```
+
+This extends the normal Mailtrap configuration below. `WithSandboxClient`
+returns a clone, like `WithSendOptions`, preserving both callback and options.
+The SDK does not expose its routing configuration: the caller must supply a
+genuinely sandbox-configured instance, not another production client. Without
+that instance, suppression returns `mailtrap.ErrSandboxNotConfigured` before
+any provider request. Sandbox errors never trigger a live fallback.
+
+A nil/false callback does not turn an already sandbox-configured normal SDK
+instance into a live client. Likewise, sandbox or dry-run message IDs are not
+evidence of real delivery. Mailtrap's production verifier does not inspect
+sandbox captures; Sweego dry-run log visibility must not be assumed. No
+production recovery behaviour is changed by this feature.
+
 ## Mailtrap client
 
 Mailtrap uses the official `github.com/mailtrap/mailtrap-go` SDK, pinned to
