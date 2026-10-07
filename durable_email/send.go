@@ -292,7 +292,6 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 	return cellar.Complete{ApplicationWork: work}
 }
 
-
 // bestEffortPost handles the email submission in a best-effort manner, recording acceptance and sending the email without retrying on failure.
 // Useful for when we have notifications disabled
 func (h PostHandler) bestEffortPost(ctx context.Context, request operationRequest, common durableRequest, pending []durableRecipient, decision SubmissionDecision) cellar.Result {
