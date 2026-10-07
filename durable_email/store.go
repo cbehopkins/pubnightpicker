@@ -392,6 +392,7 @@ func (s *Store) insertRequestWork(request SendRequest) (cellar.ApplicationWork, 
 
 func sameJSON(first, second string) bool {
 	var firstValue, secondValue any
+	// FIXME: Can we remove this use of reflect?
 	return json.Unmarshal([]byte(first), &firstValue) == nil &&
 		json.Unmarshal([]byte(second), &secondValue) == nil &&
 		reflect.DeepEqual(firstValue, secondValue)
@@ -449,6 +450,8 @@ func (s *Store) pendingRecipients(ctx context.Context, token string) ([]durableR
 	return pending, rows.Err()
 }
 
+// acceptBestEffort records the acceptance of all pending recipients without retrying on failure.
+// Useful for when we have notifications disabled.
 func (s *Store) acceptBestEffort(ctx context.Context, token, messageID string, pending []durableRecipient) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

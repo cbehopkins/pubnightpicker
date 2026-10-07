@@ -1,5 +1,8 @@
 package diagnosticsconfig
 
+// diagnosticsconfig provides a service for managing and observing diagnostics-related configuration settings.
+// That is things like silencing notifications globally while we are in teaching/testing phases.
+
 import (
 	"context"
 	"fmt"

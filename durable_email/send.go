@@ -266,32 +266,7 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 	}
 
 	if decision.BestEffort {
-		if err := h.Store.acceptBestEffort(ctx, request.IdempotencyToken, common.messageID, pending); err != nil {
-			return cellar.ErrorResult{Message: "record best-effort acceptance", Err: err}
-		}
-		result, sendErr := decision.Client.Send(ctx, newEmail(common, pending))
-		if sendErr == nil {
-			if len(result.Recipients) != len(pending) {
-				sendErr = fmt.Errorf("best-effort send returned %d results for %d recipients", len(result.Recipients), len(pending))
-			} else {
-				for _, recipient := range result.Recipients {
-					if recipient.PMUID == "" {
-						sendErr = fmt.Errorf("best-effort send returned an empty provider identifier")
-						break
-					}
-				}
-			}
-		}
-		logger := h.Logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		if sendErr != nil {
-			logger.Warn("best-effort email failed; already handled without retry", "idempotency_token", request.IdempotencyToken, "err", sendErr)
-		} else {
-			logger.Info("best-effort email handled", "idempotency_token", request.IdempotencyToken, "recipient_count", len(pending))
-		}
-		return cellar.Complete{}
+		return h.bestEffortPost(ctx, request, common, pending, decision)
 	}
 
 	// Recorded first so an interruption after the provider call remains verifiable.
@@ -315,6 +290,38 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		work = append(work, h.Store.acceptWork(request.IdempotencyToken, recipient.email, result.Recipients[index].PMUID))
 	}
 	return cellar.Complete{ApplicationWork: work}
+}
+
+
+// bestEffortPost handles the email submission in a best-effort manner, recording acceptance and sending the email without retrying on failure.
+// Useful for when we have notifications disabled
+func (h PostHandler) bestEffortPost(ctx context.Context, request operationRequest, common durableRequest, pending []durableRecipient, decision SubmissionDecision) cellar.Result {
+	if err := h.Store.acceptBestEffort(ctx, request.IdempotencyToken, common.messageID, pending); err != nil {
+		return cellar.ErrorResult{Message: "record best-effort acceptance", Err: err}
+	}
+	result, sendErr := decision.Client.Send(ctx, newEmail(common, pending))
+	if sendErr == nil {
+		if len(result.Recipients) != len(pending) {
+			sendErr = fmt.Errorf("best-effort send returned %d results for %d recipients", len(result.Recipients), len(pending))
+		} else {
+			for _, recipient := range result.Recipients {
+				if recipient.PMUID == "" {
+					sendErr = fmt.Errorf("best-effort send returned an empty provider identifier")
+					break
+				}
+			}
+		}
+	}
+	logger := h.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if sendErr != nil {
+		logger.Warn("best-effort email failed; already handled without retry", "idempotency_token", request.IdempotencyToken, "err", sendErr)
+	} else {
+		logger.Info("best-effort email handled", "idempotency_token", request.IdempotencyToken, "recipient_count", len(pending))
+	}
+	return cellar.Complete{}
 }
 
 // newEmail rebuilds the provider-neutral request for all pending recipients.
