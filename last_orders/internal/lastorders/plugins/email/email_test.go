@@ -481,10 +481,39 @@ func TestSuppressedDummyLogsDryRunAndProviderSelection(t *testing.T) {
 	if _, err := runtime.AddSequence(durableemail.NewSendSequence(request)...); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if err := runtime.Start(ctx); err != nil {
-		t.Fatal(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = runtime.Start(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		active, err := store.ListActive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) == 0 {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatalf("runtime stopped before email sequence completed: %v; active = %+v", runErr, active)
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for email sequence to complete: active = %+v", active)
+		case <-ticker.C:
+		}
+	}
+	cancel()
+	<-done
+	if runErr != nil {
+		t.Fatal(runErr)
 	}
 	for _, want := range []string{`"client":"dummy"`, `"mode":"dummy-dry-run"`, `"msg":"dummy email suppressed (dry-run)"`, `"dry_run":true`} {
 		if !strings.Contains(output.String(), want) {
