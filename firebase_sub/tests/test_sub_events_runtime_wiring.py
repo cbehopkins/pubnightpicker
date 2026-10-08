@@ -30,6 +30,9 @@ class _FakeEventProducer:
     def build_admin_delete_request_manager(self):
         return nullcontext()
 
+    def build_test_email_request_manager(self):
+        return nullcontext()
+
     def build_new_poll_manager(self):
         return nullcontext()
 

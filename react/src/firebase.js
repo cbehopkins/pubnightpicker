@@ -122,12 +122,12 @@ export async function addUserDoc(uid, name, authProvider, email) {
 }
 
 const signInWithGoogle = async () => {
-  if (useFirebaseEmulators) {
-    notifyError(
-      "Google sign-in is disabled while Firebase Auth emulator is enabled. Use email/password locally, or set VITE_USE_FIREBASE_EMULATORS=false to test against your Firebase project.",
-    );
-    return;
-  }
+  // if (useFirebaseEmulators) {
+  //   notifyError(
+  //     "Google sign-in is disabled while Firebase Auth emulator is enabled. Use email/password locally, or set VITE_USE_FIREBASE_EMULATORS=false to test against your Firebase project.",
+  //   );
+  //   return;
+  // }
 
   try {
     const res = await signInWithPopup(auth, googleProvider);

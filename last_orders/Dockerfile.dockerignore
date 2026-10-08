@@ -1,0 +1,8 @@
+*
+!cellar
+!durable_email
+!email_clients
+!last_orders
+**/*.db
+**/*.db-*
+**/.vscode

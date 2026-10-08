@@ -1,0 +1,14 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/roles",
+    "title": "roles/{roleName}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "description": "Map of uid to true indicating role membership.",
+    "propertyNames": {
+        "type": "string"
+    },
+    "additionalProperties": {
+        "type": "boolean"
+    }
+}

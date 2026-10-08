@@ -1,5 +1,7 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -50,6 +52,63 @@ class _FakeDb:
 
     def collection(self, name: str):
         return _FakeCollection(self.store, (name,))
+
+
+@pytest.mark.parametrize("apply_changes", [False, True])
+def test_reactivate_push_endpoints_only_changes_explicit_false(
+    monkeypatch, apply_changes
+):
+    import firebase_sub.cli.bootstrap as module
+
+    payloads = [
+        {"active": False, "disabledAt": "old", "lastSeenAt": "old"},
+        {"active": True},
+        {},
+        {"active": None},
+        {"active": 0},
+        {"active": "false"},
+    ]
+    documents = []
+    for index, payload in enumerate(payloads):
+        document = MagicMock()
+        document.to_dict.return_value = payload
+        document.reference.path = f"users/u1/push_endpoints/ep-{index}"
+        documents.append(document)
+    db = MagicMock()
+    db.project = "test-project"
+    db.collection_group.return_value.stream.return_value = documents
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    arguments = ["reactivate-push-endpoints"]
+    if apply_changes:
+        arguments.append("--apply")
+    result = CliRunner().invoke(module.cli, arguments)
+
+    assert result.exit_code == 0, result.output
+    db.collection_group.assert_called_once_with("push_endpoints")
+    assert "Project: test-project" in result.output
+    assert "1 push endpoint(s)." in result.output
+    assert "users/u1/push_endpoints/ep-0" in result.output
+    if apply_changes:
+        documents[0].reference.update.assert_called_once_with({"active": True})
+    else:
+        documents[0].reference.update.assert_not_called()
+        assert "Preview only" in result.output
+    for document in documents[1:]:
+        document.reference.update.assert_not_called()
+
+
+def test_reactivate_push_endpoints_handles_empty_collection(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    db = MagicMock()
+    db.collection_group.return_value.stream.return_value = []
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(module.cli, ["reactivate-push-endpoints", "--apply"])
+
+    assert result.exit_code == 0, result.output
+    assert "Reactivated 0 push endpoint(s)." in result.output
 
 
 def test_resolve_emulator_project_id_uses_cred_project_id(monkeypatch, tmp_path):

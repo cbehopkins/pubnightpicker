@@ -22,7 +22,6 @@ def test_next_occurrence_weekly_finds_next_matching_weekday():
     assert next_occurrence(
         {
             "frequency": "weekly",
-            "start_date": "2026-05-04",
             "weekdays": [Weekday.WEDNESDAY],
         },
         date(2026, 5, 14),
@@ -35,7 +34,6 @@ def test_next_occurrence_monthly_last_wednesday():
             "frequency": "monthly",
             "weekday": Weekday.WEDNESDAY,
             "nth": -1,
-            "start_date": "2026-05-01",
         },
         date(2026, 5, 14),
     ) == date(2026, 5, 27)
@@ -55,7 +53,6 @@ def test_next_occurrence_yearly_third_wednesday_after_2026_occurrence():
             "month": 5,
             "weekday": Weekday.WEDNESDAY,
             "nth": 3,
-            "start_date": "2026-05-01",
         },
         date(2026, 5, 21),
     ) == date(2027, 5, 19)
@@ -79,7 +76,6 @@ def test_materialized_next_occurrence_recomputes_non_matching_future_value():
         "month": 5,
         "weekday": Weekday.WEDNESDAY,
         "nth": 3,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_date(
         recurrence,
@@ -94,7 +90,6 @@ def test_materialized_next_occurrence_advances_when_week_is_complete():
         "month": 5,
         "weekday": Weekday.WEDNESDAY,
         "nth": 3,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_date(
         recurrence,
@@ -108,7 +103,6 @@ def test_materialized_next_occurrence_keeps_same_week_future_date():
         "frequency": "yearly",
         "month": 5,
         "month_day": 20,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_date(
         recurrence,
@@ -122,7 +116,6 @@ def test_materialized_next_occurrence_keeps_today_date():
         "frequency": "yearly",
         "month": 5,
         "month_day": 20,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_date(
         recurrence,
@@ -137,7 +130,6 @@ def test_materialized_next_occurrence_keeps_valid_future_value():
         "month": 5,
         "weekday": Weekday.WEDNESDAY,
         "nth": 3,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_date(
         recurrence,
@@ -178,7 +170,6 @@ def test_materialized_next_occurrence_iso_state_rejects_non_matching_stored_date
         "month": 5,
         "weekday": Weekday.WEDNESDAY,
         "nth": 3,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_iso_state(
         recurrence,
@@ -193,7 +184,6 @@ def test_materialized_next_occurrence_iso_state_yearly_third_thursday():
         "month": 5,
         "weekday": Weekday.THURSDAY,
         "nth": 3,
-        "start_date": "2026-05-01",
     }
     assert materialized_next_occurrence_iso_state(
         recurrence,

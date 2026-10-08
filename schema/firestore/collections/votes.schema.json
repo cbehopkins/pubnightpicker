@@ -1,0 +1,16 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/votes",
+    "title": "votes/{pollId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "propertyNames": {
+        "type": "string"
+    },
+    "additionalProperties": {
+        "type": "array",
+        "items": {
+            "type": "string"
+        }
+    }
+}

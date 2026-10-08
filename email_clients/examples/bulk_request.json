@@ -1,0 +1,21 @@
+{
+    "template": "ea86712f-bb31-4e3c-9010-a0dd5ba661dc",
+    "subject": "Hello",
+    "from": "Me <chris@email.cbeh.uk>",
+    "targets": [
+        {
+            "dest": "test1@cbeh.uk",
+            "vars": {
+                "name": "Test User",
+                "date": "Friday"
+            }
+        },
+        {
+            "dest": "test2@cbeh.uk",
+            "vars": {
+                "name": "Another User",
+                "date": "Saturday"
+            }
+        }
+    ]
+}

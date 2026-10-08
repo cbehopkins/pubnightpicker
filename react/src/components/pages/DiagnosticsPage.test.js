@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -51,6 +51,18 @@ vi.mock("../../firebase", () => ({
     db: {},
 }));
 
+vi.mock("react-redux", () => ({
+    useSelector: (select) => select({ auth: { uid: null } }),
+}));
+
+vi.mock("../ProtectedRoute", () => ({
+    default: (Component) => Component,
+}));
+
+vi.mock("../UI/BackendPingPanel", () => ({
+    default: () => <section aria-label="Last Orders API">Last Orders API</section>,
+}));
+
 vi.mock("../../hooks/usePolls", () => ({
     default: usePollsMock,
 }));
@@ -59,7 +71,104 @@ vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
     default: useAutopopulateVenueSelectorMock,
 }));
 
-import { AutopopulateCandidateListsPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+const { watchSilenceMock, setSilenceMock } = vi.hoisted(() => ({ watchSilenceMock: vi.fn(() => () => { }), setSilenceMock: vi.fn() }));
+
+vi.mock("../../dbtools/diagnosticsConfig", () => ({
+    DEFAULT_NOTIFICATION_SETTINGS: { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false },
+    watchNotificationSettings: watchSilenceMock,
+    setNotificationSetting: setSilenceMock,
+}));
+
+import DiagnosticsPage, { AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+
+describe("EmailSuppressionPanel", () => {
+    const defaults = { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false };
+    const mainCheckbox = () => screen.getByRole("checkbox", { name: "Silence notifications" });
+    beforeEach(() => {
+        watchSilenceMock.mockReset();
+        watchSilenceMock.mockImplementation((onValue) => { onValue(defaults); return () => { }; });
+        setSilenceMock.mockReset();
+        setSilenceMock.mockResolvedValue(undefined);
+    });
+    afterEach(() => cleanup());
+
+    it("shows loading and cleans up its subscription", () => {
+        const unsubscribe = vi.fn();
+        watchSilenceMock.mockImplementation(() => unsubscribe);
+        const { unmount } = render(<EmailSuppressionPanel />);
+        expect(mainCheckbox()).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("Loading");
+        unmount();
+        expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("writes both directions and follows subscription changes", async () => {
+        let deliver;
+        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue(defaults); return () => { }; });
+        render(<EmailSuppressionPanel />);
+        fireEvent.click(mainCheckbox());
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("SilenceNotifications", true));
+        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
+        act(() => deliver({ ...defaults, SilenceNotifications: true }));
+        expect(mainCheckbox()).toBeChecked();
+        expect(screen.getByRole("status")).toHaveTextContent("Test notifications remain silenced");
+        expect(screen.getByRole("checkbox", { name: "Silence notifications" })).toBeChecked();
+        expect(screen.getByText("Test notification acknowledgements confirm handling, not live delivery.")).toBeTruthy();
+        fireEvent.click(mainCheckbox());
+        await waitFor(() => expect(setSilenceMock).toHaveBeenLastCalledWith("SilenceNotifications", false));
+    });
+
+    it("disables the control while saving", async () => {
+        let finish;
+        setSilenceMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        render(<EmailSuppressionPanel />);
+        fireEvent.click(mainCheckbox());
+        expect(mainCheckbox()).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("Saving");
+        finish();
+        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
+    });
+
+    it("reports failed writes without changing the database-backed checkbox", async () => {
+        setSilenceMock.mockRejectedValue(new Error("Write denied"));
+        render(<EmailSuppressionPanel />);
+        fireEvent.click(mainCheckbox());
+        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Write denied"));
+        expect(mainCheckbox()).not.toBeChecked();
+    });
+
+    it("does not present a read error as notifications enabled", () => {
+        watchSilenceMock.mockImplementation((_onValue, onError) => { onError(new Error("Read denied")); return () => { }; });
+        render(<EmailSuppressionPanel />);
+        expect(mainCheckbox()).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("unavailable");
+        expect(screen.getByRole("alert")).toHaveTextContent("Read denied");
+    });
+
+    it("retains dormant exceptions and writes each flag independently", async () => {
+        let deliver;
+        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue({ ...defaults, NotifyPollActorWhenSilenced: true }); return () => { }; });
+        render(<EmailSuppressionPanel />);
+        const actor = screen.getByRole("checkbox", { name: "Notify poll actor while silenced" });
+        const chat = screen.getByRole("checkbox", { name: "Keep chat notifications while silenced" });
+        expect(actor).toBeChecked();
+        expect(actor).toBeDisabled();
+        expect(chat).toBeDisabled();
+        act(() => deliver({ ...defaults, SilenceNotifications: true, NotifyPollActorWhenSilenced: true }));
+        fireEvent.click(chat);
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("KeepChatNotificationsWhenSilenced", true));
+        await waitFor(() => expect(chat).not.toBeDisabled());
+        fireEvent.click(actor);
+        await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("NotifyPollActorWhenSilenced", false));
+    });
+});
+
+it("includes the direct Last Orders API panel on diagnostics", () => {
+    onSnapshotMock.mockImplementation(() => () => { });
+    render(<DiagnosticsPage />);
+    expect(screen.getByRole("region", { name: "Last Orders API" })).toBeInTheDocument();
+    cleanup();
+});
 
 describe("AutopopulateCandidateListsPanel", () => {
     beforeEach(() => {

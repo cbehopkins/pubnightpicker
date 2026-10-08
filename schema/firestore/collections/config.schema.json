@@ -1,0 +1,24 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/config/diagnostics",
+    "title": "config/diagnostics",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "x-documentId": "diagnostics",
+    "description": "Last Orders email/push suppression with optional human poll-actor and chat exceptions. Missing booleans default false. Exceptions apply only while silenced; mailing-list and diagnostic notifications remain suppressed. This does not affect the Python backend.",
+    "properties": {
+        "SilenceNotifications": {
+            "type": "boolean",
+            "default": false
+        },
+        "NotifyPollActorWhenSilenced": {
+            "type": "boolean",
+            "default": false
+        },
+        "KeepChatNotificationsWhenSilenced": {
+            "type": "boolean",
+            "default": false
+        }
+    },
+    "additionalProperties": false
+}

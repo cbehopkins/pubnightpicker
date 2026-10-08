@@ -1,0 +1,89 @@
+name: last_orders CI
+
+on:
+  pull_request:
+    paths:
+      - "last_orders/**"
+      - "durable_email/**"
+      - "email_clients/**"
+      - "cellar/**"
+      - ".github/workflows/last-orders-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "last_orders/**"
+      - "durable_email/**"
+      - "email_clients/**"
+      - "cellar/**"
+      - ".github/workflows/last-orders-ci.yml"
+  schedule:
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: last-orders-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-test:
+    name: Go checks (last_orders)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: last_orders
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: last_orders/go.mod
+          cache-dependency-path: "*/go.sum"
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Files requiring gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Install Staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+
+      - name: Staticcheck
+        run: staticcheck ./...
+
+      - name: Test with race detection
+        run: go test -race ./...
+
+  vulnerabilities:
+    name: Vulnerability scan (last_orders)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: last_orders
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: last_orders/go.mod
+          cache-dependency-path: "*/go.sum"
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Scan for vulnerabilities
+        run: govulncheck ./...

@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 
 import { doc, collection, addDoc, setDoc } from "firebase/firestore";
-import { db } from "../../firebase";
+import { auth, db } from "../../firebase";
 import Button from "../UI/Button";
 import { logPollActionAudit, POLL_ACTION_CREATE } from "../../dbtools/pollActionAudit";
 
@@ -26,9 +26,12 @@ function NewPoll(params) {
     event.preventDefault();
 
     try {
+      const createdByUid = auth.currentUser?.uid;
+      if (!createdByUid) throw new Error("No authenticated poll creator.");
       const docRef = await addDoc(collection(db, "polls"), {
         date: enteredDate,
         completed: false,
+        createdByUid,
       });
       setEnteredDate("");
       // This is important to do here as the permissions should be set on the database

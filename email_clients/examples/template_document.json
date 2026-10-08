@@ -1,0 +1,118 @@
+{
+    "document": {
+        "title": "Pubnight HTML template",
+        "subjectLine": "",
+        "previewText": "",
+        "body": {
+            "eid": "root",
+            "type": "body",
+            "children": [
+                {
+                    "children": [
+                        {
+                            "customData": {},
+                            "style": {
+                                "backgroundColor": "",
+                                "backgroundRepeat": "no-repeat",
+                                "backgroundPosition": "center center",
+                                "backgroundImage": "",
+                                "backgroundSize": "auto",
+                                "paddingLeft": "10px",
+                                "paddingBottom": "5px",
+                                "paddingRight": "10px",
+                                "paddingTop": "5px",
+                                "paragraphLineHeight": "25px",
+                                "paragraphLetterSpacing": "normal",
+                                "paragraphColor": "#131313",
+                                "paragraphFontSize": "18px",
+                                "paragraphFontFamily": "Arial, Helvetica Neue, Helvetica, sans-serif",
+                                "linkTextDecoration": "underline",
+                                "linkColor": "#00c0e7",
+                                "h3LineHeight": "27px",
+                                "h3Color": "#131313",
+                                "h3FontSize": "22px",
+                                "h3FontFamily": "Georgia, Times, Times New Roman, serif",
+                                "h3LetterSpacing": "normal",
+                                "h2LineHeight": "34px",
+                                "h2Color": "#131313",
+                                "h2FontSize": "26px",
+                                "h2FontFamily": "Georgia, Times, Times New Roman, serif",
+                                "h2LetterSpacing": "normal",
+                                "h1LineHeight": "40px",
+                                "h1Color": "#131313",
+                                "h1FontSize": "33px",
+                                "h1FontFamily": "Georgia, Times, Times New Roman, serif",
+                                "h1LetterSpacing": "normal"
+                            },
+                            "attrs": {
+                                "text": "<h1>Pub night for {{ name }}</h1>\n<p>Hello <strong>{{ name }}</strong>,</p>\n<p>Your pub night is on <strong>{{ date }}</strong>.</p>\n<p>Thanks,<br>Pubnight Picker</p>"
+                            },
+                            "type": "text",
+                            "eid": "pn-text-1"
+                        }
+                    ],
+                    "placeholder": [],
+                    "customData": {},
+                    "style": {
+                        "backgroundColor": "",
+                        "backgroundRepeat": "no-repeat",
+                        "backgroundPosition": "center center",
+                        "backgroundImage": "",
+                        "backgroundSize": "auto",
+                        "contentBackgroundColor": "",
+                        "contentBackgroundRepeat": "no-repeat",
+                        "contentBackgroundPosition": "center center",
+                        "contentBackgroundImage": "",
+                        "contentBackgroundSize": "auto",
+                        "contentBorderRadius": "0px",
+                        "contentBorderLeftColor": "#121212",
+                        "contentBorderLeftStyle": "solid",
+                        "contentBorderLeftWidth": "0px",
+                        "contentBorderBottomColor": "#121212",
+                        "contentBorderBottomStyle": "solid",
+                        "contentBorderBottomWidth": "0px",
+                        "contentBorderRightColor": "#121212",
+                        "contentBorderRightStyle": "solid",
+                        "contentBorderRightWidth": "0px",
+                        "contentBorderTopColor": "#121212",
+                        "contentBorderTopStyle": "solid",
+                        "contentBorderTopWidth": "0px",
+                        "contentMarginLeft": "0px",
+                        "contentMarginBottom": "0px",
+                        "contentMarginRight": "0px",
+                        "contentMarginTop": "0px",
+                        "contentPaddingLeft": "0px",
+                        "contentPaddingBottom": "0px",
+                        "contentPaddingRight": "0px",
+                        "contentPaddingTop": "0px",
+                        "contentWidth": 600,
+                        "bodyWidth": 600
+                    },
+                    "attrs": {
+                        "hideOnMobile": false,
+                        "hideOnDesktop": false,
+                        "lock": false,
+                        "marker": ""
+                    },
+                    "type": "fullwidth",
+                    "eid": "pn-section-1"
+                }
+            ],
+            "version": "4.1.0",
+            "attrs": {},
+            "style": {
+                "backgroundColor": "",
+                "backgroundRepeat": "no-repeat",
+                "backgroundPosition": "center center",
+                "backgroundImage": "",
+                "backgroundSize": "auto",
+                "bodyWidth": 600
+            },
+            "customData": {}
+        },
+        "variables": [],
+        "components": [],
+        "fontFiles": {}
+    },
+    "trigger": "auto-save"
+}

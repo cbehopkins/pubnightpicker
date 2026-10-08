@@ -24,6 +24,48 @@ import {
   subscribeToSystemThemeChanges,
 } from "../../utils/themeMode";
 import useDeleteMyAccount from "../../hooks/useDeleteMyAccount";
+import useTestEmailRequest from "../../hooks/useTestEmailRequest";
+import EmailHistoryPanel from "../UI/EmailHistoryPanel";
+
+const TEST_EMAIL_TIMEOUT_MS = 60000;
+
+const TEST_EMAIL_BUTTON_TEXT = {
+  sending: "Sending...",
+  sent: "Test Email Sent",
+};
+
+function TestEmailPanel({ uid }) {
+  const { status, address, sendTestEmail } = useTestEmailRequest(uid, TEST_EMAIL_TIMEOUT_MS);
+
+  return (
+    <Card>
+      <Card.Body>
+        <h2 className="h5 mb-2">Test Email</h2>
+        <p className="mb-3 text-body-secondary">
+          {address
+            ? `Send a test email to ${address}.`
+            : "No email address is set on your account."}
+        </p>
+        <button
+          type="button"
+          className="btn btn-outline-secondary"
+          onClick={sendTestEmail}
+          disabled={!address || status === "sending"}
+        >
+          {TEST_EMAIL_BUTTON_TEXT[status] ?? "Send Test Email"}
+        </button>
+        {status === "timeout" && (
+          <p className="small text-danger mt-2 mb-0">
+            {`No response from the backend after ${TEST_EMAIL_TIMEOUT_MS / 1000}s. It may be offline or rate limited.`}
+          </p>
+        )}
+        {status === "error" && (
+          <p className="small text-danger mt-2 mb-0">Unable to request a test email.</p>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
 
 function formatRoleName(roleName) {
   return roleName
@@ -415,6 +457,8 @@ function Preferences(params) {
       </Card.Body>
     </Card>
     <DeleteMyAccount />
+    {user?.uid && <TestEmailPanel uid={user.uid} />}
+    {user?.uid && <EmailHistoryPanel key={user.uid} />}
     <PreferencesForm method="post" />
     <MyRoles />
   </div>

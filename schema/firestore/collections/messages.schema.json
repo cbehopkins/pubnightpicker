@@ -1,0 +1,48 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/messages",
+    "title": "messages/{messageId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "required": [
+        "uid",
+        "name",
+        "text",
+        "createdAt",
+        "scopeType",
+        "scopeId"
+    ],
+    "properties": {
+        "uid": {
+            "type": "string",
+            "minLength": 1
+        },
+        "name": {
+            "type": "string",
+            "minLength": 1
+        },
+        "text": {
+            "type": "string",
+            "minLength": 1
+        },
+        "createdAt": {
+            "description": "Firestore timestamp represented as SDK timestamp at runtime.",
+            "type": [
+                "string",
+                "object"
+            ]
+        },
+        "scopeType": {
+            "type": "string",
+            "enum": [
+                "global",
+                "event"
+            ]
+        },
+        "scopeId": {
+            "type": "string",
+            "minLength": 1
+        }
+    },
+    "additionalProperties": true
+}

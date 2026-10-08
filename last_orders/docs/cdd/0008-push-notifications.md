@@ -1,0 +1,270 @@
+# CDD Card: Push Notification Pipeline
+
+## Purpose
+
+Define the architectural boundaries for the backend push-notification pipeline without prematurely fixing the internal cell decomposition.
+
+The pipeline consists of three linked systems:
+
+1. **Notification Truth**
+2. **Endpoint Population**
+3. **Endpoint Delivery**
+
+The boundaries between these systems are architectural; whether individual stages are implemented as separate cells is an implementation decision.
+
+---
+
+## 1. Notification Truth
+
+Notification truth represents the fact that a notification should exist as a consequence of some backend event/truth.
+
+The creation of notification truth must be **idempotent and replayable**.
+
+Replaying the source event must therefore produce the same notification identity rather than creating duplicate notifications.
+
+Notification truth is concerned with:
+
+* what notification exists;
+* its notification type;
+* the data/payload required to represent it;
+* its identity in relation to the originating backend truth.
+
+It is **not** responsible for knowing how many endpoints will receive the notification or for performing push delivery.
+
+---
+
+## 2. Endpoint Population
+
+Endpoint population determines which concrete push endpoints should receive a particular notification.
+
+Population uses:
+
+* the notification truth;
+* the user's notification preferences;
+* the current notification-profile cache containing endpoint and preference information.
+
+The resulting population represents the recipients selected for **that notification at the point population occurs**.
+
+Once population has been committed, subsequent changes to preferences or endpoint configuration do not alter the population of an already-created notification.
+
+### Persistence and atomicity
+
+Endpoint population must be durably associated with the delivery work produced from it.
+
+The architecture permits the population operation to produce, as a single cell result, application database writes which include:
+
+* endpoint-population records, where required;
+* creation of endpoint delivery cells.
+
+These writes may be committed atomically in a single transaction.
+
+The architecture **does not mandate** whether endpoint population and delivery-cell creation are implemented:
+
+* within the same cell; or
+* as separate cells.
+
+Either design is valid provided that the resulting operations are idempotent and replayable.
+
+### Replay requirement
+
+Replaying population must not produce duplicate endpoint-population records or duplicate delivery cells.
+
+Stable identities/uniqueness constraints should therefore be used for the notification/endpoints and delivery work.
+
+---
+
+## 3. Endpoint Delivery
+
+Each delivery unit is responsible for delivering one notification to one concrete push endpoint.
+
+Its responsibility begins after endpoint population has selected the endpoint.
+
+It does not re-evaluate:
+
+* notification preferences;
+* endpoint eligibility;
+* notification population.
+
+The delivery unit should contain sufficient durable information to perform its delivery without depending on the notification-profile cache.
+
+The delivery mechanism is **idempotent per notification/endpoint pair**.
+
+### Runtime suppression
+
+Last Orders applies `config/diagnostics.SilenceNotifications` at endpoint delivery,
+using the same watched setting as email. The mode is sampled once before token
+acquisition and sending. Unknown initial configuration defers the delivery without
+consuming quota, capped at notification expiry. After a valid snapshot, watch
+failures retain the last known value.
+
+The same atomic settings snapshot contains two optional exceptions. With
+`NotifyPollActorWhenSilenced`, a recognised initial poll-opened/completed delivery
+may go live only when its durable actor UID matches the endpoint's user UID.
+With `KeepChatNotificationsWhenSilenced`, recognised global/event-chat deliveries
+remain live for their existing eligible audiences. The notification purpose and
+actor UID travel in the durable endpoint payload. Legacy payloads with no purpose,
+rescheduled notifications and diagnostic tests have no exception. Personal
+preferences and endpoint eligibility remain unchanged. Live exceptions retain
+normal quota, retry and invalidation behaviour.
+
+When silenced, an eligible delivery completes with its existing `Accepted` state
+committed atomically with cell completion. There is no push service call, quota
+charge, endpoint invalidation or new attempt count. This state means handled,
+not necessarily accepted by the service. Waiters, action completion and test-push
+acknowledgements consequently continue normally. Once committed, silenced
+deliveries are terminal and never replayed live when suppression is cleared.
+
+Suppression covers poll, chat and diagnostic pushes; it does not change endpoint
+eligibility, expiry, already-selected live attempts or the old Python backend.
+No new delivery state, schema field or migration is required. Normal live retries
+and endpoint invalidation retain their existing behaviour.
+
+### Delivery outcomes
+
+A delivery attempt has three fundamental outcomes:
+
+**Accepted**
+
+The Web Push service accepts the notification.
+
+The delivery is complete and the delivery cell becomes terminal.
+
+**Transient failure**
+
+The attempt cannot currently be completed, but the endpoint is not known to be invalid.
+
+The cell remains retryable and should be retried according to the backend's retry policy.
+
+**Permanent failure**
+
+The endpoint is known to be unusable for this delivery.
+
+The delivery becomes terminal and the endpoint should be invalidated/deactivated in the authoritative endpoint store.
+
+---
+
+## Endpoint state vs delivery state
+
+Endpoint validity and delivery state are separate concepts.
+
+For example:
+
+```text
+Endpoint E1
+    ACTIVE
+
+Notification N1 → E1
+    TRANSIENT FAILURE
+    → retry
+    → ACCEPTED
+
+Endpoint E1
+    ACTIVE
+```
+
+Whereas:
+
+```text
+Endpoint E1
+    ACTIVE
+
+Notification N1 → E1
+    PERMANENT FAILURE
+    → delivery terminal
+
+Endpoint E1
+    INVALID
+```
+
+A failed delivery must not automatically imply that every delivery involving the endpoint has failed; endpoint invalidation is a separate piece of state.
+
+---
+
+## Overall pipeline
+
+```text
+Backend Truth
+     │
+     ▼
+┌──────────────────────┐
+│ 1. Notification      │
+│    Truth              │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│ 2. Endpoint           │
+│    Population         │
+│                       │
+│ preferences + cache   │
+└──────────┬───────────┘
+           │
+           │ atomically creates
+           │ durable delivery work
+           ▼
+┌──────────────────────┐
+│ 3. Endpoint Delivery │
+│                       │
+│ one notification ×    │
+│ one endpoint          │
+└──────────┬───────────┘
+           │
+           ▼
+      Web Push
+```
+
+## Architectural invariants
+
+* Notification truth is replayable and idempotent.
+* Endpoint population is replayable and idempotent.
+* Population is evaluated once for a notification rather than being re-evaluated during delivery.
+* Population and delivery-cell creation must be atomically committed when produced by the same operation.
+* The architecture does not mandate whether population and delivery-cell creation use one cell or multiple cells.
+* Delivery is independently idempotent for each notification/endpoint pair.
+* Transient provider failures cause retry.
+* Permanent endpoint failures cause endpoint invalidation rather than retry.
+* The authoritative endpoint store remains the source of truth; any notification-profile cache is derived state.
+* Delivery does not depend on re-querying the notification-profile cache after population.
+
+# CDD Amendment: Push Notification Pipeline
+
+## Endpoint Population
+
+Endpoint population determines the concrete push endpoints that are eligible to receive a notification.
+
+The population process obtains notification preferences and push subscription information from the **Firebase Notification Profile Projection**.
+
+The projection is a local, eventually consistent representation of authoritative Firebase data. The notification pipeline MUST NOT directly depend on the Firebase document structure.
+
+Population is evaluated when notification truth is expanded into concrete delivery work.
+
+The resulting population represents the recipients selected at that point in time.
+
+Once endpoint population has been committed, subsequent changes to:
+
+* Firebase notification preferences;
+* Firebase push subscriptions;
+* endpoint activity;
+
+MUST NOT modify the already-created notification population.
+
+Endpoint population MUST be idempotent and replayable.
+
+Population and creation of the associated delivery work MAY be performed by the same cell or by multiple cells. The architecture MUST NOT require a particular cell decomposition.
+
+Where they are performed together, the application database writes representing the population and the creation of delivery cells SHOULD be committed atomically.
+
+Where they are separated, the same externally visible guarantees MUST be maintained: replay MUST NOT create duplicate population entries or duplicate delivery work.
+
+## Dependency Boundary
+
+The push notification pipeline has a read-only dependency on the Firebase Notification Profile Projection.
+
+It does not:
+
+* maintain the projection;
+* write notification preferences;
+* interpret Firebase documents;
+* re-query Firebase during endpoint delivery.
+
+The projection therefore forms the boundary between Firebase's authoritative representation and the notification system's local recipient-selection model.

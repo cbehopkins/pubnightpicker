@@ -37,7 +37,6 @@ class VenueRecurrenceDict(TypedDict):
     month_day: NotRequired[int]
     weekday: NotRequired[int]
     nth: NotRequired[int]
-    start_date: NotRequired[str]
 
 
 class VenueDataDict(TypedDict):
@@ -365,7 +364,6 @@ def test_maintain_event_recurrence_polls_creates_due_event_poll_without_auto_com
             "month": 5,
             "weekday": 2,
             "nth": -1,
-            "start_date": "2026-05-01",
         },
     }
     venue_doc.reference = MagicMock()
@@ -439,7 +437,6 @@ def test_resolve_event_occurrence_date_backfills_when_missing():
             "frequency": "yearly",
             "month": 5,
             "month_day": 15,
-            "start_date": "2026-01-01",
         }
     }
 
@@ -502,24 +499,20 @@ def test_resolve_event_occurrence_date_invalid_recurrence_produces_no_date():
     venue_doc.id = "festival-invalid"
     venue_doc.reference = MagicMock()
 
-    # Recurrence with end date in the past.
+    # Recurrence with no month configured, so no candidate date can be produced.
     venue_data: VenueDataDict = {
         "recurrence": {
             "frequency": "yearly",
-            "month": 5,
             "month_day": 15,
-            "start_date": "2024-01-01",
         }
     }
 
-    # Reference date is beyond any possible recurrence.
     recurrence, occurrence_date = _resolve_event_occurrence_date(
         db, venue_doc, venue_data, today=date(2030, 6, 1)
     )
 
     assert recurrence is not None
-    # Yearly recurrence finds 2024-05-15 as first match (earliest year with month/day)
-    assert occurrence_date == date(2024, 5, 15)
+    assert occurrence_date is None
 
 
 def test_create_event_poll_if_due_creates_poll_when_eligible():

@@ -91,6 +91,7 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           VITE_ENABLE_WEB_PUSH: ${{ secrets.VITE_ENABLE_WEB_PUSH }}
           VITE_WEB_PUSH_PUBLIC_KEY: ${{ secrets.VITE_WEB_PUSH_PUBLIC_KEY }}
+          VITE_LAST_ORDERS_API_BASE_URL: ${{ vars.VITE_LAST_ORDERS_API_BASE_URL }}
       - name: Run typecheck
         working-directory: ./react
         run: npm run typecheck

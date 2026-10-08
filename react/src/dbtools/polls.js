@@ -1,5 +1,5 @@
 import { doc, updateDoc, deleteDoc, arrayUnion, deleteField } from "firebase/firestore";
-import { db } from "../firebase";
+import { auth, db } from "../firebase";
 import { assertCurrentUserPermission, PERMISSIONS } from "../permissions";
 import {
     logPollActionAudit,
@@ -24,6 +24,7 @@ export async function reschedule_a_poll(poll_id, current_pub_id, new_pub_id, res
     const docRef = doc(db, "polls", poll_id);
     const payload = {
         selected: new_pub_id,
+        completedByUid: deleteField(),
     };
 
     if (new_pub_id && current_pub_id && new_pub_id !== current_pub_id) {
@@ -87,10 +88,13 @@ export async function deletePubFromPoll(pollId, pubId, pollDate, pubName) {
 }
 export async function complete_a_poll(key, poll_id, pollDate, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "completing a poll");
+    const completedByUid = auth.currentUser?.uid;
+    if (!completedByUid) throw new Error("No authenticated poll completer.");
     const docRef = doc(db, "polls", poll_id);
     const payload = {
         completed: true,
         selected: key,
+        completedByUid,
     };
 
     if (restaurantId) {

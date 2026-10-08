@@ -17,6 +17,7 @@ import {
     NOTIFICATION_PUSH_TEST_DOC,
 } from "../../dbtools/notificationPings";
 import NotificationPingPanel from "../UI/NotificationPingPanel";
+import BackendPingPanel from "../UI/BackendPingPanel";
 import {
     POLL_ACTION_ADD_VENUE,
     POLL_ACTION_AUDIT_COLLECTION,
@@ -28,6 +29,7 @@ import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 import usePolls from "../../hooks/usePolls";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
+import { DEFAULT_NOTIFICATION_SETTINGS, setNotificationSetting, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -415,6 +417,70 @@ export function PollActionAuditPanel() {
     );
 }
 
+export function EmailSuppressionPanel() {
+    const [settings, setSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
+    const silenced = settings.SilenceNotifications;
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [readError, setReadError] = useState("");
+    const [writeError, setWriteError] = useState("");
+
+    useEffect(() => watchNotificationSettings((value) => {
+        setSettings(value);
+        setIsLoading(false);
+        setReadError("");
+    }, (error) => {
+        setReadError(error?.message || "Unable to load notification settings.");
+        setIsLoading(false);
+    }), []);
+
+    async function save(field, value) {
+        setIsSaving(true);
+        setWriteError("");
+        try {
+            await setNotificationSetting(field, value);
+        } catch (error) {
+            setWriteError(error?.message || "Unable to save notification settings.");
+        } finally {
+            setIsSaving(false);
+        }
+    }
+
+    return (
+        <section className="mb-4" aria-labelledby="email-suppression-heading">
+            <h2 id="email-suppression-heading" className="h5 mb-2">Notifications</h2>
+            <div className="form-check mb-2">
+                <input id="silence-email-notifications" type="checkbox" className="form-check-input"
+                    checked={silenced} disabled={isLoading || isSaving || Boolean(readError)}
+                    onChange={(event) => save("SilenceNotifications", event.target.checked)} />
+                <label htmlFor="silence-email-notifications" className="form-check-label">Silence notifications</label>
+            </div>
+            <div className="form-check mb-2">
+                <input id="notify-poll-actor" type="checkbox" className="form-check-input"
+                    checked={settings.NotifyPollActorWhenSilenced} disabled={!silenced || isLoading || isSaving || Boolean(readError)}
+                    onChange={(event) => save("NotifyPollActorWhenSilenced", event.target.checked)} />
+                <label htmlFor="notify-poll-actor" className="form-check-label">Notify poll actor while silenced</label>
+            </div>
+            <div className="form-check mb-2">
+                <input id="keep-chat-notifications" type="checkbox" className="form-check-input"
+                    checked={settings.KeepChatNotificationsWhenSilenced} disabled={!silenced || isLoading || isSaving || Boolean(readError)}
+                    onChange={(event) => save("KeepChatNotificationsWhenSilenced", event.target.checked)} />
+                <label htmlFor="keep-chat-notifications" className="form-check-label">Keep chat notifications while silenced</label>
+            </div>
+            <p role="status" className="small mb-2">
+                {isLoading ? "Loading..." : isSaving ? "Saving..." : readError ? "Notification setting unavailable."
+                    : silenced ? "Last Orders notifications silenced except enabled exceptions. Test notifications remain silenced."
+                        : "Last Orders email and push notifications enabled."}
+            </p>
+            {silenced && settings.NotifyPollActorWhenSilenced && <p className="small mb-2">Live opening notifications to the poll creator and initial completion notifications to the completer, respecting personal preferences.</p>}
+            {silenced && settings.KeepChatNotificationsWhenSilenced && <p className="small mb-2">Chat pushes remain live for their usual recipients.</p>}
+            <p className="small text-body-secondary mb-2">Legacy backend notifications remain active.</p>
+            {silenced && <p className="small text-body-secondary mb-2">Test notification acknowledgements confirm handling, not live delivery.</p>}
+            {(readError || writeError) && <p role="alert" className="small text-danger mb-0">{readError || writeError}</p>}
+        </section>
+    );
+}
+
 function DiagnosticsPage() {
     const uid = useSelector((state) => state.auth.uid);
 
@@ -424,6 +490,10 @@ function DiagnosticsPage() {
             <p className="text-body-secondary mb-4">
                 Admin-only tools for validating notification and push messaging.
             </p>
+
+            <BackendPingPanel />
+
+            <EmailSuppressionPanel />
 
             <NotificationPingPanel
                 title="Admin Diagnostics"

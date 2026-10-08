@@ -545,5 +545,35 @@ def seed_smoke(dry_run: bool, loglevel: int) -> None:
     )
 
 
+@cli.command("reactivate-push-endpoints")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Write changes; otherwise preview only",
+)
+def reactivate_push_endpoints(apply_changes: bool) -> None:
+    """Set active=true on every push endpoint currently marked active=false."""
+    db = _get_db()
+    click.echo(f"Project: {db.project}")
+    click.echo(
+        "Warning: this includes endpoints disabled for genuine delivery failures."
+    )
+    count = 0
+    for document in db.collection_group("push_endpoints").stream():
+        payload = document.to_dict() or {}
+        if payload.get("active") is not False:
+            continue
+        if apply_changes:
+            document.reference.update({"active": True})
+        count += 1
+        action = "Reactivated" if apply_changes else "Would reactivate"
+        click.echo(f"{action}: {document.reference.path}")
+    action = "Reactivated" if apply_changes else "Would reactivate"
+    click.echo(f"{action} {count} push endpoint(s).")
+    if not apply_changes:
+        click.echo("Preview only. Re-run with --apply to write changes.")
+
+
 if __name__ == "__main__":
     cli()
