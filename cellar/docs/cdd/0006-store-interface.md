@@ -202,6 +202,14 @@ READY -> CLAIMED
 
 The Store must ensure that a Cell cannot be claimed twice.
 
+The SQLite implementation selects and claims the next runnable Cell with a
+single `UPDATE ... RETURNING` statement inside a transaction, ordered by
+`created_at` and then Cell ID. Selection must not precede the write as a separate
+read statement: in WAL mode, concurrent commits can invalidate that read
+snapshot and cause `SQLITE_BUSY_SNAPSHOT` when the transaction attempts to write.
+The configured busy timeout can wait for writer contention, but cannot repair
+a stale read snapshot.
+
 Only the Scheduler performs this operation.
 
 ---

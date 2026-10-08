@@ -185,6 +185,8 @@ func TestStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
+	otherStore := mustOpenStore(t, dbPath)
+	defer func() { _ = otherStore.Close() }()
 
 	_, err := store.Add([]cellar.CellRequest{{Steps: []cellar.CellStep{{HandlerName: "one"}}}})
 	if err != nil {
@@ -193,13 +195,19 @@ func TestStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 
 	const workers = 32
 	results := make(chan cellar.CellID, workers)
+	start := make(chan struct{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
+		claimStore := store
+		if i%2 != 0 {
+			claimStore = otherStore
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cell, ok, claimErr := store.ClaimNext(time.Now())
+			<-start
+			cell, ok, claimErr := claimStore.ClaimNext(time.Now())
 			if claimErr != nil {
 				t.Errorf("ClaimNext() error = %v", claimErr)
 				return
@@ -209,6 +217,7 @@ func TestStoreConcurrentClaimNextNoDoubleClaim(t *testing.T) {
 			}
 		}()
 	}
+	close(start)
 	wg.Wait()
 	close(results)
 
