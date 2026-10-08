@@ -146,12 +146,17 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 	defer rollback(tx)
 
 	row := tx.QueryRow(
-		`SELECT id, steps, current_step, state, not_before
-		 FROM cells
-		 WHERE state = ?
-		   AND (not_before IS NULL OR not_before <= ?)
-		 ORDER BY created_at, id
-		 LIMIT 1`,
+		`UPDATE cells
+		 SET state = ?
+		 WHERE id = (
+		   SELECT id FROM cells
+		   WHERE state = ?
+		     AND (not_before IS NULL OR not_before <= ?)
+		   ORDER BY created_at, id
+		   LIMIT 1
+		 )
+		 RETURNING id, steps, current_step, state, not_before`,
+		string(cellar.CellStateClaimed),
 		string(cellar.CellStateReady),
 		now.UTC(),
 	)
@@ -167,34 +172,10 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 		return cellar.Cell{}, false, err
 	}
 
-	res, err := tx.Exec(
-		`UPDATE cells
-		 SET state = ?
-		 WHERE id = ? AND state = ?`,
-		string(cellar.CellStateClaimed),
-		string(cell.ID),
-		string(cellar.CellStateReady),
-	)
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-	if rowsAffected == 0 {
-		if err := tx.Commit(); err != nil {
-			return cellar.Cell{}, false, err
-		}
-		return cellar.Cell{}, false, nil
-	}
-
 	if err := tx.Commit(); err != nil {
 		return cellar.Cell{}, false, err
 	}
 
-	cell.State = cellar.CellStateClaimed
 	return cell, true, nil
 }
 
