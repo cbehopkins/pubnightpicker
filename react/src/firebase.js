@@ -23,11 +23,6 @@ import {
   doc,
   getDoc,
   setDoc,
-  query,
-  getDocs,
-  collection,
-  where,
-  addDoc,
 } from "firebase/firestore";
 import { redirect } from "react-router-dom";
 import { firebaseConfig } from "./firebase_config";
@@ -132,9 +127,8 @@ const signInWithGoogle = async () => {
   try {
     const res = await signInWithPopup(auth, googleProvider);
     const user = res.user;
-    const q = query(collection(db, "users"), where("uid", "==", user.uid));
-    const docs = await getDocs(q);
-    if (docs.docs.length === 0) {
+    const userDoc = await getDoc(doc(db, "users", user.uid));
+    if (!userDoc.exists()) {
       await addUserDoc(
         user.uid,
         user.displayName,

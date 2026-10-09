@@ -76,6 +76,62 @@ vi.mock("./utils/notify", () => {
 });
 
 import { reauthenticatePasswordUser, requestLoginEmailChange } from "./firebase";
+import { db, logInWithEmailAndPassword, signInWithGoogle } from "./firebase";
+import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
+import { doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { notifyError } from "./utils/notify";
+
+describe("login profile initialization", () => {
+    const user = { uid: "new-user", displayName: "New User", email: "new@example.com" };
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(signInWithPopup).mockResolvedValue({ user });
+        vi.mocked(signInWithEmailAndPassword).mockResolvedValue({ user });
+        vi.mocked(doc).mockImplementation((_db, collectionName, uid) => ({ path: `${collectionName}/${uid}` }));
+        vi.mocked(setDoc).mockResolvedValue(undefined);
+    });
+
+    for (const provider of ["google", "local"]) {
+        const login = () => provider === "google" ? signInWithGoogle() : logInWithEmailAndPassword(user.email, "password");
+
+        it(`initializes missing profiles on ${provider} login using a direct UID document read`, async () => {
+            vi.mocked(getDoc).mockResolvedValue({ exists: () => false });
+            await login();
+            expect(doc).toHaveBeenCalledWith(db, "users", user.uid);
+            expect(getDoc).toHaveBeenCalledWith({ path: "users/new-user" });
+            expect(getDocs).not.toHaveBeenCalled();
+            expect(setDoc).toHaveBeenCalledWith({ path: "users/new-user" }, {
+                uid: user.uid, name: user.displayName, email: user.email, authProvider: provider,
+            }, { merge: true });
+            expect(setDoc).toHaveBeenCalledWith({ path: "user-public/new-user" }, {
+                uid: user.uid, name: user.displayName, photoUrl: null, votesVisible: true,
+            }, { merge: true });
+            expect(notifyError).not.toHaveBeenCalled();
+        });
+
+        it(`preserves existing profiles on ${provider} login`, async () => {
+            vi.mocked(getDoc).mockResolvedValue({ exists: () => true });
+            await login();
+            expect(getDoc).toHaveBeenCalledWith({ path: "users/new-user" });
+            expect(getDocs).not.toHaveBeenCalled();
+            expect(setDoc).not.toHaveBeenCalled();
+            expect(notifyError).not.toHaveBeenCalled();
+        });
+    }
+
+    it("reports a Google profile read failure without attempting writes", async () => {
+        const error = new Error("Profile read denied");
+        vi.mocked(getDoc).mockRejectedValue(error);
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => { });
+        try {
+            await signInWithGoogle();
+            expect(notifyError).toHaveBeenCalledWith(error.message);
+            expect(setDoc).not.toHaveBeenCalled();
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+});
 
 describe("firebase auth helpers", () => {
     beforeEach(() => {

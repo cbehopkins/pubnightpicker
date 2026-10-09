@@ -95,6 +95,35 @@ func TestDailyLimitFromEnv(t *testing.T) {
 	}
 }
 
+func TestBoolFromEnv(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		raw        string
+		configured bool
+		fallback   bool
+		want       bool
+		wantErr    bool
+	}{
+		{name: "default", fallback: true, want: true},
+		{name: "enabled", raw: "true", configured: true, want: true},
+		{name: "disabled", raw: "false", configured: true, want: false},
+		{name: "whitespace", raw: " true ", configured: true, want: true},
+		{name: "invalid", raw: "sometimes", configured: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := boolFromEnv("ADMIN_DELETE_SETTING", test.fallback, func(name string) (string, bool) {
+				if name != "ADMIN_DELETE_SETTING" {
+					t.Fatalf("lookup name = %q", name)
+				}
+				return test.raw, test.configured
+			})
+			if got != test.want || (err != nil) != test.wantErr {
+				t.Fatalf("boolFromEnv() = %t, %v; want %t, error=%t", got, err, test.want, test.wantErr)
+			}
+		})
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

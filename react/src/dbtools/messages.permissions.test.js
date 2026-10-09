@@ -5,8 +5,11 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
-import { addDoc, collection, deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { DELETED_USER_MESSAGE, DELETED_USER_NAME, DELETED_USER_UID } from "./userDeletion";
+
+vi.mock("../firebase", () => ({ db: {} }));
 
 const PROJECT_ID = "pubnightpicker-messages-rules";
 const baseTimestamp = new Date("2026-05-07T12:00:00.000Z");
@@ -133,6 +136,70 @@ describe("messages firestore rules — creates", () => {
     it("denies create for unauthenticated users", async () => {
         const db = testEnv.unauthenticatedContext().firestore();
         await assertFails(addDoc(collection(db, "messages"), globalMessage()));
+    });
+});
+
+describe("admin account deletion message anonymization", () => {
+    function anonymization(overrides = {}) {
+        return {
+            uid: DELETED_USER_UID,
+            name: DELETED_USER_NAME,
+            text: DELETED_USER_MESSAGE,
+            deletedUserUid: "user-a",
+            deletedAt: serverTimestamp(),
+            ...overrides,
+        };
+    }
+
+    it("allows an admin without chat or moderation roles to query and anonymize a user's messages", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await deleteDoc(doc(context.firestore(), "roles", "canChat"));
+            await deleteDoc(doc(context.firestore(), "roles", "canDeleteAnyMessage"));
+        });
+        const db = testEnv.authenticatedContext("adminUser").firestore();
+        const snapshot = await assertSucceeds(getDocs(query(collection(db, "messages"), where("uid", "==", "user-a"))));
+        expect(snapshot.size).toBe(1);
+        await assertSucceeds(updateDoc(snapshot.docs[0].ref, anonymization()));
+        const data = (await getDoc(snapshot.docs[0].ref)).data();
+        expect(data).toMatchObject({
+            uid: DELETED_USER_UID, name: DELETED_USER_NAME, text: DELETED_USER_MESSAGE,
+            deletedUserUid: "user-a", scopeType: "global", scopeId: "main",
+        });
+        expect(data.createdAt.toDate()).toEqual(baseTimestamp);
+        expect(data.deletedAt).toBeDefined();
+    });
+
+    it("denies the cleanup query for non-admins without chat permission and anonymous users", async () => {
+        for (const context of [testEnv.authenticatedContext("user-no-role"), testEnv.unauthenticatedContext()]) {
+            await assertFails(getDocs(query(collection(context.firestore(), "messages"), where("uid", "==", "user-a"))));
+        }
+    });
+
+    it("denies cross-user anonymization by a non-admin", async () => {
+        const db = testEnv.authenticatedContext("user-b").firestore();
+        await assertFails(updateDoc(doc(db, "messages", "existing-msg"), anonymization()));
+    });
+
+    it("does not give an admin without chat or moderation roles general message write permissions", async () => {
+        const db = testEnv.authenticatedContext("adminUser").firestore();
+        const ref = doc(db, "messages", "existing-msg");
+        await assertFails(updateDoc(ref, { text: "edited" }));
+        await assertFails(addDoc(collection(db, "messages"), globalMessage({ uid: "adminUser" })));
+        await assertFails(deleteDoc(ref));
+    });
+
+    it("denies incomplete or altered anonymization and changes to message scope", async () => {
+        const ref = doc(testEnv.authenticatedContext("adminUser").firestore(), "messages", "existing-msg");
+        for (const overrides of [
+            { uid: "other-user" },
+            { name: "Not anonymized" },
+            { text: "Not anonymized" },
+            { deletedUserUid: "user-b" },
+            { deletedAt: baseTimestamp },
+            { scopeId: "other-poll" },
+        ]) {
+            await assertFails(updateDoc(ref, anonymization(overrides)));
+        }
     });
 });
 

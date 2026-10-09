@@ -21,7 +21,8 @@ Scope policy:
 
 - Authoritative now: react and firebase_sub production behaviour.
 - Explicitly excluded until promoted: cellar, last_orders, sweego_client rewrite assumptions.
-- Shared exception: `config/diagnostics` is consumed by React and Last Orders only.
+- Shared exceptions: `config/diagnostics` and `config/admin_delete` are consumed by
+  React and Last Orders only.
 
 This document remains a human-readable companion and flow guide.
 
@@ -41,7 +42,7 @@ Key implementation references:
 ### config/diagnostics
 
 Global runtime configuration, readable and writable only by admins through the
-client SDK. Other `config` documents are not granted access by this contract.
+client SDK. Only the explicitly documented `config` documents are granted access.
 
 - `SilenceNotifications`: optional boolean; absent document/field means false.
 - `NotifyPollActorWhenSilenced`: optional boolean, default false; allows live
@@ -154,6 +155,10 @@ Shape:
 ### users collection
 Document id: uid.
 
+Google and email/password login read `users/{auth.uid}` directly and create
+missing private/public profiles. A query on the stored `uid` field does not
+authorize a non-admin to list private users; self-access is based on document ID.
+
 Common fields used:
 - name
 - email: canonical login email mirrored from Firebase Auth (updated after verified auth email changes)
@@ -181,6 +186,14 @@ Document id: message id.
 
 Chat message payload, read/write controlled by chat permissions.
 
+Admins can also read/query messages for account deletion without `canChat`.
+Without message-moderation permission, admin updates are restricted to the
+account-deletion anonymization fields (`uid`, `name`, `text`, `deletedUserUid`,
+`deletedAt`), with the standard deleted-user values, the original author's UID,
+and a server timestamp. Message scope and creation time remain unchanged.
+This does not grant admins chat-posting, general editing or message-deletion
+permissions.
+
 Fields:
 - uid: string (author uid)
 - name: string (author display name)
@@ -195,6 +208,25 @@ lack `scopeType`/`scopeId`. The ChatBox component treats any message without
 
 ### open_actions and comp_actions collections
 Support collections used in poll lifecycle workflows and cleanup.
+
+### config/admin_delete
+
+Admin-only runtime kill switch for the Last Orders Admin Delete Service:
+
+- `paused`: boolean; `true` prevents new deletion work from being dispatched.
+- Opening Diagnostics transactionally creates `paused: false` if the document or
+  field is missing, without overwriting an existing value or other fields.
+- The "Pause admin deletions" checkbox follows confirmed Firestore updates and
+  merge-writes only `paused`. Read, initialization and write failures are displayed.
+- Admins may read and create the document and update `paused` while preserving
+  existing metadata. Existing validation for optional `reason`, `pausedAt`,
+  `updatedByUid` and `updatedAt` metadata writes is retained.
+  Non-admin access, malformed values, unknown field writes and deletion are denied.
+
+Paused requests remain pending and become eligible again when resumed.
+Already-dispatched work is not cancelled. Deploy the updated Firestore rules
+before using the control. The incorrect `system_config/admin_delete` rule has
+been removed; this control uses only `config/admin_delete`.
 
 ### notification_req and notification_ack collections
 These collections provide generic request/ack messaging between the web app and

@@ -26,6 +26,7 @@ import (
 	"last_orders/internal/lastorders/components/ratelimit"
 	"last_orders/internal/lastorders/components/recurrence"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
+	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
@@ -39,6 +40,7 @@ import (
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
+	admindeleteplugin "last_orders/internal/lastorders/plugins/admindelete"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	"last_orders/internal/lastorders/plugins/polls"
@@ -46,6 +48,7 @@ import (
 	"last_orders/internal/lastorders/plugins/pushevents"
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 	testemailplugin "last_orders/internal/lastorders/plugins/testemail"
+	admindeletesvc "last_orders/internal/lastorders/services/admindelete"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	"last_orders/internal/lastorders/truths"
@@ -75,9 +78,13 @@ type Config struct {
 	PollsSince        string
 	IdempotencyRemote firebaseidempotency.Remote
 	// CompletionActions is the durable completed-poll action history shared with Python.
-	CompletionActions      completionactions.Store
-	EventReevaluateEvery   time.Duration
-	StartupComponentChecks []func(*basestore.Store) error
+	CompletionActions       completionactions.Store
+	EventReevaluateEvery    time.Duration
+	AdminDeleteEnabled      bool
+	AdminDeleteDryRun       bool
+	EnableRealAuthDelete    bool
+	AdminDeleteEvaluateOnce bool
+	StartupComponentChecks  []func(*basestore.Store) error
 	// HTTPAddr is the address to serve HTTP endpoints on. An empty value disables HTTP entirely.
 	HTTPAddr               string
 	AuthProjectID          string
@@ -110,6 +117,9 @@ type Config struct {
 	PushTestSource            pushtestlistener.Source
 	NotificationMirrorSource  notificationmirrorlistener.Source
 	TestEmailSource           testemaillistener.Source
+	AdminDeleteSource         admindeletelistener.Source
+	AdminDeleteRepository     admindeletesvc.Repository
+	AdminDeleteAuthClient     admindeletesvc.AuthClient
 	// TestEmailTokens limits diagnostics test emails; defaults to TestEmailDailyLimit per day.
 	TestEmailTokens ratelimit.TokenSource
 }
@@ -142,6 +152,8 @@ type App struct {
 	chatMessageListener         *chatmessagelistener.Listener
 	pushTestListener            *pushtestlistener.Listener
 	testEmailListener           *testemaillistener.Listener
+	adminDeleteListener         *admindeletelistener.Listener
+	adminDeleteEvaluateOnce     bool
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	notificationProfileListener *notificationprofilelistener.Listener
@@ -167,6 +179,9 @@ func New(cfg Config) (application *App, err error) {
 	}
 	if cfg.PushDailyLimit == 0 {
 		cfg.PushDailyLimit = PushDailyLimit
+	}
+	if cfg.AdminDeleteEvaluateOnce && !cfg.AdminDeleteEnabled {
+		return nil, fmt.Errorf("admin-delete evaluation requires ENABLE_ADMIN_DELETE_REQUESTS")
 	}
 	if cfg.PollDelay <= 0 {
 		cfg.PollDelay = 50 * time.Millisecond
@@ -434,6 +449,48 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 
+	adminDeleteSource := cfg.AdminDeleteSource
+	if adminDeleteSource == nil && firestoreClient != nil {
+		adminDeleteSource, err = admindeletelistener.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	adminDeleteRepository := cfg.AdminDeleteRepository
+	if adminDeleteRepository == nil && firestoreClient != nil {
+		adminDeleteRepository, err = admindeletesvc.NewFirestoreRepository(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if cfg.AdminDeleteEnabled && adminDeleteSource == nil {
+		return nil, fmt.Errorf("admin-delete source is required when admin delete is enabled")
+	}
+	if cfg.AdminDeleteEnabled && adminDeleteRepository == nil {
+		return nil, fmt.Errorf("admin-delete repository is required when admin delete is enabled")
+	}
+	var adminDeleteEvaluator *admindeletesvc.Evaluator
+	if adminDeleteRepository != nil {
+		adminDeleteAuth := cfg.AdminDeleteAuthClient
+		if cfg.AdminDeleteEnabled && !cfg.AdminDeleteDryRun && cfg.EnableRealAuthDelete && adminDeleteAuth == nil {
+			adminDeleteAuth, err = admindeletesvc.NewFirebaseAuthClient(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator)
+			if err != nil {
+				return nil, err
+			}
+		}
+		adminDeleteEvaluator, err = admindeletesvc.New(admindeletesvc.Options{
+			Enabled:              cfg.AdminDeleteEnabled,
+			DryRun:               cfg.AdminDeleteDryRun,
+			EnableRealAuthDelete: cfg.EnableRealAuthDelete,
+			Repository:           adminDeleteRepository,
+			Auth:                 adminDeleteAuth,
+			Logger:               cfg.Logger,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	testEmailTokens := cfg.TestEmailTokens
 	if testEmailTokens == nil {
 		logger := cfg.Logger
@@ -498,10 +555,19 @@ func New(cfg Config) (application *App, err error) {
 	truths.CreateEventPollRegistry.Register(recurrenceplugin.HandlerCreateEventPoll)
 	truths.LogMessageRegistry.Register(logsvc.HandlerLogMessage)
 	autocompleteplugin.Register()
+	admindeleteplugin.Register()
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay})
 	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
+	}
+	if adminDeleteEvaluator != nil {
+		if err := admindeleteplugin.RegisterHandlers(cellarRuntime, adminDeleteEvaluator, admindeletesvc.PersistenceHandler{
+			Repository: adminDeleteRepository,
+			Logger:     cfg.Logger,
+		}); err != nil {
+			return nil, fmt.Errorf("register admin-delete handlers: %w", err)
+		}
 	}
 	if err := emailPlugin.Register(cellarRuntime); err != nil {
 		return nil, fmt.Errorf("register email plugin: %w", err)
@@ -624,8 +690,10 @@ func New(cfg Config) (application *App, err error) {
 	if err := autoCompleteTimer.Register(cellarRuntime); err != nil {
 		return nil, err
 	}
-	if _, err := autoCompleteTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
-		return nil, err
+	if !cfg.AdminDeleteEvaluateOnce {
+		if _, err := autoCompleteTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+			return nil, err
+		}
 	}
 
 	eventVenueListener, err := eventvenuelistener.New(eventvenuelistener.Config{
@@ -650,8 +718,10 @@ func New(cfg Config) (application *App, err error) {
 	if err := reevaluateTimer.Register(cellarRuntime); err != nil {
 		return nil, err
 	}
-	if _, err := reevaluateTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
-		return nil, err
+	if !cfg.AdminDeleteEvaluateOnce {
+		if _, err := reevaluateTimer.Schedule(cellarRuntime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+			return nil, err
+		}
 	}
 
 	newPollListener, err := newpolllistener.New(newpolllistener.Config{
@@ -670,6 +740,20 @@ func New(cfg Config) (application *App, err error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	var adminDeleteListener *admindeletelistener.Listener
+	if adminDeleteSource != nil {
+		adminDeleteListener, err = admindeletelistener.New(admindeletelistener.Config{
+			Source:     adminDeleteSource,
+			Store:      cellarStore,
+			Enabled:    cfg.AdminDeleteEnabled,
+			RealDelete: !cfg.AdminDeleteDryRun && cfg.EnableRealAuthDelete,
+			Logger:     cfg.Logger,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	chatMessageListener, err := chatmessagelistener.New(chatMessageSource, cellarStore, cfg.Logger)
@@ -725,6 +809,8 @@ func New(cfg Config) (application *App, err error) {
 		chatMessageListener:         chatMessageListener,
 		pushTestListener:            pushTestListener,
 		testEmailListener:           testEmailListener,
+		adminDeleteListener:         adminDeleteListener,
+		adminDeleteEvaluateOnce:     cfg.AdminDeleteEvaluateOnce,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
 		notificationProfileListener: notificationProfileListener,
@@ -757,6 +843,9 @@ func New(cfg Config) (application *App, err error) {
 func (a *App) Run(ctx context.Context) error {
 	if a.baseStore == nil {
 		return fmt.Errorf("app is not initialised")
+	}
+	if a.adminDeleteEvaluateOnce {
+		return a.RunAdminDeleteEvaluation(ctx)
 	}
 	// Must precede Cellar so interrupted submissions are verified before any resend.
 	if err := a.emailPlugin.RecoverSubmissions(ctx); err != nil {
@@ -833,6 +922,11 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("start completed poll listener: %w", err)
 		}
 	}
+	if a.adminDeleteListener != nil {
+		if err := a.adminDeleteListener.Start(runCtx); err != nil {
+			return fmt.Errorf("start admin-delete listener: %w", err)
+		}
+	}
 
 	if err := a.chatMessageListener.Start(runCtx); err != nil {
 		return fmt.Errorf("start chat message listener: %w", err)
@@ -867,6 +961,51 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("run cellar: %w", err)
 		}
 		a.logger.Warn("cellar scheduler stopped without error, shutting down")
+	}
+	return nil
+}
+
+func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
+	if a.baseStore == nil {
+		return fmt.Errorf("app is not initialised")
+	}
+	if a.adminDeleteListener == nil {
+		return fmt.Errorf("admin-delete listener is not configured")
+	}
+	requestIDs, err := a.adminDeleteListener.RunOnce(ctx)
+	if err != nil {
+		return fmt.Errorf("evaluate pending admin-delete requests: %w", err)
+	}
+	if len(requestIDs) == 0 {
+		return nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	runErr := make(chan error, 1)
+	a.runMu.Lock()
+	a.runCancel = cancel
+	a.runDone = runDone
+	a.runMu.Unlock()
+	go func() {
+		defer close(runDone)
+		err := a.cellarRuntime.Start(runCtx)
+		runErr <- err
+		cancel()
+	}()
+	waitErr := a.adminDeleteListener.WaitForTerminal(runCtx, requestIDs)
+	cancel()
+	<-runDone
+	cellarErr := <-runErr
+	a.runMu.Lock()
+	a.runCancel = nil
+	a.runDone = nil
+	a.runMu.Unlock()
+	if cellarErr != nil {
+		return fmt.Errorf("run Cellar for admin-delete evaluation: %w", cellarErr)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("wait for admin-delete request outcomes: %w", waitErr)
 	}
 	return nil
 }
@@ -910,6 +1049,9 @@ func (a *App) closeListeners() error {
 	}
 	if a.completedPollListener != nil {
 		closeErrs = append(closeErrs, a.completedPollListener.Close())
+	}
+	if a.adminDeleteListener != nil {
+		closeErrs = append(closeErrs, a.adminDeleteListener.Close())
 	}
 	if a.chatMessageListener != nil {
 		closeErrs = append(closeErrs, a.chatMessageListener.Close())
@@ -995,6 +1137,7 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.ChatMessagePosted](truths.ChatMessagePostedRegistry),
 		registerFanout[truths.PushTestRequested](truths.PushTestRequestedRegistry),
 		registerFanout[truths.TestEmailRequested](truths.TestEmailRequestedRegistry),
+		registerFanout[truths.AdminDeleteRequested](truths.AdminDeleteRequestedRegistry),
 	}
 	for _, registrar := range registrars {
 		if err := registrar(cellarRuntime); err != nil {
