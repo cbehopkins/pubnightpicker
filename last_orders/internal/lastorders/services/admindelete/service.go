@@ -84,7 +84,7 @@ func New(options Options) (*Evaluator, error) {
 		options.Logger = slog.Default()
 	}
 	if options.Enabled && !options.DryRun && options.EnableRealAuthDelete && options.Auth == nil {
-		return nil, fmt.Errorf("Firebase Auth delete client is required when real deletion is enabled")
+		return nil, fmt.Errorf("firebase auth delete client is required when real deletion is enabled")
 	}
 	return &Evaluator{
 		enabled:              options.Enabled,

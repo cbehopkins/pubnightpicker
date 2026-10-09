@@ -3,7 +3,6 @@ package admindelete
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -169,8 +168,4 @@ func validateOutcome(outcome Outcome) error {
 	default:
 		return fmt.Errorf("unknown admin-delete outcome %q", outcome)
 	}
-}
-
-func nowUTC() time.Time {
-	return time.Now().UTC()
 }

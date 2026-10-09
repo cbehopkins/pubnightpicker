@@ -58,7 +58,8 @@ jobs:
         run: go vet ./...
 
       - name: Install Staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+        working-directory: last_orders/tools/staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck
 
       - name: Staticcheck
         run: staticcheck ./...

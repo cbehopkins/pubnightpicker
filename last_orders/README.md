@@ -32,10 +32,26 @@ documents.
 
 Install dependencies and run tests:
 
+Go 1.27.2 or newer is required, including standard-library security fixes.
+With `GOTOOLCHAIN=auto`, Go selects the required version from `go.mod`.
+
 ```powershell
 go mod tidy
 go test ./...
 ```
+
+Run Staticcheck using the pinned tooling module (also used in CI):
+
+```powershell
+go -C tools\staticcheck install honnef.co/go/tools/cmd/staticcheck
+staticcheck ./...
+```
+
+The tooling module pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
+Go 1.27.2 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
+uses an older, incompatible x/tools version. If your installed Go is older,
+set `GOTOOLCHAIN=go1.27.2` when installing the checker so it is built with the
+backend's toolchain.
 
 Run the application:
 
