@@ -54,6 +54,40 @@ or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
 both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
+## Admin auth deletion
+
+Admin auth deletion is disabled unless `ENABLE_ADMIN_DELETE_REQUESTS=true`.
+When enabled, the normal Firestore listener handles pending requests. Dry-run
+defaults to true; set `ADMIN_DELETE_DRY_RUN=false` and pass
+`-enable-real-auth-delete` to permit the backend to call Firebase Auth. Real
+deletion is never enabled by the one-shot evaluation option alone.
+
+For a one-shot dry-run evaluation, set the enablement variables and use an
+isolated Cellar database:
+
+```powershell
+$env:ENABLE_ADMIN_DELETE_REQUESTS = "true"
+$env:ADMIN_DELETE_DRY_RUN = "true"
+go run ./cmd/last-orders -db-path=./admin-delete-test.db -admin-delete-evaluate-once -http-addr=
+```
+
+The command scans pending requests once, dispatches them through normal
+idempotency and service Cells, waits for terminal outcomes to be persisted, and
+then exits. If the kill switch is paused, it enqueues nothing and exits with
+requests still pending. Use `-run-for` to bound a test run if a retryable
+dependency failure prevents requests from reaching terminal status. For a
+dry-run followed by real deletion, reuse the same request: when
+`ADMIN_DELETE_DRY_RUN=false` and `-enable-real-auth-delete` are both set,
+`dry_run_validated` requests are also selected in both one-shot and normal
+listener modes. The backend rechecks all safety preconditions, uses a separate
+real-delete idempotency phase, preserves the dry-run audit as `dryRunEvidence`,
+and waits for the real outcome rather than stopping at the prior validation.
+For a destructive emulator test, additionally configure `FIREBASE_AUTH_EMULATOR_HOST`,
+set `ADMIN_DELETE_DRY_RUN=false`, and pass both `-allow-auth-emulator` and
+`-enable-real-auth-delete`. See
+[`docs/cdd/0003-admin-delete.md`](docs/cdd/0003-admin-delete.md) for the full
+request, safety-gate, and persistence contract.
+
 ## Runtime notification suppression
 
 Admins can toggle **Silence notifications** on Diagnostics. The GUI writes

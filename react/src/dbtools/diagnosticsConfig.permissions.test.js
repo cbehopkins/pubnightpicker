@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
-import { deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
+import { deleteDoc, deleteField, doc, getDoc, runTransaction, setDoc, updateDoc } from "firebase/firestore";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 let testEnv;
 
@@ -71,6 +71,53 @@ describe("diagnostics configuration rules", () => {
         await assertFails(deleteDoc(ref));
         await assertFails(getDoc(doc(db, "config", "other")));
         await assertFails(setDoc(doc(db, "config", "other"), { SilenceNotifications: true }));
+    });
+});
+
+describe("admin deletion configuration rules", () => {
+    it("allows admin initialization and boolean updates", async () => {
+        const db = testEnv.authenticatedContext("admin-user").firestore();
+        const ref = doc(db, "config", "admin_delete");
+        await assertSucceeds(runTransaction(db, async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!Object.hasOwn(snapshot.data() ?? {}, "paused")) {
+                transaction.set(ref, { paused: false }, { merge: true });
+            }
+        }));
+        expect((await getDoc(ref)).data()).toEqual({ paused: false });
+        await assertSucceeds(updateDoc(ref, { paused: true }));
+        await assertSucceeds(updateDoc(ref, { paused: false }));
+    });
+
+    it("allows adding the missing field while preserving backend metadata", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), "config", "admin_delete"), { reason: "maintenance" });
+        });
+        const ref = doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "admin_delete");
+        await assertSucceeds(setDoc(ref, { paused: false }, { merge: true }));
+        expect((await getDoc(ref)).data()).toEqual({ reason: "maintenance", paused: false });
+        await assertFails(updateDoc(ref, { reason: 123 }));
+    });
+
+    it("denies non-admin and unauthenticated reads and writes", async () => {
+        for (const context of [testEnv.authenticatedContext("ordinary-user"), testEnv.unauthenticatedContext()]) {
+            const ref = doc(context.firestore(), "config", "admin_delete");
+            await assertFails(getDoc(ref));
+            await assertFails(setDoc(ref, { paused: false }));
+        }
+        await setDoc(doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "admin_delete"), { paused: false });
+        await assertFails(updateDoc(doc(testEnv.authenticatedContext("ordinary-user").firestore(), "config", "admin_delete"), { paused: true }));
+    });
+
+    it("denies malformed values, unrelated fields, field removal and deletion", async () => {
+        const ref = doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "admin_delete");
+        await assertFails(setDoc(ref, {}));
+        await assertFails(setDoc(ref, { paused: false, unexpected: true }));
+        for (const paused of ["false", null, 0]) await assertFails(setDoc(ref, { paused }));
+        await setDoc(ref, { paused: false });
+        for (const paused of ["false", null, 0, deleteField()]) await assertFails(updateDoc(ref, { paused }));
+        await assertFails(updateDoc(ref, { unexpected: true }));
+        await assertFails(deleteDoc(ref));
     });
 });
 

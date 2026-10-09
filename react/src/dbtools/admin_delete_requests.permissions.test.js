@@ -60,7 +60,7 @@ beforeEach(async () => {
             total: 3,
             outcomes: { auth_delete_failed: 1, auth_delete_blocked: 2 },
         });
-        await setDoc(doc(adminDb, "system_config", "admin_delete"), {
+        await setDoc(doc(adminDb, "config", "admin_delete"), {
             paused: false,
             reason: "",
             updatedByUid: "admin-user",
@@ -140,20 +140,20 @@ describe("admin_delete_request_metrics rules", () => {
     });
 });
 
-describe("system_config admin_delete rules", () => {
+describe("config admin_delete rules", () => {
     it("allows admin read", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();
-        await assertSucceeds(getDoc(doc(db, "system_config", "admin_delete")));
+        await assertSucceeds(getDoc(doc(db, "config", "admin_delete")));
     });
 
     it("denies non-admin read", async () => {
         const db = testEnv.authenticatedContext("plain-user").firestore();
-        await assertFails(getDoc(doc(db, "system_config", "admin_delete")));
+        await assertFails(getDoc(doc(db, "config", "admin_delete")));
     });
 
     it("allows admin update with valid payload", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();
-        await assertSucceeds(updateDoc(doc(db, "system_config", "admin_delete"), {
+        await assertSucceeds(updateDoc(doc(db, "config", "admin_delete"), {
             paused: true,
             reason: "on-call pause",
             updatedByUid: "admin-user",
@@ -161,9 +161,9 @@ describe("system_config admin_delete rules", () => {
         }));
     });
 
-    it("denies admin write to non-admin_delete system config docs", async () => {
+    it("denies admin write to non-admin_delete config docs", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();
-        await assertFails(setDoc(doc(db, "system_config", "other"), {
+        await assertFails(setDoc(doc(db, "config", "other"), {
             paused: true,
             reason: "x",
             updatedByUid: "admin-user",
@@ -173,7 +173,7 @@ describe("system_config admin_delete rules", () => {
 
     it("denies admin update when updatedByUid mismatches", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();
-        await assertFails(updateDoc(doc(db, "system_config", "admin_delete"), {
+        await assertFails(updateDoc(doc(db, "config", "admin_delete"), {
             paused: true,
             updatedByUid: "someone-else",
             updatedAt: new Date("2026-05-12T01:00:00.000Z"),
@@ -182,6 +182,22 @@ describe("system_config admin_delete rules", () => {
 
     it("denies admin delete", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();
-        await assertFails(deleteDoc(doc(db, "system_config", "admin_delete")));
+        await assertFails(deleteDoc(doc(db, "config", "admin_delete")));
+    });
+
+    it("allows paused-only writes without changing another admin's attribution", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(doc(context.firestore(), "config", "admin_delete"), { updatedByUid: "other-admin" });
+        });
+        const db = testEnv.authenticatedContext("admin-user").firestore();
+        await assertSucceeds(updateDoc(doc(db, "config", "admin_delete"), { paused: true }));
+    });
+
+    it("denies access to the incorrect system_config path", async () => {
+        const db = testEnv.authenticatedContext("admin-user").firestore();
+        const ref = doc(db, "system_config", "admin_delete");
+        await assertFails(getDoc(ref));
+        await assertFails(setDoc(ref, { paused: false }));
+        await assertFails(deleteDoc(ref));
     });
 });

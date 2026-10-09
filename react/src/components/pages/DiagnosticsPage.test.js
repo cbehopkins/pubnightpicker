@@ -72,14 +72,86 @@ vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
 }));
 
 const { watchSilenceMock, setSilenceMock } = vi.hoisted(() => ({ watchSilenceMock: vi.fn(() => () => { }), setSilenceMock: vi.fn() }));
+const { watchAdminDeleteMock, setAdminDeleteMock } = vi.hoisted(() => ({
+    watchAdminDeleteMock: vi.fn(() => () => { }), setAdminDeleteMock: vi.fn(),
+}));
 
 vi.mock("../../dbtools/diagnosticsConfig", () => ({
     DEFAULT_NOTIFICATION_SETTINGS: { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false },
     watchNotificationSettings: watchSilenceMock,
     setNotificationSetting: setSilenceMock,
+    watchAdminDeletePaused: watchAdminDeleteMock,
+    setAdminDeletePaused: setAdminDeleteMock,
 }));
 
-import DiagnosticsPage, { AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+import DiagnosticsPage, { AdminDeletePanel, AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+
+describe("AdminDeletePanel", () => {
+    const checkbox = () => screen.getByRole("checkbox", { name: "Pause admin deletions" });
+    beforeEach(() => {
+        watchAdminDeleteMock.mockReset();
+        watchAdminDeleteMock.mockImplementation((onValue) => { onValue(false); return () => { }; });
+        setAdminDeleteMock.mockReset();
+        setAdminDeleteMock.mockResolvedValue(undefined);
+    });
+    afterEach(() => cleanup());
+
+    it("disables the control while loading and unsubscribes on unmount", () => {
+        const unsubscribe = vi.fn();
+        watchAdminDeleteMock.mockImplementation(() => unsubscribe);
+        const { unmount } = render(<AdminDeletePanel />);
+        expect(checkbox()).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("Loading");
+        unmount();
+        expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("writes both directions and reflects confirmed updates", async () => {
+        let deliver;
+        watchAdminDeleteMock.mockImplementation((onValue) => { deliver = onValue; onValue(false); return () => { }; });
+        render(<AdminDeletePanel />);
+        expect(checkbox()).not.toBeChecked();
+        fireEvent.click(checkbox());
+        await waitFor(() => expect(setAdminDeleteMock).toHaveBeenCalledWith(true));
+        expect(checkbox()).not.toBeChecked();
+        await waitFor(() => expect(checkbox()).not.toBeDisabled());
+        act(() => deliver(true));
+        expect(checkbox()).toBeChecked();
+        expect(screen.getByRole("status")).toHaveTextContent("processing paused");
+        fireEvent.click(checkbox());
+        await waitFor(() => expect(setAdminDeleteMock).toHaveBeenLastCalledWith(false));
+        act(() => deliver(false));
+        await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("processing enabled"));
+    });
+
+    it("disables the checkbox while saving", async () => {
+        let finish;
+        setAdminDeleteMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        render(<AdminDeletePanel />);
+        fireEvent.click(checkbox());
+        expect(checkbox()).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("Saving");
+        await act(async () => finish());
+        expect(checkbox()).not.toBeDisabled();
+    });
+
+    it("reports write failures without changing the stored state", async () => {
+        watchAdminDeleteMock.mockImplementation((onValue) => { onValue(true); return () => { }; });
+        setAdminDeleteMock.mockRejectedValue(new Error("Write denied"));
+        render(<AdminDeletePanel />);
+        fireEvent.click(checkbox());
+        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Write denied"));
+        expect(checkbox()).toBeChecked();
+    });
+
+    it("reports read or initialization errors instead of presenting an enabled service", () => {
+        watchAdminDeleteMock.mockImplementation((_onValue, onError) => { onError(new Error("Initialization denied")); return () => { }; });
+        render(<AdminDeletePanel />);
+        expect(checkbox()).toBeDisabled();
+        expect(screen.getByRole("alert")).toHaveTextContent("Initialization denied");
+        expect(screen.getByRole("status")).toHaveTextContent("unavailable");
+    });
+});
 
 describe("EmailSuppressionPanel", () => {
     const defaults = { SilenceNotifications: false, NotifyPollActorWhenSilenced: false, KeepChatNotificationsWhenSilenced: false };
@@ -167,6 +239,7 @@ it("includes the direct Last Orders API panel on diagnostics", () => {
     onSnapshotMock.mockImplementation(() => () => { });
     render(<DiagnosticsPage />);
     expect(screen.getByRole("region", { name: "Last Orders API" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Admin Deletions" })).toBeInTheDocument();
     cleanup();
 });
 

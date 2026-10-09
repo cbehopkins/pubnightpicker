@@ -5,8 +5,8 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
-import { deleteDoc, doc, setDoc } from "firebase/firestore";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
 
 const PROJECT_ID = "pubnightpicker-user-profile-delete-rules";
 
@@ -60,6 +60,31 @@ beforeEach(async () => {
             photoUrl: null,
             votesVisible: true,
         });
+    });
+});
+
+describe("login profile initialization rules", () => {
+    it("allows a new user with no role documents to read and create their own profiles", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await deleteDoc(doc(context.firestore(), "roles", "admin"));
+        });
+        const db = testEnv.authenticatedContext("new-user").firestore();
+        const ref = doc(db, "users", "new-user");
+        const snapshot = await assertSucceeds(getDoc(ref));
+        expect(snapshot.exists()).toBe(false);
+        await assertSucceeds(setDoc(ref, {
+            uid: "new-user", name: "New User", email: "new@example.com", authProvider: "google",
+        }, { merge: true }));
+        await assertSucceeds(setDoc(doc(db, "user-public", "new-user"), {
+            uid: "new-user", name: "New User", photoUrl: null, votesVisible: true,
+        }, { merge: true }));
+        await assertSucceeds(getDoc(ref));
+    });
+
+    it("keeps private collection queries and other users' documents inaccessible to new users", async () => {
+        const db = testEnv.authenticatedContext("new-user").firestore();
+        await assertFails(getDocs(query(collection(db, "users"), where("uid", "==", "new-user"))));
+        await assertFails(getDoc(doc(db, "users", "user-a")));
     });
 });
 

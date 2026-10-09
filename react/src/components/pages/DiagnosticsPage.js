@@ -29,7 +29,7 @@ import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
 import usePolls from "../../hooks/usePolls";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
-import { DEFAULT_NOTIFICATION_SETTINGS, setNotificationSetting, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
+import { DEFAULT_NOTIFICATION_SETTINGS, setAdminDeletePaused, setNotificationSetting, watchAdminDeletePaused, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
 const DEFAULT_AUDIT_DAYS = 7;
@@ -481,6 +481,56 @@ export function EmailSuppressionPanel() {
     );
 }
 
+export function AdminDeletePanel() {
+    const [paused, setPaused] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [readError, setReadError] = useState("");
+    const [writeError, setWriteError] = useState("");
+
+    useEffect(() => watchAdminDeletePaused((value) => {
+        setPaused(value);
+        setIsLoading(false);
+        setReadError("");
+    }, (error) => {
+        setReadError(error?.message || "Unable to load admin deletion settings.");
+        setIsLoading(false);
+    }), []);
+
+    async function save(value) {
+        setIsSaving(true);
+        setWriteError("");
+        try {
+            await setAdminDeletePaused(value);
+        } catch (error) {
+            setWriteError(error?.message || "Unable to save admin deletion settings.");
+        } finally {
+            setIsSaving(false);
+        }
+    }
+
+    return (
+        <section className="mb-4" aria-labelledby="admin-delete-heading">
+            <h2 id="admin-delete-heading" className="h5 mb-2">Admin Deletions</h2>
+            <div className="form-check mb-2">
+                <input id="pause-admin-deletions" type="checkbox" className="form-check-input"
+                    checked={paused} disabled={isLoading || isSaving || Boolean(readError)}
+                    onChange={(event) => save(event.target.checked)} />
+                <label htmlFor="pause-admin-deletions" className="form-check-label">Pause admin deletions</label>
+            </div>
+            <p role="status" className="small mb-2">
+                {isLoading ? "Loading..." : isSaving ? "Saving..." : readError ? "Admin deletion setting unavailable."
+                    : paused ? "Admin deletion processing paused." : "Admin deletion processing enabled."}
+            </p>
+            <p className="small text-body-secondary mb-2">
+                Pausing prevents new deletion work from being dispatched. Requests remain pending until resumed;
+                already-dispatched work is not cancelled.
+            </p>
+            {(readError || writeError) && <p role="alert" className="small text-danger mb-0">{readError || writeError}</p>}
+        </section>
+    );
+}
+
 function DiagnosticsPage() {
     const uid = useSelector((state) => state.auth.uid);
 
@@ -488,12 +538,14 @@ function DiagnosticsPage() {
         <div className="container py-4 py-md-5">
             <h1 className="display-6 fw-bold mb-3">Diagnostics</h1>
             <p className="text-body-secondary mb-4">
-                Admin-only tools for validating notification and push messaging.
+                Admin-only tools for backend diagnostics and runtime controls.
             </p>
 
             <BackendPingPanel />
 
             <EmailSuppressionPanel />
+
+            <AdminDeletePanel />
 
             <NotificationPingPanel
                 title="Admin Diagnostics"
