@@ -40,18 +40,31 @@ go mod tidy
 go test ./...
 ```
 
-Run Staticcheck using the pinned tooling module (also used in CI):
+Install Staticcheck from a temporary module (the same versions are used in CI).
+Run this in a separate PowerShell session:
 
 ```powershell
-go -C tools\staticcheck install honnef.co/go/tools/cmd/staticcheck
+$toolDir = Join-Path ([System.IO.Path]::GetTempPath()) ("staticcheck-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $toolDir | Out-Null
+try {
+    $env:GOTOOLCHAIN = "go1.27.2"
+    $env:GOWORK = "off"
+    go -C $toolDir mod init staticcheck-build
+    if ($LASTEXITCODE -ne 0) { throw "Failed to initialize Staticcheck build module" }
+    go -C $toolDir get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.51.0
+    if ($LASTEXITCODE -ne 0) { throw "Failed to resolve Staticcheck dependencies" }
+    go -C $toolDir install honnef.co/go/tools/cmd/staticcheck
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install Staticcheck" }
+} finally {
+    Remove-Item -LiteralPath $toolDir -Recurse -Force
+}
 staticcheck ./...
 ```
 
-The tooling module pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
+The temporary build pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
 Go 1.27.2 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
-uses an older, incompatible x/tools version. If your installed Go is older,
-set `GOTOOLCHAIN=go1.27.2` when installing the checker so it is built with the
-backend's toolchain.
+uses an older, incompatible x/tools version. The executable is installed into
+`GOBIN` (or `GOPATH\bin` by default); no tooling module remains in the repository.
 
 Run the application:
 
