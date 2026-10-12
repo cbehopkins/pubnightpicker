@@ -1,11 +1,11 @@
 module durable_email
 
-go 1.27.0
+go 1.27.2
 
 require (
 	cellar v0.0.0
 	email_clients v0.0.0
-	github.com/mailtrap/mailtrap-go v0.3.0
+	github.com/mailtrap/mailtrap-go v0.4.0
 )
 
 require (
