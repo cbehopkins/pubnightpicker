@@ -1,0 +1,1746 @@
+openapi: 3.1.0
+info:
+  title: PubNightPicker API
+  version: 1.0.0
+  summary: HTTP API for PubNightPicker groups, venues, locations and Meets.
+  description: |
+    Review draft. Firestore is an implementation detail and is not part of this
+    contract. IDs are opaque strings. Authentication uses Firebase-issued bearer
+    tokens verified by the API.
+
+    Authentication may be omitted for public group discovery and public resource
+    reads. If an Authorization bearer token is supplied, it must be valid; invalid
+    or expired credentials produce 401 rather than anonymous fallback.
+
+    A group is the boundary for membership, permissions, settings and Meet
+    discovery. Visibility and membership are distinct. Public groups can be
+    discovered by non-members; private groups are discoverable only by callers
+    authorised to see them. Read visibility does not grant write permission.
+servers:
+  - url: https://api.example.invalid
+    description: Replace with the deployed API origin.
+tags:
+  - name: Groups
+  - name: Group members
+  - name: Group permissions
+  - name: Group settings
+  - name: Locations
+  - name: Venues
+  - name: Meets
+  - name: Voting
+  - name: Attendance
+security:
+  - bearerAuth: []
+paths:
+  /groups:
+    get:
+      tags: [Groups]
+      operationId: listGroups
+      summary: List groups available to the caller
+      description: |
+        Authentication is optional. Anonymous callers receive public groups.
+        Authenticated callers receive public groups and private groups they are
+        authorised to discover. `name` is an exact-match filter. An empty result
+        is represented by 200 with an empty array.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: Exact group-name match.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Groups available to the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupSummary'
+              examples:
+                found:
+                  value:
+                    groups:
+                      - id: opaque-group-id
+                        name: ampubnight
+                        visibility: private
+                noMatches:
+                  value:
+                    groups: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Groups]
+      operationId: createGroup
+      summary: Create a group
+      description: |
+        Requires a valid authenticated caller. The creator becomes a member and
+        is granted the group's admin permission as part of the creation operation.
+        Group creation and initial admin assignment must succeed or fail as one
+        logical operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGroupRequest'
+      responses:
+        '201':
+          description: Group created.
+          headers:
+            Location:
+              description: URL of the created group.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Groups]
+      operationId: getGroup
+      summary: Get group details
+      description: |
+        Authentication is optional for public groups. A private group is returned
+        only to a caller authorised to discover it. Unknown and inaccessible groups
+        both return 404.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Group details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Groups]
+      operationId: updateGroup
+      summary: Update group identity and basic settings
+      description: Requires group-admin permission. This operation does not update permissions, membership, or feature settings.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateGroupRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGroupRequest'
+      responses:
+        '200':
+          description: Updated group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}/members:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Group members]
+      operationId: listGroupMembers
+      summary: List group members
+      description: Requires permission to manage the group or otherwise view its membership.
+      responses:
+        '200':
+          description: Current members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupMember'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}/members/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [Group members]
+      operationId: addGroupMember
+      summary: Add a group member
+      description: Requires group-admin permission. Idempotently ensures the user is a member.
+      responses:
+        '204':
+          description: User is now a member.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Group members]
+      operationId: removeGroupMember
+      summary: Remove a group member
+      description: |
+        Requires group-admin permission. The implementation must prevent removal
+        of the last group administrator unless administrative responsibility is
+        transferred in the same operation.
+      responses:
+        '204':
+          description: User is no longer a member.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}/permissions:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Group permissions]
+      operationId: getGroupPermissions
+      summary: Get group permission assignments
+      description: Requires group-admin permission. Returns the permission-oriented view; each permission maps to user IDs granted that permission.
+      responses:
+        '200':
+          description: Permission assignments.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupPermissions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}/permissions/{permission}/members/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+      - name: permission
+        in: path
+        required: true
+        description: Stable permission key recognised by the server, such as admin or canCompleteMeet.
+        schema:
+          type: string
+          minLength: 1
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [Group permissions]
+      operationId: grantGroupPermission
+      summary: Grant a group permission to a user
+      description: Requires group-admin permission. The user must be a member of the group. Permission keys are validated by the server.
+      responses:
+        '204':
+          description: Permission is granted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Group permissions]
+      operationId: revokeGroupPermission
+      summary: Revoke a group permission from a user
+      description: Requires group-admin permission. The server must prevent removal of the last admin permission.
+      responses:
+        '204':
+          description: Permission is revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /groups/{group_id}/settings:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Group settings]
+      operationId: getGroupSettings
+      summary: Get group feature settings
+      description: Requires group-admin permission. Operational settings such as automation schedules and notification destinations are not exposed by public group reads.
+      responses:
+        '200':
+          description: Group settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Group settings]
+      operationId: updateGroupSettings
+      summary: Update group feature settings
+      description: Requires group-admin permission. Only documented settings are accepted; unsupported properties must not be silently persisted.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/GroupSettingsPatch'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupSettingsPatch'
+      responses:
+        '200':
+          description: Updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /locations:
+    get:
+      tags: [Locations]
+      operationId: listLocations
+      summary: List locations
+      description: Lists locations available to the caller. Results exclude soft-deleted locations.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor returned by the previous response.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Locations page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Locations]
+      operationId: createLocation
+      summary: Create a location
+      description: Requires the appropriate global administrative permission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationWrite'
+      responses:
+        '201':
+          description: Location created.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /locations/{location_id}:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    get:
+      tags: [Locations]
+      operationId: getLocation
+      summary: Get a location
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Location details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Locations]
+      operationId: updateLocation
+      summary: Update a location
+      description: Requires the appropriate global administrative permission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/LocationPatch'
+      responses:
+        '200':
+          description: Updated location.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Locations]
+      operationId: deleteLocation
+      summary: Soft-delete a location
+      description: Requires the appropriate global administrative permission. The location is marked deleted rather than physically removed.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Location soft-deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /venues:
+    get:
+      tags: [Venues]
+      operationId: listVenues
+      summary: Search venues
+      description: |
+        Lists venues visible to the caller. Excludes soft-deleted and banned
+        venues by default. Private venue visibility is evaluated against group
+        access. Only pub venues participate in automatic venue selection.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: location_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: venue_type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/VenueType'
+        - name: name
+          in: query
+          required: false
+          description: Name search; matching semantics are implementation-defined for this draft.
+          schema:
+            type: string
+        - name: food
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: dog_friendly
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: beer_garden
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Venue results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Venues]
+      operationId: createVenue
+      summary: Create a venue
+      description: Requires the appropriate global administrative permission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueWrite'
+      responses:
+        '201':
+          description: Venue created.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /venues/{venue_id}:
+    parameters:
+      - $ref: '#/components/parameters/VenueId'
+    get:
+      tags: [Venues]
+      operationId: getVenue
+      summary: Get a venue
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Venue details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Venues]
+      operationId: updateVenue
+      summary: Update a venue
+      description: Requires the appropriate global administrative permission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/VenuePatch'
+      responses:
+        '200':
+          description: Updated venue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Venues]
+      operationId: deleteVenue
+      summary: Soft-delete a venue
+      description: Requires the appropriate global administrative permission. This is distinct from the `banned` domain property.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Venue soft-deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meets/{group_id}/current:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: listCurrentMeets
+      summary: List current Meets for a group
+      description: |
+        Returns completed voting-phase Meets whose local date is today or in the
+        future, together with the venue and attendance summary needed by the
+        current-Meets view. The response includes a collection revision suitable
+        for starting the corresponding stream. This snapshot is cacheable according
+        to server cache headers; the revision is a synchronization cursor, not a
+        cache key by itself.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Current Meets snapshot.
+          headers:
+            ETag:
+              description: Optional HTTP validator for conditional requests.
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentMeetsSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meets/{group_id}/current/stream:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: streamCurrentMeets
+      summary: Stream changes to current Meets
+      description: |
+        Server-Sent Events. `after` is an opaque collection revision cursor from
+        a snapshot; Last-Event-ID may be used on reconnect. The server replays
+        changes after that cursor and then sends live changes. Event IDs are
+        monotonically increasing within this group's current-Meets stream. The
+        stream must support a consistent snapshot/replay boundary.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of current-Meets collection changes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache
+            X-Accel-Buffering:
+              description: Deployment hint to disable proxy buffering where applicable.
+              schema:
+                type: string
+                example: 'no'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Each message follows SSE framing. Event IDs are revisions.
+                  `event: current_meets` data is a complete replacement snapshot
+                  of the current-Meets collection at that revision.
+              example: |
+                id: 1043
+                event: current_meets
+                data: {"revision":1043,"meets":[]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meets/{group_id}/past:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: listPastMeets
+      summary: List past Meets for a group
+      description: Returns completed Meets with a local date before today, newest first. No stream is provided for this historical collection.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          required: false
+          description: Opaque pagination cursor from the previous page.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Past Meets page.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PastMeetsPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Meets]
+      operationId: getMeet
+      summary: Get a Meet
+      description: Returns the Meet details visible to the caller, including its current voting/completion information.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Meet details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/votes/{venue_id}:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+      - name: venue_id
+        in: path
+        required: true
+        description: Venue ID, or the reserved literal `any` meaning any venue is acceptable.
+        schema:
+          type: string
+          minLength: 1
+    put:
+      tags: [Voting]
+      operationId: addVote
+      summary: Add the caller's vote for a venue
+      description: Idempotently records that the authenticated caller votes for this venue or the special `any` option. A caller may vote for multiple options.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Vote recorded.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Voting]
+      operationId: removeVote
+      summary: Remove the caller's vote for a venue
+      description: Idempotently removes the authenticated caller's vote for this venue or the special `any` option.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Vote removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    post:
+      tags: [Meets]
+      operationId: completeMeet
+      summary: Complete the voting phase and select the venue
+      description: |
+        Requires the caller's group permission to complete a Meet. Completion
+        ends the voting phase but does not end the Meet lifecycle. `restaurant_time`
+        is required when `restaurant_id` is supplied and must be omitted otherwise.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteMeetRequest'
+      responses:
+        '200':
+          description: Meet after completion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/reschedule:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    post:
+      tags: [Meets]
+      operationId: rescheduleMeet
+      summary: Change the selected venue or restaurant details
+      description: Requires the caller's group permission to reschedule a Meet. The prior selected venue is appended to `previous_venue_ids`; history is retained as a list.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RescheduleMeetRequest'
+      responses:
+        '200':
+          description: Meet after rescheduling.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/attendance:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Attendance]
+      operationId: getMeetAttendance
+      summary: Get the detailed attendance snapshot
+      description: Returns attendee summaries and a revision cursor consistent with the snapshot.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Attendance snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Attendance]
+      operationId: setMyAttendance
+      summary: Set the caller's attendance state
+      description: Replaces the caller's current attendance state. The caller identity comes from authentication; clients cannot set another user's attendance.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceUpdate'
+      responses:
+        '200':
+          description: Updated attendance state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyAttendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/attendance/stream:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Attendance]
+      operationId: streamMeetAttendance
+      summary: Stream attendance summary changes
+      description: |
+        SSE stream. `after` or Last-Event-ID is the attendance revision cursor.
+        Each event carries the complete attendance summary (counts) at that
+        revision, rather than a low-level mutation. The detailed attendance list
+        can be refreshed through GET /meet/{meet_id}/attendance if required.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of attendance summaries.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                id: 43
+                event: attendance
+                data: {"revision":43,"attending_count":8,"not_attending_count":2}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Firebase ID token
+      description: Firebase Authentication ID token supplied as a bearer token.
+  parameters:
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    LocationId:
+      name: location_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    VenueId:
+      name: venue_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    MeetId:
+      name: meet_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: Invalid request or domain validation failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: invalid_request
+              message: The request is invalid.
+    Unauthorized:
+      description: Missing, invalid or expired credentials for an operation requiring authentication, or invalid credentials supplied to an optionally authenticated operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: unauthenticated
+              message: Authentication is required or the supplied token is invalid.
+    Forbidden:
+      description: The caller is authenticated but is not authorised to perform the operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: forbidden
+              message: You are not authorised to perform this operation.
+    NotFound:
+      description: The resource does not exist or is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: not_found
+              message: Resource not found.
+    Conflict:
+      description: The request conflicts with current domain state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: conflict
+              message: The operation conflicts with the current state.
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: internal_error
+              message: An unexpected error occurred.
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+            message:
+              type: string
+              description: Human-readable explanation; clients should use code for programmatic handling.
+    GroupVisibility:
+      type: string
+      enum: [public, private]
+    GroupSummary:
+      type: object
+      required: [id, name, visibility]
+      properties:
+        id:
+          type: string
+          description: Opaque stable group ID.
+        name:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/GroupVisibility'
+    Group:
+      allOf:
+        - $ref: '#/components/schemas/GroupSummary'
+        - type: object
+          required: [created_by, member_ids]
+          properties:
+            created_by:
+              type: string
+              description: User ID of the original creator; not itself an ongoing permission grant.
+            member_ids:
+              type: array
+              items:
+                type: string
+              description: Current group member IDs. Returned only to callers authorised to view membership.
+            default_location_id:
+              type: [string, 'null']
+    CreateGroupRequest:
+      type: object
+      required: [name, visibility]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        visibility:
+          $ref: '#/components/schemas/GroupVisibility'
+        default_location_id:
+          type: [string, 'null']
+    UpdateGroupRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        visibility:
+          $ref: '#/components/schemas/GroupVisibility'
+        default_location_id:
+          type: [string, 'null']
+      additionalProperties: false
+    GroupMember:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+        photo_url:
+          type: string
+          format: uri
+    GroupPermissions:
+      type: object
+      required: [permissions]
+      properties:
+        permissions:
+          type: object
+          description: Permission-oriented assignment map. Keys are server-recognised permission names; values are user IDs granted that permission.
+          additionalProperties:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+          example:
+            admin: [user-1]
+            canVote: [user-1, user-2]
+            canCompleteMeet: [user-1]
+    GroupSettings:
+      type: object
+      required: [default_location_id, automation, notifications]
+      properties:
+        default_location_id:
+          type: [string, 'null']
+        automation:
+          $ref: '#/components/schemas/AutomationSettings'
+        notifications:
+          $ref: '#/components/schemas/NotificationSettings'
+    GroupSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        default_location_id:
+          type: [string, 'null']
+        automation:
+          $ref: '#/components/schemas/AutomationSettingsPatch'
+        notifications:
+          $ref: '#/components/schemas/NotificationSettingsPatch'
+      additionalProperties: false
+    AutomationSettings:
+      type: object
+      required: [poll_creation, poll_completion]
+      properties:
+        poll_creation:
+          $ref: '#/components/schemas/ScheduledAutomation'
+        poll_completion:
+          $ref: '#/components/schemas/ScheduledAutomation'
+    AutomationSettingsPatch:
+      type: object
+      properties:
+        poll_creation:
+          $ref: '#/components/schemas/ScheduledAutomationPatch'
+        poll_completion:
+          $ref: '#/components/schemas/ScheduledAutomationPatch'
+      additionalProperties: false
+    ScheduledAutomation:
+      type: object
+      required: [enabled, schedule]
+      properties:
+        enabled:
+          type: boolean
+        schedule:
+          type: string
+          description: Provisional schedule representation; exact grammar and timezone semantics must be agreed before implementation.
+          examples: ['weekly;day=friday;time=09:00']
+    ScheduledAutomationPatch:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        schedule:
+          type: string
+      additionalProperties: false
+    NotificationSettings:
+      type: object
+      required: [mailing_list]
+      properties:
+        mailing_list:
+          type: [string, 'null']
+          format: email
+    NotificationSettingsPatch:
+      type: object
+      properties:
+        mailing_list:
+          type: [string, 'null']
+          format: email
+      additionalProperties: false
+    Location:
+      type: object
+      required: [id, name, notes]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        notes:
+          type: string
+        deleted_on:
+          type: [string, 'null']
+          format: date-time
+    LocationWrite:
+      type: object
+      required: [name, notes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+    LocationPatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+      additionalProperties: false
+    LocationList:
+      type: object
+      required: [locations, next_cursor]
+      properties:
+        locations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Location'
+        next_cursor:
+          type: [string, 'null']
+    VenueType:
+      type: string
+      enum: [pub, restaurant, event]
+    Recurrence:
+      type: object
+      description: Recurrence configuration used primarily by event-type venues. Exact supported grammar should match existing recurrence logic.
+      additionalProperties: true
+    Venue:
+      type: object
+      required: [id, name, venue_type, address, food, banned]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        venue_type:
+          $ref: '#/components/schemas/VenueType'
+        website_url:
+          type: [string, 'null']
+          format: uri
+        map_url:
+          type: [string, 'null']
+          format: uri
+        address:
+          type: string
+        notes:
+          type: string
+        image_url:
+          type: [string, 'null']
+          format: uri
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/Recurrence'
+            - type: 'null'
+        next_occurrence_date:
+          type: [string, 'null']
+          format: date
+        parking:
+          type: boolean
+        food:
+          type: boolean
+        dog_friendly:
+          type: boolean
+        beer_garden:
+          type: boolean
+        banned:
+          type: boolean
+        location_id:
+          type: [string, 'null']
+        visible_group_ids:
+          type: array
+          items:
+            type: string
+        previous_venue_ids:
+          type: array
+          items:
+            type: string
+        deleted_on:
+          type: [string, 'null']
+          format: date-time
+    VenueWrite:
+      type: object
+      required: [name, venue_type, address]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        venue_type:
+          $ref: '#/components/schemas/VenueType'
+        website_url:
+          type: [string, 'null']
+          format: uri
+        map_url:
+          type: [string, 'null']
+          format: uri
+        address:
+          type: string
+        notes:
+          type: string
+        image_url:
+          type: [string, 'null']
+          format: uri
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/Recurrence'
+            - type: 'null'
+        next_occurrence_date:
+          type: [string, 'null']
+          format: date
+        parking:
+          type: boolean
+        food:
+          type: boolean
+        dog_friendly:
+          type: boolean
+        beer_garden:
+          type: boolean
+        banned:
+          type: boolean
+        location_id:
+          type: [string, 'null']
+        visible_group_ids:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    VenuePatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+        venue_type:
+          $ref: '#/components/schemas/VenueType'
+        website_url:
+          type: [string, 'null']
+          format: uri
+        map_url:
+          type: [string, 'null']
+          format: uri
+        address:
+          type: string
+        notes:
+          type: string
+        image_url:
+          type: [string, 'null']
+          format: uri
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/Recurrence'
+            - type: 'null'
+        next_occurrence_date:
+          type: [string, 'null']
+          format: date
+        parking:
+          type: boolean
+        food:
+          type: boolean
+        dog_friendly:
+          type: boolean
+        beer_garden:
+          type: boolean
+        banned:
+          type: boolean
+        location_id:
+          type: [string, 'null']
+        visible_group_ids:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    VenueList:
+      type: object
+      required: [venues, next_cursor]
+      properties:
+        venues:
+          type: array
+          items:
+            $ref: '#/components/schemas/Venue'
+        next_cursor:
+          type: [string, 'null']
+    VenueSummary:
+      type: object
+      required: [id, name, address]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        image_url:
+          type: [string, 'null']
+          format: uri
+        venue_type:
+          $ref: '#/components/schemas/VenueType'
+    AttendanceCounts:
+      type: object
+      required: [attending_count, not_attending_count, revision]
+      properties:
+        attending_count:
+          type: integer
+          minimum: 0
+        not_attending_count:
+          type: integer
+          minimum: 0
+        revision:
+          type: integer
+          minimum: 0
+    Meet:
+      type: object
+      required: [id, group_id, date, voting_complete, previous_venue_ids, attendance]
+      properties:
+        id:
+          type: string
+        group_id:
+          type: string
+        date:
+          type: string
+          format: date
+        voting_complete:
+          type: boolean
+          description: True once a venue has been selected and the voting phase is complete.
+        venue:
+          oneOf:
+            - $ref: '#/components/schemas/VenueSummary'
+            - type: 'null'
+        restaurant_id:
+          type: [string, 'null']
+        restaurant_time:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Local wall-clock time HH:MM; present if and only if restaurant_id is set.
+        previous_venue_ids:
+          type: array
+          items:
+            type: string
+        attendance:
+          $ref: '#/components/schemas/AttendanceCounts'
+    CurrentMeetsSnapshot:
+      type: object
+      required: [revision, meets]
+      properties:
+        revision:
+          type: integer
+          minimum: 0
+          description: Collection stream cursor corresponding to this snapshot.
+        meets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meet'
+    PastMeetsPage:
+      type: object
+      required: [meets, next_cursor]
+      properties:
+        meets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meet'
+        next_cursor:
+          type: [string, 'null']
+    CompleteMeetRequest:
+      type: object
+      required: [venue_id]
+      properties:
+        venue_id:
+          type: string
+          minLength: 1
+        restaurant_id:
+          type: [string, 'null']
+        restaurant_time:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      allOf:
+        - if:
+            properties:
+              restaurant_id:
+                type: string
+            required: [restaurant_id]
+          then:
+            required: [restaurant_time]
+            properties:
+              restaurant_time:
+                type: string
+          else:
+            properties:
+              restaurant_time:
+                type: 'null'
+    RescheduleMeetRequest:
+      type: object
+      minProperties: 1
+      properties:
+        venue_id:
+          type: string
+          minLength: 1
+        restaurant_id:
+          type: [string, 'null']
+        restaurant_time:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        date:
+          type: string
+          format: date
+      description: Supply the fields being changed. If restaurant_id is non-null, restaurant_time is required. Clearing restaurant_id also clears restaurant_time.
+      additionalProperties: false
+    AttendanceStatus:
+      type: string
+      enum: [attending, not_attending]
+    AttendanceUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        eta:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Optional estimated arrival time in local HH:MM format.
+      additionalProperties: false
+    MyAttendance:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        eta:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+    AttendeeSummary:
+      type: object
+      required: [user_id, display_name, status]
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+        photo_url:
+          type: [string, 'null']
+          format: uri
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        eta:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+    AttendanceSnapshot:
+      type: object
+      required: [revision, attending, not_attending]
+      properties:
+        revision:
+          type: integer
+          minimum: 0
+        attending:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendeeSummary'
+        not_attending:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendeeSummary'
