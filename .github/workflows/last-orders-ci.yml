@@ -61,7 +61,7 @@ jobs:
         run: |
           tool_dir=$(mktemp -d)
           trap 'rm -rf -- "$tool_dir"' EXIT
-          export GOTOOLCHAIN=go1.27.2
+          export GOTOOLCHAIN=go1.27.3
           export GOWORK=off
           cd "$tool_dir"
           go mod init staticcheck-build

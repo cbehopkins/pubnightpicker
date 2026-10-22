@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ import (
 	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/option"
 
 	_ "modernc.org/sqlite"
 )
@@ -69,11 +72,12 @@ type RecurrenceService interface {
 }
 
 type Config struct {
-	DBPath             string
-	PollDelay          time.Duration
-	Logger             *slog.Logger
-	FirestoreProjectID string
-	EnableFirestore    bool
+	DBPath              string
+	PollDelay           time.Duration
+	Logger              *slog.Logger
+	FirestoreProjectID  string
+	FirebaseCredentials *google.Credentials
+	EnableFirestore     bool
 	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
 	PollsSince        string
 	IdempotencyRemote firebaseidempotency.Remote
@@ -189,12 +193,16 @@ func New(cfg Config) (application *App, err error) {
 	if cfg.EnableFirestore && cfg.FirestoreProjectID == "" {
 		cfg.FirestoreProjectID = "last-orders-emulator"
 	}
+	var firebaseOptions []option.ClientOption
+	if cfg.FirebaseCredentials != nil {
+		firebaseOptions = append(firebaseOptions, option.WithCredentials(cfg.FirebaseCredentials))
+	}
 	if cfg.HTTPAddr != "" {
 		if err := firebaseauth.CheckEmulator(cfg.AllowAuthEmulator); err != nil {
 			return nil, err
 		}
 		if cfg.AuthVerifier == nil {
-			cfg.AuthVerifier, err = firebaseauth.New(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator)
+			cfg.AuthVerifier, err = firebaseauth.New(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator, firebaseOptions...)
 			if err != nil {
 				return nil, err
 			}
@@ -231,7 +239,11 @@ func New(cfg Config) (application *App, err error) {
 
 	var firestoreClient *firestore.Client
 	if cfg.EnableFirestore {
-		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID)
+		firestoreOptions := firebaseOptions
+		if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+			firestoreOptions = nil
+		}
+		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("init firestore client: %w", err)
 		}
@@ -473,7 +485,7 @@ func New(cfg Config) (application *App, err error) {
 	if adminDeleteRepository != nil {
 		adminDeleteAuth := cfg.AdminDeleteAuthClient
 		if cfg.AdminDeleteEnabled && !cfg.AdminDeleteDryRun && cfg.EnableRealAuthDelete && adminDeleteAuth == nil {
-			adminDeleteAuth, err = admindeletesvc.NewFirebaseAuthClient(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator)
+			adminDeleteAuth, err = admindeletesvc.NewFirebaseAuthClient(context.Background(), cfg.AuthProjectID, cfg.AllowAuthEmulator, firebaseOptions...)
 			if err != nil {
 				return nil, err
 			}
