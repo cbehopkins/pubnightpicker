@@ -180,8 +180,10 @@ describe("EmailSuppressionPanel", () => {
         render(<EmailSuppressionPanel />);
         fireEvent.click(mainCheckbox());
         await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("SilenceNotifications", true));
-        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
+        expect(mainCheckbox()).toBeChecked();
+        expect(mainCheckbox()).toBeDisabled();
         act(() => deliver({ ...defaults, SilenceNotifications: true }));
+        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
         expect(mainCheckbox()).toBeChecked();
         expect(screen.getByRole("status")).toHaveTextContent("Test notifications remain silenced");
         expect(screen.getByRole("checkbox", { name: "Silence notifications" })).toBeChecked();
@@ -190,15 +192,24 @@ describe("EmailSuppressionPanel", () => {
         await waitFor(() => expect(setSilenceMock).toHaveBeenLastCalledWith("SilenceNotifications", false));
     });
 
-    it("disables the control while saving", async () => {
+    it("keeps the clicked value until the subscription confirms the write", async () => {
+        let deliver;
         let finish;
+        watchSilenceMock.mockImplementation((onValue) => { deliver = onValue; onValue(defaults); return () => { }; });
         setSilenceMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
         render(<EmailSuppressionPanel />);
         fireEvent.click(mainCheckbox());
+        expect(mainCheckbox()).toBeChecked();
         expect(mainCheckbox()).toBeDisabled();
         expect(screen.getByRole("status")).toHaveTextContent("Saving");
-        finish();
-        await waitFor(() => expect(mainCheckbox()).not.toBeDisabled());
+        act(() => deliver(defaults));
+        expect(mainCheckbox()).toBeChecked();
+        await act(async () => finish());
+        expect(mainCheckbox()).toBeChecked();
+        expect(mainCheckbox()).toBeDisabled();
+        act(() => deliver({ ...defaults, SilenceNotifications: true }));
+        expect(mainCheckbox()).toBeChecked();
+        expect(mainCheckbox()).not.toBeDisabled();
     });
 
     it("reports failed writes without changing the database-backed checkbox", async () => {
@@ -229,6 +240,8 @@ describe("EmailSuppressionPanel", () => {
         act(() => deliver({ ...defaults, SilenceNotifications: true, NotifyPollActorWhenSilenced: true }));
         fireEvent.click(chat);
         await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("KeepChatNotificationsWhenSilenced", true));
+        expect(chat).toBeChecked();
+        act(() => deliver({ ...defaults, SilenceNotifications: true, NotifyPollActorWhenSilenced: true, KeepChatNotificationsWhenSilenced: true }));
         await waitFor(() => expect(chat).not.toBeDisabled());
         fireEvent.click(actor);
         await waitFor(() => expect(setSilenceMock).toHaveBeenCalledWith("NotifyPollActorWhenSilenced", false));

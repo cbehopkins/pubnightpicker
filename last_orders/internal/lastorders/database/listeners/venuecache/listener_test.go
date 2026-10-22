@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,53 @@ func (s *blockingSource) Watch(ctx context.Context) (component.ChangeStream, err
 
 func (fakeSource) Watch(context.Context) (component.ChangeStream, error) {
 	return nil, nil
+}
+
+func TestListenerReportsPersistenceFailureBeforeReadiness(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "failed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := component.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &replaySource{changes: [][]component.Change{{{Kind: component.ChangeRemoved, Doc: component.Document{ID: "venue"}}}}}
+	service, err := component.NewService(store, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := New(service, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := listener.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	select {
+	case err := <-listener.Errors():
+		if !strings.Contains(err.Error(), "persist venue cache projection") || !strings.Contains(err.Error(), "database is closed") {
+			t.Fatalf("unexpected persistence error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("listener retried persistence failure instead of reporting it")
+	}
+	select {
+	case <-listener.Ready():
+		t.Fatal("failed projection must not become ready")
+	default:
+	}
 }
 
 func TestApplyAddedModifiedAndRemovedChanges(t *testing.T) {

@@ -919,6 +919,10 @@ func (a *App) Run(ctx context.Context) error {
 	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
 		select {
 		case <-ready:
+		case err := <-a.notificationProfileListener.Errors():
+			return fmt.Errorf("notification profile projection failed: %w", err)
+		case err := <-a.venueCacheListener.Errors():
+			return fmt.Errorf("venue cache projection failed: %w", err)
 		case <-runCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
@@ -980,6 +984,10 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		a.logger.Info("run context cancelled, shutting down")
 		return nil
+	case err := <-a.notificationProfileListener.Errors():
+		return fmt.Errorf("notification profile projection failed: %w", err)
+	case err := <-a.venueCacheListener.Errors():
+		return fmt.Errorf("venue cache projection failed: %w", err)
 	case err := <-cellarErr:
 		// The scheduler stopping ends the whole application, so say so on the way out
 		// rather than only via the process exit code.

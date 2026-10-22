@@ -167,6 +167,10 @@ that startup has passed those gates and HTTP is responsive, not that background
 work is progressing or external dependencies are currently available. The route
 is unavailable when HTTP is disabled with an empty `-http-addr`.
 
+Local projection persistence failures stop the application with an error, both
+during startup and after readiness. They are not retried indefinitely as upstream
+watch interruptions are. This does not make network-backed SQLite WAL storage safe.
+
 Start with a 30-second probe interval, a 3-second timeout, three consecutive
 failures before marking the container unhealthy, and a 60-second startup grace
 period. Adjust the grace period to observed startup times. The image is

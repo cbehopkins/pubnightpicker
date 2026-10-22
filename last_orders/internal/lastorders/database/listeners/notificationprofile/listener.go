@@ -20,6 +20,8 @@ const defaultRetryDelay = 5 * time.Second
 
 var ErrMalformedDocument = errors.New("malformed notification profile document")
 
+var errPersistence = errors.New("persist notification profile projection")
+
 // Listener keeps the notification profile projection converged with Firebase.
 // It emits no Truths; it only maintains derived state.
 type Listener struct {
@@ -28,6 +30,7 @@ type Listener struct {
 	logger     *slog.Logger
 	retryDelay time.Duration
 	ready      chan struct{}
+	failed     chan error
 	unloaded   atomic.Int32
 	lifecycle.Controller
 }
@@ -44,7 +47,7 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{})}
+	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1)}
 	listener.unloaded.Store(2)
 	return listener, nil
 }
@@ -52,6 +55,10 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 // Ready closes once both streams have applied their first full snapshot.
 func (l *Listener) Ready() <-chan struct{} {
 	return l.ready
+}
+
+func (l *Listener) Errors() <-chan error {
+	return l.failed
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -93,6 +100,16 @@ type applyChange func(context.Context, notificationprofile.Change) error
 func (l *Listener) watchStream(ctx context.Context, name string, open openStream, apply applyChange, loaded func()) {
 	for ctx.Err() == nil {
 		if err := l.watchOnce(ctx, open, apply, loaded); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if errors.Is(err, errPersistence) {
+				select {
+				case l.failed <- fmt.Errorf("%s stream: %w", name, err):
+				default:
+				}
+				return
+			}
 			l.logger.Error("notification profile watch failed", "stream", name, "err", err)
 			select {
 			case <-ctx.Done():
@@ -126,7 +143,7 @@ func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyCh
 						"doc_id", change.Doc.ID, "user_id", change.Doc.UserID, "err", err)
 					continue
 				}
-				return err
+				return errors.Join(errPersistence, err)
 			}
 		}
 		loaded()
