@@ -130,6 +130,29 @@ or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
 both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
+### Reset a corrupted local database
+
+For an explicitly destructive reset, set `LAST_ORDERS_RESET_DB=true` or pass
+`-reset-db`. Before opening SQLite, the process deletes the configured `-db-path`
+and its `-wal`, `-shm` and `-journal` sidecars. Missing files are harmless;
+deletion errors stop startup. The reset is disabled by default and never happens
+automatically in response to corruption. Firestore data is not deleted.
+
+This discards all local state, including queued durable work, timers, delivery
+recovery records, idempotency state and cached projections. Firestore projections
+can rebuild, but pending work is not guaranteed to be recovered and external
+actions may be replayed when local deduplication/recovery state is lost.
+
+Stop every replica using this database before resetting it. Do not use a rolling
+restart against a shared database that another replica still has open. If the
+platform cannot provide exclusive access, ask support to stop the other replicas
+or reset the volume during maintenance. This option does not solve shared-volume
+SQLite corruption or coordinate replicas.
+
+Remove the flag or environment variable immediately after recovery: while enabled,
+it deletes the database on every process start, including health-check restarts.
+No shell or filesystem access inside the container is required.
+
 ### Container health checks
 
 Configure the cloud service's HTTP probe to use `GET /healthz` on the application
