@@ -199,19 +199,22 @@ func TestBoolFromEnv(t *testing.T) {
 		{name: "enabled", raw: "true", configured: true, want: true},
 		{name: "disabled", raw: "false", configured: true, want: false},
 		{name: "whitespace", raw: " true ", configured: true, want: true},
+		{name: "empty", raw: "", configured: true, wantErr: true},
 		{name: "invalid", raw: "sometimes", configured: true, wantErr: true},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := boolFromEnv("ADMIN_DELETE_SETTING", test.fallback, func(name string) (string, bool) {
-				if name != "ADMIN_DELETE_SETTING" {
-					t.Fatalf("lookup name = %q", name)
+		for _, setting := range []string{"ADMIN_DELETE_SETTING", "LAST_ORDERS_FIRESTORE_FORCE_IPV4"} {
+			t.Run(setting+"/"+test.name, func(t *testing.T) {
+				got, err := boolFromEnv(setting, test.fallback, func(name string) (string, bool) {
+					if name != setting {
+						t.Fatalf("lookup name = %q", name)
+					}
+					return test.raw, test.configured
+				})
+				if got != test.want || (err != nil) != test.wantErr {
+					t.Fatalf("boolFromEnv() = %t, %v; want %t, error=%t", got, err, test.want, test.wantErr)
 				}
-				return test.raw, test.configured
 			})
-			if got != test.want || (err != nil) != test.wantErr {
-				t.Fatalf("boolFromEnv() = %t, %v; want %t, error=%t", got, err, test.want, test.wantErr)
-			}
-		})
+		}
 	}
 }
 

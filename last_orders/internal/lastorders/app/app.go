@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptrace"
-	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -79,6 +77,7 @@ type Config struct {
 	PollDelay           time.Duration
 	Logger              *slog.Logger
 	FirestoreProjectID  string
+	FirestoreForceIPv4  bool
 	FirebaseCredentials *google.Credentials
 	EnableFirestore     bool
 	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
@@ -172,23 +171,6 @@ type App struct {
 }
 
 func New(cfg Config) (application *App, err error) {
-	for _, key := range []string{
-		"HTTP_PROXY",
-		"http_proxy",
-		"HTTPS_PROXY",
-		"https_proxy",
-		"ALL_PROXY",
-		"all_proxy",
-		"NO_PROXY",
-		"no_proxy",
-		"GOOGLE_APPLICATION_CREDENTIALS",
-	} {
-		_, exists := os.LookupEnv(key)
-		slog.Info("environment check",
-			"variable", key,
-			"set", exists,
-		)
-	}
 	if cfg.DBPath == "" {
 		return nil, fmt.Errorf("db path is required")
 	}
@@ -262,13 +244,8 @@ func New(cfg Config) (application *App, err error) {
 		firestoreOptions := firebaseOptions
 		if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
 			firestoreOptions = nil
-		} else {
-			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(
-				func(ctx context.Context, address string) (net.Conn, error) {
-					return dialFirestoreIPv4(ctx, address, cfg.Logger)
-				},
-			)))
-			cfg.Logger.Info("firestore transport configured", "network", "tcp4")
+		} else if cfg.FirestoreForceIPv4 {
+			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(dialFirestoreIPv4)))
 		}
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
 		if err != nil {
@@ -411,13 +388,6 @@ func New(cfg Config) (application *App, err error) {
 		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince)
 		cancelResolve()
 		if err != nil {
-			if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
-				for _, network := range []string{"tcp", "tcp4", "tcp6"} {
-					transport := firestoreDiagnosticTransport(network)
-					diagnoseFirestoreHTTPS(cfg.Logger.With("network", network), cfg.FirestoreProjectID, transport)
-					transport.CloseIdleConnections()
-				}
-			}
 			return nil, fmt.Errorf("resolve polls since: %w", err)
 		}
 		cfg.Logger.Info("listener scope resolved", "polls_since", pollsSince)
@@ -891,69 +861,9 @@ func New(cfg Config) (application *App, err error) {
 	return application, nil
 }
 
-func dialFirestoreIPv4(ctx context.Context, address string, logger *slog.Logger) (net.Conn, error) {
+func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
-	connection, err := dialer.DialContext(ctx, "tcp4", address)
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("firestore gRPC TCP connected", "network", "tcp4", "remote_address", connection.RemoteAddr().String())
-	return connection, nil
-}
-
-func firestoreDiagnosticTransport(network string) *http.Transport {
-	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-	return &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: func(ctx context.Context, _ string, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, address)
-		},
-		ForceAttemptHTTP2:   true,
-		TLSHandshakeTimeout: 5 * time.Second,
-	}
-}
-
-func diagnoseFirestoreHTTPS(logger *slog.Logger, projectID string, transport http.RoundTripper) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var remoteAddress string
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		GotConn: func(info httptrace.GotConnInfo) {
-			remoteAddress = info.Conn.RemoteAddr().String()
-		},
-	})
-	endpoint := "https://firestore.googleapis.com/v1/projects/" + url.PathEscape(projectID) +
-		"/databases/(default)/documents/listener_state/last_orders"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		logger.Warn("firestore HTTPS diagnostic", "outcome", "invalid_request")
-		return
-	}
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   5 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	started := time.Now()
-	response, err := client.Do(request)
-	if err != nil {
-		logger.Warn("firestore HTTPS diagnostic", "authenticated", false,
-			"outcome", "request_failed", "error_type", fmt.Sprintf("%T", err),
-			"deadline_exceeded", errors.Is(ctx.Err(), context.DeadlineExceeded),
-			"duration_ms", time.Since(started).Milliseconds())
-		return
-	}
-	defer response.Body.Close()
-	var negotiatedProtocol string
-	if response.TLS != nil {
-		negotiatedProtocol = response.TLS.NegotiatedProtocol
-	}
-	logger.Warn("firestore HTTPS diagnostic", "authenticated", false,
-		"status", response.StatusCode, "content_type", response.Header.Get("Content-Type"),
-		"protocol", response.Proto, "tls_alpn", negotiatedProtocol,
-		"remote_address", remoteAddress, "duration_ms", time.Since(started).Milliseconds())
+	return dialer.DialContext(ctx, "tcp4", address)
 }
 
 func (a *App) Run(ctx context.Context) error {

@@ -33,6 +33,10 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	firestoreForceIPv4, err := boolFromEnv("LAST_ORDERS_FIRESTORE_FORCE_IPV4", true, os.LookupEnv)
+	if err != nil {
+		fatalf("configure Firestore transport: %v", err)
+	}
 	adminDeleteEnabled, err := boolFromEnv("ENABLE_ADMIN_DELETE_REQUESTS", false, os.LookupEnv)
 	if err != nil {
 		fatalf("configure admin delete: %v", err)
@@ -110,6 +114,7 @@ func main() {
 		EnableFirestore:         true,
 		PollsSince:              *pollsSince,
 		FirestoreProjectID:      firestoreProjectID,
+		FirestoreForceIPv4:      firestoreForceIPv4,
 		FirebaseCredentials:     firebaseConfig.credentials,
 		EventReevaluateEvery:    *reevaluateEvery,
 		AdminDeleteEnabled:      adminDeleteEnabled,

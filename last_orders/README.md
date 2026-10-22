@@ -96,10 +96,14 @@ the credential's project ID. Auth uses `FIREBASE_AUTH_PROJECT_ID` when set, then
 `GOOGLE_CLOUD_PROJECT`, then the credential's project ID. Firestore emulator mode
 retains its `last-orders-emulator` default project.
 
-Production Firestore gRPC connections use IPv4 only to work around the reported
-Nexaa IPv6 network issue. Startup logs `firestore transport configured` with
-`network=tcp4`. Credentials, TLS hostname verification and SDK retry behaviour
-are unchanged; emulator connections retain their existing transport behaviour.
+Production Firestore gRPC connections use IPv4 only by default to work around the
+reported Nexaa IPv6 network issue. Set `LAST_ORDERS_FIRESTORE_FORCE_IPV4=false`
+and restart the container to restore the SDK's normal IPv4/IPv6 selection when
+testing the host's fix; no image rebuild is required. Set it to `true` or remove
+the variable to restore the workaround. Empty or invalid boolean values reject
+startup. Disabling the workaround permits IPv6 but does not guarantee it will be
+selected. Credentials, TLS hostname verification and SDK retry behaviour are
+unchanged; emulator connections retain their existing transport behaviour.
 
 ### Docker hosts with environment-only secrets
 
@@ -120,23 +124,6 @@ or Dockerfile change is required. Keep the SQLite database on the persistent
 arguments, frontend variables, committed configuration or logs. Runtime environment
 secrets remain accessible to anyone with sufficient container/platform privileges;
 restrict access and rotate the service-account key if exposed.
-
-If the initial production Firestore listener-state read fails, the application
-logs three `firestore HTTPS diagnostic` results before returning the original
-startup error: `network=tcp` (automatic), `network=tcp4` (IPv4 only), and
-`network=tcp6` (IPv6 only). Each unauthenticated, read-only REST probe has a
-five-second timeout, adding at most approximately 15 seconds to failed startup.
-The probes do not follow redirects and log only status, content type, HTTP/TLS protocol, remote
-address and timing metadata. It never logs credentials or response bodies.
-A JSON 401/403 response is expected without authentication and indicates the REST
-API is reachable, not that the configured credentials work. An HTML 403 suggests
-a frontend or network-path rejection; it does not identify its cause. JSON over
-IPv4 but HTML 403 over IPv6 isolates an address-family-dependent rejection.
-A failed IPv4/IPv6 connection indicates that path could not be tested, not an
-API permission failure. Configured proxies are respected; address-family forcing
-then applies to the proxy connection, not necessarily its onward connection.
-The probes do not change the Firestore client's transport and do not run against
-emulators or during successful startup.
 
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
 or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
