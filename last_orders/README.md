@@ -121,6 +121,26 @@ or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting
 both `MAILTRAP_TOKEN` and `SWEEGO_TOKEN` is an error.
 
+### Container health checks
+
+Configure the cloud service's HTTP probe to use `GET /healthz` on the application
+port (default `8080`). It requires no authentication and returns `200 OK` with
+the plain-text body `ok` and `Cache-Control: no-store`. `HEAD` is also supported.
+Successful probes are not logged and do not create application work or query
+Firestore, SQLite, email or push providers.
+
+HTTP serving begins only after the initial notification and venue projections
+are ready and the application listeners have started. A successful probe confirms
+that startup has passed those gates and HTTP is responsive, not that background
+work is progressing or external dependencies are currently available. The route
+is unavailable when HTTP is disabled with an empty `-http-addr`.
+
+Start with a 30-second probe interval, a 3-second timeout, three consecutive
+failures before marking the container unhealthy, and a 60-second startup grace
+period. Adjust the grace period to observed startup times. The image is
+distroless and has no shell or `curl`; use a platform-managed HTTP probe rather
+than a shell-based Docker `HEALTHCHECK`.
+
 ## Admin auth deletion
 
 Admin auth deletion is disabled unless `ENABLE_ADMIN_DELETE_REQUESTS=true`.

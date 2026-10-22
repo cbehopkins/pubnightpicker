@@ -841,6 +841,11 @@ func New(cfg Config) (application *App, err error) {
 			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
 		}
 		mux := http.NewServeMux()
+		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte("ok"))
+		})
 		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
 		mux.Handle("/api/", apiHandler)
 		application.httpListener = listener

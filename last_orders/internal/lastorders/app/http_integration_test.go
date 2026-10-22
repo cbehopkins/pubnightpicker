@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -16,6 +17,69 @@ import (
 )
 
 type testAuthVerifier struct{}
+
+func TestHealthEndpointEndToEnd(t *testing.T) {
+	cfg := testConfig(t, t.TempDir()+"/health.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.HTTPAddr = "127.0.0.1:0"
+	application, err := app.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- application.Run(ctx) }()
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
+	for _, test := range []struct {
+		method string
+		status int
+		body   string
+	}{
+		{method: http.MethodGet, status: http.StatusOK, body: "ok"},
+		{method: http.MethodHead, status: http.StatusOK},
+		{method: http.MethodPost, status: http.StatusMethodNotAllowed, body: "Method Not Allowed\n"},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			request, err := http.NewRequest(test.method, "http://"+application.HTTPAddr()+"/healthz", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != test.status || string(body) != test.body {
+				t.Fatalf("status=%d body=%q, want status=%d body=%q", response.StatusCode, body, test.status, test.body)
+			}
+			if test.status == http.StatusOK {
+				if got := response.Header.Get("Cache-Control"); got != "no-store" {
+					t.Fatalf("Cache-Control = %q, want no-store", got)
+				}
+				if got := response.Header.Get("Content-Type"); got != "text/plain; charset=utf-8" {
+					t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
+				}
+			}
+		})
+	}
+	if work := activeWorkCells(t, application.CellarStore()); len(work) != 0 {
+		t.Fatalf("health check created application work: %v", work)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("app did not stop")
+	}
+}
 
 func (testAuthVerifier) Verify(ctx context.Context, token string) (firebaseauth.Principal, error) {
 	if token != "valid-token" {
