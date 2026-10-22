@@ -169,6 +169,18 @@ type App struct {
 }
 
 func New(cfg Config) (application *App, err error) {
+	for _, key := range []string{
+		"HTTP_PROXY",
+		"HTTPS_PROXY",
+		"ALL_PROXY",
+		"GOOGLE_APPLICATION_CREDENTIALS",
+	} {
+		_, exists := os.LookupEnv(key)
+		slog.Info("environment check",
+			"variable", key,
+			"set", exists,
+		)
+	}
 	if cfg.DBPath == "" {
 		return nil, fmt.Errorf("db path is required")
 	}
