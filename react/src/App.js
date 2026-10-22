@@ -1,5 +1,5 @@
 import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "./firebase";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
@@ -62,6 +62,8 @@ function LegacyPubRouteRedirect() {
 function App() {
   const dispatch = useDispatch();
   const [user, loading] = useAuthState(auth);
+  const uid = useSelector((state) => state.auth.uid);
+  const authUid = user?.uid || null;
   useSelf();
   useWebPushLifecycle(user?.uid || null);
   const [databaseError, setDatabaseError] = useState(null)
@@ -80,8 +82,11 @@ function App() {
   }, [setDatabaseError])
   const roles = useRoles(user, loading, databaseErrorHandler)
   useEffect(() => {
+    if (loading || uid !== authUid) {
+      return;
+    }
     dispatch(setRoles(roles))
-  }, [roles, dispatch])
+  }, [roles, dispatch, loading, uid, authUid])
 
   // Get the subscriptions up and running
   useUsersSource()
