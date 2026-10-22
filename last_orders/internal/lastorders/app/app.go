@@ -59,6 +59,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 
 	_ "modernc.org/sqlite"
 )
@@ -261,6 +262,9 @@ func New(cfg Config) (application *App, err error) {
 		firestoreOptions := firebaseOptions
 		if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
 			firestoreOptions = nil
+		} else {
+			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(dialFirestoreIPv4)))
+			cfg.Logger.Info("firestore transport configured", "network", "tcp4")
 		}
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
 		if err != nil {
@@ -881,6 +885,11 @@ func New(cfg Config) (application *App, err error) {
 
 	cleanup = nil
 	return application, nil
+}
+
+func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
+	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
+	return dialer.DialContext(ctx, "tcp4", address)
 }
 
 func firestoreDiagnosticTransport(network string) *http.Transport {

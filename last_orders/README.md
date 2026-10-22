@@ -96,6 +96,11 @@ the credential's project ID. Auth uses `FIREBASE_AUTH_PROJECT_ID` when set, then
 `GOOGLE_CLOUD_PROJECT`, then the credential's project ID. Firestore emulator mode
 retains its `last-orders-emulator` default project.
 
+Production Firestore gRPC connections use IPv4 only to work around the reported
+Nexaa IPv6 network issue. Startup logs `firestore transport configured` with
+`network=tcp4`. Credentials, TLS hostname verification and SDK retry behaviour
+are unchanged; emulator connections retain their existing transport behaviour.
+
 ### Docker hosts with environment-only secrets
 
 For hosts such as Nexaa where a secret file mount is not available on the chosen
