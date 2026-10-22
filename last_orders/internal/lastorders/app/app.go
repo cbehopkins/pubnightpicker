@@ -246,6 +246,7 @@ func New(cfg Config) (application *App, err error) {
 			firestoreOptions = nil
 		} else if cfg.FirestoreForceIPv4 {
 			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(dialFirestoreIPv4)))
+			cfg.Logger.Info("forcing Firestore gRPC connections to IPv4", "network", "tcp4")
 		}
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
 		if err != nil {

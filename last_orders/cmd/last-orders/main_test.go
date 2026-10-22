@@ -12,8 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"cloud.google.com/go/firestore"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
+
+	"cloud.google.com/go/firestore"
 )
 
 func TestFirebaseConfigFromEnv(t *testing.T) {
