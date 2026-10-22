@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 func main() {
 	var (
 		dbPath               = flag.String("db-path", "./last-orders.db", "path to SQLite database")
+		resetDB              = flag.Bool("reset-db", false, "delete the local SQLite database and sidecars before startup (destructive; requires exclusive access)")
 		runFor               = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
 		pollDelay            = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
 		reevaluateEvery      = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
@@ -33,6 +35,14 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	firestoreForceIPv4, err := boolFromEnv("LAST_ORDERS_FIRESTORE_FORCE_IPV4", true, os.LookupEnv)
+	if err != nil {
+		fatalf("configure Firestore transport: %v", err)
+	}
+	resetDBFromEnv, err := boolFromEnv("LAST_ORDERS_RESET_DB", false, os.LookupEnv)
+	if err != nil {
+		fatalf("configure database reset: %v", err)
+	}
 	adminDeleteEnabled, err := boolFromEnv("ENABLE_ADMIN_DELETE_REQUESTS", false, os.LookupEnv)
 	if err != nil {
 		fatalf("configure admin delete: %v", err)
@@ -103,6 +113,13 @@ func main() {
 	if *allowAuthEmulator && os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "" {
 		logger.Warn("Firebase Auth emulator enabled: unsigned tokens accepted for local development only")
 	}
+	if *resetDB || resetDBFromEnv {
+		logger.Warn("resetting local SQLite database; pending durable work and local idempotency state will be lost", "db_path", *dbPath)
+		if err := resetDatabaseFiles(*dbPath); err != nil {
+			fatalf("reset database: %v", err)
+		}
+		logger.Info("local SQLite database reset complete", "db_path", *dbPath)
+	}
 	application, err := app.New(app.Config{
 		DBPath:                  *dbPath,
 		PollDelay:               *pollDelay,
@@ -110,6 +127,7 @@ func main() {
 		EnableFirestore:         true,
 		PollsSince:              *pollsSince,
 		FirestoreProjectID:      firestoreProjectID,
+		FirestoreForceIPv4:      firestoreForceIPv4,
 		FirebaseCredentials:     firebaseConfig.credentials,
 		EventReevaluateEvery:    *reevaluateEvery,
 		AdminDeleteEnabled:      adminDeleteEnabled,
@@ -145,6 +163,31 @@ func main() {
 	}
 
 	logger.Info("last-orders stopped")
+}
+
+func resetDatabaseFiles(path string) error {
+	if strings.TrimSpace(path) == "" || path == ":memory:" || strings.HasPrefix(path, "file:") || strings.ContainsAny(path, "?#") {
+		return fmt.Errorf("database reset requires a plain filesystem path")
+	}
+	paths := []string{path + "-wal", path + "-shm", path + "-journal", path}
+	for _, candidate := range paths {
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %q: %w", candidate, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to delete non-regular file %q", candidate)
+		}
+	}
+	for _, candidate := range paths {
+		if err := os.Remove(candidate); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("delete %q: %w", candidate, err)
+		}
+	}
+	return nil
 }
 
 func emailOptionsFromEnv(logger *slog.Logger, getenv func(string) string) (emailplugin.Options, error) {

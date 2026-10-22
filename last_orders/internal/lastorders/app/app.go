@@ -57,6 +57,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 
 	_ "modernc.org/sqlite"
 )
@@ -76,6 +77,7 @@ type Config struct {
 	PollDelay           time.Duration
 	Logger              *slog.Logger
 	FirestoreProjectID  string
+	FirestoreForceIPv4  bool
 	FirebaseCredentials *google.Credentials
 	EnableFirestore     bool
 	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
@@ -242,6 +244,9 @@ func New(cfg Config) (application *App, err error) {
 		firestoreOptions := firebaseOptions
 		if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
 			firestoreOptions = nil
+		} else if cfg.FirestoreForceIPv4 {
+			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(dialFirestoreIPv4)))
+			cfg.Logger.Info("forcing Firestore gRPC connections to IPv4", "network", "tcp4")
 		}
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
 		if err != nil {
@@ -857,6 +862,11 @@ func New(cfg Config) (application *App, err error) {
 	return application, nil
 }
 
+func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
+	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
+	return dialer.DialContext(ctx, "tcp4", address)
+}
+
 func (a *App) Run(ctx context.Context) error {
 	if a.baseStore == nil {
 		return fmt.Errorf("app is not initialised")
@@ -909,6 +919,10 @@ func (a *App) Run(ctx context.Context) error {
 	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
 		select {
 		case <-ready:
+		case err := <-a.notificationProfileListener.Errors():
+			return fmt.Errorf("notification profile projection failed: %w", err)
+		case err := <-a.venueCacheListener.Errors():
+			return fmt.Errorf("venue cache projection failed: %w", err)
 		case <-runCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
@@ -970,6 +984,10 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		a.logger.Info("run context cancelled, shutting down")
 		return nil
+	case err := <-a.notificationProfileListener.Errors():
+		return fmt.Errorf("notification profile projection failed: %w", err)
+	case err := <-a.venueCacheListener.Errors():
+		return fmt.Errorf("venue cache projection failed: %w", err)
 	case err := <-cellarErr:
 		// The scheduler stopping ends the whole application, so say so on the way out
 		// rather than only via the process exit code.

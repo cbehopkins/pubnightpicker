@@ -2,7 +2,9 @@ package app_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +101,54 @@ func (s blockedStream) Next() ([]notificationprofile.Change, error) {
 }
 
 func (blockedStream) Stop() {}
+
+type persistenceFailureSource struct{ neverReadySource }
+
+func (persistenceFailureSource) WatchUsers(ctx context.Context) (notificationprofile.ChangeStream, error) {
+	return &projectionRemovalStream{blockedStream: blockedStream{ctx: ctx}}, nil
+}
+
+type projectionRemovalStream struct {
+	blockedStream
+	sent bool
+}
+
+func (stream *projectionRemovalStream) Next() ([]notificationprofile.Change, error) {
+	if !stream.sent {
+		stream.sent = true
+		return []notificationprofile.Change{{
+			Kind: notificationprofile.ChangeRemoved,
+			Doc:  notificationprofile.Document{ID: "user"},
+		}}, nil
+	}
+	return stream.blockedStream.Next()
+}
+
+func TestRunFailsOnProjectionPersistenceErrorBeforeReadiness(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "projection-failure.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = testLogger()
+	cfg.NotificationProfileSource = persistenceFailureSource{}
+	application := newApp(t, cfg)
+	defer application.Close()
+	db, err := sql.Open("sqlite", cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("DROP TABLE notification_user_prefs"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = application.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "notification profile projection failed") ||
+		!strings.Contains(err.Error(), "notification_user_prefs") {
+		t.Fatalf("expected fatal projection persistence error, got %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("startup waited for cancellation instead of reporting the database failure")
+	}
+}
 
 func newApp(t *testing.T, cfg app.Config) *app.App {
 	t.Helper()
