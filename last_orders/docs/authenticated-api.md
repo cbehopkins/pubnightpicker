@@ -112,13 +112,23 @@ go test ./internal/lastorders/app -run TestAuthenticatedEmailHistoryEndToEnd
 | --- | --- |
 | `VITE_LAST_ORDERS_API_BASE_URL` | Frontend build-time URL; defaults to `http://localhost:8081` |
 | `FIREBASE_AUTH_PROJECT_ID` | Explicit Auth project; must match `VITE_FIREBASE_PROJECT_ID` |
-| `GOOGLE_CLOUD_PROJECT` | CLI fallback for Auth project, before SDK credential-based detection |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Backend service-account path for production; never a frontend variable |
+| `GOOGLE_CLOUD_PROJECT` | Explicit Firestore project and CLI fallback for Auth project, before credential-based detection |
+| `LAST_ORDERS_FIREBASE_CREDENTIALS_JSON` | Complete service-account JSON as a backend runtime secret; shared by Firestore and Firebase Auth; never a frontend variable |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Backend credential file path; mutually exclusive with the JSON setting; never a frontend variable |
 | `LAST_ORDERS_ALLOWED_ORIGINS` | Comma-separated exact frontend origins; defaults to localhost/127.0.0.1 port 3000 |
 | `LAST_ORDERS_ALLOWED_PREVIEW_SITES` | Optional comma-separated Firebase Hosting site IDs whose HTTPS preview origins are allowed; disabled by default |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Local Auth emulator `host:port`, independent of Firestore emulator configuration |
 | `-allow-auth-emulator` | Explicit development-only opt-in for unsigned local emulator tokens; default false |
 | `-http-addr` | HTTP listen address; defaults to `:8080`; empty disables HTTP and Auth initialisation |
+
+When `LAST_ORDERS_FIREBASE_CREDENTIALS_JSON` is set, an empty or invalid value
+rejects startup without falling back to other credentials. Supply raw JSON, not a
+path or base64 value. Standard JSON `\n` escapes in `private_key` are supported.
+`FIREBASE_AUTH_PROJECT_ID` takes precedence over `GOOGLE_CLOUD_PROJECT`; otherwise
+Auth uses the project from the supplied credentials (or the existing emulator
+default when Firestore emulator mode is selected). With the JSON setting unset,
+Google's Application Default Credentials behaviour is unchanged. See the README's
+Docker deployment guidance for environment-only secret configuration.
 
 An explicitly empty exact-origin allowlist permits no exact origins; configured
 preview sites can still permit their previews. With both lists empty, no browser

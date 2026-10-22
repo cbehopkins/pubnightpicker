@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/firestore"
-
 	"last_orders/internal/lastorders/app"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
@@ -63,15 +61,11 @@ func main() {
 	}
 
 	emulatorHost := os.Getenv("FIRESTORE_EMULATOR_HOST")
-	firestoreProjectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	switch {
-	case firestoreProjectID != "":
-	case emulatorHost != "":
-		firestoreProjectID = "last-orders-emulator"
-	default:
-		// Read project_id from the credentials in GOOGLE_APPLICATION_CREDENTIALS.
-		firestoreProjectID = firestore.DetectProjectID
+	firebaseConfig, err := firebaseConfigFromEnv(ctx, os.LookupEnv)
+	if err != nil {
+		fatalf("configure Firebase: %v", err)
 	}
+	firestoreProjectID := firebaseConfig.firestoreProjectID
 	if emulatorHost != "" {
 		logger.Info("firestore emulator enabled", "firestore_emulator_host", emulatorHost, "project_id", firestoreProjectID)
 	} else {
@@ -91,13 +85,6 @@ func main() {
 		fatalf("configure push rate limit: %v", err)
 	}
 
-	authProjectID := strings.TrimSpace(os.Getenv("FIREBASE_AUTH_PROJECT_ID"))
-	if authProjectID == "" {
-		authProjectID = strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT"))
-	}
-	if authProjectID == "" && firestoreProjectID != firestore.DetectProjectID {
-		authProjectID = firestoreProjectID
-	}
 	var allowedAPIOrigins []string
 	if rawOrigins, configured := os.LookupEnv("LAST_ORDERS_ALLOWED_ORIGINS"); configured {
 		allowedAPIOrigins = []string{}
@@ -123,13 +110,14 @@ func main() {
 		EnableFirestore:         true,
 		PollsSince:              *pollsSince,
 		FirestoreProjectID:      firestoreProjectID,
+		FirebaseCredentials:     firebaseConfig.credentials,
 		EventReevaluateEvery:    *reevaluateEvery,
 		AdminDeleteEnabled:      adminDeleteEnabled,
 		AdminDeleteDryRun:       adminDeleteDryRun,
 		EnableRealAuthDelete:    *enableRealAuthDelete,
 		AdminDeleteEvaluateOnce: *adminDeleteOnce,
 		HTTPAddr:                effectiveHTTPAddr,
-		AuthProjectID:           authProjectID,
+		AuthProjectID:           firebaseConfig.authProjectID,
 		AllowAuthEmulator:       *allowAuthEmulator,
 		AllowedAPIOrigins:       allowedAPIOrigins,
 		AllowedAPIPreviewSites:  allowedAPIPreviewSites,

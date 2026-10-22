@@ -32,7 +32,7 @@ func CheckEmulator(allow bool) error {
 	return nil
 }
 
-func New(ctx context.Context, projectID string, allowEmulator bool) (*FirebaseVerifier, error) {
+func New(ctx context.Context, projectID string, allowEmulator bool, options ...option.ClientOption) (*FirebaseVerifier, error) {
 	if err := CheckEmulator(allowEmulator); err != nil {
 		return nil, err
 	}
@@ -40,12 +40,11 @@ func New(ctx context.Context, projectID string, allowEmulator bool) (*FirebaseVe
 	if projectID == "*detect-project-id*" {
 		return nil, fmt.Errorf("a concrete project ID is required for Firebase Auth, not the Firestore detection sentinel")
 	}
-	var options []option.ClientOption
 	if os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "" {
 		if projectID == "" {
 			return nil, fmt.Errorf("FIREBASE_AUTH_PROJECT_ID is required with the Auth emulator")
 		}
-		options = append(options, option.WithoutAuthentication())
+		options = []option.ClientOption{option.WithoutAuthentication()}
 	}
 	application, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: projectID}, options...)
 	if err != nil {

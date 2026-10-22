@@ -16,7 +16,7 @@ type firebaseAuthClient struct {
 	client *firebaseauthsdk.Client
 }
 
-func NewFirebaseAuthClient(ctx context.Context, projectID string, allowEmulator bool) (AuthClient, error) {
+func NewFirebaseAuthClient(ctx context.Context, projectID string, allowEmulator bool, options ...option.ClientOption) (AuthClient, error) {
 	if err := firebaseauth.CheckEmulator(allowEmulator); err != nil {
 		return nil, err
 	}
@@ -24,9 +24,8 @@ func NewFirebaseAuthClient(ctx context.Context, projectID string, allowEmulator 
 	if projectID == "" || projectID == "*detect-project-id*" {
 		return nil, fmt.Errorf("a concrete Firebase Auth project ID is required")
 	}
-	var options []option.ClientOption
 	if allowEmulator && strings.TrimSpace(os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")) != "" {
-		options = append(options, option.WithoutAuthentication())
+		options = []option.ClientOption{option.WithoutAuthentication()}
 	}
 	application, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: projectID}, options...)
 	if err != nil {

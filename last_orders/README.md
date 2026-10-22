@@ -74,9 +74,47 @@ go run ./cmd/last-orders -db-path=./last-orders.db
 
 The application always connects to Firestore. For local development set
 `FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`). For production
-leave `FIRESTORE_EMULATOR_HOST` unset and point `GOOGLE_APPLICATION_CREDENTIALS`
-at a service-account JSON (e.g. the same `cred.json` used by `firebase_sub`); the
-project ID is read from that file unless `GOOGLE_CLOUD_PROJECT` is set.
+leave `FIRESTORE_EMULATOR_HOST` unset. Credentials can be supplied in either of
+these ways:
+
+- Set `LAST_ORDERS_FIREBASE_CREDENTIALS_JSON` to the complete contents of a Firebase
+  service-account JSON file, as a runtime secret environment variable.
+- Leave that variable unset to use Google's Application Default Credentials,
+  including `GOOGLE_APPLICATION_CREDENTIALS` pointing at a service-account JSON
+  file (e.g. the same `cred.json` used by `firebase_sub`).
+
+Setting both the JSON variable and a non-empty `GOOGLE_APPLICATION_CREDENTIALS`
+is an error. An explicitly empty JSON variable, malformed JSON, a non-service-account
+credential, missing required fields or an invalid RSA private key rejects startup;
+the application does not fall back to other credentials. Errors do not include the
+credential contents. The supplied credentials are shared by Firestore, API token
+verification and optional admin Auth deletion. Emulator clients retain their
+existing unauthenticated behaviour and Auth emulator safety checks.
+
+`GOOGLE_CLOUD_PROJECT` overrides the Firestore project; otherwise production uses
+the credential's project ID. Auth uses `FIREBASE_AUTH_PROJECT_ID` when set, then
+`GOOGLE_CLOUD_PROJECT`, then the credential's project ID. Firestore emulator mode
+retains its `last-orders-emulator` default project.
+
+### Docker hosts with environment-only secrets
+
+For hosts such as Nexaa where a secret file mount is not available on the chosen
+tier, configure `LAST_ORDERS_FIREBASE_CREDENTIALS_JSON` in the service's runtime
+environment with the full service-account JSON as its secret value. Leave
+`GOOGLE_APPLICATION_CREDENTIALS`, `FIRESTORE_EMULATOR_HOST` and
+`FIREBASE_AUTH_EMULATOR_HOST` unset for production, then redeploy/restart the service.
+
+Paste the JSON itself, without surrounding shell quotes or base64 encoding. It may
+be formatted across lines or compacted to one line using a JSON-aware tool. Keep
+the standard `\n` escapes inside the `private_key` JSON string; do not replace them
+with literal line breaks inside that string or double-escape them.
+
+The application reads credentials in memory: no credential file, shell entrypoint
+or Dockerfile change is required. Keep the SQLite database on the persistent
+`/data` volume independently. Never put credentials in the image, Docker build
+arguments, frontend variables, committed configuration or logs. Runtime environment
+secrets remain accessible to anyone with sufficient container/platform privileges;
+restrict access and rotate the service-account key if exposed.
 
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
 or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
