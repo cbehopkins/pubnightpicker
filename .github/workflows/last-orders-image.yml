@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "diagnose_*"
     paths:
       - "last_orders/**"
       - "cellar/**"
@@ -88,7 +89,7 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch
             type=ref,event=tag
             type=sha,format=long,prefix=sha-
 
