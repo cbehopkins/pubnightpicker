@@ -9,7 +9,74 @@ import (
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/components/notificationprofile"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
+
+func TestFirebaseClientCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("FIRESTORE_EMULATOR_HOST", "")
+	t.Setenv("FIREBASE_AUTH_EMULATOR_HOST", "")
+	for _, client := range []string{"firestore", "api", "admin-delete", "emulators", "injected"} {
+		for _, explicit := range []bool{false, true} {
+			name := client + "/default"
+			if explicit {
+				name = client + "/explicit"
+			}
+			t.Run(name, func(t *testing.T) {
+				cfg := testConfig(t, filepath.Join(t.TempDir(), "credentials.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+				cfg.Logger = testLogger()
+				cfg.FirestoreProjectID = "credential-project"
+				cfg.AuthProjectID = "credential-project"
+				if explicit {
+					cfg.FirebaseCredentials = &google.Credentials{
+						ProjectID:   "credential-project",
+						TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}),
+					}
+				}
+				if client == "firestore" || client == "emulators" {
+					cfg.EnableFirestore = true
+				}
+				if client == "api" || client == "emulators" || client == "injected" {
+					cfg.HTTPAddr = "127.0.0.1:0"
+					if client != "injected" {
+						cfg.AuthVerifier = nil
+					}
+				}
+				if client == "admin-delete" || client == "emulators" || client == "injected" {
+					source := &adminDeleteTestSource{status: "pending"}
+					cfg.AdminDeleteEnabled = true
+					cfg.EnableRealAuthDelete = true
+					cfg.AdminDeleteSource = source
+					cfg.AdminDeleteRepository = adminDeleteTestRepository{source: source}
+					if client == "injected" {
+						cfg.AdminDeleteAuthClient = &adminDeleteTestAuth{}
+					}
+				}
+				if client == "emulators" {
+					t.Setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8080")
+					t.Setenv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
+					cfg.AllowAuthEmulator = true
+				}
+				application, err := app.New(cfg)
+				if !explicit && client != "emulators" && client != "injected" {
+					if err == nil {
+						application.Close()
+						t.Fatal("expected unavailable default credentials to fail construction")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := application.Close(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
 
 // neverReadySource models Firestore not delivering an initial snapshot.
 type neverReadySource struct{}

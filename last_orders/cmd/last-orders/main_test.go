@@ -1,12 +1,103 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
+	"cloud.google.com/go/firestore"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 )
+
+func TestFirebaseConfigFromEnv(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := map[string]string{
+		"type": "service_account", "project_id": "credential-project",
+		"client_email": "backend@credential-project.iam.gserviceaccount.com",
+		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})),
+		"token_uri":    "https://oauth2.googleapis.com/token",
+	}
+	encode := func(changes map[string]string) string {
+		t.Helper()
+		copyAccount := make(map[string]string, len(account))
+		for name, value := range account {
+			copyAccount[name] = value
+		}
+		for name, value := range changes {
+			copyAccount[name] = value
+		}
+		data, err := json.Marshal(copyAccount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	validJSON := encode(nil)
+	const setting = "LAST_ORDERS_FIREBASE_CREDENTIALS_JSON"
+	for _, test := range []struct {
+		name        string
+		env         map[string]string
+		project     string
+		authProject string
+		credentials bool
+		wantErr     bool
+	}{
+		{name: "defaults", project: firestore.DetectProjectID},
+		{name: "file credentials", env: map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": "existing.json"}, project: firestore.DetectProjectID},
+		{name: "JSON", env: map[string]string{setting: validJSON}, project: "credential-project", authProject: "credential-project", credentials: true},
+		{name: "overrides", env: map[string]string{setting: validJSON, "GOOGLE_CLOUD_PROJECT": "firestore-project", "FIREBASE_AUTH_PROJECT_ID": "auth-project"}, project: "firestore-project", authProject: "auth-project", credentials: true},
+		{name: "project override", env: map[string]string{setting: validJSON, "GOOGLE_CLOUD_PROJECT": "override"}, project: "override", authProject: "override", credentials: true},
+		{name: "emulator", env: map[string]string{"FIRESTORE_EMULATOR_HOST": "localhost:8080"}, project: "last-orders-emulator", authProject: "last-orders-emulator"},
+		{name: "JSON with emulator", env: map[string]string{setting: validJSON, "FIRESTORE_EMULATOR_HOST": "localhost:8080"}, project: "last-orders-emulator", authProject: "last-orders-emulator", credentials: true},
+		{name: "empty", env: map[string]string{setting: ""}, wantErr: true},
+		{name: "whitespace", env: map[string]string{setting: "  "}, wantErr: true},
+		{name: "malformed", env: map[string]string{setting: "secret-invalid-json"}, wantErr: true},
+		{name: "wrong type", env: map[string]string{setting: encode(map[string]string{"type": "authorized_user"})}, wantErr: true},
+		{name: "missing project", env: map[string]string{setting: encode(map[string]string{"project_id": ""})}, wantErr: true},
+		{name: "missing email", env: map[string]string{setting: encode(map[string]string{"client_email": ""})}, wantErr: true},
+		{name: "invalid key", env: map[string]string{setting: encode(map[string]string{"private_key": "secret-invalid-key"})}, wantErr: true},
+		{name: "invalid PEM key", env: map[string]string{setting: encode(map[string]string{"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("secret-invalid-key")}))})}, wantErr: true},
+		{name: "conflict", env: map[string]string{setting: validJSON, "GOOGLE_APPLICATION_CREDENTIALS": "existing.json"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := firebaseConfigFromEnv(context.Background(), func(name string) (string, bool) {
+				value, ok := test.env[name]
+				return value, ok
+			})
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), setting) {
+					t.Fatal("expected an error naming the credential setting")
+				}
+				for _, secret := range []string{"secret-invalid", account["private_key"], "backend@"} {
+					if strings.Contains(err.Error(), secret) {
+						t.Fatal("error contains credential material")
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.firestoreProjectID != test.project || config.authProjectID != test.authProject || (config.credentials != nil) != test.credentials {
+				t.Fatal("unexpected project selection or credential presence")
+			}
+		})
+	}
+}
 
 func TestEmailOptionsFromEnvSelectsMailtrap(t *testing.T) {
 	options, err := emailOptionsFromEnv(testLogger(), func(name string) string {
