@@ -117,14 +117,21 @@ secrets remain accessible to anyone with sufficient container/platform privilege
 restrict access and rotate the service-account key if exposed.
 
 If the initial production Firestore listener-state read fails, the application
-logs a `firestore HTTPS diagnostic` before returning the original startup error.
-This unauthenticated, read-only REST probe has a five-second timeout, does not
-follow redirects, and logs only status, content type, HTTP/TLS protocol, remote
+logs three `firestore HTTPS diagnostic` results before returning the original
+startup error: `network=tcp` (automatic), `network=tcp4` (IPv4 only), and
+`network=tcp6` (IPv6 only). Each unauthenticated, read-only REST probe has a
+five-second timeout, adding at most approximately 15 seconds to failed startup.
+The probes do not follow redirects and log only status, content type, HTTP/TLS protocol, remote
 address and timing metadata. It never logs credentials or response bodies.
 A JSON 401/403 response is expected without authentication and indicates the REST
 API is reachable, not that the configured credentials work. An HTML 403 suggests
-a frontend or network-path rejection; it does not identify its cause. The probe
-does not run against emulators or during successful startup.
+a frontend or network-path rejection; it does not identify its cause. JSON over
+IPv4 but HTML 403 over IPv6 isolates an address-family-dependent rejection.
+A failed IPv4/IPv6 connection indicates that path could not be tested, not an
+API permission failure. Configured proxies are respected; address-family forcing
+then applies to the proxy connection, not necessarily its onward connection.
+The probes do not change the Firestore client's transport and do not run against
+emulators or during successful startup.
 
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
 or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;

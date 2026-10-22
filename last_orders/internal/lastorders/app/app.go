@@ -404,7 +404,11 @@ func New(cfg Config) (application *App, err error) {
 		cancelResolve()
 		if err != nil {
 			if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
-				diagnoseFirestoreHTTPS(cfg.Logger, cfg.FirestoreProjectID, http.DefaultTransport)
+				for _, network := range []string{"tcp", "tcp4", "tcp6"} {
+					transport := firestoreDiagnosticTransport(network)
+					diagnoseFirestoreHTTPS(cfg.Logger.With("network", network), cfg.FirestoreProjectID, transport)
+					transport.CloseIdleConnections()
+				}
 			}
 			return nil, fmt.Errorf("resolve polls since: %w", err)
 		}
@@ -877,6 +881,18 @@ func New(cfg Config) (application *App, err error) {
 
 	cleanup = nil
 	return application, nil
+}
+
+func firestoreDiagnosticTransport(network string) *http.Transport {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, _ string, address string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address)
+		},
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 5 * time.Second,
+	}
 }
 
 func diagnoseFirestoreHTTPS(logger *slog.Logger, projectID string, transport http.RoundTripper) {

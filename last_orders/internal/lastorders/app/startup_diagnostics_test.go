@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestDiagnoseFirestoreHTTPS(t *testing.T) {
 	for _, contentType := range []string{"application/json", "text/html; charset=UTF-8"} {
 		t.Run(contentType, func(t *testing.T) {
 			var output bytes.Buffer
-			logger := slog.New(slog.NewJSONHandler(&output, nil))
+			logger := slog.New(slog.NewJSONHandler(&output, nil)).With("network", "tcp4")
 			calls := 0
 			transport := diagnosticTransport(func(request *http.Request) (*http.Response, error) {
 				calls++
@@ -55,7 +56,8 @@ func TestDiagnoseFirestoreHTTPS(t *testing.T) {
 				t.Fatal(err)
 			}
 			if record["status"] != float64(http.StatusForbidden) || record["content_type"] != contentType ||
-				record["protocol"] != "HTTP/2.0" || record["tls_alpn"] != "h2" || record["authenticated"] != false {
+				record["protocol"] != "HTTP/2.0" || record["tls_alpn"] != "h2" || record["authenticated"] != false ||
+				record["network"] != "tcp4" {
 				t.Fatalf("unexpected diagnostic: %s", output.String())
 			}
 			if calls != 1 || strings.Contains(output.String(), "private-") {
@@ -102,5 +104,38 @@ func TestDiagnoseFirestoreHTTPSDeadline(t *testing.T) {
 	diagnoseFirestoreHTTPS(slog.New(slog.NewJSONHandler(&output, nil)), "test-project", transport)
 	if !strings.Contains(output.String(), `"deadline_exceeded":true`) {
 		t.Fatalf("expected bounded diagnostic: %s", output.String())
+	}
+}
+
+func TestFirestoreDiagnosticTransportAddressFamily(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	for _, network := range []string{"tcp", "tcp4", "tcp6"} {
+		t.Run(network, func(t *testing.T) {
+			transport := firestoreDiagnosticTransport(network)
+			defer transport.CloseIdleConnections()
+			if !transport.ForceAttemptHTTP2 || transport.TLSClientConfig != nil {
+				t.Fatal("diagnostic must preserve HTTP/2 support and default TLS verification")
+			}
+			client := &http.Client{Transport: transport, Timeout: time.Second}
+			response, err := client.Get(server.URL)
+			if err == nil {
+				response.Body.Close()
+			}
+			if network == "tcp6" {
+				if err == nil {
+					t.Fatal("IPv6-only diagnostic must not connect to an IPv4-only listener")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("diagnostic failed to reach IPv4 listener: %v", err)
+			}
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204", response.StatusCode)
+			}
+		})
 	}
 }
