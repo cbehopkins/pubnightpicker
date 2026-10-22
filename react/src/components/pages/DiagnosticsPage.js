@@ -418,31 +418,40 @@ export function PollActionAuditPanel() {
 }
 
 export function EmailSuppressionPanel() {
-    const [settings, setSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
+    const [confirmedSettings, setSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
+    const [pendingSetting, setPendingSetting] = useState(null);
+    const settings = pendingSetting
+        ? { ...confirmedSettings, [pendingSetting.field]: pendingSetting.value }
+        : confirmedSettings;
     const silenced = settings.SilenceNotifications;
     const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
+    const [isWriting, setIsWriting] = useState(false);
+    const isSaving = isWriting || pendingSetting !== null;
     const [readError, setReadError] = useState("");
     const [writeError, setWriteError] = useState("");
 
     useEffect(() => watchNotificationSettings((value) => {
         setSettings(value);
+        setPendingSetting((pending) => pending && value[pending.field] !== pending.value ? pending : null);
         setIsLoading(false);
         setReadError("");
     }, (error) => {
+        setPendingSetting(null);
         setReadError(error?.message || "Unable to load notification settings.");
         setIsLoading(false);
     }), []);
 
     async function save(field, value) {
-        setIsSaving(true);
+        setPendingSetting({ field, value });
+        setIsWriting(true);
         setWriteError("");
         try {
             await setNotificationSetting(field, value);
         } catch (error) {
+            setPendingSetting(null);
             setWriteError(error?.message || "Unable to save notification settings.");
         } finally {
-            setIsSaving(false);
+            setIsWriting(false);
         }
     }
 

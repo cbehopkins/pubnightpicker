@@ -9,12 +9,73 @@ import (
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"cloud.google.com/go/firestore"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
+
+	"cloud.google.com/go/firestore"
 )
+
+func TestResetDatabaseFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "last-orders.db")
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".unrelated"} {
+		if err := os.WriteFile(path+suffix, []byte("corrupt database contents"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := resetDatabaseFiles(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if _, err := os.Stat(path + suffix); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, got %v", suffix, err)
+		}
+	}
+	if _, err := os.Stat(path + ".unrelated"); err != nil {
+		t.Fatalf("unrelated file must remain: %v", err)
+	}
+	if err := resetDatabaseFiles(path); err != nil {
+		t.Fatalf("missing files should be harmless: %v", err)
+	}
+}
+
+func TestResetDatabaseFilesRefusesDirectoriesBeforeDeleting(t *testing.T) {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		t.Run(suffix, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "last-orders.db")
+			for _, candidate := range []string{"", "-wal", "-shm", "-journal"} {
+				var err error
+				if candidate == suffix {
+					err = os.Mkdir(path+candidate, 0700)
+				} else {
+					err = os.WriteFile(path+candidate, []byte("preserve"), 0600)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := resetDatabaseFiles(path); err == nil {
+				t.Fatal("expected directory to prevent reset")
+			}
+			for _, candidate := range []string{"", "-wal", "-shm", "-journal"} {
+				if _, err := os.Stat(path + candidate); err != nil {
+					t.Fatalf("preflight must not delete files: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestResetDatabaseFilesRejectsNonFilePaths(t *testing.T) {
+	for _, path := range []string{"", "  ", ":memory:", "file:database.db", "database.db?mode=rw", "database.db#fragment"} {
+		if err := resetDatabaseFiles(path); err == nil {
+			t.Fatalf("expected reset to reject %q", path)
+		}
+	}
+}
 
 func TestFirebaseConfigFromEnv(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -199,19 +260,22 @@ func TestBoolFromEnv(t *testing.T) {
 		{name: "enabled", raw: "true", configured: true, want: true},
 		{name: "disabled", raw: "false", configured: true, want: false},
 		{name: "whitespace", raw: " true ", configured: true, want: true},
+		{name: "empty", raw: "", configured: true, wantErr: true},
 		{name: "invalid", raw: "sometimes", configured: true, wantErr: true},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := boolFromEnv("ADMIN_DELETE_SETTING", test.fallback, func(name string) (string, bool) {
-				if name != "ADMIN_DELETE_SETTING" {
-					t.Fatalf("lookup name = %q", name)
+		for _, setting := range []string{"ADMIN_DELETE_SETTING", "LAST_ORDERS_FIRESTORE_FORCE_IPV4"} {
+			t.Run(setting+"/"+test.name, func(t *testing.T) {
+				got, err := boolFromEnv(setting, test.fallback, func(name string) (string, bool) {
+					if name != setting {
+						t.Fatalf("lookup name = %q", name)
+					}
+					return test.raw, test.configured
+				})
+				if got != test.want || (err != nil) != test.wantErr {
+					t.Fatalf("boolFromEnv() = %t, %v; want %t, error=%t", got, err, test.want, test.wantErr)
 				}
-				return test.raw, test.configured
 			})
-			if got != test.want || (err != nil) != test.wantErr {
-				t.Fatalf("boolFromEnv() = %t, %v; want %t, error=%t", got, err, test.want, test.wantErr)
-			}
-		})
+		}
 	}
 }
 

@@ -17,6 +17,7 @@ const DocumentPath = "config/diagnostics"
 const SilenceField = "SilenceNotifications"
 
 const (
+	// FIXME add a purpose for Test Notification from the diagnostics page
 	PurposePollOpened      = "poll-opened"
 	PurposePollCompleted   = "poll-completed"
 	PurposePollRescheduled = "poll-rescheduled"

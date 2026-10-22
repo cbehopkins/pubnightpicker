@@ -19,11 +19,14 @@ const retryDelay = 5 * time.Second
 
 var ErrMalformedDocument = errors.New("malformed venue cache document")
 
+var errPersistence = errors.New("persist venue cache projection")
+
 type Listener struct {
 	service   *venuecache.Service
 	store     *venuecache.Store
 	logger    *slog.Logger
 	ready     chan struct{}
+	failed    chan error
 	readyOnce sync.Once
 	lifecycle.Controller
 }
@@ -38,12 +41,16 @@ func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logg
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{})}, nil
+	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}, nil
 }
 
 // Ready closes once the first full venue snapshot has been applied.
 func (l *Listener) Ready() <-chan struct{} {
 	return l.ready
+}
+
+func (l *Listener) Errors() <-chan error {
+	return l.failed
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -53,6 +60,13 @@ func (l *Listener) Start(ctx context.Context) error {
 func (l *Listener) watch(ctx context.Context) {
 	for ctx.Err() == nil {
 		if err := l.watchOnce(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if errors.Is(err, errPersistence) {
+				l.failed <- err
+				return
+			}
 			l.logger.Error("venue cache watch failed", "err", err)
 			select {
 			case <-ctx.Done():
@@ -82,7 +96,7 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 					l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
 					continue
 				}
-				return err
+				return errors.Join(errPersistence, err)
 			}
 		}
 		l.readyOnce.Do(func() { close(l.ready) })
