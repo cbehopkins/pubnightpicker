@@ -3,10 +3,12 @@
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import authReducer, { authAdded } from "./store/authSlice";
 
 const {
   createBrowserRouterMock,
   useDispatchMock,
+  useSelectorMock,
   useAuthStateMock,
   useRolesMock,
   useUsersSourceMock,
@@ -16,6 +18,7 @@ const {
   return {
     createBrowserRouterMock: vi.fn(() => ({ id: "router" })),
     useDispatchMock: vi.fn(),
+    useSelectorMock: vi.fn(),
     useAuthStateMock: vi.fn(),
     useRolesMock: vi.fn(),
     useUsersSourceMock: vi.fn(),
@@ -37,6 +40,7 @@ vi.mock("react-router-dom", () => {
 vi.mock("react-redux", () => {
   return {
     useDispatch: useDispatchMock,
+    useSelector: useSelectorMock,
   };
 });
 
@@ -73,18 +77,6 @@ vi.mock("./hooks/useSelf", () => {
 vi.mock("./hooks/useWebPushLifecycle", () => {
   return {
     default: useWebPushLifecycleMock,
-  };
-});
-
-vi.mock("./store/authSlice", () => {
-  return {
-    default: () => ({
-      loggedIn: false,
-      name: "",
-      email: "",
-      roles: {},
-    }),
-    setRoles: (roles) => ({ type: "auth/setRoles", payload: roles }),
   };
 });
 
@@ -132,6 +124,7 @@ describe("App routes", () => {
   beforeEach(() => {
     createBrowserRouterMock.mockClear();
     useDispatchMock.mockReset();
+    useSelectorMock.mockReset();
     useAuthStateMock.mockReset();
     useRolesMock.mockReset();
     useUsersSourceMock.mockReset();
@@ -139,8 +132,27 @@ describe("App routes", () => {
     useWebPushLifecycleMock.mockReset();
 
     useDispatchMock.mockReturnValue(vi.fn());
+    useSelectorMock.mockReturnValue(null);
     useAuthStateMock.mockReturnValue([null, false]);
     useRolesMock.mockReturnValue({});
+  });
+
+  it("applies roles when Redux identity arrives after the roles snapshot", () => {
+    let state = { auth: authReducer(undefined, { type: "init" }) };
+    const dispatch = vi.fn((action) => {
+      state = { auth: authReducer(state.auth, action) };
+    });
+    const roles = { admin: true, canManagePubs: true };
+    useDispatchMock.mockReturnValue(dispatch);
+    useSelectorMock.mockImplementation((selector) => selector(state));
+    useAuthStateMock.mockReturnValue([{ uid: "admin-user" }, false]);
+    useRolesMock.mockReturnValue(roles);
+
+    const { rerender } = render(<App />);
+    dispatch(authAdded({ uid: "admin-user" }));
+    rerender(<App />);
+
+    expect(state.auth.roles).toEqual(roles);
   });
 
   it("keeps legacy /pubs routes redirecting to /venues equivalents", () => {
