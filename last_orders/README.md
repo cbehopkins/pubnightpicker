@@ -116,6 +116,16 @@ arguments, frontend variables, committed configuration or logs. Runtime environm
 secrets remain accessible to anyone with sufficient container/platform privileges;
 restrict access and rotate the service-account key if exposed.
 
+If the initial production Firestore listener-state read fails, the application
+logs a `firestore HTTPS diagnostic` before returning the original startup error.
+This unauthenticated, read-only REST probe has a five-second timeout, does not
+follow redirects, and logs only status, content type, HTTP/TLS protocol, remote
+address and timing metadata. It never logs credentials or response bodies.
+A JSON 401/403 response is expected without authentication and indicates the REST
+API is reachable, not that the configured credentials work. An HTML 403 suggests
+a frontend or network-path rejection; it does not identify its cause. The probe
+does not run against emulators or during successful startup.
+
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
 or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;
 `SWEEGO_BASE_URL` is optional and defaults to `https://api.sweego.io`. Setting

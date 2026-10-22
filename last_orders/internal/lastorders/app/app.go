@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -171,8 +173,13 @@ type App struct {
 func New(cfg Config) (application *App, err error) {
 	for _, key := range []string{
 		"HTTP_PROXY",
+		"http_proxy",
 		"HTTPS_PROXY",
+		"https_proxy",
 		"ALL_PROXY",
+		"all_proxy",
+		"NO_PROXY",
+		"no_proxy",
 		"GOOGLE_APPLICATION_CREDENTIALS",
 	} {
 		_, exists := os.LookupEnv(key)
@@ -396,6 +403,9 @@ func New(cfg Config) (application *App, err error) {
 		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince)
 		cancelResolve()
 		if err != nil {
+			if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+				diagnoseFirestoreHTTPS(cfg.Logger, cfg.FirestoreProjectID, http.DefaultTransport)
+			}
 			return nil, fmt.Errorf("resolve polls since: %w", err)
 		}
 		cfg.Logger.Info("listener scope resolved", "polls_since", pollsSince)
@@ -867,6 +877,49 @@ func New(cfg Config) (application *App, err error) {
 
 	cleanup = nil
 	return application, nil
+}
+
+func diagnoseFirestoreHTTPS(logger *slog.Logger, projectID string, transport http.RoundTripper) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var remoteAddress string
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			remoteAddress = info.Conn.RemoteAddr().String()
+		},
+	})
+	endpoint := "https://firestore.googleapis.com/v1/projects/" + url.PathEscape(projectID) +
+		"/databases/(default)/documents/listener_state/last_orders"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		logger.Warn("firestore HTTPS diagnostic", "outcome", "invalid_request")
+		return
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	started := time.Now()
+	response, err := client.Do(request)
+	if err != nil {
+		logger.Warn("firestore HTTPS diagnostic", "authenticated", false,
+			"outcome", "request_failed", "error_type", fmt.Sprintf("%T", err),
+			"deadline_exceeded", errors.Is(ctx.Err(), context.DeadlineExceeded),
+			"duration_ms", time.Since(started).Milliseconds())
+		return
+	}
+	defer response.Body.Close()
+	var negotiatedProtocol string
+	if response.TLS != nil {
+		negotiatedProtocol = response.TLS.NegotiatedProtocol
+	}
+	logger.Warn("firestore HTTPS diagnostic", "authenticated", false,
+		"status", response.StatusCode, "content_type", response.Header.Get("Content-Type"),
+		"protocol", response.Proto, "tls_alpn", negotiatedProtocol,
+		"remote_address", remoteAddress, "duration_ms", time.Since(started).Milliseconds())
 }
 
 func (a *App) Run(ctx context.Context) error {
