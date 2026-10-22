@@ -17,6 +17,21 @@ type Store struct {
 	base *basestore.Store
 }
 
+type UserPreferencesMutation struct {
+	UserID      string
+	Preferences *UserPreferences
+}
+
+type EndpointMutation struct {
+	UserID     string
+	EndpointID string
+	Endpoint   *Endpoint
+}
+
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func New(base *basestore.Store) (*Store, error) {
 	if base == nil || base.DB() == nil {
 		return nil, fmt.Errorf("base store is required")
@@ -71,6 +86,44 @@ func New(base *basestore.Store) (*Store, error) {
 }
 
 func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences) error {
+	return putPreferences(ctx, s.base.DB(), preferences)
+}
+
+// ApplyPreferences applies one user-preference source batch atomically. A
+// baseline replaces the complete preference projection.
+func (s *Store) ApplyPreferences(ctx context.Context, mutations []UserPreferencesMutation, baseline bool) error {
+	tx, err := s.base.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if baseline {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs`); err != nil {
+			return err
+		}
+	}
+	for _, mutation := range mutations {
+		if mutation.UserID == "" {
+			return fmt.Errorf("user ID is required")
+		}
+		if mutation.Preferences == nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, mutation.UserID); err != nil {
+				return err
+			}
+			continue
+		}
+		if mutation.Preferences.UserID != mutation.UserID {
+			return fmt.Errorf("user mutation ID %q does not match preferences ID %q", mutation.UserID, mutation.Preferences.UserID)
+		}
+		if err := putPreferences(ctx, tx, *mutation.Preferences); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func putPreferences(ctx context.Context, execer contextExecer, preferences UserPreferences) error {
 	if preferences.UserID == "" {
 		return fmt.Errorf("user ID is required")
 	}
@@ -78,7 +131,7 @@ func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences)
 	if err != nil {
 		return fmt.Errorf("encode muted poll ids: %w", err)
 	}
-	_, err = s.base.DB().ExecContext(ctx, `
+	_, err = execer.ExecContext(ctx, `
 		INSERT INTO notification_user_prefs(
 			user_id, web_push_enabled, poll_opens, poll_completes,
 			global_chat, event_chat, muted_poll_ids_json,
@@ -134,10 +187,51 @@ func (s *Store) Preferences(ctx context.Context, userID string) (UserPreferences
 }
 
 func (s *Store) PutEndpoint(ctx context.Context, endpoint Endpoint) error {
+	return putEndpoint(ctx, s.base.DB(), endpoint)
+}
+
+// ApplyEndpoints applies one endpoint source batch atomically. A baseline
+// replaces the complete endpoint projection.
+func (s *Store) ApplyEndpoints(ctx context.Context, mutations []EndpointMutation, baseline bool) error {
+	tx, err := s.base.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if baseline {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_endpoints`); err != nil {
+			return err
+		}
+	}
+	for _, mutation := range mutations {
+		if mutation.UserID == "" || mutation.EndpointID == "" {
+			return fmt.Errorf("endpoint user ID and endpoint ID are required")
+		}
+		if mutation.Endpoint == nil {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM notification_endpoints WHERE user_id = ? AND endpoint_id = ?
+			`, mutation.UserID, mutation.EndpointID); err != nil {
+				return err
+			}
+			continue
+		}
+		if mutation.Endpoint.UserID != mutation.UserID || mutation.Endpoint.EndpointID != mutation.EndpointID {
+			return fmt.Errorf("endpoint mutation key %q/%q does not match endpoint key %q/%q",
+				mutation.UserID, mutation.EndpointID, mutation.Endpoint.UserID, mutation.Endpoint.EndpointID)
+		}
+		if err := putEndpoint(ctx, tx, *mutation.Endpoint); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func putEndpoint(ctx context.Context, execer contextExecer, endpoint Endpoint) error {
 	if endpoint.UserID == "" || endpoint.EndpointID == "" {
 		return fmt.Errorf("endpoint user ID and endpoint ID are required")
 	}
-	_, err := s.base.DB().ExecContext(ctx, `
+	_, err := execer.ExecContext(ctx, `
 		INSERT INTO notification_endpoints(
 			user_id, endpoint_id, endpoint_url, p256dh, auth, active, updated_at
 		) VALUES(?, ?, ?, ?, ?, ?, ?)

@@ -112,9 +112,14 @@ commits a baseline as an atomic replacement and each delta batch atomically.
 
 The source contract explicitly identifies the first complete baseline; the
 framework does not infer completeness merely from receiving an arbitrary first
-batch. For Firestore query streams, the adapter treats the initial query result
-as that baseline. This is a per-projection reconciliation boundary, not a
-backend-wide readiness barrier.
+batch. In the pinned Firestore Go SDK (`v1.25.0`), there is no separate
+initial-sync-complete flag. Instead, `QuerySnapshotIterator.Next()` waits until
+the watch has reached a consistent query state and returns a `QuerySnapshot`
+for the complete current query result. On the first result, its changes
+represent the current matching documents as additions; an empty query is a
+valid empty baseline. The Firestore adapter marks that first returned snapshot
+as `BaselineBatch`; subsequent snapshots are `DeltaBatch` values. This is a
+per-projection reconciliation boundary, not a backend-wide readiness barrier.
 
 Application operations still define their own local-miss behaviour, such as
 source read-through or an explicit unavailable result. A projection may expose
@@ -159,10 +164,11 @@ versions, and any required deletion markers must be committed consistently in
 the same transaction. The adapter remains responsible for its projection's
 replacement semantics; the common runner does not clear arbitrary tables.
 
-The Firestore adapter must verify and test that its initial query result is a
-complete baseline and that later deltas are ordered after it. If a source cannot
-provide this contract, that adapter must supply another explicit reconciliation
-strategy rather than silently claiming convergence.
+The Firestore adapter must test that the pinned SDK's first returned query
+snapshot is applied as a complete baseline and that later deltas are ordered
+after it. If a source cannot provide this contract, that adapter must supply
+another explicit reconciliation strategy rather than silently claiming
+convergence.
 
 ### 3.6 Apply each batch transactionally and make replay idempotent
 

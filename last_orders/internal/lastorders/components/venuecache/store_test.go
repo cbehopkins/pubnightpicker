@@ -67,3 +67,29 @@ func TestStoreCreatesIndependentTable(t *testing.T) {
 		t.Fatalf("table name = %q", name)
 	}
 }
+
+func TestStoreApplyBatchReplacesBaselineAtomically(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Put(ctx, VenueProjection{ID: "old", Name: "Old venue"}); err != nil {
+		t.Fatalf("seed old venue: %v", err)
+	}
+
+	baseline := []Mutation{{ID: "new", Projection: &VenueProjection{ID: "new", Name: "New venue"}}}
+	if err := store.ApplyBatch(ctx, baseline, true); err != nil {
+		t.Fatalf("apply baseline: %v", err)
+	}
+	if _, err := store.Get(ctx, "old"); !errors.Is(err, ErrCacheMiss) {
+		t.Fatalf("old venue error = %v; want cache miss", err)
+	}
+	if got, err := store.Get(ctx, "new"); err != nil || got.Name != "New venue" {
+		t.Fatalf("new venue = %+v, %v; want new projection", got, err)
+	}
+
+	if err := store.ApplyBatch(ctx, []Mutation{{ID: ""}}, true); err == nil {
+		t.Fatal("invalid baseline mutation succeeded")
+	}
+	if got, err := store.Get(ctx, "new"); err != nil || got.Name != "New venue" {
+		t.Fatalf("venue after failed baseline = %+v, %v; want prior projection intact", got, err)
+	}
+}

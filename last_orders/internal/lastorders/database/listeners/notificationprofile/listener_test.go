@@ -3,6 +3,7 @@ package notificationprofile
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -274,7 +275,7 @@ func TestListenerRebuildsProjectionAfterLocalDataLoss(t *testing.T) {
 	waitForEndpointKeys(t, store, "user/a")
 }
 
-func TestListenerSkipsUnprojectableDocuments(t *testing.T) {
+func TestListenerDoesNotReplaceProjectionFromMalformedBaseline(t *testing.T) {
 	optedIn := map[string]any{"webPushEnabled": true}
 	malformed := notificationprofile.Change{Kind: notificationprofile.ChangeAdded, Doc: notificationprofile.Document{
 		ID: "broken", UserID: "user", Data: map[string]any{"endpoint": "https://push.test/broken"},
@@ -287,12 +288,34 @@ func TestListenerSkipsUnprojectableDocuments(t *testing.T) {
 		}},
 	}
 	store, listener := newTestHarness(t, source)
+	ctx := context.Background()
+	if err := store.PutPreferences(ctx, notificationprofile.UserPreferences{UserID: "user", WebPushEnabled: true}); err != nil {
+		t.Fatalf("seed preferences: %v", err)
+	}
+	if err := store.PutEndpoint(ctx, notificationprofile.Endpoint{
+		UserID: "user", EndpointID: "existing", URL: "https://push.test/existing", P256DH: "key", Auth: "secret", Active: true,
+	}); err != nil {
+		t.Fatalf("seed existing endpoint: %v", err)
+	}
 	if err := listener.Start(t.Context()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	defer listener.Close()
 
-	waitForEndpointKeys(t, store, "user/a")
+	select {
+	case err := <-listener.Errors():
+		if !errors.Is(err, ErrMalformedDocument) {
+			t.Fatalf("listener error = %v; want malformed-document error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not report malformed baseline")
+	}
+	select {
+	case <-listener.Ready():
+		t.Fatal("listener became ready after rejecting the endpoint baseline")
+	default:
+	}
+	waitForEndpointKeys(t, store, "user/existing")
 }
 
 func TestServiceInvalidateEndpointWritesBackAndUpdatesProjection(t *testing.T) {
