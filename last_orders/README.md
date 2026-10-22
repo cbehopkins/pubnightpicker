@@ -32,7 +32,7 @@ documents.
 
 Install dependencies and run tests:
 
-Go 1.27.2 or newer is required, including standard-library security fixes.
+Go 1.27.3 or newer is required, including standard-library security fixes.
 With `GOTOOLCHAIN=auto`, Go selects the required version from `go.mod`.
 
 ```powershell
@@ -47,7 +47,7 @@ Run this in a separate PowerShell session:
 $toolDir = Join-Path ([System.IO.Path]::GetTempPath()) ("staticcheck-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $toolDir | Out-Null
 try {
-    $env:GOTOOLCHAIN = "go1.27.2"
+    $env:GOTOOLCHAIN = "go1.27.3"
     $env:GOWORK = "off"
     go -C $toolDir mod init staticcheck-build
     if ($LASTEXITCODE -ne 0) { throw "Failed to initialize Staticcheck build module" }
@@ -62,7 +62,7 @@ staticcheck ./...
 ```
 
 The temporary build pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
-Go 1.27.2 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
+Go 1.27.3 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
 uses an older, incompatible x/tools version. The executable is installed into
 `GOBIN` (or `GOPATH\bin` by default); no tooling module remains in the repository.
 

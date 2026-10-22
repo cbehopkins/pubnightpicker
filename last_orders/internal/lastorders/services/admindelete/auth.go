@@ -6,10 +6,11 @@ import (
 	"os"
 	"strings"
 
+	"last_orders/internal/lastorders/components/firebaseauth"
+
 	firebase "firebase.google.com/go/v4"
 	firebaseauthsdk "firebase.google.com/go/v4/auth"
 	"google.golang.org/api/option"
-	"last_orders/internal/lastorders/components/firebaseauth"
 )
 
 type firebaseAuthClient struct {

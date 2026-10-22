@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/components/notificationprofile"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 func TestFirebaseClientCredentials(t *testing.T) {
