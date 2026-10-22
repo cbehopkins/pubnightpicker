@@ -263,7 +263,11 @@ func New(cfg Config) (application *App, err error) {
 		if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
 			firestoreOptions = nil
 		} else {
-			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(dialFirestoreIPv4)))
+			firestoreOptions = append(firestoreOptions, option.WithGRPCDialOption(grpc.WithContextDialer(
+				func(ctx context.Context, address string) (net.Conn, error) {
+					return dialFirestoreIPv4(ctx, address, cfg.Logger)
+				},
+			)))
 			cfg.Logger.Info("firestore transport configured", "network", "tcp4")
 		}
 		firestoreClient, err = firestore.NewClient(context.Background(), cfg.FirestoreProjectID, firestoreOptions...)
@@ -887,9 +891,14 @@ func New(cfg Config) (application *App, err error) {
 	return application, nil
 }
 
-func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
+func dialFirestoreIPv4(ctx context.Context, address string, logger *slog.Logger) (net.Conn, error) {
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
-	return dialer.DialContext(ctx, "tcp4", address)
+	connection, err := dialer.DialContext(ctx, "tcp4", address)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("firestore gRPC TCP connected", "network", "tcp4", "remote_address", connection.RemoteAddr().String())
+	return connection, nil
 }
 
 func firestoreDiagnosticTransport(network string) *http.Transport {

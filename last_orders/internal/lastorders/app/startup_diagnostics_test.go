@@ -143,6 +143,8 @@ func TestFirestoreDiagnosticTransportAddressFamily(t *testing.T) {
 }
 
 func TestDialFirestoreIPv4(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +157,7 @@ func TestDialFirestoreIPv4(t *testing.T) {
 	t.Run("IPv4", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		connection, err := dialFirestoreIPv4(ctx, listener.Addr().String())
+		connection, err := dialFirestoreIPv4(ctx, listener.Addr().String(), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,11 +170,19 @@ func TestDialFirestoreIPv4(t *testing.T) {
 		if address := connection.RemoteAddr().(*net.TCPAddr); address.IP.To4() == nil {
 			t.Fatalf("expected IPv4 peer, got %s", address)
 		}
+		var record map[string]any
+		if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["msg"] != "firestore gRPC TCP connected" || record["network"] != "tcp4" ||
+			record["remote_address"] != connection.RemoteAddr().String() {
+			t.Fatalf("unexpected gRPC connection diagnostic: %s", output.String())
+		}
 	})
 	t.Run("IPv6 rejected", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		connection, err := dialFirestoreIPv4(ctx, net.JoinHostPort("::1", port))
+		connection, err := dialFirestoreIPv4(ctx, net.JoinHostPort("::1", port), logger)
 		if err == nil {
 			connection.Close()
 			t.Fatal("IPv4 dialer must reject an IPv6 address")
@@ -181,7 +191,7 @@ func TestDialFirestoreIPv4(t *testing.T) {
 	t.Run("cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		connection, err := dialFirestoreIPv4(ctx, listener.Addr().String())
+		connection, err := dialFirestoreIPv4(ctx, listener.Addr().String(), logger)
 		if err == nil {
 			connection.Close()
 			t.Fatal("dialer must honour cancellation")
