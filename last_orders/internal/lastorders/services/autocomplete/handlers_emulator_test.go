@@ -12,6 +12,7 @@ import (
 	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
+	"github.com/google/uuid"
 )
 
 func emulatorClient(t *testing.T, ctx context.Context) *firestore.Client {
@@ -19,10 +20,7 @@ func emulatorClient(t *testing.T, ctx context.Context) *firestore.Client {
 	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
 		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
 	}
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
-		projectID = "last-orders-emulator"
-	}
+	projectID := "autocomplete-" + uuid.NewString()[:16]
 	client, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
 		t.Fatalf("new firestore client: %v", err)

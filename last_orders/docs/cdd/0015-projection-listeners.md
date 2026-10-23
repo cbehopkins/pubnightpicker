@@ -293,3 +293,23 @@ The design and implementation must demonstrate:
    shape, such as notification profiles, to validate what should be shared.
 5. Keep event-producing listeners on their existing path unless a separate CDD
    establishes that they share the same semantics.
+
+## 8. Implementation Status (2026-10-23)
+
+The shared runner is used by venue and notification-profile listeners. Venue
+stores now use shared transaction-aware sequence allocation, projection-owned
+versions and retained tombstones for listener batches and read-through writes.
+Venue baselines reconcile only real projected differences. Store and listener
+tests verify replay, offline deletions, rollback, atomic reader visibility and
+baseline-before-delta ordering without changing the runner contract.
+
+Malformed venue baselines fail without signalling readiness or replacing local
+state. The existing venue listener policy for malformed deltas remains a logged
+skip; notification profiles are not yet sequence-aware. The broader source
+validation boundary and retry-classification questions remain open.
+
+The Firestore emulator baseline-contract test is added but skipped locally
+because no emulator was configured. Full tests, race, vet and formatting checks
+passed; pinned staticcheck is blocked by compiler export-data incompatibility.
+See [CDD-0016](0016-projection-sync-implementation.md) for detailed verification
+and the remaining work. Cursors and SSE remain unimplemented.

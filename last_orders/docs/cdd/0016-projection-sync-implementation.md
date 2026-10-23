@@ -15,7 +15,7 @@ The shared projection-watch runner and atomic batch writes exist for venues and
 notification profiles. Shared sequence metadata and sequence-aware venue writes
 are implemented as of 2026-10-23. Venue baselines now compare existing values and
 retain versioned tombstones; remaining baseline visibility and listener-level
-verification belongs to Step D. Notification profiles still clear and repopulate
+verification was completed in Step D. Notification profiles still clear and repopulate
 baselines without sequence allocation. Cursors remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
@@ -112,7 +112,8 @@ committed high-water mark.
 ### Stage 3: Make Venue Writes Sequence-Aware
 
 **Implemented:** Steps B and C completed on 2026-10-23. The first milestone still
-requires the remaining Step D verification and milestone gates.
+has the staticcheck toolchain blocker recorded below; Step D checks are complete
+apart from unavailable Firestore emulator execution.
 
 Expand the model according to stage 1. Route `Put`, `Delete`, batch ingestion and
 read-through population through shared venue-owned transactional write logic.
@@ -123,6 +124,9 @@ and assign a newer live version on recreation.
 recreation, existing-data migration and rollback.
 
 ### Stage 4: Replace Baseline Rebuilds With Diffing
+
+**Implemented and locally verified (2026-10-23):** Step D is complete. The
+Firestore source contract test is present but requires an emulator to execute.
 
 Validate and map each complete baseline, then compare it with committed venue
 state in one transaction. Insert additions, update differences and tombstone
@@ -320,28 +324,58 @@ settings. The shared runner and HTTP contracts are unchanged.
   against the complete incoming projected set within one transaction.
 - [x] Insert new venues, update changed values, tombstone missing live venues
   and leave identical live rows and existing tombstones untouched.
-- [ ] Apply deltas through the same venue write helpers. Validate the whole
-  batch so any mapping, validation or persistence failure preserves the
-  previous committed projection and sequence metadata.
-- [ ] Extend existing venue store and listener tests for identical reconnects,
+- [x] Apply deltas through the same venue write helpers. Validate complete
+  baselines before applying them; failed store batches preserve the previous
+  projection and metadata. Preserve the existing listener policy of logging
+  and skipping malformed delta documents, applying only valid mutations.
+- [x] Extend existing venue store and listener tests for identical reconnects,
   empty baselines, offline deletions, mixed differences, replay, failures and
   baseline-before-delta application.
-- [ ] Verify separate readers see the previous or next complete committed
+- [x] Verify separate readers see the previous or next complete committed
   projection, never a partially reconciled baseline. Test writer contention
   with deterministic coordination rather than timing-only sleeps.
-- [ ] Preserve existing baseline-applied readiness, cancellation and error
+- [x] Preserve existing baseline-applied readiness, cancellation and error
   reporting. Keep the shared runner contract unchanged.
 
 **Check:** Replaying an identical baseline or delta leaves the global sequence
 and all venue versions unchanged. A failed batch also preserves tombstones.
 
+**Verified (2026-10-23):** Mixed baseline additions, changes, removals and
+recreation; identical and empty replays; failed baseline validation; persistence
+failure after earlier writes and allocations; and preservation of existing
+tombstones. A test-only SQLite trigger pauses a real transaction so separate
+readers can verify old committed rows and metadata during the write, stable
+read snapshots after commit, and complete new snapshots afterwards. A competing
+writer receives the next sequence after commit, or after rollback without
+retaining abandoned allocations. No production test hooks or reflection were
+introduced.
+
+The real listener reconnect test is channel-coordinated and verifies full
+baseline application, offline deletion, ordered and replayed deltas, readiness,
+stream stop and cancellation. Malformed baselines preserve local state and do
+not signal readiness; malformed deltas retain the existing observable skip
+policy. Runner APIs, retry policy and HTTP behaviour remain unchanged.
+
+**Emulator gap:** `TestFirestoreWatchCompleteBaselineBeforeDeltas` covers empty
+and populated initial queries, ordered deltas and a complete new baseline on
+reopen. It compiled but skipped because `FIRESTORE_EMULATOR_HOST` was unset.
+The Firestore SDK contract is therefore not runtime-verified in this environment.
+
 ### Milestone Completion
 
-- [ ] Run focused Base Store, venue store/service and relevant listener tests.
+- [x] Run focused Base Store, venue store/service and relevant listener tests.
 - [ ] Run the milestone gates in section 4 and report any unavailable emulator
   coverage or unrelated failures explicitly.
-- [ ] Update this checklist and the owning CDDs with verified implementation
+- [x] Update this checklist and the owning CDDs with verified implementation
   status. Do not mark cursor recovery or SSE as implemented.
+
+**Gate results (2026-10-23):** Full VS Code test run: 579 passed. Full repository
+`go test -race ./...`, `go vet ./...` and `gofmt -l .` passed. Pinned staticcheck
+`v0.8.1` failed before analysing the code because its importer supports Go export
+data version 4, while this compiler emits version 5. This is a toolchain
+compatibility blocker, not a passing staticcheck result; resolve it before
+claiming all milestone gates have passed. Emulator coverage remains as noted
+above. Stages 5-7, cursor recovery and SSE are not implemented by this milestone.
 
 **Deliverable:** A complete, sequence-aware venue projection with atomic,
 idempotent reconciliation, and reusable sequence infrastructure ready for the
