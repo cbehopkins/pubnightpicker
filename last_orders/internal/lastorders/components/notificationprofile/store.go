@@ -3,10 +3,9 @@ package notificationprofile
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"last_orders/internal/lastorders/basestore"
 )
@@ -43,78 +42,35 @@ func New(base *basestore.Store) (*Store, error) {
 }
 
 func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences) error {
-	return putPreferences(ctx, s.base.DB(), preferences)
+	return s.ApplyPreferences(ctx, []UserPreferencesMutation{{UserID: preferences.UserID, Preferences: &preferences}}, false)
 }
 
 // ApplyPreferences applies one user-preference source batch atomically. A
 // baseline replaces the complete preference projection.
 func (s *Store) ApplyPreferences(ctx context.Context, mutations []UserPreferencesMutation, baseline bool) error {
-	tx, err := s.base.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if baseline {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs`); err != nil {
-			return err
-		}
-	}
+	userIDs := make([]string, 0, len(mutations))
 	for _, mutation := range mutations {
-		if mutation.UserID == "" {
-			return fmt.Errorf("user ID is required")
+		if mutation.UserID == "" || (mutation.Preferences != nil && mutation.Preferences.UserID != mutation.UserID) {
+			return fmt.Errorf("preference mutation requires matching user IDs")
 		}
-		if mutation.Preferences == nil {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, mutation.UserID); err != nil {
+		userIDs = append(userIDs, mutation.UserID)
+	}
+	return s.applyUserBatch(ctx, "notification_user_prefs", userIDs, baseline, func(tx *sql.Tx) error {
+		for _, mutation := range mutations {
+			if mutation.Preferences == nil {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, mutation.UserID); err != nil {
+					return err
+				}
+			} else if err := writePreferences(ctx, tx, *mutation.Preferences); err != nil {
 				return err
 			}
-			continue
 		}
-		if mutation.Preferences.UserID != mutation.UserID {
-			return fmt.Errorf("user mutation ID %q does not match preferences ID %q", mutation.UserID, mutation.Preferences.UserID)
-		}
-		if err := putPreferences(ctx, tx, *mutation.Preferences); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func putPreferences(ctx context.Context, execer contextExecer, preferences UserPreferences) error {
-	if preferences.UserID == "" {
-		return fmt.Errorf("user ID is required")
-	}
-	muted, err := json.Marshal(nonNilStrings(normaliseStringSet(preferences.EventChatMutedPollIDs)))
-	if err != nil {
-		return fmt.Errorf("encode muted poll ids: %w", err)
-	}
-	_, err = execer.ExecContext(ctx, `
-		INSERT INTO notification_user_prefs(
-			user_id, web_push_enabled, poll_opens, poll_completes,
-			global_chat, event_chat, muted_poll_ids_json,
-			notification_email, open_poll_email, notification_email_enabled, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET
-			web_push_enabled = excluded.web_push_enabled,
-			poll_opens = excluded.poll_opens,
-			poll_completes = excluded.poll_completes,
-			global_chat = excluded.global_chat,
-			event_chat = excluded.event_chat,
-			muted_poll_ids_json = excluded.muted_poll_ids_json,
-			notification_email = excluded.notification_email,
-			open_poll_email = excluded.open_poll_email,
-			notification_email_enabled = excluded.notification_email_enabled,
-			updated_at = excluded.updated_at
-	`, preferences.UserID, preferences.WebPushEnabled, preferences.PollOpens,
-		preferences.PollCompletes, preferences.GlobalChat, preferences.EventChat,
-		string(muted), preferences.NotificationEmail, preferences.OpenPollEmailEnabled,
-		preferences.NotificationEmailEnabled, time.Now().UTC())
-	return err
+		return nil
+	})
 }
 
 func (s *Store) DeletePreferences(ctx context.Context, userID string) error {
-	_, err := s.base.DB().ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, userID)
-	return err
+	return s.ApplyPrivateUsers(ctx, []PrivateUserMutation{{UserID: userID}}, false)
 }
 
 func (s *Store) Preferences(ctx context.Context, userID string) (UserPreferences, error) {
@@ -131,66 +87,45 @@ func (s *Store) Preferences(ctx context.Context, userID string) (UserPreferences
 }
 
 func (s *Store) PutEndpoint(ctx context.Context, endpoint Endpoint) error {
-	return putEndpoint(ctx, s.base.DB(), endpoint)
+	return s.ApplyEndpoints(ctx, []EndpointMutation{{UserID: endpoint.UserID, EndpointID: endpoint.EndpointID, Endpoint: &endpoint}}, false)
 }
 
 // ApplyEndpoints applies one endpoint source batch atomically. A baseline
 // replaces the complete endpoint projection.
 func (s *Store) ApplyEndpoints(ctx context.Context, mutations []EndpointMutation, baseline bool) error {
-	tx, err := s.base.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if baseline {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_endpoints`); err != nil {
-			return err
-		}
-	}
-	for _, mutation := range mutations {
-		if mutation.UserID == "" || mutation.EndpointID == "" {
-			return fmt.Errorf("endpoint user ID and endpoint ID are required")
-		}
-		if mutation.Endpoint == nil {
-			if _, err := tx.ExecContext(ctx, `
-				DELETE FROM notification_endpoints WHERE user_id = ? AND endpoint_id = ?
-			`, mutation.UserID, mutation.EndpointID); err != nil {
-				return err
+	contributions := make([]EndpointContributionMutation, len(mutations))
+	for index, mutation := range mutations {
+		contributions[index] = EndpointContributionMutation{UserID: mutation.UserID, EndpointID: mutation.EndpointID}
+		if mutation.Endpoint != nil {
+			endpoint := mutation.Endpoint
+			contributions[index].Endpoint = &EndpointContribution{
+				UserID: endpoint.UserID, EndpointID: endpoint.EndpointID, URL: endpoint.URL,
+				P256DH: endpoint.P256DH, Auth: endpoint.Auth, Active: &endpoint.Active,
 			}
-			continue
-		}
-		if mutation.Endpoint.UserID != mutation.UserID || mutation.Endpoint.EndpointID != mutation.EndpointID {
-			return fmt.Errorf("endpoint mutation key %q/%q does not match endpoint key %q/%q",
-				mutation.UserID, mutation.EndpointID, mutation.Endpoint.UserID, mutation.Endpoint.EndpointID)
-		}
-		if err := putEndpoint(ctx, tx, *mutation.Endpoint); err != nil {
-			return err
 		}
 	}
-	return tx.Commit()
-}
-
-func putEndpoint(ctx context.Context, execer contextExecer, endpoint Endpoint) error {
-	return putEndpointContribution(ctx, execer, EndpointContribution{
-		UserID: endpoint.UserID, EndpointID: endpoint.EndpointID,
-		URL: endpoint.URL, P256DH: endpoint.P256DH, Auth: endpoint.Auth, Active: &endpoint.Active,
-	})
+	return s.ApplyEndpointContributions(ctx, contributions, baseline)
 }
 
 func (s *Store) DeleteEndpoint(ctx context.Context, userID, endpointID string) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		DELETE FROM notification_endpoints WHERE user_id = ? AND endpoint_id = ?
-	`, userID, endpointID)
-	return err
+	return s.ApplyEndpointContributions(ctx, []EndpointContributionMutation{{UserID: userID, EndpointID: endpointID}}, false)
 }
 
 func (s *Store) SetEndpointActive(ctx context.Context, userID, endpointID string, active bool) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		UPDATE notification_endpoints SET active = ?, updated_at = ?
-		WHERE user_id = ? AND endpoint_id = ?
-	`, active, time.Now().UTC(), userID, endpointID)
-	return err
+	if endpointID == "" {
+		return fmt.Errorf("endpoint ID is required")
+	}
+	return s.writeProfiles(ctx, []string{userID}, func(tx *sql.Tx) error {
+		endpoint, _, err := readEndpointContribution(ctx, tx, userID, endpointID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		endpoint.Active = &active
+		return writeEndpointContribution(ctx, tx, endpoint)
+	})
 }
 
 // EligibleEndpoints returns the active endpoints whose owner has opted in to the

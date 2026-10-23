@@ -81,7 +81,7 @@ func (s *fakeStream) Stop() {}
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "projection.db")
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -231,11 +231,10 @@ func TestListenerAppliesRemovals(t *testing.T) {
 	optedIn := map[string]any{"webPushEnabled": true}
 	source := &fakeSource{
 		users: [][]notificationprofile.Change{{userChange(notificationprofile.ChangeAdded, "user", optedIn)}},
-		endpoints: [][]notificationprofile.Change{{
-			endpointChange(notificationprofile.ChangeAdded, "user", "a"),
-			endpointChange(notificationprofile.ChangeAdded, "user", "b"),
-			endpointChange(notificationprofile.ChangeRemoved, "user", "a"),
-		}},
+		endpoints: [][]notificationprofile.Change{
+			{endpointChange(notificationprofile.ChangeAdded, "user", "a"), endpointChange(notificationprofile.ChangeAdded, "user", "b")},
+			{endpointChange(notificationprofile.ChangeAdded, "user", "b")},
+		},
 	}
 	store, listener := newTestHarness(t, source)
 	if err := listener.Start(t.Context()); err != nil {

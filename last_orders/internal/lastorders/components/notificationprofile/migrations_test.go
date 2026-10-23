@@ -83,6 +83,7 @@ func TestMigrationRebuildsOnlyLegacyNotificationProjection(t *testing.T) {
 		t.Fatalf("unrelated data = %q, %v", value, err)
 	}
 	seedUser(t, store, UserPreferences{UserID: "new", WebPushEnabled: true})
+	after = profileSyncState(t, base)
 	if _, err := New(base); err != nil {
 		t.Fatal(err)
 	}

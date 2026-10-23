@@ -305,13 +305,18 @@ baseline-before-delta ordering without changing the runner contract.
 
 Malformed venue baselines fail without signalling readiness or replacing local
 state. The existing venue listener policy for malformed deltas remains a logged
-skip; notification profiles are not yet sequence-aware. The broader source
+skip. Notification profile stores now maintain one combined profile version per
+changed owner, including compatibility writes and endpoint invalidation.
+Source-owned baselines preserve other contributions and orphan endpoints do
+not establish live profiles. The broader source
 validation boundary and retry-classification questions remain open.
 
 The Firestore emulator baseline-contract test subsequently passed against an
 empty disposable emulator. Full tests, race, vet and formatting checks passed;
 the full race gate preceded emulator execution. Pinned staticcheck remains
-blocked by compiler export-data incompatibility. The combined user-profile
-implementation is planned in section 6 of CDD-0016; it is not yet implemented.
+blocked by compiler export-data incompatibility. Combined user-profile types,
+schema and transactional writes are implemented through Step G of CDD-0016.
+Raw three-stream ingestion remains for Step H; current notification listener
+adapters still provide legacy effective views rather than raw contributions.
 See [CDD-0016](0016-projection-sync-implementation.md) for detailed verification
 and the remaining work. Cursors and SSE remain unimplemented.

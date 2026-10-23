@@ -1,6 +1,6 @@
 # CDD: Projection Synchronisation Implementation Plan
 
-**Status:** Venue milestone implemented; Stage 5 steps E-F implemented; staticcheck gate blocked
+**Status:** Venue milestone implemented; Stage 5 steps E-G implemented; staticcheck gate blocked
 **Date:** 2026-10-22
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -16,8 +16,10 @@ notification profiles. Shared sequence metadata and sequence-aware venue writes
 are implemented as of 2026-10-23. Venue baselines now compare existing values and
 retain versioned tombstones; remaining baseline visibility and listener-level
 verification was completed in Step D, including the Firestore emulator source
-contract check. Notification profiles still clear and repopulate baselines
-without sequence allocation. Stage 5 has the execution checklist in section 6.
+contract check. Notification profile stores now reconcile per-source baselines
+and allocate combined profile versions atomically. Their current two-stream
+listener still supplies legacy effective views; raw three-stream integration
+remains for Step H. Stage 5 has the execution checklist in section 6.
 Cursors remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
@@ -144,10 +146,10 @@ all supported venue writers participate in global ordering.
 
 ### Stage 5: Adapt Combined User Profiles
 
-**Implementation status (2026-10-23):** Steps E-F typed contributions, comparison,
-strict conversion, schema migration and typed storage helpers are implemented.
-Combined profile sequencing and raw contribution ingestion from all three
-streams remain pending in steps G-I.
+**Implementation status (2026-10-23):** Steps E-G typed contributions, comparison,
+strict conversion, schema migration, typed storage and combined profile
+sequencing are implemented. Raw contribution ingestion from all three streams
+and the remaining integration gates are pending in steps H-I.
 
 Implement the agreed source composition and normalisation with one version per
 user profile. Cover preferences, endpoints and local endpoint deactivation as
@@ -554,11 +556,11 @@ writing them back. Existing preference-only writes preserve email, arrival and
 diagnostic source fields outside their scope. No duplicate effective projection
 is persisted.
 
-**Transition boundary:** Current listener batches still carry legacy effective
+**Transition boundary at the Step F checkpoint:** Listener batches still carry legacy effective
 preference/endpoint views. Those compatibility writes remain usable, but cannot
 recover source presence already erased by the old adapter API. Steps G-H must
 route raw contributions through the sequence-aware boundary and all three
-streams. Step F does not automatically populate `notification_profiles` or
+streams. Step F did not automatically populate `notification_profiles` or
 allocate profile versions, reconcile profile lifecycle or add a public-user
 watch. Earlier development databases may need rebuilding as this undeployed
 initial migration evolves; no second development-only migration was added.
@@ -574,29 +576,72 @@ the known staticcheck toolchain blocker remains unchanged.
 
 ### Step G: One Transactional Profile Write Boundary
 
-- [ ] Route private/public writes, preference puts/deletes, endpoint
+- [x] Route private/public writes, preference puts/deletes, endpoint
   puts/deletes, batch ingestion and `SetEndpointActive` through component-owned
   transactional helpers. Keep `InvalidateEndpoint` remote-first, followed by
   this local boundary; a later identical listener update must be a no-op.
-- [ ] Compare each affected user's combined state before and after a batch.
+- [x] Compare each affected user's combined state before and after a batch.
   Allocate one new profile version per actually changed live resource in that
   transaction, not one version per endpoint or source row. Commit contributions,
   endpoints, profile versions/tombstones and allocations together.
-- [ ] Retain a partial live profile while either user document exists. Removing
+- [x] Retain a partial live profile while either user document exists. Removing
   one source removes only its contribution. Removing the last source writes a
   newer tombstone; repeated absent deletes do not allocate. Reappearance creates
   a newer live version.
-- [ ] Endpoint rows alone must not establish or resurrect a profile. Retain
+- [x] Endpoint rows alone must not establish or resurrect a profile. Retain
   orphan endpoints only as internal data pending cleanup; their changes do not
   advance an absent profile or its tombstone. When a user document appears,
   include the currently committed endpoint contribution in its live profile.
-- [ ] Test all writer paths, changed presence even for empty documents,
+- [x] Test all writer paths, changed presence even for empty documents,
   multiple endpoints belonging to one user in a batch, multiple affected users,
   replay, deletion, recreation and rollback after allocation. Verify venue and
   user changes share the same global allocator.
 
 **Check:** Each profile version describes the combined locally committed
 resource, not a source notification or an independently versioned endpoint.
+
+**Implemented (2026-10-23):** `profile_write.go` owns the transaction boundary.
+It snapshots each affected user's private/public contributions and sorted
+endpoints, applies the batch, then compares final combined values. Each changed
+owner receives one global sequence and profile version; net-zero batches and
+identical replay do not allocate. Contributions, endpoint rows, versions and
+tombstones roll back together. Identical source rows are not rewritten, so
+their ingestion timestamps are preserved too.
+
+Typed private/public/endpoint batch APIs and existing preference/endpoint APIs
+use this boundary. Preference-only writes preserve unrelated private fields.
+`SetEndpointActive` participates; `InvalidateEndpoint` remains remote-first,
+with a later identical source update treated as a no-op. Source baselines
+collect existing owner IDs before removing missing rows, reconcile only their
+own tables and preserve other contributions. This storage-level baseline work
+is shared with Step H; no third stream is added here.
+
+A profile remains live while either user contribution exists. Removing the last
+contribution writes a retained tombstone; orphan endpoint changes neither create
+a profile nor advance its tombstone. Reappearance creates a newer live profile
+using the current endpoint state. Empty contribution documents still establish
+source presence and participate in versioning.
+
+**Verified:** Full VS Code test run: 640 passed. Focused component/listener race,
+vet and diagnostics passed. Tests cover presence/null changes, compatibility
+writers, repeated and net-zero batches, multiple endpoints per owner, multiple
+owners, source-isolated baselines, deletion/recreation, orphan endpoints,
+remote-first invalidation, rollback after allocations and shared venue/profile
+ordering. Concurrent identical source puts allocate once; distinct endpoint
+writes are preserved; repeated last-source deletion allocates one tombstone.
+
+The listener test database now matches the application's immediate transaction
+locking configuration; deferred read-to-write upgrades failed under concurrent
+streams. Its removal fixture now supplies a complete subsequent baseline rather
+than a duplicate added/removed key in the initial baseline. No runner API or
+production retry policy was changed, and the single initial migration remains.
+
+**Transition boundary:** The existing two streams now produce versioned writes,
+but their effective-view adapters still erase raw field presence before store
+ingestion. Step H must supply typed raw contributions and add the public-user
+stream before full combined source convergence is claimed. Earlier development
+caches may need rebuilding; no development-only backfill migration was added.
+No reflection is used. Staticcheck remains blocked by the known toolchain issue.
 
 ### Step H: Three Independent Projection Streams
 
