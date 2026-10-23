@@ -50,8 +50,8 @@ def test_user_repository_yields_only_complete_user_records():
     db = MagicMock()
     docs_query = MagicMock()
     docs_query.stream.return_value = [
-        _make_doc("u1", {"notificationEmail": "one@example.com", "uid": "u1"}),
-        _make_doc("u2", {"notificationEmail": "two@example.com"}),
+        _make_doc("u1", {"notificationEmail": "one@example.com"}),
+        _make_doc("u2", {"notificationEmail": ""}),
         _make_doc("u3", None),
     ]
     db.collection.return_value.where.return_value = docs_query

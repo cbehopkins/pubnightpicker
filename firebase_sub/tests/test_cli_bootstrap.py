@@ -176,14 +176,16 @@ def test_create_admin_seeds_user_docs_and_roles(monkeypatch):
     private_doc = fake_db.store[("users", "admin-user")]
     public_doc = fake_db.store[("user-public", "admin-user")]
 
-    assert private_doc["uid"] == "admin-user"
-    assert private_doc["name"] == "Admin Name"
+    assert "uid" not in private_doc
+    assert "name" not in private_doc
+    assert "votesVisible" not in private_doc
     assert private_doc["notificationEmail"] == "admin@example.com"
     assert private_doc["webPushEnabled"] is False
     assert private_doc["pushPreferences"]["globalChat"] is False
 
-    assert public_doc["uid"] == "admin-user"
+    assert "uid" not in public_doc
     assert public_doc["name"] == "Admin Name"
+    assert public_doc["customPhotoUrl"] == ""
 
     assert fake_db.store[("roles", "admin")]["admin-user"] is True
     assert fake_db.store[("roles", "canChat")]["admin-user"] is True
@@ -255,8 +257,9 @@ def test_create_admin_generates_uid_when_missing(monkeypatch):
     generated_uid = user_doc_keys[0][1]
 
     assert generated_uid.startswith("admin-")
-    assert fake_db.store[("users", generated_uid)]["uid"] == generated_uid
-    assert fake_db.store[("user-public", generated_uid)]["uid"] == generated_uid
+    assert "uid" not in fake_db.store[("users", generated_uid)]
+    assert "name" not in fake_db.store[("users", generated_uid)]
+    assert "uid" not in fake_db.store[("user-public", generated_uid)]
     assert fake_db.store[("roles", "admin")][generated_uid] is True
 
 
@@ -350,19 +353,20 @@ def test_seed_smoke_creates_expected_documents(monkeypatch):
     fake_db = _FakeDb()
     result = module.seed_smoke_data(fake_db)
 
-    # All three private user docs
-    assert (
-        fake_db.store[("users", module.SMOKE_ADMIN_UID)]["uid"]
-        == module.SMOKE_ADMIN_UID
-    )
-    assert (
-        fake_db.store[("users", module.SMOKE_USER_A_UID)]["uid"]
-        == module.SMOKE_USER_A_UID
-    )
-    assert (
-        fake_db.store[("users", module.SMOKE_USER_B_UID)]["uid"]
-        == module.SMOKE_USER_B_UID
-    )
+    # Identity and display fields belong to the public profile/document path.
+    for uid in (
+        module.SMOKE_ADMIN_UID,
+        module.SMOKE_USER_A_UID,
+        module.SMOKE_USER_B_UID,
+    ):
+        private_user = fake_db.store[("users", uid)]
+        public_user = fake_db.store[("user-public", uid)]
+        assert "uid" not in private_user
+        assert "name" not in private_user
+        assert "votesVisible" not in private_user
+        assert "uid" not in public_user
+        assert "name" in public_user
+        assert public_user["customPhotoUrl"] == ""
 
     # User B has push enabled and global chat opted in
     user_b = fake_db.store[("users", module.SMOKE_USER_B_UID)]

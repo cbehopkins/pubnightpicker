@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../firebase";
-import { onSnapshot, updateDoc, doc, setDoc } from "firebase/firestore";
+import { onSnapshot, doc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { authAdded, clearAuth } from "../store/authSlice";
 import { useDispatch } from "react-redux";
@@ -16,7 +16,6 @@ async function ensureCanonicalUserDocFromAuth(user) {
         // Only ensure canonical identity fields exist here. Preferred display fields
         // are managed in user-public and should not be overwritten by auth defaults.
         await setDoc(doc(db, "users", user.uid), {
-            uid: user.uid,
             email: user.email || "",
             authProvider,
         }, { merge: true });
@@ -25,30 +24,42 @@ async function ensureCanonicalUserDocFromAuth(user) {
     }
 }
 
-function selfSubscription(uid, update_callback) {
-    const selfDocRef = doc(db, "users", uid);
-    return onSnapshot(selfDocRef, (snapshot) => {
-        if (!snapshot.exists()) {
-            return;
+function selfSubscription(uid, updateCallback) {
+    let privateData = {};
+    let publicData = {};
+    let privateLoaded = false;
+    let publicLoaded = false;
+
+    const publish = () => {
+        if (privateLoaded && publicLoaded) {
+            updateCallback(privateData, publicData);
         }
-        update_callback(snapshot.data());
-    }, (err) => {
+    };
+    const handleError = (err) => {
         console.error(err);
         notifyError(err.message);
-    });
+    };
+
+    const unsubscribePrivate = onSnapshot(doc(db, "users", uid), (snapshot) => {
+        privateLoaded = true;
+        privateData = snapshot.exists() ? snapshot.data() : {};
+        publish();
+    }, handleError);
+    const unsubscribePublic = onSnapshot(doc(db, "user-public", uid), (snapshot) => {
+        publicLoaded = true;
+        publicData = snapshot.exists() ? snapshot.data() : {};
+        publish();
+    }, handleError);
+
+    return () => {
+        unsubscribePrivate();
+        unsubscribePublic();
+    };
 }
 
 async function updatePhotoUrl(uid, photoUrl) {
     try {
-        await updateDoc(doc(db, "users", uid), { photoUrl });
-    } catch (err) {
-        console.error(err);
-        notifyError(err.message);
-    }
-
-    try {
         await setDoc(doc(db, "user-public", uid), {
-            uid,
             photoUrl,
         }, { merge: true });
     } catch (err) {
@@ -71,26 +82,31 @@ export default function useSelf() {
             photoUrl: authUser.photoURL || null,
         }));
     }, [dispatch]);
-    const logInUser = useCallback(async (data) => {
-        const resolvedUid = data?.uid || auth.currentUser?.uid;
+    const logInUser = useCallback(async (privateData, loadedPublicData) => {
+        const resolvedUid = auth.currentUser?.uid;
         if (!resolvedUid) {
             return;
         }
 
-        if (data.authProvider === "google" && !data?.customPhotoUrl) {
-            if (data?.photoUrl !== auth.currentUser.photoURL) {
-                data.photoUrl = auth.currentUser.photoURL
-                // FIXME await this after the dispatch
-                await updatePhotoUrl(resolvedUid, data.photoUrl)
-            }
+        let publicData = loadedPublicData;
+        const authProvider = privateData?.authProvider
+            || auth.currentUser?.providerData?.[0]?.providerId;
+        const authPhotoUrl = auth.currentUser?.photoURL || null;
+        if (
+            (authProvider === "google" || authProvider === "google.com")
+            && !publicData?.customPhotoUrl
+            && publicData?.photoUrl !== authPhotoUrl
+        ) {
+            await updatePhotoUrl(resolvedUid, authPhotoUrl);
+            publicData = { ...publicData, photoUrl: authPhotoUrl };
         }
-        const photoUrl = data?.photoUrl ?? auth.currentUser?.photoURL ?? null
+
         dispatch(
             authAdded({
-                name: data?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
+                name: publicData?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
                 uid: resolvedUid,
-                email: auth.currentUser?.email || data?.email || "",
-                photoUrl,
+                email: auth.currentUser?.email || privateData?.email || "",
+                photoUrl: publicData?.customPhotoUrl || publicData?.photoUrl || authPhotoUrl,
             })
         );
     }, [dispatch]);
@@ -105,10 +121,10 @@ export default function useSelf() {
             return;
         }
 
-        // Keep auth/uid available for role-gated UI even if users/{uid} hydration is delayed.
+        // Keep auth/uid available for role-gated UI while profile documents load.
         logInFromAuthUser(user);
 
-        // Ensure canonical users/{uid} exists before listening.
+        // Ensure private identity data exists before listening for both profiles.
         void ensureCanonicalUserDocFromAuth(user);
         const unsubscribe = selfSubscription(user.uid, logInUser);
         return unsubscribe;

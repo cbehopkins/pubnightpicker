@@ -161,10 +161,32 @@ describe("savePreferences", () => {
         expect(firestoreDocMock).toHaveBeenCalledWith({}, "users", "other-user");
         expect(firestoreDocMock).toHaveBeenCalledWith({}, "user-public", "other-user");
         expect(setDocMock.mock.calls[0][1]).toMatchObject({
-            uid: "other-user",
             name: "Bob",
             photoUrl: "https://example.com/bob.png",
         });
         expect(updateDocMock.mock.calls[0][1].notificationEmail).toBe("bob@example.com");
+    });
+
+    it("writes custom avatar metadata only to user-public", async () => {
+        const formData = new FormData();
+        formData.set("name", "Alice");
+        formData.set("avatar", "https://example.com/custom.png");
+
+        const saved = await savePreferences({
+            uid: "user-1",
+            formData,
+            currentPhotoUrl: "https://example.com/provider.png",
+        });
+
+        expect(saved).toBe(true);
+        expect(updateDocMock.mock.calls[0][1]).not.toHaveProperty("customPhotoUrl");
+        expect(setDocMock).toHaveBeenCalledWith(
+            { path: "user-public/user-1" },
+            expect.objectContaining({
+                photoUrl: "https://example.com/provider.png",
+                customPhotoUrl: "https://example.com/custom.png",
+            }),
+            { merge: true },
+        );
     });
 });
