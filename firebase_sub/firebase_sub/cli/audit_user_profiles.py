@@ -608,9 +608,7 @@ def _apply_legacy_profile_cleanup(db: Any, operations: list[dict[str, Any]]) -> 
 
 def _plan_public_uid_cleanup(public_users: Iterable[Any]) -> list[str]:
     return [
-        snapshot.id
-        for snapshot in public_users
-        if "uid" in (snapshot.to_dict() or {})
+        snapshot.id for snapshot in public_users if "uid" in (snapshot.to_dict() or {})
     ]
 
 
