@@ -45,10 +45,17 @@ Cursors from incompatible stream contracts must not be treated as interchangeabl
 The cursor format and stream contract will be versionable independently of the underlying storage implementation.
 
 ### 4. Determine changes from the current read model
+### 4. Incremental synchronization (future mode)
+
+V1 sends a full snapshot on every connection. The following cursor-based
+incremental behavior is a future extension, not a requirement to omit cursors
+from V1.
 
 The system will not require a durable history of event payloads.
 
-When a client reconnects with a valid cursor, the backend will identify resources whose latest change versions are later than that cursor and return or notify the client about their latest state.
+When incremental resume is enabled and a client reconnects with a valid cursor,
+the backend identifies resources whose latest change versions are later than
+that cursor and returns or notifies the client about their latest state.
 
 Intermediate updates to the same resource may be coalesced. The system does not promise to deliver every individual change.
 
@@ -184,16 +191,67 @@ Define authorised public/private API representations before exposing profiles.
 A combined internal resource must not imply public exposure of private user
 data or push credentials.
 
+### Cursor and Stream Decisions (2026-10-23)
+
+- V1 sends complete replacement views on every stream connection and after
+	relevant changes, rather than mutations or partial patches. Snapshot data
+	and its cursor come from the same SQLite read transaction. Register the
+	subscriber before reading; notifications at or below the snapshot
+	high-water mark are covered by the snapshot, and later ones are delivered.
+- Proposed cursor: a versioned HMAC-authenticated opaque token scoped to stream
+	contract, resource ID, database generation and global sequence. Current-Meets
+	cursors also bind to the `Europe/London` calendar date. Keep the signing key
+	stable across restarts. V1 has no expiry while tombstones remain indefinite.
+	Invalid, tampered, future, wrong-scope, wrong-generation or date-mismatched
+	cursors return a complete current view. Key rotation likewise causes a full
+	view.
+- `Last-Event-ID` takes precedence over `after`; past-Meet pagination cursors
+	are separate. Bound each subscriber's buffer and close the stream on overflow.
+- Do not accept SSE until local projection startup readiness checks complete;
+	this does not assert Firebase is globally caught up. V1 assumes one backend
+	instance and one persistent SQLite database. Active streams close at shutdown.
+- Anonymous reads of public Group Meets expose attendance counts but no attendee
+	identities. Authenticated attendance GET responses may include attendee
+	details.
+- On an effective authorization change, publish a post-commit invalidation to
+	the in-memory stream hub for the affected UID. The hub signals all registered
+	streams without closing their channels. Each handler sends a generic
+	`view_reset` with no event ID and `data: {}`, then closes; the client reconnects
+	and receives a full snapshot after current authorization is checked. Because
+	every connection receives a full view, no durable invalidation marker is
+	required for reconnect correctness. Registration happens before the
+	connection's authorization check to cover setup races. An event already
+	being written may complete; strict post-commit write exclusion is not a V1
+	guarantee.
+
 ## Implementation outline
 
 The staged delivery plan and outstanding resource-contract decisions are tracked
 in [CDD-0016: Projection Synchronisation Implementation Plan](0016-projection-sync-implementation.md).
 
+### V1 and Incremental Resume
+
+V1 sends a complete snapshot on every connection. This is a versioned delivery
+choice, not a claim that cursors are unnecessary. A later version may resume
+from a valid cursor when its authorization state has not changed and return
+latest-state changes after that position.
+
+For incremental resume, the active-stream hub remains necessary to close live
+connections after a detected authorization change. It is not sufficient for a
+client that is already disconnected: the server also needs durable evidence
+that a supplied cursor predates an authorization change. The selected future
+mechanism is a durable per-UID authorization epoch, advanced atomically with the
+local authorization projection and bound into each cursor. Before returning
+deltas, compare the cursor's epoch to the current durable epoch; a mismatch
+forces a complete snapshot. Retain the epoch across user deletion and never
+reset or reuse it within a database generation. Cursor deletion is not selected
+because it requires a server-side registry covering disconnected clients.
+
 1. Add global change-sequence allocation to the SQLite read-model update path.
 2. Store the last-change sequence on independently synchronizable resources.
 3. Ensure projection updates and version assignments commit atomically.
 4. Define the opaque cursor contract for `app-changes-v1`.
-5. Implement cursor validation and incremental synchronization with a consistent high-water mark.
+5. Implement opaque cursor validation and complete-view synchronization with a consistent high-water mark.
 6. Implement SSE notifications for currently connected, interested clients.
 7. Implement deletion tracking and a full-refresh fallback.
 8. Test disconnects, reconnects, concurrent updates, repeated updates, deletions, process restarts, and read-model rebuilds.

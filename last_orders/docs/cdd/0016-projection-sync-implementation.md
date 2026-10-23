@@ -5,6 +5,7 @@
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
 [Reusable Projection Listeners](0015-projection-listeners.md)
+[Reusable SSE Stream Prototype](0017-sse-stream-prototype.md)
 
 ## 1. Scope and Starting Point
 
@@ -172,9 +173,17 @@ repair leftovers in the meantime; do not depend on it for push eligibility.
 ### Stage 6: Implement Cursor and Recovery Reads
 
 Specify opaque encoding and stream scope. Validate generation and sequence
-position; return consistent snapshots or latest-state incremental changes with
-deletions. Define pagination boundaries and full-refresh responses. Resolve
-durable authorisation invalidation before exposing protected views.
+position; return consistent full snapshots on every connection. Define
+pagination boundaries and full-view responses. Re-authorise each connection.
+After a committed authorization change, signal active streams for that UID
+through an in-memory hub, send a generic reset, and close so the client reconnects.
+
+If a later version enables incremental cursor resume, bind a durable per-UID
+authorization epoch into each cursor and compare it before returning deltas.
+Advance the epoch atomically with the local authorization projection; retain it
+across user deletion and never reset or reuse it within a database generation.
+A mismatch requires a full, currently authorised snapshot. The active-stream
+hub remains responsible for promptly closing already-open connections.
 
 **Verify:** Concurrent updates, pagination, restart/rebuild, unusable cursors,
 deletions and visibility changes. A snapshot and cursor describe the same state.
@@ -735,9 +744,9 @@ Keep these as design gates rather than silently deciding them during Stage 5:
 - Specify public/self/private API representations and authorisation. The
   combined internal identity does not expose private settings or endpoint
   credentials to public consumers.
-- Define durable visibility/authorisation invalidation and how profile/resource
-  versions contribute to each authorised stream. A resource version alone is
-  not proof that a client may resume its prior view.
+- Define per-UID in-memory stream invalidation after committed authorization
+  changes. Every reconnect receives a complete, currently authorised snapshot,
+  so no durable invalidation marker is required.
 - Specify opaque cursor encoding, generation/stream scope, valid sequence
   bounds, high-water marks, pagination and full-refresh envelopes in OpenAPI.
 - Design snapshot-to-live handover, post-commit dispatcher notifications,

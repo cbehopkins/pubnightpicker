@@ -711,10 +711,9 @@ paths:
       description: |
         Returns completed voting-phase Meets whose local date is today or in the
         future, together with the venue and attendance summary needed by the
-        current-Meets view. The response includes a collection revision suitable
-        for starting the corresponding stream. This snapshot is cacheable according
-        to server cache headers; the revision is a synchronization cursor, not a
-        cache key by itself.
+        current-Meets view. Public Group Meet details are available without
+        authentication. The response includes an opaque cursor from the same
+        consistent local snapshot, suitable for starting the corresponding stream.
       security:
         - bearerAuth: []
         - {}
@@ -747,11 +746,15 @@ paths:
       operationId: streamCurrentMeets
       summary: Stream changes to current Meets
       description: |
-        Server-Sent Events. `after` is an opaque collection revision cursor from
-        a snapshot; Last-Event-ID may be used on reconnect. The server replays
-        changes after that cursor and then sends live changes. Event IDs are
-        monotonically increasing within this group's current-Meets stream. The
-        stream must support a consistent snapshot/replay boundary.
+        Server-Sent Events. `after` is an opaque cursor from a snapshot;
+        Last-Event-ID may be used on reconnect and takes precedence if both are
+        supplied. Every connection receives a complete current-Meets replacement
+        snapshot and a fresh cursor, then another complete replacement after each
+        relevant change. Invalid cursors recover with the same replacement, not
+        an error. The subscriber is registered before the consistent snapshot
+        read, so concurrent changes are not missed. SSE is unavailable until
+        backend startup readiness checks complete; this does not imply Firebase
+        is globally caught up.
       security:
         - bearerAuth: []
         - {}
@@ -784,19 +787,29 @@ paths:
               schema:
                 type: string
                 description: |
-                  Each message follows SSE framing. Event IDs are revisions.
+                  Each message follows SSE framing. Event IDs are opaque cursors.
                   `event: current_meets` data is a complete replacement snapshot
-                  of the current-Meets collection at that revision.
+                  of the collection. A generic `event: view_reset` is sent at
+                  a committed authorization change or London midnight, then the
+                  connection closes. The reset has no ID and carries
+                  `data: {}`.
               example: |
-                id: 1043
+                id: eyJ2IjoxLCJzdHJlYW0iOiJjdXJyZW50LW1lZXRzLXYxIn0.signature
                 event: current_meets
-                data: {"revision":1043,"meets":[]}
+                data: {"cursor":"eyJ2IjoxLCJzdHJlYW0iOiJjdXJyZW50LW1lZXRzLXYxIn0.signature","meets":[]}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Backend startup readiness checks have not completed. Retry after the backend is ready.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
   /meets/{group_id}/past:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -997,7 +1010,10 @@ paths:
       tags: [Attendance]
       operationId: getMeetAttendance
       summary: Get the detailed attendance snapshot
-      description: Returns attendee summaries and a revision cursor consistent with the snapshot.
+      description: |
+        Returns aggregate attendance counts and a cursor consistent with the
+        snapshot. Anonymous callers receive counts only and no attendee
+        identities. Authenticated callers may also receive attendee details.
       security:
         - bearerAuth: []
         - {}
@@ -1052,10 +1068,15 @@ paths:
       operationId: streamMeetAttendance
       summary: Stream attendance summary changes
       description: |
-        SSE stream. `after` or Last-Event-ID is the attendance revision cursor.
-        Each event carries the complete attendance summary (counts) at that
-        revision, rather than a low-level mutation. The detailed attendance list
-        can be refreshed through GET /meet/{meet_id}/attendance if required.
+        SSE stream. `after` or Last-Event-ID is an opaque cursor; Last-Event-ID
+        takes precedence if both are supplied. Every connection receives a
+        complete current aggregate attendance summary with a fresh cursor, then
+        a complete summary after each relevant change. The stream never includes
+        attendee identities and is unavailable until backend startup readiness
+        attendee identities. After a committed authorization change, the stream
+        sends a generic `view_reset` with no ID and `data: {}`, then closes. The
+        client reconnects for a complete summary. The stream is unavailable
+        until backend startup readiness checks complete.
       security:
         - bearerAuth: []
         - {}
@@ -1083,15 +1104,22 @@ paths:
               schema:
                 type: string
               example: |
-                id: 43
+                id: eyJ2IjoxLCJzdHJlYW0iOiJtZWV0LWF0dGVuZGFuY2UtdjEifQ.signature
                 event: attendance
-                data: {"revision":43,"attending_count":8,"not_attending_count":2}
+                data: {"cursor":"eyJ2IjoxLCJzdHJlYW0iOiJtZWV0LWF0dGVuZGFuY2UtdjEifQ.signature","attending_count":8,"not_attending_count":2}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Backend startup readiness checks have not completed. Retry after the backend is ready.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
 components:
   securitySchemes:
     bearerAuth:
@@ -1583,15 +1611,12 @@ components:
           $ref: '#/components/schemas/VenueType'
     AttendanceCounts:
       type: object
-      required: [attending_count, not_attending_count, revision]
+      required: [attending_count, not_attending_count]
       properties:
         attending_count:
           type: integer
           minimum: 0
         not_attending_count:
-          type: integer
-          minimum: 0
-        revision:
           type: integer
           minimum: 0
     Meet:
@@ -1626,12 +1651,11 @@ components:
           $ref: '#/components/schemas/AttendanceCounts'
     CurrentMeetsSnapshot:
       type: object
-      required: [revision, meets]
+      required: [cursor, meets]
       properties:
-        revision:
-          type: integer
-          minimum: 0
-          description: Collection stream cursor corresponding to this snapshot.
+        cursor:
+          type: string
+          description: Opaque stream cursor corresponding to this consistent snapshot.
         meets:
           type: array
           items:
@@ -1731,11 +1755,20 @@ components:
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
     AttendanceSnapshot:
       type: object
-      required: [revision, attending, not_attending]
+      required: [cursor, attending_count, not_attending_count, attendees_visible, attending, not_attending]
       properties:
-        revision:
+        cursor:
+          type: string
+          description: Opaque attendance stream cursor corresponding to this snapshot.
+        attending_count:
           type: integer
           minimum: 0
+        not_attending_count:
+          type: integer
+          minimum: 0
+        attendees_visible:
+          type: boolean
+          description: False for anonymous callers; attendee arrays are empty when false.
         attending:
           type: array
           items:
