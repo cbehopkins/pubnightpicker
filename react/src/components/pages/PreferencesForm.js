@@ -260,8 +260,8 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
       setCurrUserDoc(privateData);
       setPublicUserDoc(publicData);
       setFormValues({
-        name: publicData?.name || privateData?.name || "",
-        avatar: isAdminEditing ? publicData?.photoUrl || "" : authPhotoUrl || "",
+        name: publicData?.name || "",
+        avatar: publicData?.photoUrl ?? (isAdminEditing ? "" : authPhotoUrl || ""),
         notificationEmailEnabled: privateData?.notificationEmailEnabled === true,
         notificationEmail: privateData?.notificationEmail || privateData?.email || "",
         votesVisible: publicData?.votesVisible !== false,
@@ -275,7 +275,8 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
 
   const webPushEnabled = loggedIn ? currUserDoc?.webPushEnabled === true : false;
   const pushPreferences = loggedIn ? currUserDoc?.pushPreferences ?? null : null;
-  const currentPhotoUrl = isAdminEditing ? publicUserDoc?.photoUrl || "" : authPhotoUrl;
+  const currentPhotoUrl = publicUserDoc?.photoUrl
+    ?? (isAdminEditing ? "" : authPhotoUrl);
   const navigate = useNavigate();
   const navigation = useNavigation();
 

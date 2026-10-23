@@ -120,6 +120,7 @@ describe("PrivacyPage", () => {
         getUserDocMock.mockResolvedValue({
             data: () => ({
                 uid: "user-123",
+                name: "Legacy private name",
                 email: "user@example.com",
                 notificationEmailEnabled: true,
                 votesVisible: true,

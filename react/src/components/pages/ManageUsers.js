@@ -101,13 +101,15 @@ function useManageUsersState() {
     }, []);
 
     const mergedUsers = useMemo(() => {
-        // users/{uid} is canonical for Manage Users (admin-only page).
-        // user-public/{uid} is only used to overlay preferred display fields.
+        // Private settings stay in users; display profile fields come only from user-public.
         const merged = {};
         Object.keys(privateUsers).forEach((uid) => {
+            const publicUser = publicUsers[uid] || {};
             merged[uid] = {
                 ...(privateUsers[uid] || {}),
-                ...(publicUsers[uid] || {}),
+                name: publicUser.name,
+                photoUrl: publicUser.photoUrl,
+                votesVisible: publicUser.votesVisible !== false,
                 uid,
             };
         });

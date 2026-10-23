@@ -99,13 +99,12 @@ async function addUserPublicProfile(uid, name, photoUrl) {
 }
 
 /**
- * Write user private data to users collection and public profile to user-public
+ * Write private identity data to users and display profile to user-public
  */
 export async function addUserDoc(uid, name, authProvider, email) {
   // Write private user data
   await setDoc(doc(db, "users", uid), {
     uid: uid,
-    name: name,
     authProvider: authProvider,
     email: email,
   }, {

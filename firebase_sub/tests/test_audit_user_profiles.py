@@ -1,0 +1,306 @@
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+from click.testing import CliRunner
+
+from firebase_sub.cli import audit_user_profiles as module
+
+
+class _FakeSnapshot:
+    def __init__(self, document_id: str, data: dict[str, Any]) -> None:
+        self.id = document_id
+        self._data = data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
+
+
+class _FakeCollection:
+    def __init__(
+        self, name: str, documents: list[_FakeSnapshot], writes: list[Any]
+    ) -> None:
+        self._name = name
+        self._documents = documents
+        self._writes = writes
+
+    def stream(self) -> Iterator[_FakeSnapshot]:
+        return iter(self._documents)
+
+    def document(self, document_id: str) -> str:
+        return f"{self._name}/{document_id}"
+
+
+class _FakeBatch:
+    def __init__(self, writes: list[Any]) -> None:
+        self._writes = writes
+
+    def set(self, reference: str, payload: dict[str, Any], *, merge: bool) -> None:
+        self._writes.append((reference, payload, merge))
+
+    def update(self, reference: str, payload: dict[str, Any]) -> None:
+        self._writes.append((reference, payload))
+
+    def commit(self) -> None:
+        self._writes.append("committed")
+
+
+class _FakeDb:
+    def __init__(
+        self, users: list[_FakeSnapshot], public_users: list[_FakeSnapshot]
+    ) -> None:
+        self._collections = {"users": users, "user-public": public_users}
+        self.writes: list[Any] = []
+
+    def collection(self, name: str) -> _FakeCollection:
+        return _FakeCollection(name, self._collections[name], self.writes)
+
+    def batch(self) -> _FakeBatch:
+        return _FakeBatch(self.writes)
+
+
+def test_audit_reports_missing_fields_differences_and_document_id_issues() -> None:
+    report = module._audit_user_profiles(
+        [
+            _FakeSnapshot(
+                "u1",
+                {
+                    "uid": "wrong-uid",
+                    "name": "Old name",
+                    "photoUrl": "https://private.example/avatar.png",
+                    "votesVisible": False,
+                },
+            ),
+            _FakeSnapshot("u2", {"uid": "u2", "name": "No public profile"}),
+        ],
+        [
+            _FakeSnapshot(
+                "u1",
+                {"uid": "u1", "name": "Preferred name", "votesVisible": True},
+            ),
+            _FakeSnapshot("orphan", {"uid": "orphan"}),
+        ],
+    )
+
+    counts = report["counts"]
+    assert counts["users_scanned"] == 2
+    assert counts["user_public_documents_scanned"] == 2
+    assert counts["missing_user_public_documents"] == 1
+    assert counts["orphan_user_public_documents"] == 1
+    assert counts["users_uid_missing_or_mismatched"] == 1
+    assert counts["missing_public_fields"]["photoUrl"] == 1
+    assert counts["missing_public_fields"]["name"] == 1
+    assert counts["differing_values"]["name"] == 1
+    assert counts["differing_values"]["votesVisible"] == 1
+    assert set(report["issues"]["u1"]) == {
+        "users_uid_missing_or_mismatched",
+        "missing_public_field:photoUrl",
+        "value_differs:name",
+        "value_differs:votesVisible",
+    }
+    assert report["votes_visible_details"]["u1"] == "users=false, user-public=true"
+
+
+def test_cli_is_read_only_and_hides_document_ids_without_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("sensitive-uid", {"uid": "sensitive-uid", "name": "Name"})],
+        [],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(module.main, [])
+
+    assert result.exit_code == 0
+    assert "User profile audit (read-only)" in result.output
+    assert "missing user-public documents: 1" in result.output
+    assert "sensitive-uid" not in result.output
+
+
+def test_cli_can_include_document_issue_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "name": "Name", "votesVisible": False})],
+        [],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(module.main, ["--details"])
+
+    assert result.exit_code == 0
+    assert (
+        "u1: missing_public_field:name, missing_public_field:votesVisible, "
+        "missing_user_public_document"
+    ) in result.output
+    assert "votesVisible: users=false, user-public=missing" in result.output
+
+
+def test_migration_plan_copies_missing_and_true_wins_conflicts() -> None:
+    operations, skipped = module._plan_votes_visible_migration(
+        [
+            _FakeSnapshot("missing-false", {"votesVisible": False}),
+            _FakeSnapshot("missing-true", {"votesVisible": True}),
+            _FakeSnapshot("public-false", {"votesVisible": True}),
+            _FakeSnapshot("private-false", {"votesVisible": False}),
+        ],
+        [
+            _FakeSnapshot(
+                "public-false", {"uid": "public-false", "votesVisible": False}
+            ),
+            _FakeSnapshot(
+                "private-false", {"uid": "private-false", "votesVisible": True}
+            ),
+        ],
+    )
+
+    assert [(item["uid"], item["value"], item["write"]) for item in operations] == [
+        ("missing-false", False, True),
+        ("missing-true", True, True),
+        ("public-false", True, True),
+        ("private-false", True, False),
+    ]
+    assert skipped == []
+
+
+def test_migration_is_dry_run_unless_apply_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "votesVisible": False})],
+        [_FakeSnapshot("u1", {"uid": "u1"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(module.main, ["--migrate-votes-visible"])
+
+    assert result.exit_code == 0
+    assert "writes planned: 1" in result.output
+    assert "writes applied" not in result.output
+    assert db.writes == []
+
+
+def test_migration_apply_aborts_on_unexpected_public_value_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "votesVisible": False})],
+        [_FakeSnapshot("u1", {"uid": "u1", "votesVisible": "false"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(
+        module.main,
+        ["--migrate-votes-visible", "--apply"],
+    )
+
+    assert result.exit_code != 0
+    assert "no writes were applied" in result.output
+    assert db.writes == []
+
+
+def test_migration_apply_batches_public_field_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "votesVisible": False})],
+        [],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(
+        module.main,
+        ["--migrate-votes-visible", "--apply"],
+    )
+
+    assert result.exit_code == 0
+    assert "writes applied: 1" in result.output
+    assert db.writes == [
+        ("user-public/u1", {"votesVisible": False, "uid": "u1"}, True),
+        "committed",
+    ]
+
+
+def test_legacy_cleanup_plan_only_selects_profile_fields() -> None:
+    operations = module._plan_legacy_profile_cleanup(
+        [
+            _FakeSnapshot(
+                "u1",
+                {
+                    "uid": "u1",
+                    "email": "u1@example.com",
+                    "name": "Legacy name",
+                    "photoUrl": "https://example.com/avatar.png",
+                    "votesVisible": False,
+                },
+            ),
+            _FakeSnapshot("u2", {"uid": "u2", "email": "u2@example.com"}),
+        ]
+    )
+
+    assert operations == [{"uid": "u1", "fields": ["name", "photoUrl", "votesVisible"]}]
+
+
+def test_legacy_cleanup_is_dry_run_unless_apply_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "name": "Legacy name"})],
+        [_FakeSnapshot("u1", {"uid": "u1", "name": "Public name"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(module.main, ["--delete-legacy-profile-fields"])
+
+    assert result.exit_code == 0
+    assert "fields to delete: 1" in result.output
+    assert "fields deleted" not in result.output
+    assert db.writes == []
+
+
+def test_legacy_cleanup_apply_refuses_missing_public_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "votesVisible": False})],
+        [_FakeSnapshot("u1", {"uid": "u1"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(
+        module.main,
+        ["--delete-legacy-profile-fields", "--apply"],
+    )
+
+    assert result.exit_code != 0
+    assert "no fields were deleted" in result.output
+    assert db.writes == []
+
+
+def test_legacy_cleanup_apply_batches_field_deletions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"uid": "u1", "name": "Legacy name", "photoUrl": None})],
+        [_FakeSnapshot("u1", {"uid": "u1", "name": "Public name"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(
+        module.main,
+        ["--delete-legacy-profile-fields", "--apply"],
+    )
+
+    assert result.exit_code == 0
+    assert "fields deleted: 2" in result.output
+    assert db.writes == [
+        (
+            "users/u1",
+            {
+                "name": module.firestore.DELETE_FIELD,
+                "photoUrl": module.firestore.DELETE_FIELD,
+            },
+        ),
+        "committed",
+    ]
