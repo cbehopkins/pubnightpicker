@@ -80,8 +80,8 @@ vi.mock("firebase/firestore", () => {
     // Immediately call the snapshot callback with two fake users so privateUsers
     // is populated and the component renders user data instead of the empty state.
     const fakeUsers = [
-        { id: "uid-a", data: () => ({ uid: "uid-a", name: "Alpha User", email: "alpha@example.com" }) },
-        { id: "uid-b", data: () => ({ uid: "uid-b", name: "Bravo User", email: "bravo@example.com" }) },
+        { id: "uid-a", data: () => ({ uid: "uid-a", name: "Private Alpha", email: "alpha@example.com" }) },
+        { id: "uid-b", data: () => ({ uid: "uid-b", name: "Private Bravo", email: "bravo@example.com" }) },
     ];
     const fakeSnapshot = { forEach: (cb) => fakeUsers.forEach(cb) };
 
@@ -106,8 +106,8 @@ describe("ManageUsers responsive layout", () => {
         preferencesFormMock.mockClear();
 
         useUsersMock.mockReturnValue({
-            "uid-b": { name: "Bravo User", email: "bravo@example.com" },
-            "uid-a": { name: "Alpha User", email: "alpha@example.com" },
+            "uid-b": { name: "Bravo User" },
+            "uid-a": { name: "Alpha User" },
         });
 
         useAllRolesMock.mockReturnValue({
@@ -144,6 +144,20 @@ describe("ManageUsers responsive layout", () => {
         expect(screen.getByRole("table")).toBeTruthy();
         const alphaLink = screen.getByRole("link", { name: "Alpha User" });
         expect(alphaLink.getAttribute("href")).toBe("/manage_users/uid-a");
+    });
+
+    it("does not fall back to private names when a public profile is missing", () => {
+        useIsMobileViewMock.mockReturnValue(false);
+        useUsersMock.mockReturnValue({});
+
+        render(
+            <MemoryRouter>
+                <ManageUsers />
+            </MemoryRouter>
+        );
+
+        expect(screen.queryByText("Private Alpha")).toBeNull();
+        expect(screen.getAllByText("alpha@example.com").length).toBeGreaterThan(0);
     });
 
     it("opens preferences for the selected user and closes the editor", () => {

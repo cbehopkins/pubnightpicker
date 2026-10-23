@@ -290,13 +290,13 @@ export async function buildCurrentUserDataExport(uid) {
         },
         expanded: {
             profile: {
-                preferredName: publicUserData?.name || privateUserData?.name || null,
+                preferredName: publicUserData?.name || null,
                 email: privateUserData?.email || null,
                 notificationPreferences: {
                     notificationEmail: privateUserData?.notificationEmail || null,
                     notificationEmailEnabled: privateUserData?.notificationEmailEnabled || false,
                     openPollEmailEnabled: privateUserData?.openPollEmailEnabled || false,
-                    votesVisible: publicUserData?.votesVisible ?? privateUserData?.votesVisible ?? true,
+                    votesVisible: publicUserData?.votesVisible ?? true,
                 },
                 publicProfile: publicUserData,
             },

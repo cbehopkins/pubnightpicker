@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 
 const useWebPushSettingsMock = vi.hoisted(() => vi.fn());
 const getDocMock = vi.hoisted(() => vi.fn());
@@ -192,6 +193,55 @@ describe("PreferencesForm", () => {
             }),
             { merge: true }
         );
+    });
+
+    it("does not restore public profile fields from stale private values", async () => {
+        firestoreDocMock.mockImplementation((_db, collection, uid) => ({ collection, uid }));
+        getDocMock.mockImplementation(({ collection }) => Promise.resolve({
+            exists: () => true,
+            data: () => collection === "users"
+                ? {
+                    name: "Legacy private name",
+                    photoUrl: "https://legacy.example/avatar.png",
+                    votesVisible: false,
+                }
+                : { uid: "managed-user" },
+        }));
+        useWebPushSettingsMock.mockReturnValue({ featureEnabled: false });
+
+        render(<PreferencesForm method="post" uid="managed-user" isAdminEditing />);
+
+        await waitFor(() => {
+            expect(screen.getByLabelText("My Preferred Name").value).toBe("");
+            expect(screen.getByLabelText("Chat Avatar").value).toBe("");
+            expect(screen.getByLabelText("Votes Visible to Known Users").checked).toBe(true);
+        });
+    });
+
+    it("loads the self-service avatar from user-public", async () => {
+        firestoreDocMock.mockImplementation((_db, collection, uid) => ({ collection, uid }));
+        getDocMock.mockImplementation(({ collection }) => Promise.resolve({
+            exists: () => true,
+            data: () => collection === "users"
+                ? { photoUrl: "https://legacy.example/avatar.png" }
+                : {
+                    name: "Public User",
+                    photoUrl: "https://public.example/avatar.png",
+                    votesVisible: false,
+                },
+        }));
+        useWebPushSettingsMock.mockReturnValue({ featureEnabled: false });
+
+        const router = createMemoryRouter([
+            { path: "/", element: <PreferencesForm method="post" uid="user-1" /> },
+        ]);
+        render(<RouterProvider router={router} />);
+
+        await waitFor(() => {
+            expect(screen.getByLabelText("My Preferred Name").value).toBe("Public User");
+            expect(screen.getByLabelText("Chat Avatar").value).toBe("https://public.example/avatar.png");
+            expect(screen.getByLabelText("Votes Visible to Known Users").checked).toBe(false);
+        });
     });
 
     it("closes admin editing without saving when cancelled", () => {

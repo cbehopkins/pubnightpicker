@@ -101,7 +101,7 @@ describe("login profile initialization", () => {
             expect(getDoc).toHaveBeenCalledWith({ path: "users/new-user" });
             expect(getDocs).not.toHaveBeenCalled();
             expect(setDoc).toHaveBeenCalledWith({ path: "users/new-user" }, {
-                uid: user.uid, name: user.displayName, email: user.email, authProvider: provider,
+                uid: user.uid, email: user.email, authProvider: provider,
             }, { merge: true });
             expect(setDoc).toHaveBeenCalledWith({ path: "user-public/new-user" }, {
                 uid: user.uid, name: user.displayName, photoUrl: null, votesVisible: true,
