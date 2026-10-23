@@ -168,14 +168,12 @@ class FirestoreUserRepository:
                 _log.warning("Skipping users doc %s with no payload", doc.id)
                 continue
             email = record.get("notificationEmail")
-            uid = record.get("uid")
+            uid = doc.id
             if email and uid:
                 _log.debug(f"User {uid}: {email}")
                 yield email, uid
             else:
-                _log.warning(
-                    f"User doc {doc.id} missing email or uid fields: email={email}, uid={uid}"
-                )
+                _log.warning(f"User doc {doc.id} missing notification email")
 
 
 def _parse_poll_document(raw: object) -> PollDocument | None:

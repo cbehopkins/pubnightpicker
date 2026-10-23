@@ -84,7 +84,7 @@ function useManageUsersState() {
                 const nextPrivateUsers = {};
                 snapshot.forEach((userDoc) => {
                     const data = userDoc.data();
-                    const normalizedUid = data?.uid || userDoc.id;
+                    const normalizedUid = userDoc.id;
                     nextPrivateUsers[normalizedUid] = {
                         ...data,
                         uid: normalizedUid,
@@ -109,6 +109,7 @@ function useManageUsersState() {
                 ...(privateUsers[uid] || {}),
                 name: publicUser.name,
                 photoUrl: publicUser.photoUrl,
+                customPhotoUrl: publicUser.customPhotoUrl,
                 votesVisible: publicUser.votesVisible !== false,
                 uid,
             };

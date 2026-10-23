@@ -50,24 +50,21 @@ describe("useSelf profile hydration", () => {
         });
     });
 
-    it("uses public profile fields and refreshes only the public Google avatar", async () => {
+    it("hydrates the public profile without legacy display fields in users", async () => {
+        mocks.auth.currentUser.providerData = [{ providerId: "password" }];
         renderHook(() => useSelf());
 
         act(() => {
             mocks.listeners.users(snapshot({
                 uid: "user-1",
-                name: "Legacy private name",
-                photoUrl: "https://private.example/old.png",
-                votesVisible: false,
-                authProvider: "google",
-                customPhotoUrl: false,
                 email: "user@example.com",
+                authProvider: "password",
             }));
             mocks.listeners["user-public"](snapshot({
                 uid: "user-1",
                 name: "Public preferred name",
-                photoUrl: "https://provider.example/old.png",
-                votesVisible: true,
+                photoUrl: "https://public.example/avatar.png",
+                votesVisible: false,
             }));
         });
 
@@ -76,19 +73,63 @@ describe("useSelf profile hydration", () => {
                 uid: "user-1",
                 name: "Public preferred name",
                 email: "user@example.com",
-                photoUrl: "https://provider.example/avatar.png",
+                photoUrl: "https://public.example/avatar.png",
             }));
         });
-
-        expect(mocks.setDoc).toHaveBeenCalledWith(
-            { collection: "user-public", uid: "user-1" },
-            { uid: "user-1", photoUrl: "https://provider.example/avatar.png" },
+        expect(mocks.setDoc).toHaveBeenCalledExactlyOnceWith(
+            { collection: "users", uid: "user-1" },
+            { email: "user@example.com", authProvider: "password" },
             { merge: true },
         );
-        expect(mocks.setDoc).not.toHaveBeenCalledWith(
-            { collection: "users", uid: "user-1" },
-            expect.objectContaining({ name: expect.anything(), photoUrl: expect.anything() }),
-            expect.anything(),
-        );
     });
+
+    it.each(["", "https://public.example/custom-avatar.png"])(
+        "uses the public custom-avatar URL (%s) instead of the private copy",
+        async (customPhotoUrl) => {
+            renderHook(() => useSelf());
+
+            act(() => {
+                mocks.listeners.users(snapshot({
+                    uid: "user-1",
+                    name: "Legacy private name",
+                    photoUrl: "https://private.example/old.png",
+                    votesVisible: false,
+                    authProvider: "google",
+                    customPhotoUrl: "https://private.example/legacy-custom.png",
+                    email: "user@example.com",
+                }));
+                mocks.listeners["user-public"](snapshot({
+                    uid: "user-1",
+                    name: "Public preferred name",
+                    photoUrl: "https://provider.example/old.png",
+                    customPhotoUrl,
+                    votesVisible: true,
+                }));
+            });
+
+            await waitFor(() => {
+                expect(mocks.dispatch).toHaveBeenLastCalledWith(authAdded({
+                    uid: "user-1",
+                    name: "Public preferred name",
+                    email: "user@example.com",
+                    photoUrl: customPhotoUrl || "https://provider.example/avatar.png",
+                }));
+            });
+
+            if (customPhotoUrl) {
+                expect(mocks.setDoc).toHaveBeenCalledTimes(1);
+            } else {
+                expect(mocks.setDoc).toHaveBeenCalledWith(
+                    { collection: "user-public", uid: "user-1" },
+                    { photoUrl: "https://provider.example/avatar.png" },
+                    { merge: true },
+                );
+            }
+            expect(mocks.setDoc).not.toHaveBeenCalledWith(
+                { collection: "users", uid: "user-1" },
+                expect.objectContaining({ name: expect.anything(), photoUrl: expect.anything() }),
+                expect.anything(),
+            );
+        },
+    );
 });

@@ -16,7 +16,6 @@ async function ensureCanonicalUserDocFromAuth(user) {
         // Only ensure canonical identity fields exist here. Preferred display fields
         // are managed in user-public and should not be overwritten by auth defaults.
         await setDoc(doc(db, "users", user.uid), {
-            uid: user.uid,
             email: user.email || "",
             authProvider,
         }, { merge: true });
@@ -61,7 +60,6 @@ function selfSubscription(uid, updateCallback) {
 async function updatePhotoUrl(uid, photoUrl) {
     try {
         await setDoc(doc(db, "user-public", uid), {
-            uid,
             photoUrl,
         }, { merge: true });
     } catch (err) {
@@ -85,7 +83,7 @@ export default function useSelf() {
         }));
     }, [dispatch]);
     const logInUser = useCallback(async (privateData, loadedPublicData) => {
-        const resolvedUid = privateData?.uid || auth.currentUser?.uid;
+        const resolvedUid = auth.currentUser?.uid;
         if (!resolvedUid) {
             return;
         }
@@ -96,7 +94,7 @@ export default function useSelf() {
         const authPhotoUrl = auth.currentUser?.photoURL || null;
         if (
             (authProvider === "google" || authProvider === "google.com")
-            && !privateData?.customPhotoUrl
+            && !publicData?.customPhotoUrl
             && publicData?.photoUrl !== authPhotoUrl
         ) {
             await updatePhotoUrl(resolvedUid, authPhotoUrl);
@@ -108,7 +106,7 @@ export default function useSelf() {
                 name: publicData?.name || auth.currentUser?.displayName || auth.currentUser?.email || "",
                 uid: resolvedUid,
                 email: auth.currentUser?.email || privateData?.email || "",
-                photoUrl: publicData?.photoUrl ?? authPhotoUrl,
+                photoUrl: publicData?.customPhotoUrl || publicData?.photoUrl || authPhotoUrl,
             })
         );
     }, [dispatch]);

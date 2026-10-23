@@ -50,8 +50,8 @@ beforeEach(async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
         const adminDb = context.firestore();
         await setDoc(doc(adminDb, "roles", "admin"), { adminUser: true });
-        await setDoc(doc(adminDb, "users", "user-a"), { uid: "user-a" });
-        await setDoc(doc(adminDb, "users", "user-b"), { uid: "user-b" });
+        await setDoc(doc(adminDb, "users", "user-a"), {});
+        await setDoc(doc(adminDb, "users", "user-b"), {});
         await setDoc(
             doc(adminDb, "users", "user-b", "push_endpoints", "endpoint-b"),
             endpointPayload(),

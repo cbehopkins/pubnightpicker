@@ -216,12 +216,9 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
 
     # Admin user ---------------------------------------------------------------
     admin_private: dict[str, Any] = {
-        "uid": SMOKE_ADMIN_UID,
-        "name": "Smoke Admin",
         "notificationEmail": "",
         "notificationEmailEnabled": False,
         "openPollEmailEnabled": False,
-        "votesVisible": True,
         "webPushEnabled": False,
         "pushPreferences": {
             "pollOpens": True,
@@ -231,9 +228,9 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     admin_public: dict[str, Any] = {
-        "uid": SMOKE_ADMIN_UID,
         "name": "Smoke Admin",
         "photoUrl": None,
+        "customPhotoUrl": "",
         "votesVisible": True,
     }
     _record(
@@ -251,8 +248,6 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
 
     # User A (sender, has canChat, no push endpoint) ---------------------------
     user_a_private: dict[str, Any] = {
-        "uid": SMOKE_USER_A_UID,
-        "name": "Smoke User A",
         "webPushEnabled": False,
         "pushPreferences": {
             "pollOpens": False,
@@ -262,9 +257,9 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     user_a_public: dict[str, Any] = {
-        "uid": SMOKE_USER_A_UID,
         "name": "Smoke User A",
         "photoUrl": None,
+        "customPhotoUrl": "",
         "votesVisible": False,
     }
     _record(
@@ -284,8 +279,6 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
 
     # User B (recipient, push-enabled, global chat opted in) -------------------
     user_b_private: dict[str, Any] = {
-        "uid": SMOKE_USER_B_UID,
-        "name": "Smoke User B",
         "webPushEnabled": True,
         "pushPreferences": {
             "pollOpens": False,
@@ -295,9 +288,9 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     user_b_public: dict[str, Any] = {
-        "uid": SMOKE_USER_B_UID,
         "name": "Smoke User B",
         "photoUrl": None,
+        "customPhotoUrl": "",
         "votesVisible": False,
     }
     _record(
@@ -436,12 +429,9 @@ def create_admin(
     public_ref = db.collection("user-public").document(uid)
 
     private_defaults = {
-        "uid": uid,
-        "name": name,
         "notificationEmail": email,
         "notificationEmailEnabled": False,
         "openPollEmailEnabled": False,
-        "votesVisible": True,
         "webPushEnabled": False,
         "pushPreferences": {
             "pollOpens": True,
@@ -452,9 +442,9 @@ def create_admin(
         "bootstrapUpdatedAt": SERVER_TIMESTAMP,
     }
     public_defaults = {
-        "uid": uid,
         "name": name,
         "photoUrl": None,
+        "customPhotoUrl": "",
         "votesVisible": True,
     }
 
