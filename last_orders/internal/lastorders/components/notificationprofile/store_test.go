@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"last_orders/internal/lastorders/basestore"
@@ -275,51 +274,6 @@ func TestEmailPreferencesRoundTrip(t *testing.T) {
 	}
 	if stored.NotificationEmail != "user@example.com" || !stored.OpenPollEmailEnabled || stored.NotificationEmailEnabled {
 		t.Fatalf("stored = %+v; want email preferences preserved", stored)
-	}
-}
-
-func TestNewAddsEmailColumnsToExistingSchema(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "profile.db"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`
-		CREATE TABLE notification_user_prefs (
-			user_id TEXT PRIMARY KEY,
-			web_push_enabled INTEGER NOT NULL DEFAULT 0,
-			poll_opens INTEGER NOT NULL DEFAULT 1,
-			poll_completes INTEGER NOT NULL DEFAULT 1,
-			global_chat INTEGER NOT NULL DEFAULT 0,
-			event_chat INTEGER NOT NULL DEFAULT 0,
-			muted_poll_ids_json TEXT NOT NULL DEFAULT '[]',
-			updated_at DATETIME NOT NULL
-		);
-		INSERT INTO notification_user_prefs(user_id, updated_at) VALUES('existing', CURRENT_TIMESTAMP);
-	`); err != nil {
-		t.Fatalf("create previous schema: %v", err)
-	}
-	base, err := basestore.New(db)
-	if err != nil {
-		t.Fatalf("new base store: %v", err)
-	}
-
-	for range 2 {
-		if _, err := New(base); err != nil {
-			t.Fatalf("new notification profile store: %v", err)
-		}
-	}
-
-	store, err := New(base)
-	if err != nil {
-		t.Fatalf("new notification profile store: %v", err)
-	}
-	existing, err := store.Preferences(context.Background(), "existing")
-	if err != nil {
-		t.Fatalf("existing preferences: %v", err)
-	}
-	if existing.NotificationEmail != "" || existing.OpenPollEmailEnabled || existing.NotificationEmailEnabled {
-		t.Fatalf("existing = %+v; want email defaults", existing)
 	}
 }
 

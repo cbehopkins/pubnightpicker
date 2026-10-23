@@ -1,6 +1,6 @@
 # CDD: Projection Synchronisation Implementation Plan
 
-**Status:** Venue milestone implemented; Stage 5 planned; staticcheck gate blocked
+**Status:** Venue milestone implemented; Stage 5 steps E-F implemented; staticcheck gate blocked
 **Date:** 2026-10-22
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -144,8 +144,10 @@ all supported venue writers participate in global ordering.
 
 ### Stage 5: Adapt Combined User Profiles
 
-**Planning status:** Ready for incremental implementation using section 6.
-No Stage 5 runtime changes are included in this planning update.
+**Implementation status (2026-10-23):** Steps E-F typed contributions, comparison,
+strict conversion, schema migration and typed storage helpers are implemented.
+Combined profile sequencing and raw contribution ingestion from all three
+streams remain pending in steps G-I.
 
 Implement the agreed source composition and normalisation with one version per
 user profile. Cover preferences, endpoints and local endpoint deactivation as
@@ -452,50 +454,123 @@ the existing fake-source package and app notification tests.
 
 The following boxes track implementation, not agreement on these rules.
 
-- [ ] Define typed private-user and public-user contributions, identified by
+- [x] Define typed private-user and public-user contributions, identified by
   document ID. Retain every declared field in the current schemas, including
   private email, arrival time, diagnostic request/acknowledgement and notification
   settings, and public name, photos and vote visibility. Use the registered
   endpoint schema, excluding the agreed operational timestamps and descriptive
   client metadata from the synchronised representation.
-- [ ] Ignore legacy `uid` and undeclared top-level fields. Never fall back from
+- [x] Ignore legacy `uid` and undeclared top-level fields. Never fall back from
   missing/null public values to legacy private duplicates. Distinguish missing,
   explicit null where allowed, false and empty values where meaningful.
-- [ ] Define normalisation and explicit typed equality for all contributions
+- [x] Define normalisation and explicit typed equality for all contributions
   and endpoints. Muted poll IDs compare as a sorted, deduplicated set;
   ingestion timestamps do not affect equality or versions. Do not use reflection
   in implementation or tests.
-- [ ] Preserve existing notification defaults at the selector/read boundary.
-  Do not persist duplicate raw and effective copies of the same source values.
+- [x] Provide separate effective notification views with the existing defaults,
+  ready for use at the selector/read boundary in steps F-G. Do not persist
+  duplicate raw and effective copies of the same source values.
   Retaining diagnostic fields must not emit work or duplicate the test-email
   listener's responsibilities.
-- [ ] Extend existing mapping/equality tests for every declared field,
+- [x] Extend existing mapping/equality tests for every declared field,
   presence/null distinctions, independent pointer values, defaults, set replay,
   invalid values and ignored legacy fields.
 
 **Check:** A real change to any retained contribution is detectable, while
 equivalent source replays cannot manufacture profile changes.
 
+**Implemented (2026-10-23):** `PrivateUserContribution`,
+`PublicUserContribution` and `EndpointContribution` retain the agreed
+synchronisation fields and expose explicit typed equality. Public nullable
+fields use `NullableField` to preserve missing/null/value states. Other optional
+fields preserve presence through pointers. Muted IDs normalise as a set without
+rewriting IDs or mutating source slices. Endpoint operational/descriptive
+metadata and legacy IDs are excluded from the contribution types.
+
+`PrivateUserContribution.Preferences` and `EndpointContribution.Endpoint` derive
+the established effective views without changing source presence. Existing
+document adapters delegate to strict conversion and these views: valid inputs
+retain their previous effective defaults, while malformed supplied values now
+fail rather than being defaulted or silently discarded. Existing tests that
+expected permissive filtering/defaulting were updated for the agreed policy.
+No diagnostic work is emitted by conversion.
+
+**Transition boundary at the Step E checkpoint:** The store still persisted
+the old effective preference/endpoint views. Steps F-G replace that persistence with
+source contributions and apply defaults at the selector/read boundary; this
+checkpoint did not preserve raw presence across database round-trips or version
+the combined profile. Step F below adds typed storage; public-user streaming
+and combined sequencing remain pending.
+
+**Verified:** Full VS Code test run: 597 passed. Notification-profile component
+and listener race tests and focused vet checks passed. Mapping/equality tests
+cover all retained fields, nullable public states, missing-to-explicit defaults,
+independent pointers, unordered/duplicate muted IDs, source immutability,
+invalid values, ignored endpoint metadata and ingestion timestamps. No
+reflection is used. The known staticcheck toolchain blocker remains unchanged.
+
 ### Step F: Component-Owned Schema and Initial Migration
 
-- [ ] Define storage for public/private contributions and endpoints, plus one
+- [x] Define storage for public/private contributions and endpoints, plus one
   combined profile version or retained tombstone per user ID. Derive source
   presence from contribution-row existence, including empty documents; do not
   duplicate listener catch-up state or add persisted readiness flags.
-- [ ] Keep schema ownership and migration SQL in the notification-profile
+- [x] Keep schema ownership and migration SQL in the notification-profile
   component, with a small constructor and separate migration methods/tests as
   established for venues. Keep the undeployed work as one initial migration,
   not a history of intermediate development schemas.
-- [ ] Atomically discard legacy notification projection data, install the new
+- [x] Atomically discard legacy notification projection data, install the new
   schema and change database generation when existing projection history is
   reset. Preserve venue data/versions, global sequence and unrelated durable
   application work. Fresh creation and ordinary reopen preserve generation.
-- [ ] Test fresh creation, legacy rebuild, repeat startup, unknown schema
+- [x] Test fresh creation, legacy rebuild, repeat startup, unknown schema
   rejection and injected migration failure. Existing development caches may
   need rebuilding as the initial undeployed migration evolves.
 
 **Check:** Source presence and combined deletion can be represented without
 inventing account existence from endpoint rows or deleting unrelated domains.
+
+**Implemented (2026-10-23):** `migrations.go` owns a single initial migration
+and `migrations_test.go` verifies its lifecycle separately from store behaviour.
+`New` validates its dependency, migrates and constructs the store. Legacy
+notification tables are discarded transactionally with a generation change;
+venue projection values/versions, the global sequence and unrelated durable
+data are preserved. Fresh creation and normal reopen retain generation.
+
+Private source columns and endpoint `active` are nullable, without persisted
+effective defaults. Public nullable fields store per-field presence alongside
+nullable values to distinguish missing/null/value; these are source semantics,
+not listener-readiness flags. Contribution row existence identifies source
+presence, including empty documents. `notification_profiles` holds one positive
+version and deletion marker per user ID, with a change-query index and no
+foreign-key requirement that would prevent retained tombstones or orphan
+endpoint storage.
+
+`contribution_store.go` provides typed reads and writes usable with either the
+database or a caller-owned transaction. Round-trips preserve every retained
+field and replace removed fields correctly. Ordinary preference reads derive
+effective defaults; recipient queries apply missing poll/chat defaults without
+writing them back. Existing preference-only writes preserve email, arrival and
+diagnostic source fields outside their scope. No duplicate effective projection
+is persisted.
+
+**Transition boundary:** Current listener batches still carry legacy effective
+preference/endpoint views. Those compatibility writes remain usable, but cannot
+recover source presence already erased by the old adapter API. Steps G-H must
+route raw contributions through the sequence-aware boundary and all three
+streams. Step F does not automatically populate `notification_profiles` or
+allocate profile versions, reconcile profile lifecycle or add a public-user
+watch. Earlier development databases may need rebuilding as this undeployed
+initial migration evolves; no second development-only migration was added.
+
+**Verified:** Full VS Code test run: 625 passed. Notification component/listener
+race tests, focused vet and diagnostics passed. Tests cover fresh/legacy schema,
+repeat startup, close/reopen, unknown version rejection, injected rollback of
+rows/schema/generation, preserved venue and durable data, typed source
+round-trips, read-only defaults, public-only/orphan push exclusion, caller-owned
+transaction rollback and invalid schema states. The profile-version table can
+retain a tombstone independently of contribution rows. No reflection is used;
+the known staticcheck toolchain blocker remains unchanged.
 
 ### Step G: One Transactional Profile Write Boundary
 
