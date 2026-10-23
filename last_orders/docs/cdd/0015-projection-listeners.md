@@ -148,21 +148,36 @@ The common runner only invokes the adapter's write operation. It does not
 allocate sequence numbers itself, because source changes are not necessarily
 identical to committed local projection changes.
 
+Resource contracts and the staged implementation are recorded in
+[CDD-0014](0014-sse-cursors.md#implementation-decisions-2026-10-22) and
+[CDD-0016](0016-projection-sync-implementation.md). Venues retain all declared
+schema fields. A combined user profile uses `user-public` as the authority for
+overlapping fields, without falling back to deprecated private duplicates, and
+includes endpoint changes in its version. Frontend reads must migrate to the
+public fields before private duplicates are removed. Comparisons
+use field-specific normalisation, including set semantics for muted poll IDs;
+local ingestion timestamps are excluded. Existing projection rows may be
+discarded during migration with a generation reset, without deleting unrelated
+SQLite data or durable work.
+
 ### 3.5 Rebuild projections from a complete baseline on stream restart
 
 When the runner opens a new stream after a failure, the source adapter supplies
-a complete baseline before subsequent deltas. The adapter atomically replaces
-the projection it owns from that baseline. Readers continue to see the previous
-committed projection until replacement commits; on a cold start, the projection
-is empty and existing per-operation local-miss behaviour applies. Subsequent
-change batches are applied as deltas.
+a complete baseline before subsequent deltas. The adapter maps and validates
+the complete baseline, then diffs its projected values against the committed
+local projection within one SQLite transaction. It inserts new resources,
+updates resources whose projected values changed, and removes resources absent
+from the baseline. Readers continue to see the previous committed projection
+until the transaction commits; on a cold start, the projection is empty and
+existing per-operation local-miss behaviour applies. Subsequent change batches
+are applied as deltas.
 
 This recovery path identifies source-side deletions that occurred while the
 stream was down: rows absent from the complete baseline are removed as part of
-the atomic replacement. Projection data, sequence allocation, resource
-versions, and any required deletion markers must be committed consistently in
-the same transaction. The adapter remains responsible for its projection's
-replacement semantics; the common runner does not clear arbitrary tables.
+the diff. Projection data, sequence allocation, resource versions, and any
+required deletion markers must be committed consistently in the same
+transaction. The adapter remains responsible for comparing its projection's
+domain values; the common runner does not clear or diff arbitrary tables.
 
 The Firestore adapter must test that the pinned SDK's first returned query
 snapshot is applied as a complete baseline and that later deltas are ordered
@@ -178,12 +193,12 @@ unit and must not advance the sequence or resource versions. The runner may
 reopen the stream; its complete baseline then allows the projection to be
 reconciled again.
 
-For V1, a successfully applied source change may advance the global sequence
-even when it writes a value identical to the current projection. This avoids
-requiring the generic write path to compare old and new domain values. Such
-replays are idempotent in resulting state but may create redundant sync work.
-Tests must ensure retries cannot produce inconsistent projection state or
-sequence ordering.
+The projection adapter compares normalized projected values, not raw source
+documents. It allocates a sequence and updates a resource version only when the
+local projection state actually changes. Replayed identical puts and deletes
+of already-absent resources are no-ops and do not advance the sequence. A
+baseline with no differences therefore commits no resource changes. This avoids
+turning every reconnect into apparent changes to the entire projection.
 
 ### 3.7 Validate documents before projection application
 
@@ -241,6 +256,8 @@ The design and implementation must demonstrate:
 - Idempotent handling of replayed source changes.
 - A complete baseline atomically replaces its projection, including removal of
    local rows absent from the baseline.
+- Replaying an identical baseline or delta does not advance resource versions or
+   the global sequence; only projection differences do.
 - Readers observe either the previous committed projection or the replacement,
    never an empty/partially rebuilt projection during reconnect.
 - A failed batch leaves projection rows, sequence state, resource versions, and

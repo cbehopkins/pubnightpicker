@@ -61,6 +61,12 @@
                 },
                 "eventChat": {
                     "type": "boolean"
+                },
+                "eventChatMutedPollIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             },
             "additionalProperties": false

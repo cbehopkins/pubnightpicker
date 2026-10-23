@@ -99,7 +99,64 @@ Changes to a client's authorization or subscription scope must not leave it rely
 - The in-memory dispatcher provides low-latency notification, not guaranteed delivery.
 - If the SQLite read model is lost or rebuilt, clients may need to refresh their state.
 
+## Implementation decisions (2026-10-22)
+
+- A venue is one independently synchronisable resource per venue ID.
+- A user profile is one combined resource per user ID, rather than separate
+	synchronisable preference and endpoint resources. Push endpoint additions,
+	changes and removals participate in the owning profile's version.
+- Retain every explicitly declared field in the relevant Firestore schemas,
+	including venue notes and amenities, rather than the existing cache subsets.
+	`user-public` is authoritative for fields also declared in `users`. This
+	precedence does not grant public access to private user fields or endpoint
+	credentials. There is no fallback to private values when the public document
+	or field is absent or null. Deleting the public document removes its
+	contributed fields, not any remaining private data.
+- Duplicate profile fields in `users`, such as `name`, `photoUrl` and
+	`votesVisible`, are deprecated. Update frontend consumers to read their public
+	counterparts, then remove the deprecated private fields in a coordinated
+	schema/data cleanup. This decision does not itself remove fields or migrate
+	clients. User ID remains the combined resource identity; precise schema
+	removals belong to that follow-up.
+- Compare normalised domain values using field-specific defaults. Preserve
+	missing/null distinctions where meaningful, rather than treating every
+	missing field as false. Muted poll IDs are compared as a set; other arrays
+	follow their domain semantics. Local ingestion timestamps do not affect
+	resource versions.
+- Explicitly declared fields in the Firestore schemas define the domain data
+	under consideration, rather than arbitrary additional document fields or
+	local ingestion metadata. The reference schemas are
+	`schema/firestore/collections/pubs.schema.json`, `users.schema.json`, and
+	`user-public.schema.json` in the sibling schema project. Existing cache
+	models must not silently define the full API resource contract: they currently
+	retain only subsets of this data.
+- Projection stores own resource versions and deletion markers. Shared
+	infrastructure owns only the global sequence allocator, used within the
+	projection write transaction.
+- V1 retains deletion markers indefinitely. A V2 maintenance task may introduce
+	cleanup, together with a retention boundary that requires older cursors to
+	perform a full refresh.
+- Each SQLite database generation has a persistent identity. Ordinary process
+	restarts preserve that identity; rebuilding or replacing the read model must
+	establish a new generation. Cursors from a different generation require a
+	full refresh, even if their sequence values overlap those in the new database.
+- Existing local projection data may be discarded and rebuilt during migration;
+	preserving or backfilling old cache rows is not required. Reset affected
+	projection state and establish a new generation atomically, then reconcile
+	from authoritative sources using existing local-miss behaviour. This does
+	not authorise deletion of unrelated tables or durable application work.
+
+Before implementing the combined user profile, define resource existence when
+only some source documents are present, and which fields each authorised caller
+may retrieve. Deprecating duplicate fields does not by itself define which
+source deletion removes the combined resource. A
+combined internal resource must not imply public exposure of private user data
+or push credentials.
+
 ## Implementation outline
+
+The staged delivery plan and outstanding resource-contract decisions are tracked
+in [CDD-0016: Projection Synchronisation Implementation Plan](0016-projection-sync-implementation.md).
 
 1. Add global change-sequence allocation to the SQLite read-model update path.
 2. Store the last-change sequence on independently synchronizable resources.
