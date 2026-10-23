@@ -151,14 +151,24 @@ identical to committed local projection changes.
 Resource contracts and the staged implementation are recorded in
 [CDD-0014](0014-sse-cursors.md#implementation-decisions-2026-10-22) and
 [CDD-0016](0016-projection-sync-implementation.md). Venues retain all declared
-schema fields. A combined user profile uses `user-public` as the authority for
-overlapping fields, without falling back to deprecated private duplicates, and
-includes endpoint changes in its version. Frontend reads must migrate to the
-public fields before private duplicates are removed. Comparisons
+schema fields. A combined user profile takes public fields from `user-public`
+and private settings from `users`, without falling back to legacy private
+duplicates, and includes endpoint changes in its version. The current schemas
+no longer duplicate public fields in `users`. Join documents by their Firestore
+document IDs; ignore legacy `uid` fields, including changes or removal. Comparisons
 use field-specific normalisation, including set semantics for muted poll IDs;
 local ingestion timestamps are excluded. Existing projection rows may be
 discarded during migration with a generation reset, without deleting unrelated
 SQLite data or durable work.
+
+For combined user profiles, reconcile each source's contribution independently.
+Retain a partial profile while either user document remains, and tombstone it
+when neither remains. Endpoints alone cannot establish or resurrect a profile.
+Push eligibility requires the locally present private user document and its
+applicable opt-ins; transient catch-up gaps suppress delivery rather than
+allowing orphan endpoints. Housekeeping can repair leftovers but is not part of
+this eligibility boundary. Stricter coordinated deletion is a follow-up when
+the backend becomes the sole user-deletion path.
 
 ### 3.5 Rebuild projections from a complete baseline on stream restart
 

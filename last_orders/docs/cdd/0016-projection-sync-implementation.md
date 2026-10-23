@@ -1,6 +1,6 @@
 # CDD: Projection Synchronisation Implementation Plan
 
-**Status:** Draft plan - core resource decisions agreed; user lifecycle details pending
+**Status:** Draft plan - resource ownership and lifecycle decisions agreed
 **Date:** 2026-10-22
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -25,12 +25,21 @@ block venue work or shared sequence infrastructure.
 
 - One venue resource per venue ID; one combined user profile per user ID.
 - Retain every explicitly declared schema field, including venue amenities and
-  notes. `user-public` owns fields overlapping with `users`; push endpoint
+  notes. `user-public` owns public fields; `users` owns private settings. Push endpoint
   changes advance the owning profile version without exposing credentials.
 - Do not fall back to private duplicate fields if public data is absent or
-  null. Private duplicates are deprecated: migrate frontend reads to
-  `user-public`, then remove duplicates through coordinated schema/data cleanup.
-  The plan does not authorise immediate schema removals or frontend changes.
+  null. The schemas checked on 2026-10-23 no longer declare private duplicates.
+  Frontend and stored-document cleanup are outside this backend plan.
+- Join user documents by their Firestore document ID. Ignore legacy `uid`
+  fields, including their removal, for projection values and change detection.
+  Neither current user schema declares a `uid` property.
+- Retain partial profiles while either public or private user document remains.
+  Remove only a deleted source's contributed fields; tombstone the profile when
+  neither remains. Endpoints alone cannot create or retain a live profile.
+- Push eligibility requires the private user document, applicable opt-ins and
+  an eligible endpoint in committed local state. Suppress pushes while private
+  user data is missing, including transient creation/catch-up gaps. Housekeeping
+  is cleanup, not a prerequisite for excluding orphan endpoints from delivery.
 - Explicitly declared Firestore schema fields define domain data under
   consideration; arbitrary extra fields and ingestion bookkeeping do not.
 - Projection stores own comparisons, resource versions and deletion markers.
@@ -60,14 +69,17 @@ before implementing the affected resource:
 
 1. **Field coverage (agreed):** Retain all explicitly declared schema fields,
   not only today's cache subsets.
-2. **User sources (partly agreed):** `user-public` is authoritative for overlapping
-  fields, with no private fallback for missing/null public data; private
-  duplicates are deprecated pending frontend migration. Endpoint changes
+2. **User sources (agreed):** `user-public` owns
+  public fields and `users` owns private settings; the current schemas no
+  longer duplicate these fields. There is no private fallback for missing/null
+  public data. Use document IDs, not legacy `uid` values. Endpoint changes
   participate in the combined version. Removing `user-public` removes its
-  contributed fields without removing remaining private data. Still define
-  combined profile existence and authorised public/private representations.
-  A combined identity does not grant access to private fields or push
-  credentials.
+  contributed fields without removing remaining private data. Either user
+  document sustains a partial profile; neither means a versioned deletion.
+  Endpoints cannot sustain a profile and private-user absence prevents push
+  eligibility. Authorised public/private API representations still need to be
+  specified before exposure. A combined identity does not grant access to
+  private fields or push credentials.
 3. **Normalisation (agreed direction):** Use field-specific defaults, preserve
   meaningful null/missing distinctions and compare muted poll IDs as a set.
   Specify concrete field mappings with each adapter's tests. Ingestion
@@ -79,7 +91,8 @@ before implementing the affected resource:
   work; do not delete the whole database.
 
 **Exit:** Applicable resource contracts and migration behaviour are explicit in
-CDD-0014/0015; unresolved user-profile decisions remain visibly pending.
+CDD-0014/0015. Ownership and lifecycle are agreed; concrete normalisation
+mappings accompany adapter tests and API visibility contracts precede exposure.
 
 ### Stage 2: Add Shared Sequence Infrastructure
 
@@ -121,10 +134,18 @@ Implement the agreed source composition and normalisation with one version per
 user profile. Cover preferences, endpoints and local endpoint deactivation as
 required by the contract. Independent Firestore streams converge on locally
 committed state; they do not provide an atomic cross-source remote snapshot.
+Retain partial public/private profiles, prevent endpoints from resurrecting
+deleted profiles and require private-user presence for push eligibility.
 
 **Verify:** Changes from every participating source, baseline reconciliation,
 replay, deletion, normalisation, private/public access boundaries and existing
-notification behaviour.
+notification behaviour. Include endpoints-before-user arrival, public-only and
+private-only profiles, removal of either/both user documents, orphan endpoint
+updates and restoration after transient catch-up gaps.
+
+**Follow-up:** Make backend-owned user deletion an early architecture feature,
+then tighten the transitional partial-profile/orphan rules. Housekeeping may
+repair leftovers in the meantime; do not depend on it for push eligibility.
 
 ### Stage 6: Implement Cursor and Recovery Reads
 

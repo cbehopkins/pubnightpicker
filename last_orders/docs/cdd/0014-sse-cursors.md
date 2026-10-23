@@ -107,17 +107,22 @@ Changes to a client's authorization or subscription scope must not leave it rely
 	changes and removals participate in the owning profile's version.
 - Retain every explicitly declared field in the relevant Firestore schemas,
 	including venue notes and amenities, rather than the existing cache subsets.
-	`user-public` is authoritative for fields also declared in `users`. This
-	precedence does not grant public access to private user fields or endpoint
+	`user-public` owns public profile fields; `users` owns private settings. This
+	separation does not grant public access to private user fields or endpoint
 	credentials. There is no fallback to private values when the public document
 	or field is absent or null. Deleting the public document removes its
 	contributed fields, not any remaining private data.
-- Duplicate profile fields in `users`, such as `name`, `photoUrl` and
-	`votesVisible`, are deprecated. Update frontend consumers to read their public
-	counterparts, then remove the deprecated private fields in a coordinated
-	schema/data cleanup. This decision does not itself remove fields or migrate
-	clients. User ID remains the combined resource identity; precise schema
-	removals belong to that follow-up.
+- As verified against the schemas on 2026-10-23, `users` no longer declares
+	duplicate public profile fields. `user-public` declares `name`, `photoUrl`,
+	`customPhotoUrl` and `votesVisible`; `users` declares private email,
+	notification, arrival-time and diagnostic settings. Adapters must not read
+	legacy private duplicates as fallbacks. Frontend and stored-document cleanup
+	are outside this backend plan; schema inspection does not verify them.
+- Derive user identity from the Firestore document ID, joining public and
+	private documents by that ID. Neither current schema declares a `uid`
+	property. Ignore any legacy `uid` document field: it is not required for
+	ingestion, is not projected and cannot advance a resource version when it is
+	changed or removed.
 - Compare normalised domain values using field-specific defaults. Preserve
 	missing/null distinctions where meaningful, rather than treating every
 	missing field as false. Muted poll IDs are compared as a set; other arrays
@@ -146,12 +151,38 @@ Changes to a client's authorization or subscription scope must not leave it rely
 	from authoritative sources using existing local-miss behaviour. This does
 	not authorise deletion of unrelated tables or durable application work.
 
-Before implementing the combined user profile, define resource existence when
-only some source documents are present, and which fields each authorised caller
-may retrieve. Deprecating duplicate fields does not by itself define which
-source deletion removes the combined resource. A
-combined internal resource must not imply public exposure of private user data
-or push credentials.
+### User profile lifecycle (agreed 2026-10-23)
+
+- Retain a partial combined profile while either `users/{id}` or
+	`user-public/{id}` is present in committed local state. Independent listener
+	catch-up may temporarily expose only one source's contribution; do not wait
+	for a backend-wide initial-sync barrier.
+- Removing one source document removes only its contributed fields and advances
+	the profile version when the projected state changes. Retain the remaining
+	contribution. When neither user document remains, remove the live combined
+	profile and retain its versioned tombstone. Repeated removals are no-ops.
+- Push endpoints alone neither establish nor keep alive a user profile. Orphan
+	endpoints may remain for cleanup, but their changes must not recreate a live
+	profile. Changes to endpoints belonging to a live profile participate in its
+	version.
+- Push eligibility requires a locally present private `users/{id}` document,
+	its applicable opt-in settings and an eligible endpoint. A public-only profile
+	or orphan endpoint is insufficient. If endpoints arrive before the private
+	user document during account creation or listener catch-up, suppress push
+	delivery until that document is locally present. Do not substitute a grace
+	period or housekeeping completion for the eligibility check.
+- These rules describe committed local knowledge; asynchronous ingestion cannot
+	guarantee immediate observation of a remote deletion. Once removal of the
+	private user document is committed, that user is ineligible for push delivery.
+- The permissive partial-profile rules are transitional. When this backend
+	becomes the sole user-deletion path, tighten deletion coordination and orphan
+	handling as an early feature of the new architecture. Until then, housekeeping
+	may repair leftovers, but is not required to exclude known deleted users from
+	push eligibility.
+
+Define authorised public/private API representations before exposing profiles.
+A combined internal resource must not imply public exposure of private user
+data or push credentials.
 
 ## Implementation outline
 
