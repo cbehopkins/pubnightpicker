@@ -29,10 +29,9 @@ export function useUsersSource() {
   const dispatch = useDispatch();
   const addCallback = useCallback(
     (id, doc) => {
-      const uid = doc?.uid || id;
       dispatch(
         userAdded({
-          uid,
+          uid: id,
           name: doc.name,
           photoUrl: doc.customPhotoUrl || doc.photoUrl,
           votesVisible: doc?.votesVisible !== false,
@@ -44,10 +43,9 @@ export function useUsersSource() {
 
   const modCallback = useCallback(
     (id, doc) => {
-      const uid = doc?.uid || id;
       dispatch(
         userAdded({
-          uid,
+          uid: id,
           name: doc.name,
           photoUrl: doc.customPhotoUrl || doc.photoUrl,
           votesVisible: doc?.votesVisible !== false,
@@ -58,9 +56,8 @@ export function useUsersSource() {
   );
 
   const rmCallback = useCallback(
-    (id, doc) => {
-      const uid = doc?.uid || id;
-      dispatch(clearUser({ uid }));
+    (id) => {
+      dispatch(clearUser({ uid: id }));
     },
     [dispatch]
   );

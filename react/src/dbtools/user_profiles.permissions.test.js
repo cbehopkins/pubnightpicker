@@ -46,7 +46,6 @@ beforeEach(async () => {
         });
 
         await setDoc(doc(adminDb, "user-public", "user-a"), {
-            uid: "user-a",
             name: "User A",
             photoUrl: null,
             customPhotoUrl: "",
@@ -54,7 +53,6 @@ beforeEach(async () => {
         });
 
         await setDoc(doc(adminDb, "user-public", "user-b"), {
-            uid: "user-b",
             name: "User B",
             photoUrl: null,
             customPhotoUrl: "",
@@ -76,7 +74,7 @@ describe("login profile initialization rules", () => {
             email: "new@example.com", authProvider: "google",
         }, { merge: true }));
         await assertSucceeds(setDoc(doc(db, "user-public", "new-user"), {
-            uid: "new-user", name: "New User", photoUrl: null,
+            name: "New User", photoUrl: null,
             customPhotoUrl: "", votesVisible: true,
         }, { merge: true }));
         await assertSucceeds(getDoc(ref));
@@ -92,6 +90,20 @@ describe("login profile initialization rules", () => {
         await assertFails(setDoc(
             doc(db, "user-public", "user-a"),
             { customPhotoUrl: true },
+            { merge: true },
+        ));
+    });
+
+    it("uses the document ID for public identity instead of storing uid", async () => {
+        const newUserDb = testEnv.authenticatedContext("new-user").firestore();
+        await assertSucceeds(setDoc(
+            doc(newUserDb, "user-public", "new-user"),
+            { name: "New User", photoUrl: null, customPhotoUrl: "", votesVisible: true },
+        ));
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertFails(setDoc(
+            doc(db, "user-public", "user-a"),
+            { uid: "user-a" },
             { merge: true },
         ));
     });

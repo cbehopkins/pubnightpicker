@@ -121,7 +121,7 @@ describe("useSelf profile hydration", () => {
             } else {
                 expect(mocks.setDoc).toHaveBeenCalledWith(
                     { collection: "user-public", uid: "user-1" },
-                    { uid: "user-1", photoUrl: "https://provider.example/avatar.png" },
+                    { photoUrl: "https://provider.example/avatar.png" },
                     { merge: true },
                 );
             }

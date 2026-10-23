@@ -30,7 +30,6 @@ export async function savePreferences({ uid, formData, currentPhotoUrl }) {
   };
 
   const publicData = {
-    uid,
     name: formData.get("name"),
     photoUrl: currentPhotoUrl,
     customPhotoUrl: defaultAvatar ? "" : avatarUrl,

@@ -158,10 +158,9 @@ This private profile contains email and notification, arrival-time, and web-push
 settings.
 
 ### user-public collection
-Document id: auth uid. The `uid` field is retained for the Firestore rules
-contract. Public profile fields are `name`, `photoUrl`, `customPhotoUrl`, and
-`votesVisible`. `customPhotoUrl` is the custom avatar URL string, or an empty
-string when no custom avatar is selected.
+Document id: auth uid. Public profile fields are `name`, `photoUrl`,
+`customPhotoUrl`, and `votesVisible`. `customPhotoUrl` is the custom avatar URL
+string, or an empty string when no custom avatar is selected.
 
 pushPreferences map fields:
 - pollOpens: boolean (default true when absent)

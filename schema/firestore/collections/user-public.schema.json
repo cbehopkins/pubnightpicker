@@ -4,13 +4,7 @@
     "title": "user-public/{uid}",
     "type": "object",
     "x-schemaVersion": 1,
-    "required": [
-        "uid"
-    ],
     "properties": {
-        "uid": {
-            "type": "string"
-        },
         "name": {
             "type": [
                 "string",

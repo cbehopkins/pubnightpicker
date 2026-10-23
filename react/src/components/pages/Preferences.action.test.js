@@ -161,7 +161,6 @@ describe("savePreferences", () => {
         expect(firestoreDocMock).toHaveBeenCalledWith({}, "users", "other-user");
         expect(firestoreDocMock).toHaveBeenCalledWith({}, "user-public", "other-user");
         expect(setDocMock.mock.calls[0][1]).toMatchObject({
-            uid: "other-user",
             name: "Bob",
             photoUrl: "https://example.com/bob.png",
         });

@@ -228,7 +228,6 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     admin_public: dict[str, Any] = {
-        "uid": SMOKE_ADMIN_UID,
         "name": "Smoke Admin",
         "photoUrl": None,
         "customPhotoUrl": "",
@@ -258,7 +257,6 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     user_a_public: dict[str, Any] = {
-        "uid": SMOKE_USER_A_UID,
         "name": "Smoke User A",
         "photoUrl": None,
         "customPhotoUrl": "",
@@ -290,7 +288,6 @@ def seed_smoke_data(db: Client, *, dry_run: bool = False) -> SeedResult:
         },
     }
     user_b_public: dict[str, Any] = {
-        "uid": SMOKE_USER_B_UID,
         "name": "Smoke User B",
         "photoUrl": None,
         "customPhotoUrl": "",
@@ -445,7 +442,6 @@ def create_admin(
         "bootstrapUpdatedAt": SERVER_TIMESTAMP,
     }
     public_defaults = {
-        "uid": uid,
         "name": name,
         "photoUrl": None,
         "customPhotoUrl": "",

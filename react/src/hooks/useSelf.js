@@ -60,7 +60,6 @@ function selfSubscription(uid, updateCallback) {
 async function updatePhotoUrl(uid, photoUrl) {
     try {
         await setDoc(doc(db, "user-public", uid), {
-            uid,
             photoUrl,
         }, { merge: true });
     } catch (err) {

@@ -113,10 +113,16 @@ def _audit_user_profiles(
         if public_data is None:
             add_issue(uid, "missing_user_public_document")
             public_data = {}
-        elif public_data.get("uid") != uid:
+        elif "uid" in public_data and public_data["uid"] != uid:
             add_issue(uid, "user_public_uid_missing_or_mismatched")
 
         for field in PROFILE_FIELDS:
+            if (
+                field == "customPhotoUrl"
+                and private_data.get(field) is False
+                and (public_data.get(field) in (None, "") or field not in public_data)
+            ):
+                continue
             if _has_value(private_data, field) and not _has_value(public_data, field):
                 add_issue(uid, f"missing_public_field:{field}")
             elif _has_value(private_data, field) and _has_value(public_data, field):
@@ -286,6 +292,198 @@ def _plan_custom_photo_migration(
     return operations, skipped
 
 
+def _is_valid_public_value(field: str, value: Any) -> bool:
+    if field in {"name", "photoUrl"}:
+        return isinstance(value, str) or value is None
+    if field == "votesVisible":
+        return isinstance(value, bool) or value is None
+    if field == "customPhotoUrl":
+        return isinstance(value, str)
+    return False
+
+
+def _has_migration_value(field: str, value: Any) -> bool:
+    if field == "votesVisible":
+        return isinstance(value, bool)
+    return isinstance(value, str) and value != ""
+
+
+def _plan_public_profile_migration(
+    users: Iterable[Any], public_users: Iterable[Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    users_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in users}
+    public_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in public_users}
+    operations: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+
+    for uid, private_data in users_by_id.items():
+        public_data = public_by_id.get(uid)
+        changes: dict[str, Any] = {}
+
+        for field in PROFILE_FIELDS:
+            private_has_field = field in private_data
+            public_has_field = public_data is not None and field in public_data
+            private_value = private_data.get(field)
+            public_value = public_data.get(field) if public_data is not None else None
+
+            if field == "customPhotoUrl":
+                if public_has_field and isinstance(public_value, str) and public_value:
+                    continue
+
+                legacy_custom_flag = (
+                    private_has_field
+                    and isinstance(private_value, bool)
+                    and private_value
+                ) or (
+                    public_has_field and isinstance(public_value, bool) and public_value
+                )
+                if legacy_custom_flag:
+                    legacy_url = public_data.get("photoUrl") if public_data else None
+                    if isinstance(legacy_url, str) and legacy_url:
+                        changes[field] = legacy_url
+                    else:
+                        skipped.append(
+                            {
+                                "uid": uid,
+                                "reason": (
+                                    "legacy customPhotoUrl is true but "
+                                    "user-public.photoUrl has no usable URL"
+                                ),
+                            }
+                        )
+                    continue
+
+                has_legacy_false_flag = (
+                    private_has_field and private_value is False
+                ) or (public_has_field and public_value is False)
+                if has_legacy_false_flag and (
+                    not public_has_field
+                    or isinstance(public_value, bool)
+                    or not public_value
+                ):
+                    changes[field] = ""
+                    continue
+
+                if public_has_field and not _is_valid_public_value(field, public_value):
+                    skipped.append(
+                        {
+                            "uid": uid,
+                            "reason": (
+                                "public customPhotoUrl has unexpected type "
+                                f"{type(public_value).__name__}"
+                            ),
+                        }
+                    )
+                    continue
+
+                if private_has_field and not _is_valid_public_value(
+                    field, private_value
+                ):
+                    if private_value is not None:
+                        skipped.append(
+                            {
+                                "uid": uid,
+                                "reason": (
+                                    "private customPhotoUrl has unexpected type "
+                                    f"{type(private_value).__name__}"
+                                ),
+                            }
+                        )
+                    continue
+
+                public_is_missing = not public_has_field or public_value in (None, "")
+                if (
+                    private_has_field
+                    and public_is_missing
+                    and _has_migration_value(field, private_value)
+                ):
+                    changes[field] = private_value
+                continue
+
+            if public_has_field and not _is_valid_public_value(field, public_value):
+                skipped.append(
+                    {
+                        "uid": uid,
+                        "reason": (
+                            f"public {field} has unexpected type "
+                            f"{type(public_value).__name__}"
+                        ),
+                    }
+                )
+                continue
+
+            if private_has_field and not _is_valid_public_value(field, private_value):
+                if not public_has_field or public_value in (None, ""):
+                    skipped.append(
+                        {
+                            "uid": uid,
+                            "reason": (
+                                f"private {field} has unexpected type "
+                                f"{type(private_value).__name__}"
+                            ),
+                        }
+                    )
+                continue
+
+            public_is_missing = not public_has_field or public_value in (None, "")
+            if (
+                private_has_field
+                and public_is_missing
+                and _has_migration_value(field, private_value)
+            ):
+                changes[field] = private_value
+            elif (
+                field == "votesVisible"
+                and isinstance(private_value, bool)
+                and isinstance(public_value, bool)
+                and private_value != public_value
+                and private_value
+            ):
+                changes[field] = True
+
+        if changes:
+            operations.append({"uid": uid, "data": changes})
+
+    return operations, skipped
+
+
+def _print_public_profile_migration_plan(
+    operations: list[dict[str, Any]],
+    skipped: list[dict[str, str]],
+    *,
+    details: bool,
+) -> None:
+    click.echo("public profile migration plan (dry-run unless --apply is supplied)")
+    click.echo(f"  documents to update: {len(operations)}")
+    field_counts = {field: 0 for field in PROFILE_FIELDS}
+    for operation in operations:
+        for field in operation["data"]:
+            field_counts[field] += 1
+    for field, count in field_counts.items():
+        click.echo(f"    {field}: {count}")
+    click.echo(f"  skipped for review: {len(skipped)}")
+
+    if details:
+        for operation in operations:
+            click.echo(f"  {operation['uid']}: set {', '.join(operation['data'])}")
+        for item in skipped:
+            click.echo(f"  {item['uid']}: skipped ({item['reason']})")
+
+
+def _apply_public_profile_migration(db: Any, operations: list[dict[str, Any]]) -> int:
+    for start in range(0, len(operations), 500):
+        batch = db.batch()
+        public_collection = db.collection("user-public")
+        for operation in operations[start : start + 500]:
+            batch.set(
+                public_collection.document(operation["uid"]),
+                operation["data"],
+                merge=True,
+            )
+        batch.commit()
+    return len(operations)
+
+
 def _print_migration_plan(
     operations: list[dict[str, Any]],
     skipped: list[dict[str, str]],
@@ -356,8 +554,6 @@ def _apply_profile_field_migration(
     public_collection = db.collection("user-public")
     for operation in writes:
         payload = {field: operation["value"]}
-        if operation["create_document"]:
-            payload["uid"] = operation["uid"]
         batch.set(
             public_collection.document(operation["uid"]),
             payload,
@@ -410,12 +606,91 @@ def _apply_legacy_profile_cleanup(db: Any, operations: list[dict[str, Any]]) -> 
     return sum(len(operation["fields"]) for operation in operations)
 
 
-def _has_invalid_public_custom_photo(public_users: Iterable[Any]) -> bool:
+def _plan_public_uid_cleanup(public_users: Iterable[Any]) -> list[str]:
+    return [
+        snapshot.id
+        for snapshot in public_users
+        if "uid" in (snapshot.to_dict() or {})
+    ]
+
+
+def _print_public_uid_cleanup_plan(uids: list[str], *, details: bool) -> None:
+    click.echo("legacy user-public uid cleanup (dry-run unless --apply is supplied)")
+    click.echo(f"  documents with uid field: {len(uids)}")
+    if details:
+        for uid in uids:
+            click.echo(f"  {uid}: delete uid")
+
+
+def _apply_public_uid_cleanup(db: Any, uids: list[str]) -> int:
+    for start in range(0, len(uids), 500):
+        batch = db.batch()
+        public_collection = db.collection("user-public")
+        for uid in uids[start : start + 500]:
+            batch.update(
+                public_collection.document(uid),
+                {"uid": firestore.DELETE_FIELD},
+            )
+        batch.commit()
+    return len(uids)
+
+
+def _legacy_cleanup_blockers(
+    report: dict[str, Any],
+    users: Iterable[Any],
+    public_users: Iterable[Any],
+) -> dict[str, list[str]]:
+    blockers: dict[str, list[str]] = {}
+    users_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in users}
+    public_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in public_users}
+
+    def add(uid: str, field: str) -> None:
+        blockers.setdefault(uid, []).append(field)
+
+    for uid, issues in report["issues"].items():
+        for issue in issues:
+            if issue == "missing_user_public_document":
+                add(uid, "user-public document")
+            elif issue.startswith("missing_public_field:"):
+                field = issue.removeprefix("missing_public_field:")
+                if field == "customPhotoUrl":
+                    private_flag = users_by_id.get(uid, {}).get(field)
+                    legacy_photo_url = public_by_id.get(uid, {}).get("photoUrl")
+                    if (
+                        private_flag is True
+                        and isinstance(legacy_photo_url, str)
+                        and legacy_photo_url
+                    ):
+                        add(
+                            uid,
+                            "customPhotoUrl (legacy true; source URL available in "
+                            "user-public.photoUrl; run --migrate-public-profile)",
+                        )
+                    elif private_flag is True:
+                        add(
+                            uid,
+                            "customPhotoUrl (legacy true; no usable URL in "
+                            "user-public.photoUrl)",
+                        )
+                    else:
+                        add(uid, field)
+                else:
+                    add(uid, field)
+
     for snapshot in public_users:
         data = snapshot.to_dict() or {}
-        if "customPhotoUrl" in data and not isinstance(data["customPhotoUrl"], str):
-            return True
-    return False
+        uid = snapshot.id
+        for field in PROFILE_FIELDS:
+            if field in data and not _is_valid_public_value(field, data[field]):
+                add(uid, f"invalid user-public.{field}")
+    return blockers
+
+
+def _format_cleanup_blockers(blockers: dict[str, list[str]]) -> str:
+    return "; ".join(
+        f"{uid}: {', '.join(sorted(set(fields)))}"
+        for uid, fields in sorted(blockers.items())
+    )
 
 
 def _print_report(report: dict[str, Any], *, details: bool) -> None:
@@ -432,7 +707,7 @@ def _print_report(report: dict[str, Any], *, details: bool) -> None:
         "  orphan user-public documents: " f"{counts['orphan_user_public_documents']}"
     )
     click.echo(
-        "  uid field missing/mismatched: "
+        "  legacy uid field mismatch: "
         f"users={counts['users_uid_missing_or_mismatched']}, "
         f"user-public={counts['user_public_uid_missing_or_mismatched']}"
     )
@@ -472,9 +747,19 @@ def _print_report(report: dict[str, Any], *, details: bool) -> None:
     help="Backfill customPhotoUrl when public is missing; preserve existing public values.",
 )
 @click.option(
+    "--migrate-public-profile",
+    is_flag=True,
+    help="Backfill all missing public profile fields from users; preserve public values.",
+)
+@click.option(
     "--delete-legacy-profile-fields",
     is_flag=True,
     help="Plan to delete uid and duplicated profile fields from users.",
+)
+@click.option(
+    "--delete-public-uid",
+    is_flag=True,
+    help="Plan to delete the redundant uid field from user-public documents.",
 )
 @click.option(
     "--apply",
@@ -492,13 +777,21 @@ def main(
     details: bool,
     migrate_votes_visible: bool,
     migrate_custom_photo: bool,
+    migrate_public_profile: bool,
     delete_legacy_profile_fields: bool,
+    delete_public_uid: bool,
     apply: bool,
     loglevel: int,
 ) -> None:
     """Audit, migrate, or clean up duplicated user profile fields."""
     selected_operations = sum(
-        (migrate_votes_visible, migrate_custom_photo, delete_legacy_profile_fields)
+        (
+            migrate_votes_visible,
+            migrate_custom_photo,
+            migrate_public_profile,
+            delete_legacy_profile_fields,
+            delete_public_uid,
+        )
     )
     if selected_operations > 1:
         raise click.UsageError(
@@ -528,10 +821,6 @@ def main(
                 raise click.ClickException(
                     "Migration contains values needing review; no writes were applied."
                 )
-            if report["counts"]["user_public_uid_missing_or_mismatched"]:
-                raise click.ClickException(
-                    "user-public uid fields are inconsistent; no writes were applied."
-                )
             written = _apply_votes_visible_migration(db, operations)
             click.echo(f"  writes applied: {written}")
 
@@ -546,38 +835,53 @@ def main(
                 raise click.ClickException(
                     "Migration contains values needing review; no writes were applied."
                 )
-            if report["counts"]["user_public_uid_missing_or_mismatched"]:
-                raise click.ClickException(
-                    "user-public uid fields are inconsistent; no writes were applied."
-                )
             written = _apply_custom_photo_migration(db, operations)
             click.echo(f"  writes applied: {written}")
+
+    if migrate_public_profile:
+        operations, skipped = _plan_public_profile_migration(
+            user_snapshots,
+            public_snapshots,
+        )
+        _print_public_profile_migration_plan(operations, skipped, details=details)
+        if apply:
+            if skipped:
+                skipped_details = "; ".join(
+                    f"{item['uid']}: {item['reason']}" for item in skipped
+                )
+                raise click.ClickException(
+                    "Public profile migration needs review; no writes were applied: "
+                    f"{skipped_details}"
+                )
+            written = _apply_public_profile_migration(db, operations)
+            click.echo(f"  documents updated: {written}")
 
     if delete_legacy_profile_fields:
         operations = _plan_legacy_profile_cleanup(user_snapshots)
         _print_legacy_profile_cleanup_plan(operations, details=details)
         if apply:
-            if report["counts"]["missing_user_public_documents"]:
+            blockers = _legacy_cleanup_blockers(
+                report,
+                user_snapshots,
+                public_snapshots,
+            )
+            if blockers:
                 raise click.ClickException(
-                    "Some users lack user-public documents; no fields were deleted."
-                )
-            if report["counts"]["user_public_uid_missing_or_mismatched"]:
-                raise click.ClickException(
-                    "user-public uid fields are inconsistent; no fields were deleted."
-                )
-            if _has_invalid_public_custom_photo(public_snapshots):
-                raise click.ClickException(
-                    "Some public customPhotoUrl values are not strings; "
-                    "no fields were deleted."
-                )
-            missing_public_fields = report["counts"]["missing_public_fields"]
-            if any(missing_public_fields.values()):
-                raise click.ClickException(
-                    "Some private profile values are not present in user-public; "
-                    "no fields were deleted."
+                    "Cleanup blocked because public profile data is incomplete or "
+                    "invalid; no fields were deleted. "
+                    f"Affected documents: {_format_cleanup_blockers(blockers)}. "
+                    "Run --migrate-public-profile --details, review the plan, then "
+                    "rerun with --apply."
                 )
             deleted = _apply_legacy_profile_cleanup(db, operations)
             click.echo(f"  fields deleted: {deleted}")
+
+    if delete_public_uid:
+        uids = _plan_public_uid_cleanup(public_snapshots)
+        _print_public_uid_cleanup_plan(uids, details=details)
+        if apply:
+            deleted = _apply_public_uid_cleanup(db, uids)
+            click.echo(f"  uid fields deleted: {deleted}")
 
     _log.info("Completed user profile audit")
 

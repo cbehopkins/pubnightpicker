@@ -183,7 +183,7 @@ def test_create_admin_seeds_user_docs_and_roles(monkeypatch):
     assert private_doc["webPushEnabled"] is False
     assert private_doc["pushPreferences"]["globalChat"] is False
 
-    assert public_doc["uid"] == "admin-user"
+    assert "uid" not in public_doc
     assert public_doc["name"] == "Admin Name"
     assert public_doc["customPhotoUrl"] == ""
 
@@ -259,7 +259,7 @@ def test_create_admin_generates_uid_when_missing(monkeypatch):
     assert generated_uid.startswith("admin-")
     assert "uid" not in fake_db.store[("users", generated_uid)]
     assert "name" not in fake_db.store[("users", generated_uid)]
-    assert fake_db.store[("user-public", generated_uid)]["uid"] == generated_uid
+    assert "uid" not in fake_db.store[("user-public", generated_uid)]
     assert fake_db.store[("roles", "admin")][generated_uid] is True
 
 
@@ -364,7 +364,7 @@ def test_seed_smoke_creates_expected_documents(monkeypatch):
         assert "uid" not in private_user
         assert "name" not in private_user
         assert "votesVisible" not in private_user
-        assert public_user["uid"] == uid
+        assert "uid" not in public_user
         assert "name" in public_user
         assert public_user["customPhotoUrl"] == ""
 

@@ -186,7 +186,6 @@ describe("PreferencesForm", () => {
         expect(setDocMock).toHaveBeenCalledWith(
             { collection: "user-public", uid: "managed-user" },
             expect.objectContaining({
-                uid: "managed-user",
                 name: "Updated User",
                 photoUrl: "https://example.com/old-avatar.png",
                 customPhotoUrl: "https://example.com/new-avatar.png",

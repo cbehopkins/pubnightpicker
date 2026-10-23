@@ -89,7 +89,6 @@ function mapAuthErrorMessage(err, fallbackMessage = "Unable to complete the requ
  */
 async function addUserPublicProfile(uid, name, photoUrl) {
   return setDoc(doc(db, "user-public", uid), {
-    uid: uid,
     name: name,
     photoUrl: photoUrl || null,
     customPhotoUrl: "",
