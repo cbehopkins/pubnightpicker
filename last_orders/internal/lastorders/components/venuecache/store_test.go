@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 
 	"last_orders/internal/lastorders/basestore"
@@ -91,5 +92,40 @@ func TestStoreApplyBatchReplacesBaselineAtomically(t *testing.T) {
 	}
 	if got, err := store.Get(ctx, "new"); err != nil || got.Name != "New venue" {
 		t.Fatalf("venue after failed baseline = %+v, %v; want prior projection intact", got, err)
+	}
+}
+
+func TestStoreRoundTripsOptionalValuesAndHidesTombstones(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	projection, err := ProjectionFromDocument(Document{ID: "venue-1", Data: map[string]any{
+		"name": "The Crown", "notes": "", "parking": false, "food": true,
+		"dog_friend": true, "beer_gerden": false, "out_of_town": true, "banned": false,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, projection); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.Get(ctx, projection.ID); err != nil || !reflect.DeepEqual(got, projection) {
+		t.Fatalf("round trip = %+v, %v; want %+v", got, err, projection)
+	}
+	projection = VenueProjection{ID: "venue-1", Name: "The Crown"}
+	if err := store.Put(ctx, projection); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.Get(ctx, projection.ID); err != nil || !reflect.DeepEqual(got, projection) {
+		t.Fatalf("cleared optional fields = %+v, %v; want %+v", got, err, projection)
+	}
+	if _, err := store.base.DB().Exec(`UPDATE venue_cache SET deleted = 1, change_version = 1 WHERE venue_id = ?`, projection.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, projection.ID); !errors.Is(err, ErrCacheMiss) {
+		t.Fatalf("tombstone get error = %v; want cache miss", err)
+	}
+	var count int
+	if err := store.base.DB().QueryRow(`SELECT COUNT(*) FROM venue_cache WHERE deleted = 1`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retained tombstones = %d, %v; want 1", count, err)
 	}
 }

@@ -27,20 +27,8 @@ func New(base *basestore.Store) (*Store, error) {
 	if base == nil || base.DB() == nil {
 		return nil, fmt.Errorf("base store is required")
 	}
-	if _, err := base.DB().Exec(`
-		CREATE TABLE IF NOT EXISTS venue_cache (
-			venue_id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			venue_type TEXT NOT NULL DEFAULT '',
-			website TEXT NOT NULL DEFAULT '',
-			map TEXT NOT NULL DEFAULT '',
-			address TEXT NOT NULL DEFAULT '',
-			photo_url TEXT NOT NULL DEFAULT '',
-			recurrence_json TEXT NOT NULL DEFAULT '',
-			next_occurrence_date TEXT NOT NULL DEFAULT ''
-		);
-	`); err != nil {
-		return nil, fmt.Errorf("create venue_cache schema: %w", err)
+	if err := migrate(context.Background(), base); err != nil {
+		return nil, err
 	}
 	return &Store{base: base}, nil
 }
@@ -49,12 +37,16 @@ func (s *Store) Get(ctx context.Context, venueID string) (VenueProjection, error
 	var projection VenueProjection
 	err := s.base.DB().QueryRowContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, photo_url,
-			recurrence_json, next_occurrence_date
-		FROM venue_cache WHERE venue_id = ?
+			recurrence_json, next_occurrence_date, notes, parking, food,
+			dog_friendly, beer_garden, out_of_town, banned
+		FROM venue_cache WHERE venue_id = ? AND deleted = 0
 	`, venueID).Scan(
 		&projection.ID, &projection.Name, &projection.VenueType, &projection.Website,
 		&projection.Map, &projection.Address, &projection.PhotoURL,
 		&projection.RecurrenceJSON, &projection.NextOccurrenceDate,
+		&projection.Notes, &projection.Parking, &projection.Food,
+		&projection.DogFriendly, &projection.BeerGarden, &projection.OutOfTown,
+		&projection.Banned,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -107,8 +99,9 @@ func put(ctx context.Context, execer contextExecer, projection VenueProjection) 
 	_, err := execer.ExecContext(ctx, `
 		INSERT INTO venue_cache(
 			venue_id, name, venue_type, website, map, address, photo_url,
-			recurrence_json, next_occurrence_date
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			recurrence_json, next_occurrence_date, notes, parking, food,
+			dog_friendly, beer_garden, out_of_town, banned
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(venue_id) DO UPDATE SET
 			name = excluded.name,
 			venue_type = excluded.venue_type,
@@ -117,10 +110,20 @@ func put(ctx context.Context, execer contextExecer, projection VenueProjection) 
 			address = excluded.address,
 			photo_url = excluded.photo_url,
 			recurrence_json = excluded.recurrence_json,
-			next_occurrence_date = excluded.next_occurrence_date
+			next_occurrence_date = excluded.next_occurrence_date,
+			notes = excluded.notes,
+			parking = excluded.parking,
+			food = excluded.food,
+			dog_friendly = excluded.dog_friendly,
+			beer_garden = excluded.beer_garden,
+			out_of_town = excluded.out_of_town,
+			banned = excluded.banned,
+			deleted = 0
 	`, projection.ID, projection.Name, projection.VenueType, projection.Website,
 		projection.Map, projection.Address, projection.PhotoURL,
-		projection.RecurrenceJSON, projection.NextOccurrenceDate)
+		projection.RecurrenceJSON, projection.NextOccurrenceDate, projection.Notes,
+		projection.Parking, projection.Food, projection.DogFriendly,
+		projection.BeerGarden, projection.OutOfTown, projection.Banned)
 	return err
 }
 
