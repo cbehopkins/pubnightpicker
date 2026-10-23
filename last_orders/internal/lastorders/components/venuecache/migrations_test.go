@@ -69,6 +69,7 @@ func TestStoreMigratesLegacyCacheOnceAndPreservesOtherData(t *testing.T) {
 	if err := store.Put(context.Background(), VenueProjection{ID: "new", Name: "New venue"}); err != nil {
 		t.Fatal(err)
 	}
+	after = venueSyncState(t, base)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}

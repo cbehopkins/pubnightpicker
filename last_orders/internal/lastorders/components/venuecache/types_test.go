@@ -1,7 +1,7 @@
 package venuecache
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -107,14 +107,78 @@ func TestProjectionNormalisesRecurrenceAndIgnoresUndeclaredFields(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(left, right) {
+	if !left.Equal(right) {
 		t.Fatalf("equivalent documents differ: %+v and %+v", left, right)
 	}
 	if left.RecurrenceJSON != `{"frequency":"weekly","interval":1,"weekdays":[1,4]}` {
 		t.Fatalf("normalised recurrence = %s", left.RecurrenceJSON)
 	}
-	if !reflect.DeepEqual(first.Data["recurrence"].(map[string]any)["weekdays"], []any{int64(4), int64(1), int64(4)}) {
+	if !slices.Equal(first.Data["recurrence"].(map[string]any)["weekdays"].([]any), []any{int64(4), int64(1), int64(4)}) {
 		t.Fatal("normalisation mutated the source document")
+	}
+}
+
+func TestVenueProjectionEqual(t *testing.T) {
+	notes := "notes"
+	otherNotes := "notes"
+	flag := false
+	otherFlag := false
+	baseline := VenueProjection{
+		ID: "venue-1", Name: "The Crown", VenueType: "pub", Website: "website",
+		Map: "map", Address: "address", PhotoURL: "photo", RecurrenceJSON: `{}`,
+		NextOccurrenceDate: "2026-10-23", Notes: &notes, Parking: &flag, Food: &flag,
+		DogFriendly: &flag, BeerGarden: &flag, OutOfTown: &flag, Banned: &flag,
+	}
+	other := baseline
+	other.Notes = &otherNotes
+	other.Parking, other.Food, other.DogFriendly = &otherFlag, &otherFlag, &otherFlag
+	other.BeerGarden, other.OutOfTown, other.Banned = &otherFlag, &otherFlag, &otherFlag
+	if !baseline.Equal(other) || !other.Equal(baseline) {
+		t.Fatal("equal optional values at different addresses must compare equal")
+	}
+	if !(VenueProjection{}).Equal(VenueProjection{}) {
+		t.Fatal("absent optional values must compare equal")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*VenueProjection)
+	}{
+		{"ID", func(value *VenueProjection) { value.ID = "other" }},
+		{"Name", func(value *VenueProjection) { value.Name = "other" }},
+		{"VenueType", func(value *VenueProjection) { value.VenueType = "other" }},
+		{"Website", func(value *VenueProjection) { value.Website = "other" }},
+		{"Map", func(value *VenueProjection) { value.Map = "other" }},
+		{"Address", func(value *VenueProjection) { value.Address = "other" }},
+		{"PhotoURL", func(value *VenueProjection) { value.PhotoURL = "other" }},
+		{"RecurrenceJSON", func(value *VenueProjection) { value.RecurrenceJSON = "other" }},
+		{"NextOccurrenceDate", func(value *VenueProjection) { value.NextOccurrenceDate = "other" }},
+		{"Notes", func(value *VenueProjection) { value.Notes = nil }},
+		{"Parking", func(value *VenueProjection) { value.Parking = nil }},
+		{"Food", func(value *VenueProjection) { value.Food = nil }},
+		{"DogFriendly", func(value *VenueProjection) { value.DogFriendly = nil }},
+		{"BeerGarden", func(value *VenueProjection) { value.BeerGarden = nil }},
+		{"OutOfTown", func(value *VenueProjection) { value.OutOfTown = nil }},
+		{"Banned", func(value *VenueProjection) { value.Banned = nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := baseline
+			test.change(&changed)
+			if baseline.Equal(changed) || changed.Equal(baseline) {
+				t.Fatalf("different %s values compared equal", test.name)
+			}
+		})
+	}
+}
+
+func TestEqualOptionalValues(t *testing.T) {
+	falseValue, trueValue := false, true
+	empty, populated := "", "notes"
+	if equalOptional(&falseValue, &trueValue) || equalOptional(&empty, &populated) {
+		t.Fatal("different present values compared equal")
+	}
+	if equalOptional(nil, &falseValue) || equalOptional(&falseValue, nil) ||
+		equalOptional(nil, &empty) || equalOptional(&empty, nil) {
+		t.Fatal("absent values compared equal to present zero values")
 	}
 }
 

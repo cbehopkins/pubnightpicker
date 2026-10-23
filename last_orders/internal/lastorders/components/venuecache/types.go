@@ -31,6 +31,32 @@ type VenueProjection struct {
 	Banned             *bool
 }
 
+func (projection VenueProjection) Equal(other VenueProjection) bool {
+	return projection.ID == other.ID &&
+		projection.Name == other.Name &&
+		projection.VenueType == other.VenueType &&
+		projection.Website == other.Website &&
+		projection.Map == other.Map &&
+		projection.Address == other.Address &&
+		projection.PhotoURL == other.PhotoURL &&
+		projection.RecurrenceJSON == other.RecurrenceJSON &&
+		projection.NextOccurrenceDate == other.NextOccurrenceDate &&
+		equalOptional(projection.Notes, other.Notes) &&
+		equalOptional(projection.Parking, other.Parking) &&
+		equalOptional(projection.Food, other.Food) &&
+		equalOptional(projection.DogFriendly, other.DogFriendly) &&
+		equalOptional(projection.BeerGarden, other.BeerGarden) &&
+		equalOptional(projection.OutOfTown, other.OutOfTown) &&
+		equalOptional(projection.Banned, other.Banned)
+}
+
+func equalOptional[Value comparable](left, right *Value) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 var ErrNotFound = fmt.Errorf("venue not found")
 var ErrCacheMiss = fmt.Errorf("venue cache miss")
 

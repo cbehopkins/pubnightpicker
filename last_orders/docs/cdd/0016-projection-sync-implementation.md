@@ -11,12 +11,12 @@
 Implement sequence-aware local projections, replay-idempotent reconciliation,
 cursor recovery and, subsequently, SSE delivery in independently testable stages.
 
-The shared projection-watch runner and atomic batch writes already exist for
-venues and notification profiles. Baselines currently clear and repopulate each
-projection. Shared sequence metadata is implemented as of 2026-10-23, but
-projection writers do not yet use it. Venue field coverage and migration are
-implemented, including storage columns for versions and tombstones. Assignment
-of versions, tombstone writes, baseline diffing and cursors remain unimplemented.
+The shared projection-watch runner and atomic batch writes exist for venues and
+notification profiles. Shared sequence metadata and sequence-aware venue writes
+are implemented as of 2026-10-23. Venue baselines now compare existing values and
+retain versioned tombstones; remaining baseline visibility and listener-level
+verification belongs to Step D. Notification profiles still clear and repopulate
+baselines without sequence allocation. Cursors remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
 (stages 2-4); its prerequisite resource decisions are agreed. It does not change
@@ -111,8 +111,8 @@ committed high-water mark.
 
 ### Stage 3: Make Venue Writes Sequence-Aware
 
-**Partial progress:** Step B field coverage and schema migration completed on
-2026-10-23. Step C sequence-aware writes remain pending.
+**Implemented:** Steps B and C completed on 2026-10-23. The first milestone still
+requires the remaining Step D verification and milestone gates.
 
 Expand the model according to stage 1. Route `Put`, `Delete`, batch ingestion and
 read-through population through shared venue-owned transactional write logic.
@@ -263,8 +263,9 @@ The venue-owned schema marker records the migration once. Rebuilding a legacy
 venue table and changing database generation commit atomically; fresh creation
 and repeat startup preserve generation. Unrelated data and the existing global
 sequence are retained. Unknown schema versions fail without destroying data.
-Ordinary reads hide rows marked deleted. Version/deletion columns are present,
-but current writers still use zero versions and physical deletes until Step C.
+Ordinary reads hide rows marked deleted. At the Step B checkpoint, version and
+deletion columns existed but writes were not yet sequence-aware; Step C below
+supersedes that transitional behaviour.
 
 **Verified:** Direct package tests, focused venue/Base Store race and vet checks,
 and the full VS Code test run (544 passed). Migration tests cover reopen,
@@ -273,28 +274,51 @@ generation update proving rollback of schema, rows, marker and generation.
 
 ### Step C: One Venue Write Boundary
 
-- [ ] Handle any interim zero-version rows from Step B before enabling venue
-  synchronisation, using the agreed projection-rebuild migration policy.
-- [ ] Refactor venue `Put`, `Delete` and `ApplyBatch` to call venue-owned helpers
+- [x] Keep one initial migration for the undeployed changes. Its final schema
+  requires positive versions without a zero default. Legacy deployed cache
+  rows are discarded atomically by that migration; no second migration is
+  needed solely for intermediate development versions. Earlier local
+  development caches may need rebuilding before testing the revised schema.
+- [x] Refactor venue `Put`, `Delete` and `ApplyBatch` to call venue-owned helpers
   using the same transaction for comparison, allocation and persistence.
-- [ ] Allocate a version only for an actual insertion, value change, removal or
+- [x] Allocate a version only for an actual insertion, value change, removal or
   recreation. Keep identical puts and already-absent deletes as no-ops.
-- [ ] Confirm `Service.Get` read-through still populates through `Store.Put`;
+- [x] Confirm `Service.Get` read-through still populates through `Store.Put`;
   there must be no unversioned alternative write path.
-- [ ] Test live-row versions, deletion markers, identical replay, recreation,
+- [x] Test live-row versions, deletion markers, identical replay, recreation,
   mixed writes and whole-transaction rollback. Keep deleted values out of
   ordinary venue reads.
-- [ ] Extend existing service tests to verify read-through participates in
+- [x] Extend existing service tests to verify read-through participates in
   versioning without changing its current remote-fetch and failure behaviour.
 
 **Check:** Every supported venue writer commits data and its version together;
 no resource version can become visible ahead of its committed sequence.
 
+**Implemented (2026-10-23):** Puts and deletes delegate to the atomic batch
+boundary. Normalised projected values are compared by value, including nullable
+fields, before sequence allocation. Removals retain a versioned tombstone;
+recreation assigns a newer live version. Invalid inputs fail before writes.
+Read-through still returns the authoritative source value if population fails,
+without committing an orphan sequence allocation.
+
+The baseline-wide delete was also replaced here because it would bypass this
+write boundary and erase retained tombstones. Baselines remove absent live rows
+through the same deletion helper and upsert only actual differences; replayed
+identical baselines preserve versions. Step D still supplies the broader
+baseline/source and reader-visibility verification.
+
+**Verified:** Full VS Code test run (563 passed), focused venue/Base Store race
+and vet checks, migration and schema checks, replay and recreation tests, and
+injected persistence failure after allocations proving whole-batch rollback.
+Concurrent identical puts allocate once; concurrent repeated deletes allocate
+one tombstone version, using the application's WAL/busy-timeout/immediate-lock
+settings. The shared runner and HTTP contracts are unchanged.
+
 ### Step D: Baseline Reconciliation
 
-- [ ] Replace the baseline-wide delete in venue `ApplyBatch` with comparison
+- [x] Replace the baseline-wide delete in venue `ApplyBatch` with comparison
   against the complete incoming projected set within one transaction.
-- [ ] Insert new venues, update changed values, tombstone missing live venues
+- [x] Insert new venues, update changed values, tombstone missing live venues
   and leave identical live rows and existing tombstones untouched.
 - [ ] Apply deltas through the same venue write helpers. Validate the whole
   batch so any mapping, validation or persistence failure preserves the

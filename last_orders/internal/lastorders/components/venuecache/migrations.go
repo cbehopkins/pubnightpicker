@@ -82,7 +82,7 @@ func migrateToV1(ctx context.Context, base *basestore.Store, tx *sql.Tx) error {
 			beer_garden INTEGER CHECK(beer_garden IN (0, 1)),
 			out_of_town INTEGER CHECK(out_of_town IN (0, 1)),
 			banned INTEGER CHECK(banned IN (0, 1)),
-			change_version INTEGER NOT NULL DEFAULT 0 CHECK(change_version >= 0),
+			change_version INTEGER NOT NULL CHECK(change_version > 0),
 			deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1))
 		);
 		CREATE INDEX venue_cache_changes ON venue_cache(change_version, venue_id);
