@@ -96,3 +96,9 @@ func (s *Source) Ack(userID string) (any, bool) {
 	value, ok := s.Acks[userID]
 	return value, ok
 }
+
+func (source *Source) RequestDeleted(userID string) bool {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	return slices.Contains(source.Deleted, userID)
+}

@@ -3,14 +3,20 @@ package notificationprofile
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/venuecache"
+
+	"github.com/google/uuid"
+	"modernc.org/sqlite"
 )
 
 func TestProfileLifecycleRetainsPartialUsersAndExcludesOrphans(t *testing.T) {
@@ -507,5 +513,141 @@ func TestConcurrentProfileWritesAllocateOncePerCommittedChange(t *testing.T) {
 	var endpoints int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_endpoints`).Scan(&endpoints); err != nil || endpoints != workers {
 		t.Fatalf("concurrent endpoint writes lost rows: %d, %v; want %d", endpoints, err, workers)
+	}
+}
+
+// A paused real transaction must expose neither partial contributions nor an
+// advanced version; old snapshots stay stable after either commit or rollback.
+func TestCombinedProfileReadersObserveAtomicVersions(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollback=%v", rollback), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			paused, release := make(chan struct{}), make(chan struct{})
+			releaseWriter := sync.OnceFunc(func() { close(release) })
+			defer releaseWriter()
+			function := "pause_profile_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			if err := sqlite.RegisterScalarFunction(function, 0, func(_ *sqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
+				close(paused)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				if rollback {
+					return nil, errors.New("injected profile rollback")
+				}
+				return nil, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "atomic-profile.db")
+			db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			base, err := basestore.New(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := New(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enabled, disabled := true, false
+			oldName, newName, newEmail := "Old name", "New name", "new@example.com"
+			private := PrivateUserContribution{UserID: "user", WebPushEnabled: &enabled}
+			public := PublicUserContribution{UserID: "user", Name: NullableField[string]{Present: true, Value: &oldName}}
+			endpoint := EndpointContribution{UserID: "user", EndpointID: "device", URL: "url", P256DH: "key", Auth: "auth", Active: &enabled}
+			if err := store.PutPrivateUser(ctx, private); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.PutPublicUser(ctx, public); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.PutEndpointContribution(ctx, endpoint); err != nil {
+				t.Fatal(err)
+			}
+			before := profileSyncState(t, base)
+			oldState := profileState{private: &private, public: &public, endpoints: []EndpointContribution{endpoint}}
+			changedPrivate, changedPublic, changedEndpoint := private, public, endpoint
+			changedPrivate.Email = &newEmail
+			changedPublic.Name.Value = &newName
+			changedEndpoint.Active = &disabled
+			newState := profileState{private: &changedPrivate, public: &changedPublic, endpoints: []EndpointContribution{changedEndpoint}}
+			if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+				CREATE TRIGGER pause_profile BEFORE INSERT ON notification_profiles
+				WHEN NEW.user_id = 'user' BEGIN SELECT %s(); END;
+			`, function)); err != nil {
+				t.Fatal(err)
+			}
+			reader, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = reader.Close() })
+			done := make(chan error, 1)
+			go func() {
+				done <- store.writeProfiles(ctx, []string{"user"}, func(tx *sql.Tx) error {
+					if err := writePrivateUser(ctx, tx, changedPrivate); err != nil {
+						return err
+					}
+					if err := writePublicUser(ctx, tx, changedPublic); err != nil {
+						return err
+					}
+					return writeEndpointContribution(ctx, tx, changedEndpoint)
+				})
+			}()
+			select {
+			case <-paused:
+			case err := <-done:
+				t.Fatalf("write finished before test pause: %v", err)
+			case <-ctx.Done():
+				t.Fatal("write did not reach the version boundary")
+			}
+			assertSnapshot := func(tx *sql.Tx, want profileState, wantVersion int64) {
+				t.Helper()
+				got, err := readProfileState(ctx, tx, "user")
+				if err != nil || !got.equal(want) {
+					t.Fatalf("inconsistent contribution snapshot: %+v, %v", got, err)
+				}
+				var version int64
+				var deleted bool
+				if err := tx.QueryRowContext(ctx, `SELECT change_version, deleted FROM notification_profiles WHERE user_id = 'user'`).Scan(&version, &deleted); err != nil || version != wantVersion || deleted {
+					t.Fatalf("inconsistent profile version: %d, deleted=%v, %v; want %d", version, deleted, err, wantVersion)
+				}
+				state, err := base.ReadSyncState(ctx, tx)
+				if err != nil || state.Generation != before.Generation || state.Sequence != wantVersion {
+					t.Fatalf("inconsistent sequence snapshot: %+v, %v; want %d", state, err, wantVersion)
+				}
+			}
+			oldSnapshot, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer oldSnapshot.Rollback()
+			assertSnapshot(oldSnapshot, oldState, before.Sequence)
+			releaseWriter()
+			select {
+			case err := <-done:
+				if (err != nil) != rollback {
+					t.Fatalf("write error = %v; rollback=%v", err, rollback)
+				}
+			case <-ctx.Done():
+				t.Fatal("write did not finish")
+			}
+			assertSnapshot(oldSnapshot, oldState, before.Sequence)
+			freshSnapshot, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer freshSnapshot.Rollback()
+			if rollback {
+				assertSnapshot(freshSnapshot, oldState, before.Sequence)
+			} else {
+				assertSnapshot(freshSnapshot, newState, before.Sequence+1)
+			}
+		})
 	}
 }

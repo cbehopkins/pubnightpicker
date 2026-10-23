@@ -190,11 +190,20 @@ func TestPollOpenedTruthEmailsOptedInRecipients(t *testing.T) {
 	logs := &syncBuffer{}
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
 	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
-	cfg.NotificationProfileSource = &notificationprofiletest.Source{UserChanges: []notificationprofile.Change{
-		userDocument("alice", map[string]any{"notificationEmail": "alice@example.com", "openPollEmailEnabled": true}),
-		userDocument("bob", map[string]any{"notificationEmail": "bob@example.com", "openPollEmailEnabled": false}),
-		userDocument("carol", map[string]any{"openPollEmailEnabled": true}),
-	}}
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{
+		UserChanges: []notificationprofile.Change{
+			userDocument("alice", map[string]any{"notificationEmail": "alice@example.com", "openPollEmailEnabled": true}),
+			userDocument("bob", map[string]any{"notificationEmail": "bob@example.com", "openPollEmailEnabled": false}),
+			userDocument("carol", map[string]any{"openPollEmailEnabled": true}),
+		},
+		PublicChanges: []notificationprofile.Change{
+			userDocument("alice", map[string]any{"name": "Alice"}),
+			userDocument("public-only", map[string]any{
+				"name": "No private settings", "notificationEmail": "public-only@example.com", "openPollEmailEnabled": true,
+			}),
+		},
+		EndpointChange: []notificationprofile.Change{endpointDocument("public-only", "public-only-phone"), endpointDocument("orphan", "orphan-phone")},
+	}
 	a := newApp(t, cfg)
 	defer a.Close()
 

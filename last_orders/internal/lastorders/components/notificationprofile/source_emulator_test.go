@@ -270,4 +270,24 @@ func TestFirestoreSourceThreeStreamBaselinesAndRawDeltas(t *testing.T) {
 	if changes, err := empty.Next(); err != nil || len(changes) != 0 {
 		t.Fatalf("empty public baseline = %+v, %v", changes, err)
 	}
+	private.Stop()
+	endpoints.Stop()
+	for _, userID := range []string{"first", "second"} {
+		if _, err := users.Doc(userID).Collection(endpointsCollection).Doc("device").Delete(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := users.Doc(userID).Delete(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, watch := range []func(context.Context) (ChangeStream, error){source.WatchUsers, source.WatchEndpoints} {
+		stream, err := watch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Stop()
+		if changes, err := stream.Next(); err != nil || len(changes) != 0 {
+			t.Fatalf("reopened empty source baseline = %+v, %v", changes, err)
+		}
+	}
 }
