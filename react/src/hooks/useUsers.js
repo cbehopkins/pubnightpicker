@@ -34,7 +34,7 @@ export function useUsersSource() {
         userAdded({
           uid,
           name: doc.name,
-          photoUrl: doc.photoUrl,
+          photoUrl: doc.customPhotoUrl || doc.photoUrl,
           votesVisible: doc?.votesVisible !== false,
         })
       );
@@ -49,7 +49,7 @@ export function useUsersSource() {
         userAdded({
           uid,
           name: doc.name,
-          photoUrl: doc.photoUrl,
+          photoUrl: doc.customPhotoUrl || doc.photoUrl,
           votesVisible: doc?.votesVisible !== false,
         })
       );

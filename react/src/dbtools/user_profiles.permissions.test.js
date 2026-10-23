@@ -6,7 +6,7 @@ import {
     initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 
 const PROJECT_ID = "pubnightpicker-user-profile-delete-rules";
 
@@ -38,12 +38,10 @@ beforeEach(async () => {
         await setDoc(doc(adminDb, "roles", "admin"), { "admin-user": true });
 
         await setDoc(doc(adminDb, "users", "user-a"), {
-            uid: "user-a",
             email: "user-a@example.com",
         });
 
         await setDoc(doc(adminDb, "users", "user-b"), {
-            uid: "user-b",
             email: "user-b@example.com",
         });
 
@@ -51,6 +49,7 @@ beforeEach(async () => {
             uid: "user-a",
             name: "User A",
             photoUrl: null,
+            customPhotoUrl: "",
             votesVisible: true,
         });
 
@@ -58,6 +57,7 @@ beforeEach(async () => {
             uid: "user-b",
             name: "User B",
             photoUrl: null,
+            customPhotoUrl: "",
             votesVisible: true,
         });
     });
@@ -73,17 +73,32 @@ describe("login profile initialization rules", () => {
         const snapshot = await assertSucceeds(getDoc(ref));
         expect(snapshot.exists()).toBe(false);
         await assertSucceeds(setDoc(ref, {
-            uid: "new-user", name: "New User", email: "new@example.com", authProvider: "google",
+            email: "new@example.com", authProvider: "google",
         }, { merge: true }));
         await assertSucceeds(setDoc(doc(db, "user-public", "new-user"), {
-            uid: "new-user", name: "New User", photoUrl: null, votesVisible: true,
+            uid: "new-user", name: "New User", photoUrl: null,
+            customPhotoUrl: "", votesVisible: true,
         }, { merge: true }));
         await assertSucceeds(getDoc(ref));
     });
 
+    it("allows customPhotoUrl only as a string on user-public", async () => {
+        const db = testEnv.authenticatedContext("user-a").firestore();
+        await assertSucceeds(setDoc(
+            doc(db, "user-public", "user-a"),
+            { customPhotoUrl: "https://example.com/avatar.png" },
+            { merge: true },
+        ));
+        await assertFails(setDoc(
+            doc(db, "user-public", "user-a"),
+            { customPhotoUrl: true },
+            { merge: true },
+        ));
+    });
+
     it("keeps private collection queries and other users' documents inaccessible to new users", async () => {
         const db = testEnv.authenticatedContext("new-user").firestore();
-        await assertFails(getDocs(query(collection(db, "users"), where("uid", "==", "new-user"))));
+        await assertFails(getDocs(collection(db, "users")));
         await assertFails(getDoc(doc(db, "users", "user-a")));
     });
 });
@@ -123,7 +138,7 @@ describe("users testEmail fields rules", () => {
 
     it("denies a user creating their doc with testEmailAck", async () => {
         const db = testEnv.authenticatedContext("user-c").firestore();
-        await assertFails(setDoc(doc(db, "users", "user-c"), { uid: "user-c", testEmailAck: "uuid-1" }));
+        await assertFails(setDoc(doc(db, "users", "user-c"), { testEmailAck: "uuid-1" }));
     });
 
     it("allows unrelated updates when testEmailAck already exists", async () => {
@@ -131,7 +146,11 @@ describe("users testEmail fields rules", () => {
             await setDoc(doc(context.firestore(), "users", "user-a"), { testEmailAck: "uuid-1" }, { merge: true });
         });
         const db = testEnv.authenticatedContext("user-a").firestore();
-        await assertSucceeds(setDoc(doc(db, "users", "user-a"), { name: "A" }, { merge: true }));
+        await assertSucceeds(setDoc(
+            doc(db, "users", "user-a"),
+            { notificationEmailEnabled: true },
+            { merge: true },
+        ));
     });
 
     it("allows admin to write testEmailAck", async () => {

@@ -153,24 +153,15 @@ Shape:
 - special handling for admin in app logic and rules
 
 ### users collection
-Document id: uid.
+Document id: auth uid. The document ID is the identity; no `uid` field is stored.
+This private profile contains email and notification, arrival-time, and web-push
+settings.
 
-Google and email/password login read `users/{auth.uid}` directly and create
-missing private/public profiles. A query on the stored `uid` field does not
-authorize a non-admin to list private users; self-access is based on document ID.
-
-Common fields used:
-- name
-- email: canonical login email mirrored from Firebase Auth (updated after verified auth email changes)
-- notificationEmail
-- notificationEmailEnabled
-- votesVisible
-- openPollEmailEnabled
-- defaultArrivalTime: string in HH:mm format (default 19:30 when absent)
-- photoUrl
-- customPhotoUrl
-- webPushEnabled: boolean, master web push switch
-- pushPreferences: map (see below)
+### user-public collection
+Document id: auth uid. The `uid` field is retained for the Firestore rules
+contract. Public profile fields are `name`, `photoUrl`, `customPhotoUrl`, and
+`votesVisible`. `customPhotoUrl` is the custom avatar URL string, or an empty
+string when no custom avatar is selected.
 
 pushPreferences map fields:
 - pollOpens: boolean (default true when absent)

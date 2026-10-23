@@ -11,8 +11,8 @@ from firebase_admin import credentials, firestore
 from firebase_sub.common.logging import configure_logging, log_level_to_int
 
 _log = logging.getLogger(__name__)
-PROFILE_FIELDS = ("name", "photoUrl", "votesVisible")
-LEGACY_PROFILE_FIELDS = PROFILE_FIELDS
+PROFILE_FIELDS = ("name", "photoUrl", "votesVisible", "customPhotoUrl")
+LEGACY_PROFILE_FIELDS = ("uid", *PROFILE_FIELDS)
 CWD = Path(__file__).resolve().parent
 
 
@@ -62,11 +62,26 @@ def _has_value(data: dict[str, Any], field: str) -> bool:
 
 
 def _render_votes_visible(data: dict[str, Any]) -> str:
-    if "votesVisible" not in data:
+    return _render_boolean_field(data, "votesVisible")
+
+
+def _render_boolean_field(data: dict[str, Any], field: str) -> str:
+    if field not in data:
         return "missing"
-    value = data["votesVisible"]
+    value = data[field]
     if isinstance(value, bool):
         return str(value).lower()
+    if value is None:
+        return "null"
+    return f"unexpected-type:{type(value).__name__}"
+
+
+def _render_string_presence(data: dict[str, Any], field: str) -> str:
+    if field not in data:
+        return "missing"
+    value = data[field]
+    if isinstance(value, str):
+        return "set" if value else "empty"
     if value is None:
         return "null"
     return f"unexpected-type:{type(value).__name__}"
@@ -79,6 +94,7 @@ def _audit_user_profiles(
     public_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in public_users}
     issues: dict[str, list[str]] = {}
     votes_visible_details: dict[str, str] = {}
+    custom_photo_details: dict[str, str] = {}
 
     def add_issue(uid: str, issue: str) -> None:
         issues.setdefault(uid, []).append(issue)
@@ -91,7 +107,7 @@ def _audit_user_profiles(
             add_issue(uid, "orphan_user_public")
             continue
 
-        if private_data.get("uid") != uid:
+        if "uid" in private_data and private_data["uid"] != uid:
             add_issue(uid, "users_uid_missing_or_mismatched")
 
         if public_data is None:
@@ -119,6 +135,18 @@ def _audit_user_profiles(
             votes_visible_details[uid] = (
                 f"users={_render_votes_visible(private_data)}, "
                 f"user-public={_render_votes_visible(public_data)}"
+            )
+        if any(
+            issue
+            in {
+                "missing_public_field:customPhotoUrl",
+                "value_differs:customPhotoUrl",
+            }
+            for issue in user_issues
+        ):
+            custom_photo_details[uid] = (
+                f"users={_render_string_presence(private_data, 'customPhotoUrl')}, "
+                f"user-public={_render_string_presence(public_data, 'customPhotoUrl')}"
             )
 
     counts = {
@@ -152,6 +180,7 @@ def _audit_user_profiles(
         "counts": counts,
         "issues": issues,
         "votes_visible_details": votes_visible_details,
+        "custom_photo_details": custom_photo_details,
     }
 
 
@@ -175,7 +204,7 @@ def _plan_votes_visible_migration(
                 {
                     "uid": uid,
                     "value": private_value,
-                    "reason": "copy private value to missing public field",
+                    "reason": "fill missing or empty public field",
                     "write": True,
                     "create_document": uid not in public_by_id,
                 }
@@ -195,6 +224,61 @@ def _plan_votes_visible_migration(
                     "value": target_value,
                     "reason": "true wins conflict",
                     "write": target_value != public_value,
+                    "create_document": False,
+                }
+            )
+
+    return operations, skipped
+
+
+def _plan_custom_photo_migration(
+    users: Iterable[Any], public_users: Iterable[Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    users_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in users}
+    public_by_id = {snapshot.id: snapshot.to_dict() or {} for snapshot in public_users}
+    operations: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+
+    for uid, private_data in users_by_id.items():
+        if "customPhotoUrl" not in private_data:
+            continue
+
+        private_value = private_data["customPhotoUrl"]
+        public_data = public_by_id.get(uid, {})
+        public_value = public_data.get("customPhotoUrl")
+        if not isinstance(private_value, str):
+            if private_value is not None:
+                skipped.append(
+                    {"uid": uid, "reason": "private customPhotoUrl is not a string"}
+                )
+            continue
+
+        if "customPhotoUrl" not in public_data or public_value == "":
+            if not private_value:
+                continue
+            operations.append(
+                {
+                    "uid": uid,
+                    "value": private_value,
+                    "reason": "copy private value to missing public field",
+                    "write": True,
+                    "create_document": uid not in public_by_id,
+                }
+            )
+        elif not isinstance(public_value, str):
+            skipped.append(
+                {
+                    "uid": uid,
+                    "reason": f"public customPhotoUrl is not a string: {type(public_value).__name__}",
+                }
+            )
+        elif private_value != public_value:
+            operations.append(
+                {
+                    "uid": uid,
+                    "value": public_value,
+                    "reason": "preserve existing public value",
+                    "write": False,
                     "create_document": False,
                 }
             )
@@ -226,7 +310,40 @@ def _print_migration_plan(
             click.echo(f"  {item['uid']}: skipped ({item['reason']})")
 
 
+def _print_custom_photo_migration_plan(
+    operations: list[dict[str, Any]],
+    skipped: list[dict[str, str]],
+    *,
+    details: bool,
+) -> None:
+    write_count = sum(operation["write"] for operation in operations)
+    click.echo("customPhotoUrl migration plan (dry-run unless --apply is supplied)")
+    click.echo(f"  writes planned: {write_count}")
+    click.echo(f"  public values preserved: {len(operations) - write_count}")
+    click.echo(f"  skipped for review: {len(skipped)}")
+    if details:
+        for operation in operations:
+            action = "write" if operation["write"] else "no change"
+            value = "set" if operation["value"] else "empty"
+            click.echo(
+                f"  {operation['uid']}: {action} customPhotoUrl={value} "
+                f"({operation['reason']})"
+            )
+        for item in skipped:
+            click.echo(f"  {item['uid']}: skipped ({item['reason']})")
+
+
 def _apply_votes_visible_migration(db: Any, operations: list[dict[str, Any]]) -> int:
+    return _apply_profile_field_migration(db, operations, "votesVisible")
+
+
+def _apply_custom_photo_migration(db: Any, operations: list[dict[str, Any]]) -> int:
+    return _apply_profile_field_migration(db, operations, "customPhotoUrl")
+
+
+def _apply_profile_field_migration(
+    db: Any, operations: list[dict[str, Any]], field: str
+) -> int:
     writes = [operation for operation in operations if operation["write"]]
     if not writes:
         return 0
@@ -238,7 +355,7 @@ def _apply_votes_visible_migration(db: Any, operations: list[dict[str, Any]]) ->
     batch = db.batch()
     public_collection = db.collection("user-public")
     for operation in writes:
-        payload = {"votesVisible": operation["value"]}
+        payload = {field: operation["value"]}
         if operation["create_document"]:
             payload["uid"] = operation["uid"]
         batch.set(
@@ -293,6 +410,14 @@ def _apply_legacy_profile_cleanup(db: Any, operations: list[dict[str, Any]]) -> 
     return sum(len(operation["fields"]) for operation in operations)
 
 
+def _has_invalid_public_custom_photo(public_users: Iterable[Any]) -> bool:
+    for snapshot in public_users:
+        data = snapshot.to_dict() or {}
+        if "customPhotoUrl" in data and not isinstance(data["customPhotoUrl"], str):
+            return True
+    return False
+
+
 def _print_report(report: dict[str, Any], *, details: bool) -> None:
     counts = report["counts"]
     click.echo("User profile audit (read-only)")
@@ -325,6 +450,9 @@ def _print_report(report: dict[str, Any], *, details: bool) -> None:
             votes_detail = report["votes_visible_details"].get(uid)
             if votes_detail:
                 click.echo(f"      votesVisible: {votes_detail}")
+            custom_photo_detail = report["custom_photo_details"].get(uid)
+            if custom_photo_detail:
+                click.echo(f"      customPhotoUrl: {custom_photo_detail}")
 
 
 @click.command()
@@ -339,9 +467,14 @@ def _print_report(report: dict[str, Any], *, details: bool) -> None:
     help="Plan to backfill missing votesVisible and make true win conflicts.",
 )
 @click.option(
+    "--migrate-custom-photo",
+    is_flag=True,
+    help="Backfill customPhotoUrl when public is missing; preserve existing public values.",
+)
+@click.option(
     "--delete-legacy-profile-fields",
     is_flag=True,
-    help="Plan to delete name, photoUrl, and votesVisible from users.",
+    help="Plan to delete uid and duplicated profile fields from users.",
 )
 @click.option(
     "--apply",
@@ -358,16 +491,20 @@ def _print_report(report: dict[str, Any], *, details: bool) -> None:
 def main(
     details: bool,
     migrate_votes_visible: bool,
+    migrate_custom_photo: bool,
     delete_legacy_profile_fields: bool,
     apply: bool,
     loglevel: int,
 ) -> None:
-    """Audit profile overlap and optionally migrate votesVisible."""
-    if migrate_votes_visible and delete_legacy_profile_fields:
+    """Audit, migrate, or clean up duplicated user profile fields."""
+    selected_operations = sum(
+        (migrate_votes_visible, migrate_custom_photo, delete_legacy_profile_fields)
+    )
+    if selected_operations > 1:
         raise click.UsageError(
-            "Choose either --migrate-votes-visible or --delete-legacy-profile-fields."
+            "Choose only one migration or cleanup option per invocation."
         )
-    if apply and not (migrate_votes_visible or delete_legacy_profile_fields):
+    if apply and selected_operations == 0:
         raise click.UsageError("--apply requires a migration or cleanup option.")
 
     configure_logging(loglevel, None)
@@ -398,6 +535,24 @@ def main(
             written = _apply_votes_visible_migration(db, operations)
             click.echo(f"  writes applied: {written}")
 
+    if migrate_custom_photo:
+        operations, skipped = _plan_custom_photo_migration(
+            user_snapshots,
+            public_snapshots,
+        )
+        _print_custom_photo_migration_plan(operations, skipped, details=details)
+        if apply:
+            if skipped:
+                raise click.ClickException(
+                    "Migration contains values needing review; no writes were applied."
+                )
+            if report["counts"]["user_public_uid_missing_or_mismatched"]:
+                raise click.ClickException(
+                    "user-public uid fields are inconsistent; no writes were applied."
+                )
+            written = _apply_custom_photo_migration(db, operations)
+            click.echo(f"  writes applied: {written}")
+
     if delete_legacy_profile_fields:
         operations = _plan_legacy_profile_cleanup(user_snapshots)
         _print_legacy_profile_cleanup_plan(operations, details=details)
@@ -405,6 +560,15 @@ def main(
             if report["counts"]["missing_user_public_documents"]:
                 raise click.ClickException(
                     "Some users lack user-public documents; no fields were deleted."
+                )
+            if report["counts"]["user_public_uid_missing_or_mismatched"]:
+                raise click.ClickException(
+                    "user-public uid fields are inconsistent; no fields were deleted."
+                )
+            if _has_invalid_public_custom_photo(public_snapshots):
+                raise click.ClickException(
+                    "Some public customPhotoUrl values are not strings; "
+                    "no fields were deleted."
                 )
             missing_public_fields = report["counts"]["missing_public_fields"]
             if any(missing_public_fields.values()):

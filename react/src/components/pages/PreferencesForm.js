@@ -19,7 +19,6 @@ export async function savePreferences({ uid, formData, currentPhotoUrl }) {
     notificationEmailEnabled: Boolean(formData.get("emailme")),
     openPollEmailEnabled: Boolean(formData.get("open_poll_email")),
     defaultArrivalTime: normalizeArrivalTime(formData.get("default_arrival_time")),
-    customPhotoUrl: !defaultAvatar,
     pushPreferences: formData.get("push_prefs_visible")
       ? {
         pollOpens: Boolean(formData.get("push_poll_opens")),
@@ -33,7 +32,8 @@ export async function savePreferences({ uid, formData, currentPhotoUrl }) {
   const publicData = {
     uid,
     name: formData.get("name"),
-    photoUrl: defaultAvatar ? currentPhotoUrl : avatarUrl,
+    photoUrl: currentPhotoUrl,
+    customPhotoUrl: defaultAvatar ? "" : avatarUrl,
     votesVisible: Boolean(formData.get("votes_visible")),
   };
 
@@ -261,7 +261,8 @@ function PreferencesForm({ method, uid: targetUid, isAdminEditing = false, onCan
       setPublicUserDoc(publicData);
       setFormValues({
         name: publicData?.name || "",
-        avatar: publicData?.photoUrl ?? (isAdminEditing ? "" : authPhotoUrl || ""),
+        avatar: publicData?.customPhotoUrl || publicData?.photoUrl
+          || (isAdminEditing ? "" : authPhotoUrl || ""),
         notificationEmailEnabled: privateData?.notificationEmailEnabled === true,
         notificationEmail: privateData?.notificationEmail || privateData?.email || "",
         votesVisible: publicData?.votesVisible !== false,

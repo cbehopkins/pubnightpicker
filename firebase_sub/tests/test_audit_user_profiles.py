@@ -222,6 +222,82 @@ def test_migration_apply_batches_public_field_updates(
     ]
 
 
+def test_custom_photo_migration_copies_missing_urls_and_preserves_public_values() -> (
+    None
+):
+    operations, skipped = module._plan_custom_photo_migration(
+        [
+            _FakeSnapshot(
+                "missing-url", {"customPhotoUrl": "https://custom.example/a.png"}
+            ),
+            _FakeSnapshot(
+                "empty-public", {"customPhotoUrl": "https://custom.example/b.png"}
+            ),
+            _FakeSnapshot("empty-private", {"customPhotoUrl": ""}),
+            _FakeSnapshot(
+                "keep-public", {"customPhotoUrl": "https://legacy.example/a.png"}
+            ),
+            _FakeSnapshot("invalid-private", {"customPhotoUrl": 12}),
+            _FakeSnapshot(
+                "invalid-public", {"customPhotoUrl": "https://private.example/a.png"}
+            ),
+        ],
+        [
+            _FakeSnapshot(
+                "empty-public", {"uid": "empty-public", "customPhotoUrl": ""}
+            ),
+            _FakeSnapshot(
+                "empty-private", {"uid": "empty-private", "customPhotoUrl": ""}
+            ),
+            _FakeSnapshot(
+                "keep-public",
+                {
+                    "uid": "keep-public",
+                    "customPhotoUrl": "https://public.example/a.png",
+                },
+            ),
+            _FakeSnapshot(
+                "invalid-public", {"uid": "invalid-public", "customPhotoUrl": True}
+            ),
+        ],
+    )
+
+    assert [(item["uid"], item["value"], item["write"]) for item in operations] == [
+        ("missing-url", "https://custom.example/a.png", True),
+        ("empty-public", "https://custom.example/b.png", True),
+        ("keep-public", "https://public.example/a.png", False),
+    ]
+    assert skipped == [
+        {"uid": "invalid-private", "reason": "private customPhotoUrl is not a string"},
+        {
+            "uid": "invalid-public",
+            "reason": "public customPhotoUrl is not a string: bool",
+        },
+    ]
+
+
+def test_custom_photo_migration_batches_public_field_backfills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDb(
+        [_FakeSnapshot("u1", {"customPhotoUrl": "https://custom.example/a.png"})],
+        [_FakeSnapshot("u1", {"uid": "u1"})],
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: db)
+
+    result = CliRunner().invoke(
+        module.main,
+        ["--migrate-custom-photo", "--apply"],
+    )
+
+    assert result.exit_code == 0
+    assert "writes applied: 1" in result.output
+    assert db.writes == [
+        ("user-public/u1", {"customPhotoUrl": "https://custom.example/a.png"}, True),
+        "committed",
+    ]
+
+
 def test_legacy_cleanup_plan_only_selects_profile_fields() -> None:
     operations = module._plan_legacy_profile_cleanup(
         [
@@ -233,13 +309,20 @@ def test_legacy_cleanup_plan_only_selects_profile_fields() -> None:
                     "name": "Legacy name",
                     "photoUrl": "https://example.com/avatar.png",
                     "votesVisible": False,
+                    "customPhotoUrl": "https://example.com/avatar.png",
                 },
             ),
             _FakeSnapshot("u2", {"uid": "u2", "email": "u2@example.com"}),
         ]
     )
 
-    assert operations == [{"uid": "u1", "fields": ["name", "photoUrl", "votesVisible"]}]
+    assert operations == [
+        {
+            "uid": "u1",
+            "fields": ["uid", "name", "photoUrl", "votesVisible", "customPhotoUrl"],
+        },
+        {"uid": "u2", "fields": ["uid"]},
+    ]
 
 
 def test_legacy_cleanup_is_dry_run_unless_apply_is_explicit(
@@ -282,8 +365,30 @@ def test_legacy_cleanup_apply_batches_field_deletions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = _FakeDb(
-        [_FakeSnapshot("u1", {"uid": "u1", "name": "Legacy name", "photoUrl": None})],
-        [_FakeSnapshot("u1", {"uid": "u1", "name": "Public name"})],
+        [
+            _FakeSnapshot(
+                "u1",
+                {
+                    "uid": "u1",
+                    "name": "Legacy name",
+                    "photoUrl": None,
+                    "votesVisible": True,
+                    "customPhotoUrl": "",
+                },
+            )
+        ],
+        [
+            _FakeSnapshot(
+                "u1",
+                {
+                    "uid": "u1",
+                    "name": "Public name",
+                    "photoUrl": None,
+                    "votesVisible": True,
+                    "customPhotoUrl": "",
+                },
+            )
+        ],
     )
     monkeypatch.setattr(module, "_get_db", lambda: db)
 
@@ -293,13 +398,16 @@ def test_legacy_cleanup_apply_batches_field_deletions(
     )
 
     assert result.exit_code == 0
-    assert "fields deleted: 2" in result.output
+    assert "fields deleted: 5" in result.output
     assert db.writes == [
         (
             "users/u1",
             {
+                "uid": module.firestore.DELETE_FIELD,
                 "name": module.firestore.DELETE_FIELD,
                 "photoUrl": module.firestore.DELETE_FIELD,
+                "votesVisible": module.firestore.DELETE_FIELD,
+                "customPhotoUrl": module.firestore.DELETE_FIELD,
             },
         ),
         "committed",

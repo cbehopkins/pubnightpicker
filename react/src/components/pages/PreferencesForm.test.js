@@ -188,7 +188,8 @@ describe("PreferencesForm", () => {
             expect.objectContaining({
                 uid: "managed-user",
                 name: "Updated User",
-                photoUrl: "https://example.com/new-avatar.png",
+                photoUrl: "https://example.com/old-avatar.png",
+                customPhotoUrl: "https://example.com/new-avatar.png",
                 votesVisible: true,
             }),
             { merge: true }

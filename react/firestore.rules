@@ -111,19 +111,21 @@ service cloud.firestore {
       }
 
     function isValidPublicUserProfileCreate(userId) {
-      return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
+      return request.resource.data.keys().hasOnly(["uid", "name", "photoUrl", "customPhotoUrl", "votesVisible"])
         && request.resource.data.uid == userId
         && (!("name" in request.resource.data) || request.resource.data.name is string || request.resource.data.name == null)
         && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
+        && (!("customPhotoUrl" in request.resource.data) || request.resource.data.customPhotoUrl is string)
         && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
     }
 
     function isValidPublicUserProfileUpdate(userId) {
       return request.resource.data.uid == userId
         // Permit legacy keys to remain, but only allow changing approved public fields.
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["uid", "name", "photoUrl", "votesVisible"])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["uid", "name", "photoUrl", "customPhotoUrl", "votesVisible"])
         && (!("name" in request.resource.data) || request.resource.data.name is string || request.resource.data.name == null)
         && (!("photoUrl" in request.resource.data) || request.resource.data.photoUrl is string || request.resource.data.photoUrl == null)
+        && (!("customPhotoUrl" in request.resource.data) || request.resource.data.customPhotoUrl is string)
         && (!("votesVisible" in request.resource.data) || request.resource.data.votesVisible is bool || request.resource.data.votesVisible == null);
     }
 

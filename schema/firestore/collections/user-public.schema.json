@@ -23,6 +23,9 @@
                 "null"
             ]
         },
+        "customPhotoUrl": {
+            "type": "string"
+        },
         "votesVisible": {
             "type": [
                 "boolean",

@@ -2,10 +2,7 @@ import { useNavigate, defer, useRouteLoaderData } from "react-router-dom";
 import { useEffect, useCallback } from "react";
 import { useSelector } from "react-redux";
 import {
-  query,
-  getDocs,
-  collection,
-  where,
+  doc,
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../../firebase";
@@ -24,19 +21,12 @@ function NotificationUnsub() {
   const { user_id } = useRouteLoaderData("user_id");
   const navigate = useNavigate();
   const unsubUser = useCallback(async () => {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
-    const docs = await getDocs(q);
-    const notificationParams = {
-      notificationEmailEnabled: false,
-    };
-    docs.docs.forEach((doc) => {
-      try {
-        updateDoc(doc.ref, notificationParams);
-      } catch (err) {
-        console.error(err);
-        notifyError(err.message);
-      }
-    });
+    try {
+      await updateDoc(doc(db, "users", uid), { notificationEmailEnabled: false });
+    } catch (err) {
+      console.error(err);
+      notifyError(err.message);
+    }
   }, [uid]);
 
   useEffect(() => {

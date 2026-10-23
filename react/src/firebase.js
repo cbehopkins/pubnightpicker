@@ -92,6 +92,7 @@ async function addUserPublicProfile(uid, name, photoUrl) {
     uid: uid,
     name: name,
     photoUrl: photoUrl || null,
+    customPhotoUrl: "",
     votesVisible: true,
   }, {
     merge: true,
@@ -104,7 +105,6 @@ async function addUserPublicProfile(uid, name, photoUrl) {
 export async function addUserDoc(uid, name, authProvider, email) {
   // Write private user data
   await setDoc(doc(db, "users", uid), {
-    uid: uid,
     authProvider: authProvider,
     email: email,
   }, {
@@ -142,38 +142,6 @@ const signInWithGoogle = async () => {
   }
 };
 
-// const facebookProvider = new FacebookAuthProvider();
-// const signInWithFacebook = async () => {
-//   try {
-//     const res = await signInWithPopup(auth, facebookProvider)
-//       // This gives you a Facebook Access Token. You can use it to access the Facebook API.
-//     const credential = FacebookAuthProvider.credentialFromResult(res);
-//     const accessToken = credential.accessToken;
-//     const user = res.user;
-//     const q = query(collection(db, "users"), where("uid", "==", user.uid));
-//     const docs = await getDocs(q);
-//     if (docs.docs.length === 0) {
-//       await addDoc(collection(db, "users"), {
-//         uid: user.uid,
-//         name: user.displayName,
-//         authProvider: "facebook",
-//         email: user.email,
-//       });
-//     }
-
-//   } catch (error) {
-//     // Handle Errors here.
-//     const errorCode = error.code;
-//     const errorMessage = error.message;
-//     // The email of the user's account used.
-//     const email = error.customData.email;
-//     // The AuthCredential type that was used.
-//     const credential = FacebookAuthProvider.credentialFromError(error);
-//     console.error(error);
-//     alert(error.message);
-//     // ...
-//   }
-// };
 const logInWithEmailAndPassword = async (email, password) => {
   const normalizedEmail = normalizeEmail(email);
   const normalizedPassword = String(password || "");
