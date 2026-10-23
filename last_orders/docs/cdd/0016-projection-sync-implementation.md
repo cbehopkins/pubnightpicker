@@ -1,6 +1,6 @@
 # CDD: Projection Synchronisation Implementation Plan
 
-**Status:** Draft plan - resource ownership and lifecycle decisions agreed
+**Status:** Venue milestone implemented; Stage 5 planned; staticcheck gate blocked
 **Date:** 2026-10-22
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -15,8 +15,10 @@ The shared projection-watch runner and atomic batch writes exist for venues and
 notification profiles. Shared sequence metadata and sequence-aware venue writes
 are implemented as of 2026-10-23. Venue baselines now compare existing values and
 retain versioned tombstones; remaining baseline visibility and listener-level
-verification was completed in Step D. Notification profiles still clear and repopulate
-baselines without sequence allocation. Cursors remain unimplemented.
+verification was completed in Step D, including the Firestore emulator source
+contract check. Notification profiles still clear and repopulate baselines
+without sequence allocation. Stage 5 has the execution checklist in section 6.
+Cursors remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
 (stages 2-4); its prerequisite resource decisions are agreed. It does not change
@@ -113,7 +115,7 @@ committed high-water mark.
 
 **Implemented:** Steps B and C completed on 2026-10-23. The first milestone still
 has the staticcheck toolchain blocker recorded below; Step D checks are complete
-apart from unavailable Firestore emulator execution.
+including the subsequent Firestore emulator run.
 
 Expand the model according to stage 1. Route `Put`, `Delete`, batch ingestion and
 read-through population through shared venue-owned transactional write logic.
@@ -126,7 +128,7 @@ recreation, existing-data migration and rollback.
 ### Stage 4: Replace Baseline Rebuilds With Diffing
 
 **Implemented and locally verified (2026-10-23):** Step D is complete. The
-Firestore source contract test is present but requires an emulator to execute.
+Firestore source contract test subsequently passed against an empty emulator.
 
 Validate and map each complete baseline, then compare it with committed venue
 state in one transaction. Insert additions, update differences and tombstone
@@ -141,6 +143,9 @@ rollback of data and metadata, and atomic visibility to readers.
 all supported venue writers participate in global ordering.
 
 ### Stage 5: Adapt Combined User Profiles
+
+**Planning status:** Ready for incremental implementation using section 6.
+No Stage 5 runtime changes are included in this planning update.
 
 Implement the agreed source composition and normalisation with one version per
 user profile. Cover preferences, endpoints and local endpoint deactivation as
@@ -356,10 +361,13 @@ stream stop and cancellation. Malformed baselines preserve local state and do
 not signal readiness; malformed deltas retain the existing observable skip
 policy. Runner APIs, retry policy and HTTP behaviour remain unchanged.
 
-**Emulator gap:** `TestFirestoreWatchCompleteBaselineBeforeDeltas` covers empty
+**Emulator verification:** `TestFirestoreWatchCompleteBaselineBeforeDeltas` covers empty
 and populated initial queries, ordered deltas and a complete new baseline on
-reopen. It compiled but skipped because `FIRESTORE_EMULATOR_HOST` was unset.
-The Firestore SDK contract is therefore not runtime-verified in this environment.
+reopen. Initially skipped, it subsequently passed against the empty emulator at
+`127.0.0.1:8080`. The recurrence, venue-cache and test-email packages passed
+together with the emulator enabled after fixing test isolation and the missing
+recurrence SQLite driver import. These tests supply their own fixtures; use a
+disposable empty emulator, not an imported example dataset.
 
 ### Milestone Completion
 
@@ -374,9 +382,212 @@ The Firestore SDK contract is therefore not runtime-verified in this environment
 `v0.8.1` failed before analysing the code because its importer supports Go export
 data version 4, while this compiler emits version 5. This is a toolchain
 compatibility blocker, not a passing staticcheck result; resolve it before
-claiming all milestone gates have passed. Emulator coverage remains as noted
-above. Stages 5-7, cursor recovery and SSE are not implemented by this milestone.
+claiming all milestone gates have passed. The subsequent emulator-enabled
+package checks passed as noted above; the earlier full race result was obtained
+without emulator coverage. Stages 5-7, cursor recovery and SSE are not implemented
+by this milestone.
 
 **Deliverable:** A complete, sequence-aware venue projection with atomic,
 idempotent reconciliation, and reusable sequence infrastructure ready for the
 combined user-profile stage.
+
+## 6. Stage 5: Combined User Profile Execution Checklist
+
+**Scope:** Extend the existing notification-profile component into the agreed
+combined local user projection. Reuse Base Store sequence allocation and the
+existing projection-watch runner. Keep notification callers working through
+their established service interfaces. Do not add HTTP endpoints, cursor
+encoding, SSE delivery, remote user deletion or housekeeping jobs here.
+
+The current implementation watches `users` and the `push_endpoints` collection
+group, stores preferences and endpoints separately, and rewrites baselines.
+It does not yet retain `user-public` documents or version the combined resource.
+Relevant code lives in `components/notificationprofile`, its database listener,
+the existing fake-source package and app notification tests.
+
+### Step E: Typed Source Contributions and Equality
+
+**Field semantics agreed (2026-10-23):**
+
+- Preserve missing, explicit null and explicit values as distinct states for
+  public `name`, `photoUrl` and `votesVisible`; moving between these states is
+  a profile change. `customPhotoUrl` permits a missing field or a string, not
+  null. Never substitute legacy private values.
+- Preserve whether private settings were supplied. Apply notification defaults
+  only when reading or selecting recipients. Missing-to-explicit-default is a
+  profile change even if delivery eligibility is unchanged. Missing
+  `webPushEnabled`, `globalChat`, `eventChat`, `notificationEmailEnabled` and
+  `openPollEmailEnabled` are effectively false; missing `pollOpens` and
+  `pollCompletes` are effectively true. The two email settings are boolean
+  enablement flags, not the email-address fields.
+- Missing muted poll IDs and an empty array represent the same empty set.
+  Ignore ordering and duplicates, but do not trim or otherwise rewrite IDs.
+  Wrongly typed entries are invalid rather than silently discarded.
+- Reject a complete baseline containing an invalid document without changing
+  committed state. For an invalid delta document, retain that source's existing
+  contribution, log the rejection and apply other valid changes in the batch.
+  Never turn invalid values into defaults. Persistence failures still roll back
+  the entire store batch, including sequence allocations and resource versions.
+- Endpoint `endpoint`, `p256dh`, `auth` and `active` participate in the combined
+  profile version. Endpoint and owner IDs come from the document path; credentials
+  remain private. Missing `active` is effectively false at the selector boundary,
+  without erasing source-field presence during comparison.
+- Endpoint timestamps (`createdAt`, `lastSeenAt`, `disabledAt`) are internal
+  operational metadata, excluded from the synchronised profile representation
+  and its version comparison. Timestamp-only updates must not allocate a
+  sequence. An `active` change still does. `disabledAt` may be null when the
+  frontend registers or reactivates a subscription.
+- The endpoint schema is now registered as
+  `schema/firestore/collections/push_endpoints.schema.json` in the sibling schema
+  project. It also documents existing nullable `userAgent`, `platform` and
+  `appVersion` fields from the frontend writer. These descriptive fields are
+  excluded from the synchronised profile representation and its version
+  comparison, like the operational timestamps. They are not required for push
+  delivery; changes to them alone must not allocate a sequence.
+- Unversioned endpoint metadata must not be included in cursor-synchronised
+  representations. If a later client needs to synchronise these fields, first
+  add them to the versioned contract and update comparison and recovery tests.
+  This is a deliberate scope exclusion, not permission to return changing
+  resource fields under an unchanged version.
+
+The following boxes track implementation, not agreement on these rules.
+
+- [ ] Define typed private-user and public-user contributions, identified by
+  document ID. Retain every declared field in the current schemas, including
+  private email, arrival time, diagnostic request/acknowledgement and notification
+  settings, and public name, photos and vote visibility. Use the registered
+  endpoint schema, excluding the agreed operational timestamps and descriptive
+  client metadata from the synchronised representation.
+- [ ] Ignore legacy `uid` and undeclared top-level fields. Never fall back from
+  missing/null public values to legacy private duplicates. Distinguish missing,
+  explicit null where allowed, false and empty values where meaningful.
+- [ ] Define normalisation and explicit typed equality for all contributions
+  and endpoints. Muted poll IDs compare as a sorted, deduplicated set;
+  ingestion timestamps do not affect equality or versions. Do not use reflection
+  in implementation or tests.
+- [ ] Preserve existing notification defaults at the selector/read boundary.
+  Do not persist duplicate raw and effective copies of the same source values.
+  Retaining diagnostic fields must not emit work or duplicate the test-email
+  listener's responsibilities.
+- [ ] Extend existing mapping/equality tests for every declared field,
+  presence/null distinctions, independent pointer values, defaults, set replay,
+  invalid values and ignored legacy fields.
+
+**Check:** A real change to any retained contribution is detectable, while
+equivalent source replays cannot manufacture profile changes.
+
+### Step F: Component-Owned Schema and Initial Migration
+
+- [ ] Define storage for public/private contributions and endpoints, plus one
+  combined profile version or retained tombstone per user ID. Derive source
+  presence from contribution-row existence, including empty documents; do not
+  duplicate listener catch-up state or add persisted readiness flags.
+- [ ] Keep schema ownership and migration SQL in the notification-profile
+  component, with a small constructor and separate migration methods/tests as
+  established for venues. Keep the undeployed work as one initial migration,
+  not a history of intermediate development schemas.
+- [ ] Atomically discard legacy notification projection data, install the new
+  schema and change database generation when existing projection history is
+  reset. Preserve venue data/versions, global sequence and unrelated durable
+  application work. Fresh creation and ordinary reopen preserve generation.
+- [ ] Test fresh creation, legacy rebuild, repeat startup, unknown schema
+  rejection and injected migration failure. Existing development caches may
+  need rebuilding as the initial undeployed migration evolves.
+
+**Check:** Source presence and combined deletion can be represented without
+inventing account existence from endpoint rows or deleting unrelated domains.
+
+### Step G: One Transactional Profile Write Boundary
+
+- [ ] Route private/public writes, preference puts/deletes, endpoint
+  puts/deletes, batch ingestion and `SetEndpointActive` through component-owned
+  transactional helpers. Keep `InvalidateEndpoint` remote-first, followed by
+  this local boundary; a later identical listener update must be a no-op.
+- [ ] Compare each affected user's combined state before and after a batch.
+  Allocate one new profile version per actually changed live resource in that
+  transaction, not one version per endpoint or source row. Commit contributions,
+  endpoints, profile versions/tombstones and allocations together.
+- [ ] Retain a partial live profile while either user document exists. Removing
+  one source removes only its contribution. Removing the last source writes a
+  newer tombstone; repeated absent deletes do not allocate. Reappearance creates
+  a newer live version.
+- [ ] Endpoint rows alone must not establish or resurrect a profile. Retain
+  orphan endpoints only as internal data pending cleanup; their changes do not
+  advance an absent profile or its tombstone. When a user document appears,
+  include the currently committed endpoint contribution in its live profile.
+- [ ] Test all writer paths, changed presence even for empty documents,
+  multiple endpoints belonging to one user in a batch, multiple affected users,
+  replay, deletion, recreation and rollback after allocation. Verify venue and
+  user changes share the same global allocator.
+
+**Check:** Each profile version describes the combined locally committed
+resource, not a source notification or an independently versioned endpoint.
+
+### Step H: Three Independent Projection Streams
+
+- [ ] Add the `user-public` source/service watch capability and typed conversion.
+  Update existing test fakes and app injection points to support it; do not
+  introduce a second runner or an untyped universal change model.
+- [ ] Run private-user, public-user and endpoint streams using projectionwatch.
+  Reconcile each complete baseline against only its owned contribution within
+  one transaction. A public baseline must never clear private rows or endpoints;
+  an endpoint baseline must not remove user contributions.
+- [ ] Apply baseline differences and deltas through Step G helpers, collecting
+  affected owner IDs before removing endpoint rows. Preserve unchanged profile
+  versions and existing tombstones on identical reconnects or empty replays.
+- [ ] Preserve existing error reporting, cancellation and source retries. Extend
+  adapter readiness to mean all three initial baselines have committed once,
+  without adding an application-wide barrier or blocking partial-profile reads.
+- [ ] Test malformed baselines without destructive omission; keep delta error
+  policy explicit and observable. Use channel-coordinated listener tests for
+  reordered initial baselines, reconnects, offline removals, replay, readiness,
+  stream stop and worker exit. Verify that one stream's recovery cannot erase
+  another stream's contribution.
+
+**Check:** Independent streams converge without claiming a remote cross-source
+snapshot, and readers observe only complete local transactions.
+
+### Step I: Eligibility, Integration and Stage Gates
+
+- [ ] Require a locally present private user contribution, applicable opt-ins
+  and an eligible endpoint for push selection, including diagnostic selection.
+  Public-only profiles and orphan endpoints cannot receive pushes. Retain the
+  current email preference semantics through private-source reads.
+- [ ] Exercise public-first, private-first and endpoints-first arrival, removal
+  of either/both user documents, delayed catch-up and recreation. Suppress
+  delivery while private data is missing; housekeeping must not be required to
+  exclude orphan endpoints. Remote deletion remains asynchronous until ingested.
+- [ ] Extend existing store/service, listener, push/email and app integration
+  tests. Prove unchanged externally used notification behaviour, except the
+  explicitly agreed missing-user safety rule. Verify atomic readers and
+  concurrent writers using deterministic coordination, without production hooks.
+- [ ] Extend source emulator tests for complete/empty baselines, public-user
+  watch, endpoint owner keys, ordered deltas and reconnect completeness. Use
+  isolated projects and an empty disposable emulator; do not clear user data or
+  weaken completeness assertions to accommodate imported fixtures.
+- [ ] Run focused checks after each edit and the section 4 gates at completion.
+  Record emulator-enabled results separately. Resolve or explicitly retain the
+  known staticcheck/compiler compatibility blocker; do not call it a pass.
+- [ ] Update CDD-0014/0015 and this checklist with verified status. Mark user
+  profile sequencing complete only after every supported writer participates.
+
+**Deliverable:** One versioned combined user profile per ID, maintained from
+three independent streams, with replay-idempotent reconciliation and safe
+notification eligibility. No new public API is exposed by this stage.
+
+### Handover to Stages 6-7
+
+Keep these as design gates rather than silently deciding them during Stage 5:
+
+- Specify public/self/private API representations and authorisation. The
+  combined internal identity does not expose private settings or endpoint
+  credentials to public consumers.
+- Define durable visibility/authorisation invalidation and how profile/resource
+  versions contribute to each authorised stream. A resource version alone is
+  not proof that a client may resume its prior view.
+- Specify opaque cursor encoding, generation/stream scope, valid sequence
+  bounds, high-water marks, pagination and full-refresh envelopes in OpenAPI.
+- Design snapshot-to-live handover, post-commit dispatcher notifications,
+  slow-client policy and the applicable London-midnight reset behaviour.
+
+Do not implement cursor or SSE contracts until those decisions are explicit.

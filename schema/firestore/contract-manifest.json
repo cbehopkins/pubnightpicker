@@ -60,6 +60,12 @@
             "schemaFile": "collections/users.schema.json"
         },
         {
+            "name": "push_endpoints",
+            "documentPath": "users/{uid}/push_endpoints/{endpointId}",
+            "status": "authoritative",
+            "schemaFile": "collections/push_endpoints.schema.json"
+        },
+        {
             "name": "user-public",
             "status": "authoritative",
             "schemaFile": "collections/user-public.schema.json"

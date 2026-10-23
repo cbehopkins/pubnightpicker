@@ -308,8 +308,10 @@ state. The existing venue listener policy for malformed deltas remains a logged
 skip; notification profiles are not yet sequence-aware. The broader source
 validation boundary and retry-classification questions remain open.
 
-The Firestore emulator baseline-contract test is added but skipped locally
-because no emulator was configured. Full tests, race, vet and formatting checks
-passed; pinned staticcheck is blocked by compiler export-data incompatibility.
+The Firestore emulator baseline-contract test subsequently passed against an
+empty disposable emulator. Full tests, race, vet and formatting checks passed;
+the full race gate preceded emulator execution. Pinned staticcheck remains
+blocked by compiler export-data incompatibility. The combined user-profile
+implementation is planned in section 6 of CDD-0016; it is not yet implemented.
 See [CDD-0016](0016-projection-sync-implementation.md) for detailed verification
 and the remaining work. Cursors and SSE remain unimplemented.

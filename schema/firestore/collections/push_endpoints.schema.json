@@ -1,0 +1,80 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/users/push_endpoints",
+    "title": "users/{uid}/push_endpoints/{endpointId}",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "required": [
+        "endpoint",
+        "p256dh",
+        "auth"
+    ],
+    "properties": {
+        "endpoint": {
+            "type": "string",
+            "minLength": 1
+        },
+        "p256dh": {
+            "type": "string",
+            "minLength": 1
+        },
+        "auth": {
+            "type": "string",
+            "minLength": 1
+        },
+        "active": {
+            "type": "boolean",
+            "default": false
+        },
+        "createdAt": {
+            "$ref": "#/$defs/firestoreTimestamp",
+            "description": "Operational registration timestamp; not part of the synchronised profile version."
+        },
+        "lastSeenAt": {
+            "$ref": "#/$defs/firestoreTimestamp",
+            "description": "Operational activity timestamp; not part of the synchronised profile version."
+        },
+        "disabledAt": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/firestoreTimestamp"
+                },
+                {
+                    "type": "null"
+                }
+            ],
+            "description": "Operational disablement timestamp, cleared to null on registration or reactivation; not part of the synchronised profile version."
+        },
+        "userAgent": {
+            "description": "Descriptive client metadata; excluded from the synchronised profile representation and its version comparison.",
+            "type": [
+                "string",
+                "null"
+            ]
+        },
+        "platform": {
+            "description": "Descriptive client metadata; excluded from the synchronised profile representation and its version comparison.",
+            "type": [
+                "string",
+                "null"
+            ]
+        },
+        "appVersion": {
+            "description": "Descriptive client metadata; excluded from the synchronised profile representation and its version comparison.",
+            "type": [
+                "string",
+                "null"
+            ]
+        }
+    },
+    "$defs": {
+        "firestoreTimestamp": {
+            "description": "Firestore timestamp represented as an SDK timestamp object or a serialised string.",
+            "type": [
+                "string",
+                "object"
+            ]
+        }
+    },
+    "additionalProperties": true
+}
