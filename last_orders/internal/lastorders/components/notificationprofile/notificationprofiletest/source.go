@@ -16,6 +16,7 @@ import (
 type Source struct {
 	mu             sync.Mutex
 	UserChanges    []notificationprofile.Change
+	PublicChanges  []notificationprofile.Change
 	EndpointChange []notificationprofile.Change
 	OnDeactivate   func(ctx context.Context, userID, endpointID string) error
 }
@@ -28,6 +29,12 @@ func (s *Source) WatchUsers(ctx context.Context) (notificationprofile.ChangeStre
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return newStream(ctx, s.UserChanges), nil
+}
+
+func (s *Source) WatchPublicUsers(ctx context.Context) (notificationprofile.ChangeStream, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return newStream(ctx, s.PublicChanges), nil
 }
 
 func (s *Source) WatchEndpoints(ctx context.Context) (notificationprofile.ChangeStream, error) {

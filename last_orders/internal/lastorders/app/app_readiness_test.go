@@ -87,6 +87,10 @@ func (neverReadySource) WatchUsers(ctx context.Context) (notificationprofile.Cha
 	return blockedStream{ctx: ctx}, nil
 }
 
+func (neverReadySource) WatchPublicUsers(ctx context.Context) (notificationprofile.ChangeStream, error) {
+	return blockedStream{ctx: ctx}, nil
+}
+
 func (neverReadySource) WatchEndpoints(ctx context.Context) (notificationprofile.ChangeStream, error) {
 	return blockedStream{ctx: ctx}, nil
 }

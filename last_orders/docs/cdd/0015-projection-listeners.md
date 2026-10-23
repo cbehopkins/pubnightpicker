@@ -308,15 +308,19 @@ state. The existing venue listener policy for malformed deltas remains a logged
 skip. Notification profile stores now maintain one combined profile version per
 changed owner, including compatibility writes and endpoint invalidation.
 Source-owned baselines preserve other contributions and orphan endpoints do
-not establish live profiles. The broader source
+not establish live profiles. The notification listener now ingests raw private,
+public and endpoint contributions through three independent runner instances;
+its existing adapter readiness covers all three first committed baselines.
+Partial local reads do not wait for that readiness. The broader source
 validation boundary and retry-classification questions remain open.
 
 The Firestore emulator baseline-contract test subsequently passed against an
 empty disposable emulator. Full tests, race, vet and formatting checks passed;
-the full race gate preceded emulator execution. Pinned staticcheck remains
+the subsequent Step H full race run included the notification three-stream
+emulator test. Pinned staticcheck remains
 blocked by compiler export-data incompatibility. Combined user-profile types,
-schema and transactional writes are implemented through Step G of CDD-0016.
-Raw three-stream ingestion remains for Step H; current notification listener
-adapters still provide legacy effective views rather than raw contributions.
+schema, transactional writes and raw three-stream ingestion are implemented
+through Step H of CDD-0016. Step I retains final eligibility and integration
+verification before closing the combined-profile milestone.
 See [CDD-0016](0016-projection-sync-implementation.md) for detailed verification
 and the remaining work. Cursors and SSE remain unimplemented.

@@ -1,6 +1,6 @@
 # CDD: Projection Synchronisation Implementation Plan
 
-**Status:** Venue milestone implemented; Stage 5 steps E-G implemented; staticcheck gate blocked
+**Status:** Venue milestone implemented; Stage 5 steps E-H implemented; staticcheck gate blocked
 **Date:** 2026-10-22
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -17,9 +17,10 @@ are implemented as of 2026-10-23. Venue baselines now compare existing values an
 retain versioned tombstones; remaining baseline visibility and listener-level
 verification was completed in Step D, including the Firestore emulator source
 contract check. Notification profile stores now reconcile per-source baselines
-and allocate combined profile versions atomically. Their current two-stream
-listener still supplies legacy effective views; raw three-stream integration
-remains for Step H. Stage 5 has the execution checklist in section 6.
+and allocate combined profile versions atomically. Their listener ingests raw
+private-user, public-user and endpoint contributions through three independent
+streams. Stage 5 has the execution checklist in section 6; final eligibility and
+integration verification remains in Step I.
 Cursors remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
@@ -146,10 +147,10 @@ all supported venue writers participate in global ordering.
 
 ### Stage 5: Adapt Combined User Profiles
 
-**Implementation status (2026-10-23):** Steps E-G typed contributions, comparison,
+**Implementation status (2026-10-23):** Steps E-H typed contributions, comparison,
 strict conversion, schema migration, typed storage and combined profile
-sequencing are implemented. Raw contribution ingestion from all three streams
-and the remaining integration gates are pending in steps H-I.
+sequencing are implemented, including raw ingestion from all three streams.
+The remaining eligibility/integration verification and stage gates are in Step I.
 
 Implement the agreed source composition and normalisation with one version per
 user profile. Cover preferences, endpoints and local endpoint deactivation as
@@ -636,29 +637,29 @@ streams. Its removal fixture now supplies a complete subsequent baseline rather
 than a duplicate added/removed key in the initial baseline. No runner API or
 production retry policy was changed, and the single initial migration remains.
 
-**Transition boundary:** The existing two streams now produce versioned writes,
+**Transition boundary at the Step G checkpoint:** The existing two streams produced versioned writes,
 but their effective-view adapters still erase raw field presence before store
-ingestion. Step H must supply typed raw contributions and add the public-user
-stream before full combined source convergence is claimed. Earlier development
+ingestion. Step H below replaces those listener adapters with raw contribution
+conversion and adds the public-user stream. Earlier development
 caches may need rebuilding; no development-only backfill migration was added.
 No reflection is used. Staticcheck remains blocked by the known toolchain issue.
 
 ### Step H: Three Independent Projection Streams
 
-- [ ] Add the `user-public` source/service watch capability and typed conversion.
+- [x] Add the `user-public` source/service watch capability and typed conversion.
   Update existing test fakes and app injection points to support it; do not
   introduce a second runner or an untyped universal change model.
-- [ ] Run private-user, public-user and endpoint streams using projectionwatch.
+- [x] Run private-user, public-user and endpoint streams using projectionwatch.
   Reconcile each complete baseline against only its owned contribution within
   one transaction. A public baseline must never clear private rows or endpoints;
   an endpoint baseline must not remove user contributions.
-- [ ] Apply baseline differences and deltas through Step G helpers, collecting
+- [x] Apply baseline differences and deltas through Step G helpers, collecting
   affected owner IDs before removing endpoint rows. Preserve unchanged profile
   versions and existing tombstones on identical reconnects or empty replays.
-- [ ] Preserve existing error reporting, cancellation and source retries. Extend
+- [x] Preserve existing error reporting, cancellation and source retries. Extend
   adapter readiness to mean all three initial baselines have committed once,
   without adding an application-wide barrier or blocking partial-profile reads.
-- [ ] Test malformed baselines without destructive omission; keep delta error
+- [x] Test malformed baselines without destructive omission; keep delta error
   policy explicit and observable. Use channel-coordinated listener tests for
   reordered initial baselines, reconnects, offline removals, replay, readiness,
   stream stop and worker exit. Verify that one stream's recovery cannot erase
@@ -666,6 +667,38 @@ No reflection is used. Staticcheck remains blocked by the known toolchain issue.
 
 **Check:** Independent streams converge without claiming a remote cross-source
 snapshot, and readers observe only complete local transactions.
+
+**Implemented (2026-10-23):** `Source.WatchPublicUsers` and its service forwarding
+method provide the third watch. The listener runs all three through the existing
+runner and converts documents directly to private/public/endpoint contributions,
+not legacy effective views. Missing fields and public null states now survive
+the complete Firestore-to-SQLite path. Existing fake sources and app readiness
+and persistence-failure stand-ins implement the extended contract.
+
+Adapter readiness closes only after all three initial baselines commit once;
+partial-profile reads and notification selectors continue to use committed local
+state while another stream is pending. Reconnects do not reset that readiness.
+Each source uses the Step G source-owned batch boundary, preserving other
+contributions and versioned tombstones. Malformed baselines report failure
+without signalling readiness or replacing data; malformed public deltas retain
+the prior contribution, log rejection and apply other valid changes.
+
+**Verified:** Full VS Code test run: 658 passed. Full repository race, vet and
+formatting checks passed. Channel-coordinated tests cover all six initial stream
+orders, partial push eligibility, raw field presence, all-three readiness,
+identical replay, private-stream reconnect/offline deletion, preserved public
+and endpoint state, deletion/recreation, orphan updates, stream stop and worker
+exit. Baseline rejection is tested for each source, with a separate public delta
+logging test. Existing app readiness and persistence-failure checks pass.
+
+The new three-stream Firestore emulator test passed against the running empty
+emulator, including in the full race run. It verifies complete private/public
+and endpoint baselines, ignored legacy `uid`, private missing fields, nullable
+public fields, same endpoint ID under different owner paths, ordered deltas,
+public deletion and populated/empty public baselines after reopening. Emulator
+tests now use isolated per-test projects rather than the shared application
+project. No production retry policy or runner interface was changed. No
+reflection is used; the staticcheck toolchain blocker remains explicit.
 
 ### Step I: Eligibility, Integration and Stage Gates
 
