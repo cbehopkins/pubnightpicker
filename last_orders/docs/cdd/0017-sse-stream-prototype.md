@@ -139,13 +139,23 @@ are coalescible wake-ups; the next snapshot represents the latest committed
 state. Authorisation invalidation and shutdown have distinct buffered signals
 and must not be dropped. A slow or disconnected client is removed when its
 request ends. Bound write duration so a blocked response cannot prevent the
-handler from observing cancellation or invalidation indefinitely.
+handler from observing cancellation or invalidation indefinitely. The handler
+sends and flushes an SSE comment heartbeat every 15 seconds by default; the
+interval is configurable per handler. Heartbeats carry no application event or
+view data and let the HTTP stack detect disconnected peers during otherwise
+quiet periods.
 
-The prototype must explicitly resolve interaction with the current app server's
-15-second `WriteTimeout` before production wiring. A fixed short response-write
-timeout is incompatible with an indefinitely open SSE response unless the
-stream uses an appropriate deadline strategy. Do not silently disable timeouts
-for every API route.
+The current app server has a 15-second `WriteTimeout`. The prototype keeps that
+server-wide setting for ordinary requests. At stream start, the handler clears
+the inherited deadline for this response only. Before each frame it sets a
+fresh write deadline, writes and flushes the frame, then clears the deadline
+again before it can expire. This is necessary because Go's
+`ResponseController.SetWriteDeadline` cannot revive an already-expired write
+deadline. The per-frame timeout bounds slow clients while allowing an idle
+stream to remain open between heartbeats. A response writer that does not
+support deadline control cannot serve a stream; the handler ends it rather than
+silently falling back to an unbounded write. This preserves the server timeout
+for every non-SSE route without requiring a separate HTTP server.
 
 ## 6. Prototype Validation
 
@@ -169,6 +179,8 @@ coordination; do not rely on sleeps or live Firestore. The prototype must test:
 - Request cancellation, hub shutdown and idempotent unregistration.
 - Concurrent notification, invalidation, shutdown and unregistration without
   blocking, send-on-closed-channel panics or leaked subscriptions.
+- Heartbeat comments are flushed without producing application events, and a
+  stalled heartbeat write ends within the configured write deadline.
 - Readiness rejection before registration and recovery once ready.
 - A slow/disconnected reader is bounded by the selected write-deadline policy
   and does not block other subscribers or hub publishers.
@@ -219,7 +231,7 @@ remain subject to the cursor design and tests.
 ## 9. Completion Criteria
 
 The prototype is ready to reuse when its race, lifecycle, privacy, readiness and
-slow-client tests pass; its API surface remains small; and the write-timeout and
-browser-auth transport questions are recorded with a concrete production
-integration decision. Cursor parsing and incremental resume are not required to
-complete this prototype.
+slow-client tests pass; its API surface remains small; and the per-frame
+write-timeout policy is recorded for production wiring. Browser-auth transport
+remains an endpoint integration decision. Cursor parsing and incremental
+resume are not required to complete this prototype.
