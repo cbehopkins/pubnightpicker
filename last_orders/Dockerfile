@@ -32,6 +32,6 @@ COPY --from=builder --chown=nonroot:nonroot /out/data /data
 
 VOLUME /data
 EXPOSE 8080
+ENV LAST_ORDERS_DB_PATH=/data/last-orders.db
 
 ENTRYPOINT [ "/usr/local/bin/last-orders" ]
-CMD [ "-db-path", "/data/last-orders.db" ]

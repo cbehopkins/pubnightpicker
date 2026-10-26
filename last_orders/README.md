@@ -72,6 +72,32 @@ Run the application:
 go run ./cmd/last-orders -db-path=./last-orders.db
 ```
 
+The default command runs the combined production composition. For component
+debugging, the same binary supports `landlord` and `handpump` subcommands:
+
+```powershell
+$env:LANDLORD_INTERNAL_TOKEN = [guid]::NewGuid().ToString("N")
+go run ./cmd/last-orders landlord -db-path=./landlord.db
+go run ./cmd/last-orders handpump -db-path=./handpump.db -landlord-url=$env:LANDLORD_INTERNAL_URL
+```
+
+Landlord owns the durable email database and serves its authenticated internal
+email-history query on its private listener. HandPump serves the public API and
+calls that query; it must use its own SQLite path and must not share Landlord's
+database file. Set `LANDLORD_INTERNAL_TOKEN` to the same high-entropy value on
+both components (at least 32 characters). In combined mode, the private endpoint
+is automatically bound to loopback and the token is generated for that process.
+
+For Scaleway Serverless Containers, attach Landlord and HandPump to the same
+Private Network and enable Landlord's private endpoint. Set HandPump's
+`LANDLORD_INTERNAL_URL` to the private endpoint shown in the Landlord container's
+`private_endpoint` field, for example
+`http://<landlord-container-id>.<private-network-id>.internal`. Disable Landlord's
+public endpoint; keep the existing public domain routed to HandPump. Configure
+Landlord's internal listener on the container's application port (default 8080).
+The current single-container Docker deployment continues to use the default
+combined command.
+
 The application always connects to Firestore. For local development set
 `FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`). For production
 leave `FIRESTORE_EMULATOR_HOST` unset. Credentials can be supplied in either of

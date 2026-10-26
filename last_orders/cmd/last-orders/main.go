@@ -19,13 +19,27 @@ import (
 )
 
 func main() {
+	dbPathDefault := os.Getenv("LAST_ORDERS_DB_PATH")
+	if dbPathDefault == "" {
+		dbPathDefault = "./last-orders.db"
+	}
+	component := "all"
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "all", "landlord", "handpump":
+			component = os.Args[1]
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		}
+	}
 	var (
-		dbPath               = flag.String("db-path", "./last-orders.db", "path to SQLite database")
+		dbPath               = flag.String("db-path", dbPathDefault, "path to SQLite database")
 		resetDB              = flag.Bool("reset-db", false, "delete the local SQLite database and sidecars before startup (destructive; requires exclusive access)")
 		runFor               = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
 		pollDelay            = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
 		reevaluateEvery      = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
 		httpAddr             = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
+		internalHTTPAddr     = flag.String("internal-http-addr", "", "private Landlord API listen address (Landlord mode; combined mode uses loopback automatically)")
+		landlordURL          = flag.String("landlord-url", os.Getenv("LANDLORD_INTERNAL_URL"), "Landlord private API base URL (HandPump mode; defaults to LANDLORD_INTERNAL_URL)")
 		allowAuthEmulator    = flag.Bool("allow-auth-emulator", false, "allow unsigned Firebase Auth tokens from a loopback emulator (development only)")
 		pushClient           = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
 		pollsSince           = flag.String("polls-since", "", "YYYY-MM-DD: ignore polls dated, and chat messages created, before this date; persisted in Firestore and may only move forward (empty uses the stored value)")
@@ -121,6 +135,7 @@ func main() {
 		logger.Info("local SQLite database reset complete", "db_path", *dbPath)
 	}
 	application, err := app.New(app.Config{
+		Component:               component,
 		DBPath:                  *dbPath,
 		PollDelay:               *pollDelay,
 		Logger:                  logger,
@@ -135,6 +150,9 @@ func main() {
 		EnableRealAuthDelete:    *enableRealAuthDelete,
 		AdminDeleteEvaluateOnce: *adminDeleteOnce,
 		HTTPAddr:                effectiveHTTPAddr,
+		InternalHTTPAddr:        *internalHTTPAddr,
+		LandlordInternalURL:     *landlordURL,
+		InternalAPIToken:        os.Getenv("LANDLORD_INTERNAL_TOKEN"),
 		AuthProjectID:           firebaseConfig.authProjectID,
 		AllowAuthEmulator:       *allowAuthEmulator,
 		AllowedAPIOrigins:       allowedAPIOrigins,
@@ -155,8 +173,12 @@ func main() {
 	defer application.Close()
 
 	logger.Info("last-orders starting", "db_path", *dbPath)
+	logger.Info("last-orders component selected", "component", component)
 	if addr := application.HTTPAddr(); addr != "" {
 		logger.Info("http endpoints listening", "addr", addr)
+	}
+	if addr := application.InternalHTTPAddr(); addr != "" {
+		logger.Info("Landlord internal API listening", "addr", addr)
 	}
 	if err := application.Run(ctx); err != nil {
 		fatalf("run app: %v", err)
