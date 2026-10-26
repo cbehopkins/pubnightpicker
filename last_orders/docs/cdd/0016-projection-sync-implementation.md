@@ -22,7 +22,9 @@ and allocate combined profile versions atomically. Their listener ingests raw
 private-user, public-user and endpoint contributions through three independent
 streams. Stage 5 has the execution checklist in section 6; final eligibility and
 integration verification remains in Step I.
-Cursors remain unimplemented.
+The CDD-0017 component prototype now implements opaque cursor encoding and
+sequence-aware stream handover. Projection-specific recovery reads and
+production cursor endpoint wiring remain unimplemented.
 
 The first implementation milestone is sequence-aware venue reconciliation
 (stages 2-4); its prerequisite resource decisions are agreed. It does not change
@@ -747,9 +749,10 @@ prototype decisions. The remaining production gates are:
 - Specify public/self/private API representations and authorization in
   OpenAPI. The combined internal identity does not expose private settings or
   endpoint credentials to public consumers.
-- Finalize the opaque cursor and recovery envelopes in OpenAPI, including
-  stream scope, database generation, sequence bounds, high-water marks,
-  pagination and full-refresh behavior.
+- Verify that the existing OpenAPI cursor and recovery definitions match the
+  finalized token claims, high-water handling, pagination boundary and
+  full-snapshot fallback; update the spec if the implementation contract
+  differs.
 - Integrate per-UID invalidation after permission or membership changes and
   authorization-scope invalidation after visibility changes, including
   anonymous streams. Each reconnect receives a complete, currently authorized

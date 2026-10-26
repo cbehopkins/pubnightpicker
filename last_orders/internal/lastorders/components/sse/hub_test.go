@@ -13,9 +13,9 @@ func TestHubRoutesChangesAndInvalidations(t *testing.T) {
 	public := hub.Register("group-a", "group-a", "")
 	t.Cleanup(hub.Shutdown)
 
-	hub.PublishChanged("group-a")
-	hub.PublishChanged("group-a")
-	if count(a.Changed()) != 1 || count(a2.Changed()) != 1 || count(b.Changed()) != 0 {
+	hub.PublishChanged("group-a", 1)
+	hub.PublishChanged("group-a", 2)
+	if a.TakeChanged() != 2 || a2.TakeChanged() != 2 || count(b.Changed()) != 0 {
 		t.Fatal("view changes were not routed and coalesced")
 	}
 	hub.InvalidateUID("user-a")
@@ -30,6 +30,23 @@ func TestHubRoutesChangesAndInvalidations(t *testing.T) {
 	if count(public.Invalidated()) != 1 || count(a.Invalidated()) != 1 || count(b.Invalidated()) != 0 {
 		t.Fatal("scope invalidation did not include anonymous streams or escaped its scope")
 	}
+}
+
+func TestSubscriptionDiscardsChangesCoveredBySnapshot(t *testing.T) {
+	hub := NewHub()
+	sub := hub.Register("view", "scope", "uid")
+	hub.PublishChanged("view", 4)
+	hub.PublishChanged("view", 6)
+	sub.DiscardChangesThrough(4)
+	if got := sub.TakeChanged(); got != 6 {
+		t.Fatalf("pending sequence=%d, want newer sequence 6", got)
+	}
+	hub.PublishChanged("view", 5)
+	sub.DiscardChangesThrough(6)
+	if got := sub.TakeChanged(); got != 0 {
+		t.Fatalf("covered pending sequence=%d, want none", got)
+	}
+	sub.Unregister()
 }
 
 func TestHubUnregisterAndShutdownAreIdempotent(t *testing.T) {
@@ -70,7 +87,7 @@ func TestHubConcurrentSignalsAndUnregistration(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 500 {
-				hub.PublishChanged("view")
+				hub.PublishChanged("view", int64(1))
 				hub.InvalidateUID("uid")
 				hub.InvalidateAllAuthenticated()
 				hub.InvalidateScope("scope")

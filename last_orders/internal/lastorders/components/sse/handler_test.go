@@ -22,11 +22,11 @@ func TestHandlerSendsInitialAndChangedFullViews(t *testing.T) {
 	handler := &Handler{
 		Hub: hub, Ready: ready, ViewKey: "group-a-current-meets", AuthorizationScope: "group-a",
 		UID: "user-a", EventName: "current_meets", Authorize: func(context.Context) (bool, int) { return true, 0 },
-		Snapshot: func(context.Context) (json.RawMessage, error) {
+		Snapshot: func(context.Context, CursorInput) (ViewSnapshot, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			version++
-			return json.RawMessage(`{"version":` + string(rune('0'+version)) + `}`), nil
+			return ViewSnapshot{Data: json.RawMessage(`{"version":` + string(rune('0'+version)) + `}`), Sequence: int64(version)}, nil
 		},
 	}
 	w := newStreamWriter()
@@ -41,8 +41,8 @@ func TestHandlerSendsInitialAndChangedFullViews(t *testing.T) {
 	if got := w.body(); !strings.Contains(got, "event: current_meets\ndata: {\"version\":1}\n\n") {
 		t.Fatalf("initial event missing: %q", got)
 	}
-	hub.PublishChanged("unrelated-view")
-	hub.PublishChanged("group-a-current-meets")
+	hub.PublishChanged("unrelated-view", 2)
+	hub.PublishChanged("group-a-current-meets", 2)
 	w.waitFlush(t)
 	if got := w.body(); strings.Count(got, "event: current_meets") != 2 || !strings.Contains(got, `data: {"version":2}`) {
 		t.Fatalf("changed full view missing or unrelated view woke handler: %q", got)
@@ -75,23 +75,79 @@ func TestHandlerSendsFlushedHeartbeatComments(t *testing.T) {
 	waitDone(t, done)
 }
 
+func TestHandlerWritesSnapshotCursorAsSSEID(t *testing.T) {
+	hub := NewHub()
+	handler := testHandler(hub, closedSignal())
+	handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
+		return ViewSnapshot{
+			Data:   json.RawMessage(`{"cursor":"signed-token","meets":[]}`),
+			Cursor: "signed-token", Sequence: 12,
+		}, nil
+	}
+	w := newStreamWriter()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx))
+	}()
+	w.waitFlush(t)
+	cancel()
+	waitDone(t, done)
+	if got := w.body(); !strings.Contains(got, "id: signed-token\nevent: view\n") || !strings.Contains(got, `data: {"cursor":"signed-token","meets":[]}`) {
+		t.Fatalf("cursor ID and snapshot payload do not match: %q", got)
+	}
+}
+
+func TestHandlerPassesReconnectCursorToSnapshotAdapter(t *testing.T) {
+	hub := NewHub()
+	handler := testHandler(hub, closedSignal())
+	var gotInput CursorInput
+	handler.Snapshot = func(_ context.Context, input CursorInput) (ViewSnapshot, error) {
+		gotInput = input
+		return ViewSnapshot{
+			Data:   json.RawMessage(`{"cursor":"fresh-token","meets":[{"id":"meet-1"}]}`),
+			Cursor: "fresh-token", Sequence: 7,
+		}, nil
+	}
+	r := httptest.NewRequest(http.MethodGet, "/stream?after=query-token", nil)
+	r.Header.Set("Last-Event-ID", "last-event-token")
+	w := newStreamWriter()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	}()
+	w.waitFlush(t)
+	cancel()
+	waitDone(t, done)
+	if gotInput != (CursorInput{Value: "last-event-token", Supplied: true}) {
+		t.Fatalf("snapshot received cursor input %+v", gotInput)
+	}
+	if got := w.body(); !strings.Contains(got, "id: fresh-token\nevent: view\n") || !strings.Contains(got, `"meets":[{"id":"meet-1"}]`) {
+		t.Fatalf("handler did not return a fresh full snapshot: %q", got)
+	}
+}
+
 func TestHandlerCoalescesChangesAndDeliversNewestSnapshot(t *testing.T) {
 	hub := NewHub()
 	var mu sync.Mutex
-	version, reads := 1, 0
+	version, reads, sequence := 1, 0, int64(1)
 	readEntered, releaseRead := make(chan struct{}), make(chan struct{})
 	handler := testHandler(hub, closedSignal())
-	handler.Snapshot = func(context.Context) (json.RawMessage, error) {
+	handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
 		mu.Lock()
 		reads++
 		read := reads
 		current := version
+		currentSequence := sequence
 		mu.Unlock()
 		if read == 2 {
 			close(readEntered)
 			<-releaseRead
 		}
-		return json.RawMessage(`{"version":` + string(rune('0'+current)) + `}`), nil
+		return ViewSnapshot{Data: json.RawMessage(`{"version":` + string(rune('0'+current)) + `}`), Sequence: currentSequence}, nil
 	}
 	w := newStreamWriter()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,8 +160,9 @@ func TestHandlerCoalescesChangesAndDeliversNewestSnapshot(t *testing.T) {
 	w.waitFlush(t)
 	mu.Lock()
 	version = 2
+	sequence = 2
 	mu.Unlock()
-	hub.PublishChanged("view")
+	hub.PublishChanged("view", 2)
 	select {
 	case <-readEntered:
 	case <-time.After(2 * time.Second):
@@ -113,9 +170,10 @@ func TestHandlerCoalescesChangesAndDeliversNewestSnapshot(t *testing.T) {
 	}
 	mu.Lock()
 	version = 8
+	sequence = 22
 	mu.Unlock()
-	for range 20 {
-		hub.PublishChanged("view")
+	for changeSequence := int64(3); changeSequence <= 22; changeSequence++ {
+		hub.PublishChanged("view", changeSequence)
 	}
 	close(releaseRead)
 	w.waitFlush(t)
@@ -141,9 +199,9 @@ func TestHandlerPrioritizesInvalidationAfterRegistrationAndSnapshot(t *testing.T
 			hub.InvalidateUID("user-a")
 			return true, 0
 		}
-		handler.Snapshot = func(context.Context) (json.RawMessage, error) {
+		handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
 			snapshotCalled = true
-			return json.RawMessage(`{"private":true}`), nil
+			return ViewSnapshot{Data: json.RawMessage(`{"private":true}`), Sequence: 1}, nil
 		}
 		w := newStreamWriter()
 		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -157,10 +215,10 @@ func TestHandlerPrioritizesInvalidationAfterRegistrationAndSnapshot(t *testing.T
 		ready := closedSignal()
 		readEntered, releaseRead := make(chan struct{}), make(chan struct{})
 		handler := testHandler(hub, ready)
-		handler.Snapshot = func(context.Context) (json.RawMessage, error) {
+		handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
 			close(readEntered)
 			<-releaseRead
-			return json.RawMessage(`{"private":true}`), nil
+			return ViewSnapshot{Data: json.RawMessage(`{"private":true}`), Sequence: 1}, nil
 		}
 		w := newStreamWriter()
 		done := make(chan struct{})
@@ -207,8 +265,8 @@ func TestAnonymousViewStreamsOnlyAdapterSuppliedAggregate(t *testing.T) {
 	hub := NewHub()
 	handler := testHandler(hub, closedSignal())
 	handler.UID = ""
-	handler.Snapshot = func(context.Context) (json.RawMessage, error) {
-		return json.RawMessage(`{"attendee_count":3}`), nil
+	handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
+		return ViewSnapshot{Data: json.RawMessage(`{"attendee_count":3}`)}, nil
 	}
 	w := newStreamWriter()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -290,6 +348,11 @@ func TestHandlerBoundsAStalledHeartbeat(t *testing.T) {
 func TestHandlerAllowsInflightWriteThenResetsAtNextBoundary(t *testing.T) {
 	hub := NewHub()
 	handler := testHandler(hub, closedSignal())
+	var snapshotSequence int64
+	handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
+		snapshotSequence++
+		return ViewSnapshot{Data: json.RawMessage(`{"ok":true}`), Sequence: snapshotSequence}, nil
+	}
 	w := newStreamWriter()
 	done := make(chan struct{})
 	go func() {
@@ -298,7 +361,7 @@ func TestHandlerAllowsInflightWriteThenResetsAtNextBoundary(t *testing.T) {
 	}()
 	w.waitFlush(t)
 	w.blockNextWrite()
-	hub.PublishChanged("view")
+	hub.PublishChanged("view", 2)
 	select {
 	case <-w.writeEntered:
 	case <-time.After(2 * time.Second):
@@ -319,7 +382,9 @@ func testHandler(hub *Hub, ready <-chan struct{}) *Handler {
 	return &Handler{
 		Hub: hub, Ready: ready, ViewKey: "view", AuthorizationScope: "group-a", UID: "user-a", EventName: "view",
 		Authorize: func(context.Context) (bool, int) { return true, 0 },
-		Snapshot:  func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"ok":true}`), nil },
+		Snapshot: func(context.Context, CursorInput) (ViewSnapshot, error) {
+			return ViewSnapshot{Data: json.RawMessage(`{"ok":true}`)}, nil
+		},
 	}
 }
 

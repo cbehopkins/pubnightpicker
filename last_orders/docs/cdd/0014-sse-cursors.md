@@ -235,13 +235,14 @@ data or push credentials.
 	and its cursor come from the same SQLite read transaction. Register the
 	subscriber before reading; notifications at or below the snapshot
 	high-water mark are covered by the snapshot, and later ones are delivered.
-- Proposed cursor: a versioned HMAC-authenticated opaque token scoped to stream
-	contract, resource ID, database generation and global sequence. Current-Meets
-	cursors also bind to the `Europe/London` calendar date. Keep the signing key
-	stable across restarts. V1 has no expiry while tombstones remain indefinite.
-	Invalid, tampered, future, wrong-scope, wrong-generation or date-mismatched
-	cursors return a complete current view. Key rotation likewise causes a full
-	view.
+- Use a versioned HMAC-SHA256 opaque token scoped to stream contract, resource
+  ID, database generation and global sequence. Current-Meets cursors also bind
+  to the `Europe/London` calendar date. Use the separate
+  `LAST_ORDERS_CURSOR_HMAC_KEY` runtime secret, containing at least 32 random
+  bytes encoded as unpadded base64url, and keep it stable across restarts. V1
+  has no expiry while tombstones remain indefinite. Invalid, tampered, future,
+  wrong-scope, wrong-generation or date-mismatched cursors return a complete
+  current view. Key rotation likewise causes a full view.
 - `Last-Event-ID` takes precedence over `after`; past-Meet pagination cursors
 	are separate. Bound each subscriber's buffer and close the stream on overflow.
 - Do not accept SSE until local projection startup readiness checks complete;

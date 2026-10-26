@@ -20,14 +20,16 @@ type Hub struct {
 // Its channels are intentionally never closed; Hub owns registration and
 // signals them while holding its lock.
 type Subscription struct {
-	id      uint64
-	hub     *Hub
-	viewKey string
-	scope   string
-	uid     string
-	changed chan struct{}
-	reset   chan struct{}
-	removed bool
+	id              uint64
+	hub             *Hub
+	viewKey         string
+	scope           string
+	uid             string
+	changed         chan struct{}
+	reset           chan struct{}
+	changeMu        sync.Mutex
+	pendingSequence int64
+	removed         bool
 }
 
 func NewHub() *Hub {
@@ -69,14 +71,49 @@ func (s *Subscription) Unregister() {
 	delete(h.streams, s.id)
 }
 
-func (h *Hub) PublishChanged(viewKey string) {
+func (h *Hub) PublishChanged(viewKey string, sequence int64) {
+	if sequence <= 0 {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.streams {
 		if s.viewKey == viewKey {
-			signal(s.changed)
+			s.recordChange(sequence)
 		}
 	}
+}
+
+// TakeChanged returns the greatest pending sequence and clears its wake-up.
+func (s *Subscription) TakeChanged() int64 {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	sequence := s.pendingSequence
+	s.pendingSequence = 0
+	drain(s.changed)
+	return sequence
+}
+
+// DiscardChangesThrough removes notifications already represented by a
+// snapshot. Newer notifications remain buffered and signalled.
+func (s *Subscription) DiscardChangesThrough(sequence int64) {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	if s.pendingSequence <= sequence {
+		s.pendingSequence = 0
+		drain(s.changed)
+		return
+	}
+	signal(s.changed)
+}
+
+func (s *Subscription) recordChange(sequence int64) {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	if sequence > s.pendingSequence {
+		s.pendingSequence = sequence
+	}
+	signal(s.changed)
 }
 
 func (h *Hub) InvalidateUID(uid string) {
@@ -138,6 +175,13 @@ func (h *Hub) SubscriberCount() int {
 func signal(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func drain(ch chan struct{}) {
+	select {
+	case <-ch:
 	default:
 	}
 }

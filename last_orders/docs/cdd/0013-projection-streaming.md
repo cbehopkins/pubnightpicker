@@ -108,8 +108,10 @@ versions are implemented. Snapshot handover, complete-view event semantics,
 startup gating, single-instance V1 deployment and bounded-client behaviour are
 decided. Future instances are expected to own independent listeners,
 projections and stream hubs, but cross-instance convergence is not guaranteed
-in V1. Cursor encoding remains a proposal. Permission invalidation is a
-per-UID in-memory signal; visibility invalidation is scoped to the affected
+in V1. The opaque cursor codec and sequence-aware handover are implemented in
+the CDD-0017 component prototype; production snapshot adapters and endpoint
+recovery reads remain to be implemented. Permission invalidation is a per-UID
+in-memory signal; visibility invalidation is scoped to the affected
 view boundary, including anonymous streams. No durable marker is required
 because every reconnect receives a complete snapshot.
 
@@ -149,13 +151,13 @@ because every reconnect receives a complete snapshot.
 
 ### V1 Decision Status (2026-10-23)
 
-- **Cursor proposal:** Use a versioned, HMAC-authenticated opaque token scoped
+- **Cursor:** Use the versioned HMAC-SHA256 token and separate stable runtime
+  secret specified in [CDD-0017](0017-sse-stream-prototype.md#v1-slice-opaque-cursors-on-full-snapshots), scoped
   to stream contract, resource ID, database generation and global sequence.
-  Current-Meets tokens also include the `Europe/London` calendar date. The
-  signing key must remain stable across restarts. V1 has no cursor expiry while
-  tombstones are retained indefinitely. Malformed, tampered, future,
-  wrong-scope, wrong-generation or wrong-date cursors return a full view.
-  Signing-key rotation also results in full views.
+  Current-Meets tokens also include the `Europe/London` calendar date. V1 has
+  no cursor expiry while tombstones are retained indefinitely. Malformed,
+  tampered, future, wrong-scope, wrong-generation or wrong-date cursors return
+  a full view. Signing-key rotation also results in full views.
 - **Handover:** Register the subscriber before reading the snapshot. Read the
   view and high-water mark in one SQLite read transaction, send that view and
   cursor, discard buffered notifications at or below the high-water mark, then

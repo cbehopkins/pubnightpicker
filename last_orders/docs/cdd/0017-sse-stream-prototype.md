@@ -1,7 +1,7 @@
 # CDD: Reusable SSE Stream Prototype
 
-**Status:** Proposed for implementation
-**Date:** 2026-10-23
+**Status:** Lifecycle and cursor component prototypes implemented; endpoint integration pending
+**Date:** 2026-10-26
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
 [Projection Synchronisation Implementation Plan](0016-projection-sync-implementation.md);
@@ -192,23 +192,76 @@ another. No production test hooks or reflection are introduced.
 
 ## 7. Cursor Follow-up
 
-After the lifecycle prototype is accepted, add opaque cursor support in a
-separate slice:
+**Implementation status:** The component now provides the cursor codec,
+request-cursor precedence helper, sequence-aware hub handover, and SSE event-ID
+framing. Production snapshot adapters, runtime secret loading, GET snapshots,
+and SSE endpoint integration remain pending.
 
-- Emit a cursor corresponding to each full snapshot and use it as the SSE event
-  ID. Preserve V1's full snapshot on every new connection, even when a cursor is
-  supplied.
-- Keep stream contract, view scope, database generation and global sequence
-  behind the opaque cursor contract. Do not expose SQLite implementation
-  details.
-- Incremental resume is a later extension. It requires validating the cursor's
-  per-UID authorisation epoch before returning any deltas. Advance that durable
-  epoch atomically with the local authorisation projection, retain it across
-  user deletion, and force a full snapshot on mismatch. The in-memory hub still
-  closes already-open streams.
+After the lifecycle prototype is accepted, add the V1 opaque-cursor slice
+described below. This slice adds cursor production and validation to full
+snapshots; it does not add incremental delta replay. Every connection continues
+to return a complete, currently authorised view, including when the supplied
+cursor is valid. This matches the existing stream and snapshot definitions in
+`docs/pubnightpicker-openapi-v1.yaml`.
 
-The prototype does not decide the cursor encoding or signing-key format; those
-remain subject to the cursor design and tests.
+Each snapshot adapter returns its serialized view and cursor as one result. It
+reads the view and the shared sync state (`generation`, global `sequence`) in
+the same SQLite read transaction. The SSE handler writes that cursor both as
+the event `id` and in the JSON `cursor` field. A reset event has no ID. The
+initial subscription-before-snapshot ordering remains in place. View-change
+notifications carry committed sequence numbers and coalesce to the highest
+pending sequence. After the initial snapshot, discard buffered notifications at
+or below its high-water mark; deliver later ones. After a live snapshot, ignore
+notifications at or below the last-sent high-water mark. This preserves the
+snapshot-to-live boundary without redundant pre-boundary snapshots.
+
+The V1 cursor is a versioned HMAC-SHA256 token. Its payload contains the stream
+contract, resource scope, SQLite database generation and global sequence.
+Current-Meets cursors also contain the `Europe/London` calendar date. The
+token format is `v1.<base64url-payload>.<base64url-mac>`; the MAC covers a
+cursor-specific domain separator and the encoded payload. The token is opaque
+as an API contract and is not confidential; clients must store and return it
+without interpreting its contents. It is not an authorization credential.
+
+Use a separate runtime secret named `LAST_ORDERS_CURSOR_HMAC_KEY`, encoded as
+unpadded base64url for at least 32 random bytes. Load it from the deployment's
+secret configuration, keep it stable across restarts, and never log it. Cursor-enabled
+endpoints must fail startup if the secret is absent or malformed. V1 uses one
+active key; rotating it intentionally invalidates older cursors, which then
+recover by returning a full current view. Test code injects a fixed key rather
+than relying on environment state.
+
+On connection, `Last-Event-ID` takes precedence over the `after` query value.
+Validate a supplied cursor's MAC, version, stream contract, resource scope,
+database generation, non-negative sequence bound, current high-water bound,
+and (for Current-Meets) London date. A malformed, tampered, future,
+wrong-scope, wrong-generation, wrong-date or old-key cursor is not an HTTP
+error: return a complete current snapshot and a newly issued cursor. The cursor
+does not skip the initial snapshot in V1. No cursor expiry is needed while
+tombstones are retained indefinitely.
+
+The endpoint adapter owns resource-specific snapshot queries and authorization,
+and obtains the snapshot's committed generation and sequence from the same
+SQLite transaction. The cursor codec owns token encoding and validation; the
+generic handler owns SSE framing and event IDs. For example, the Current-Meets
+stream is scoped to a Group and the attendance stream to a Meet. Current
+authorization is checked on every connection; the in-memory hub continues to
+reset already-open streams after authorization changes.
+
+Cursor component tests cover encoding/decoding, tampering, unsupported
+versions, scope/resource mismatch, generation/date mismatch, negative/future
+sequences, key rotation, `Last-Event-ID` precedence and cursor equality between
+the JSON snapshot and SSE ID. Endpoint integration tests must also prove that
+valid and invalid reconnect cursors both receive full snapshots with a fresh
+cursor. A concurrent projection update test verifies that each cursor
+identifies the same SQLite snapshot as its data.
+
+Incremental resume is a later slice. Before returning deltas, it requires a
+durable per-UID authorization epoch advanced atomically with the local
+authorization projection and bound into each cursor. Retain that epoch across
+user deletion and never reset or reuse it within a database generation. An
+epoch mismatch forces a full snapshot; the in-memory hub still closes
+already-open streams.
 
 ## 8. Integration Checks Before Production Use
 
@@ -233,5 +286,6 @@ remain subject to the cursor design and tests.
 The prototype is ready to reuse when its race, lifecycle, privacy, readiness and
 slow-client tests pass; its API surface remains small; and the per-frame
 write-timeout policy is recorded for production wiring. Browser-auth transport
-remains an endpoint integration decision. Cursor parsing and incremental
-resume are not required to complete this prototype.
+remains an endpoint integration decision. Cursor codec tests are part of the
+component prototype; production recovery reads and incremental resume remain
+separate follow-up work.

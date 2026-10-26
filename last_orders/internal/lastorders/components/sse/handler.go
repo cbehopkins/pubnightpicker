@@ -28,7 +28,22 @@ type Handler struct {
 	// then a fresh deadline is applied and cleared around each frame.
 	WriteTimeout time.Duration
 	Authorize    func(context.Context) (allowed bool, deniedStatus int)
-	Snapshot     func(context.Context) (json.RawMessage, error)
+	Snapshot     func(context.Context, CursorInput) (ViewSnapshot, error)
+}
+
+// ViewSnapshot is one consistent replacement and its synchronization cursor.
+// Cursor must also appear in Data when the endpoint contract includes it.
+type ViewSnapshot struct {
+	Data     json.RawMessage
+	Cursor   string
+	Sequence int64
+}
+
+// CursorInput is the reconnect cursor supplied by the client, if any. The
+// initial snapshot adapter validates it but still returns a full view in V1.
+type CursorInput struct {
+	Value    string
+	Supplied bool
 }
 
 const DefaultHeartbeatInterval = 15 * time.Second
@@ -70,12 +85,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeReset(w)
 		return
 	}
-	initial, err := h.Snapshot(r.Context())
+	cursor, supplied := RequestCursor(r)
+	initial, err := h.Snapshot(r.Context(), CursorInput{Value: cursor, Supplied: supplied})
 	if err != nil {
 		http.Error(w, "view is unavailable", http.StatusInternalServerError)
 		return
 	}
-	if !json.Valid(initial) {
+	if !validSnapshot(initial) {
 		http.Error(w, "view is unavailable", http.StatusInternalServerError)
 		return
 	}
@@ -86,13 +102,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeReset(w)
 		return
 	}
+	sub.DiscardChangesThrough(initial.Sequence)
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	if !h.writeEvent(w, h.EventName, initial) {
+	if !h.writeEvent(w, h.EventName, initial.Data, initial.Cursor) {
 		return
 	}
+	lastSequence := initial.Sequence
 	ticker := time.NewTicker(h.heartbeatInterval())
 	defer ticker.Stop()
 
@@ -117,6 +135,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-sub.Changed():
+			changedThrough := sub.TakeChanged()
+			if changedThrough <= lastSequence {
+				continue
+			}
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
@@ -124,17 +146,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !h.authorized(r.Context(), w) {
 				return
 			}
-			view, err := h.Snapshot(r.Context())
-			if err != nil || !json.Valid(view) {
+			view, err := h.Snapshot(r.Context(), CursorInput{})
+			if err != nil || !validSnapshot(view) || view.Sequence < changedThrough {
 				return
 			}
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
 			}
-			if !h.writeEvent(w, h.EventName, view) {
+			if view.Sequence <= lastSequence {
+				sub.DiscardChangesThrough(view.Sequence)
+				continue
+			}
+			sub.DiscardChangesThrough(view.Sequence)
+			if !h.writeEvent(w, h.EventName, view.Data, view.Cursor) {
 				return
 			}
+			lastSequence = view.Sequence
 		}
 	}
 }
@@ -194,15 +222,19 @@ func (h *Handler) writeReset(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	_ = h.writeEvent(w, "view_reset", json.RawMessage(`{}`))
+	_ = h.writeEvent(w, "view_reset", json.RawMessage(`{}`), "")
 }
 
-func (h *Handler) writeEvent(w http.ResponseWriter, name string, data json.RawMessage) bool {
+func (h *Handler) writeEvent(w http.ResponseWriter, name string, data json.RawMessage, cursor string) bool {
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, data); err != nil {
+	if err := json.Compact(&compact, data); err != nil || strings.ContainsAny(cursor, "\x00\r\n") {
 		return false
 	}
-	return h.writeFrame(w, fmt.Sprintf("event: %s\ndata: %s\n\n", name, compact.Bytes()))
+	id := ""
+	if cursor != "" {
+		id = "id: " + cursor + "\n"
+	}
+	return h.writeFrame(w, fmt.Sprintf("%sevent: %s\ndata: %s\n\n", id, name, compact.Bytes()))
 }
 
 func (h *Handler) writeHeartbeat(w http.ResponseWriter) bool {
@@ -223,6 +255,10 @@ func (h *Handler) writeFrame(w http.ResponseWriter, frame string) bool {
 	// Clear before the deadline expires so the next frame can install a new
 	// bound. Go's HTTP ResponseController cannot revive an expired deadline.
 	return controller.SetWriteDeadline(time.Time{}) == nil
+}
+
+func validSnapshot(snapshot ViewSnapshot) bool {
+	return snapshot.Sequence >= 0 && json.Valid(snapshot.Data) && !strings.ContainsAny(snapshot.Cursor, "\x00\r\n")
 }
 
 func (h *Handler) clearWriteDeadline(w http.ResponseWriter) bool {
