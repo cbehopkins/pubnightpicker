@@ -93,7 +93,8 @@ class TestBootstrappedUserFirestoreDocs:
             firestore_client.collection("users").document("smoke-admin").get().to_dict()
         )
         assert doc is not None
-        assert doc["uid"] == "smoke-admin"
+        assert "uid" not in doc
+        assert "name" not in doc
         assert doc["webPushEnabled"] is False
         # Required notification fields
         assert "notificationEmailEnabled" in doc
@@ -108,8 +109,8 @@ class TestBootstrappedUserFirestoreDocs:
             .to_dict()
         )
         assert doc is not None
-        assert doc["uid"] == "smoke-admin"
-        assert "name" in doc
+        assert "uid" not in doc
+        assert doc["name"] == "Smoke Admin"
 
     def test_create_admin_grants_admin_role(self, firestore_client):
         seed_smoke_data(firestore_client)

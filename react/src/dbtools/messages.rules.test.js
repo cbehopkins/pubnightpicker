@@ -11,7 +11,7 @@ import { DELETED_USER_MESSAGE, DELETED_USER_NAME, DELETED_USER_UID } from "./use
 
 vi.mock("../firebase", () => ({ db: {} }));
 
-const PROJECT_ID = "pubnightpicker-messages-rules";
+const PROJECT_ID = "demo-pubnightpicker-messages-rules";
 const baseTimestamp = new Date("2026-05-07T12:00:00.000Z");
 
 let testEnv;
@@ -46,7 +46,7 @@ beforeAll(async () => {
         projectId: PROJECT_ID,
         firestore: {
             host: "127.0.0.1",
-            port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "8080"),
+            port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "9080"),
             rules,
         },
     });

@@ -8,7 +8,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 
-const PROJECT_ID = "pubnightpicker-push-rules";
+const PROJECT_ID = "demo-pubnightpicker-push-rules";
 const baseTimestamp = new Date("2026-04-16T12:00:00.000Z");
 
 let testEnv;
@@ -35,7 +35,7 @@ beforeAll(async () => {
         projectId: PROJECT_ID,
         firestore: {
             host: "127.0.0.1",
-            port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "8080"),
+            port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "9080"),
             rules,
         },
     });

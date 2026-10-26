@@ -36,7 +36,6 @@ export default defineConfig({
   test: {
     globals: true,
     setupFiles: ["./src/test-setup/vitest-setup.js"],
-    globalSetup: "./src/test-setup/emulatorGlobalSetup.js",
   },
   server: {
     port: 3000,

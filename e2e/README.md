@@ -1,6 +1,7 @@
 # E2E Test Suite
 
-End-to-end tests for PubNightPicker chat push notification flow.
+End-to-end tests for PubNightPicker. This folder contains both the notifier
+integration flow and browser journeys written in Gherkin.
 
 ## Architecture
 
@@ -15,21 +16,30 @@ The E2E test harness uses a mixed approach:
    - Asserts on either Firestore side effects (`chat_push_actions`) or notifier logs
 3. **E2E Runner** (`run_e2e_tests.py`) — Manages emulator lifecycle and test execution
 
+The browser journey uses Cucumber.js and Playwright. Its runner starts fresh
+Auth and Firestore emulators, creates an admin using the Python bootstrap CLI,
+starts the React dev server, then executes the feature. It does not start or
+call either application backend.
+
 ## Setup
 
 ### Prerequisites
 
-- Node.js 18+ with npm
+- Node.js 20+ with npm (required by the Cucumber/Playwright browser journey)
 - Python 3.12+ with Poetry
 - Firebase CLI (`npm install -g firebase-tools`)
-- Emulators running on ports 8180 (Firestore) and 9199 (Auth)
+- The existing notifier flow uses emulators on ports 8180 (Firestore) and 9199 (Auth).
+  The browser journey starts its own emulators on 8080 and 9099 and requires those
+  ports to be free.
+- For the browser journey: the React dependencies installed. Installing the E2E
+  npm dependencies also installs the matching Playwright Chromium browser.
 
 ### Installation
 
 ```bash
 # Install Node dependencies
 cd e2e
-npm install
+npm ci
 cd ..
 
 # Install Python dependencies (via poetry in firebase_sub)
@@ -56,6 +66,33 @@ poetry run python e2e/run_e2e_tests.py
 ./run-tests.ps1 -Integration      # Integration tests only (default)
 ./run-tests.ps1 -Unit             # Unit tests only
 ```
+
+### Admin browser journey
+
+From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
+
+```bash
+npm run test:journey
+```
+
+The `postinstall` hook installs the browser required by the local Playwright
+version. If npm lifecycle scripts were disabled or the browser cache was removed,
+run `npm run install:browsers` from `e2e/`. The root dependency updater runs this
+step explicitly after E2E npm updates, even though it disables other lifecycle
+scripts.
+
+The journey uses a fresh, empty emulator database (no import) with project ID
+`demo-pubnightpicker-journey`. It creates `journey-admin@test.local` with the
+bootstrap CLI and an E2E-only password, opens the homepage, signs in, and checks
+that the administrator can reach My Preferences. Firestore and Auth use the
+ports already configured by the React app (8080 and 9099), plus Firebase's hub
+port (4400) and Firestore websocket port (9150); the run fails if those ports
+are occupied rather than reusing or terminating another process. On Windows,
+the runner interrupts the Firebase CLI
+process group in cleanup and checks the reserved emulator ports for leftover
+Java/Node emulator processes, including when the scenario fails.
+The only Python application code it invokes is
+`firebase_sub/cli/bootstrap.py`; neither backend is started.
 
 ## Test Flow
 
@@ -153,8 +190,9 @@ The consolidated runner (`run-tests.ps1`) makes it easy to integrate all test su
 
 ### Emulator fails to start
 - Check if ports 8180 and 9199 are already in use
-- Try `firebase emulators:stop` then restart
-- On Windows, may need to force-kill lingering Java/Node processes
+- Stop an emulator session from the terminal that started it with Ctrl+C.
+- The admin browser journey owns its emulator process group and cleans up its
+  reserved ports when it exits, including after a failed scenario.
 
 ### Frontend client: "User not found"
 - Verify smoke users were seeded: check `users/{uid}` in Firestore

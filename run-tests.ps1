@@ -3,9 +3,11 @@
 # Consolidated test runner for PubNightPicker
 # 
 # Usage:
-#   ./run-tests.ps1 -Integration                      # Run integration tests (default)
+#   ./run-tests.ps1                                   # Run integration and Go tests (default)
+#   ./run-tests.ps1 -Integration                      # Run integration tests
 #   ./run-tests.ps1 -Unit                             # Run Python unit tests
 #   ./run-tests.ps1 -Node                             # Run Node/React unit tests (vitest)
+#   ./run-tests.ps1 -Go                               # Run tests in all Go modules
 #   ./run-tests.ps1 -E2E                              # Run E2E tests
 #   ./run-tests.ps1 -Tox                              # Run tox (full test suite + linting)
 #   ./run-tests.ps1 -Black                            # Run black linting only
@@ -21,6 +23,7 @@ param(
     [switch]$Integration,
     [switch]$E2E,
     [switch]$Node,
+    [switch]$Go,
     [switch]$Tox,
     [switch]$Black,
     [switch]$Typecheck,
@@ -38,10 +41,11 @@ $WorkspaceRoot = $PSScriptRoot
 $FirebaseSubDir = Join-Path $WorkspaceRoot "firebase_sub"
 $E2EDir = Join-Path $WorkspaceRoot "e2e"
 $ReactDir = Join-Path $WorkspaceRoot "react"
+$GoModules = @("cellar", "durable_email", "email_clients", "last_orders")
 
-# Default to Integration if no suite specified
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $All) {
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $All) {
     $Integration = $true
+    $Go = $true
 }
 
 # If All is specified, run all suites
@@ -50,6 +54,7 @@ if ($All) {
     $Integration = $true
     $E2E = $true
     $Node = $true
+    $Go = $true
     $Tox = $true
     $Black = $true
     $Typecheck = $true
@@ -57,6 +62,37 @@ if ($All) {
 }
 
 $FailedSuites = @()
+
+if ($Go) {
+    foreach ($module in $GoModules) {
+        Write-Host "`n=== Running Go Tests ($module) ===" -ForegroundColor Cyan
+
+        Push-Location (Join-Path $WorkspaceRoot $module)
+        try {
+            $cmd = @("go", "test", "./...")
+            if ($VerboseOutput) {
+                $cmd += "-v"
+            }
+
+            Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
+            & $cmd[0] $cmd[1..($cmd.Length-1)]
+
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "Go Tests ($module)"
+                Write-Host "[FAILED] Go tests ($module) FAILED" -ForegroundColor Red
+            } else {
+                Write-Host "[OK] Go tests ($module) PASSED" -ForegroundColor Green
+            }
+        }
+        catch {
+            $FailedSuites += "Go Tests ($module)"
+            Write-Host "[FAILED] Go tests ($module): $_" -ForegroundColor Red
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
 
 # ======================
 # Unit Tests
@@ -84,6 +120,7 @@ if ($Unit) {
     finally {
         Pop-Location
     }
+
 }
 
 # ======================
@@ -129,7 +166,7 @@ if ($E2E) {
         # Install dependencies if not already installed
         if (-not (Test-Path (Join-Path $E2EDir "node_modules"))) {
             Write-Host "[Runner] Installing npm dependencies..."
-            & npm install
+            & npm ci
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "[Runner] npm install failed" -ForegroundColor Red
                 $FailedSuites += "E2E Tests (npm install)"
@@ -157,6 +194,23 @@ if ($E2E) {
             Write-Host "[FAILED] E2E tests FAILED" -ForegroundColor Red
         } else {
             Write-Host "[OK] E2E tests PASSED" -ForegroundColor Green
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    # Run the isolated React user journey against fresh Auth/Firestore emulators.
+    Push-Location $E2EDir
+    try {
+        Write-Host "[Runner] Starting Gherkin admin preferences journey..." -ForegroundColor Gray
+        & python run_gherkin_e2e.py
+
+        if ($LASTEXITCODE -ne 0) {
+            $FailedSuites += "Gherkin Admin Preferences Journey"
+            Write-Host "[FAILED] Gherkin admin preferences journey FAILED" -ForegroundColor Red
+        } else {
+            Write-Host "[OK] Gherkin admin preferences journey PASSED" -ForegroundColor Green
         }
     }
     finally {

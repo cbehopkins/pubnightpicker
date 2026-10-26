@@ -36,8 +36,8 @@ class TestSeedSmokeIntegration:
             .to_dict()
         )
         assert doc is not None
-        assert doc["uid"] == SMOKE_ADMIN_UID
-        assert doc["name"] == "Smoke Admin"
+        assert "uid" not in doc
+        assert "name" not in doc
         assert doc["webPushEnabled"] is False
         assert doc["pushPreferences"]["globalChat"] is False
 
@@ -50,7 +50,8 @@ class TestSeedSmokeIntegration:
             .to_dict()
         )
         assert doc is not None
-        assert doc["uid"] == SMOKE_ADMIN_UID
+        assert "uid" not in doc
+        assert doc["name"] == "Smoke Admin"
 
     def test_smoke_admin_roles(self, firestore_client):
         seed_smoke_data(firestore_client)

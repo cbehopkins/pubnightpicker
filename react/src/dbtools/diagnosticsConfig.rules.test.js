@@ -8,8 +8,8 @@ let testEnv;
 beforeAll(async () => {
     const rules = await readFile(new URL("../../firestore.rules", import.meta.url), "utf8");
     testEnv = await initializeTestEnvironment({
-        projectId: "pubnightpicker-diagnostics-config-rules",
-        firestore: { host: "127.0.0.1", port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "8080"), rules },
+        projectId: "demo-pubnightpicker-diagnostics-config-rules",
+        firestore: { host: "127.0.0.1", port: parseInt(process.env.VITEST_FIRESTORE_PORT ?? "9080"), rules },
     });
 });
 

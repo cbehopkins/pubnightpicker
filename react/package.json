@@ -30,7 +30,12 @@
     "prebuild": "npm run generate:icons",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest",
+    "test": "vitest --config vitest.unit.config.js",
+    "test:unit": "vitest run --config vitest.unit.config.js",
+    "test:unit:watch": "vitest --config vitest.unit.config.js",
+    "test:rules:vitest": "vitest run --config vitest.rules.config.js",
+    "test:rules": "npx firebase-tools emulators:exec --only firestore --config firebase.test.json --project demo-pubnightpicker-rules \"npm run test:rules:vitest\"",
+    "test:ci": "npm run test:unit && npm run test:rules",
     "typecheck": "tsc --noEmit -p jsconfig.json",
     "lint": "eslint src"
   },

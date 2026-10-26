@@ -59,6 +59,23 @@ npx firebase-tools emulators:start --import=./db_dir --export-on-exit=./db_dir.
 
 You should now be able to develop without affecting the production database.
 
+## Tests
+
+From `react/`, run `npm test` for the unit-test watch mode or `npm run test:unit`
+for a one-shot unit run. These tests use mocked Firebase behavior and do not
+start emulators.
+
+Firestore security-rule tests are named `*.rules.test.js` and run separately:
+
+```
+npm run test:rules
+```
+
+This command starts a Firestore emulator for the duration of the rules tests
+using `firebase.test.json`, then shuts it down. It uses demo project IDs and the
+dedicated test port, so it does not connect to a live Firebase project. Run both
+suites with `npm run test:ci`; CI does this before deploying Hosting.
+
 If you want the data to persist, while the emulators are running, run this in another terminal:
 ```
 npx firebase-tools emulators:export ./db_dir

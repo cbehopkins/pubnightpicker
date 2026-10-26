@@ -4,13 +4,20 @@
     "description": "End-to-end tests for PubNightPicker chat push notifications",
     "type": "module",
     "scripts": {
-        "test": "node frontend-client.js"
+        "install:browsers": "playwright install chromium",
+        "postinstall": "npm run install:browsers",
+        "test": "node frontend-client.js",
+        "cucumber": "cucumber-js",
+        "test:journey": "python run_gherkin_e2e.py"
     },
     "dependencies": {
         "firebase": "^10.0.0"
     },
-    "devDependencies": {},
+    "devDependencies": {
+        "@cucumber/cucumber": "^12.2.0",
+        "playwright": "^1.56.1"
+    },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=20.0.0"
     }
 }

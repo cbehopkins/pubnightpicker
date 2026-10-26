@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from queue import Empty, Queue
 from threading import Thread
 from typing import TypedDict
 
@@ -164,6 +165,7 @@ def run_notifier_subprocess(firebase_sub_dir: Path) -> subprocess.Popen:
         "python",
         "-m",
         "firebase_sub.cli.sub_events",
+        "--dummy-email",
         "--dummy-push",
         "--loglevel",
         "info",
@@ -199,32 +201,34 @@ def wait_for_notifier_ready(
     process: subprocess.Popen, timeout_sec: float, log_capture: NotifierLogCapture
 ) -> bool:
     """Wait for notifier startup logs that indicate listeners are active."""
-    required_markers = (
-        "Notification request/ack mirror listener started",
-        "Poll listeners using recent history",
-        "Chat message push listener started",
-    )
-    seen: set[str] = set()
-    start = time.time()
+    ready_marker = "sub_events runtime started"
+    output: Queue[str | None] = Queue()
 
-    while time.time() - start < timeout_sec:
-        if process.poll() is not None:
+    def read_startup_output() -> None:
+        try:
+            for line in process.stdout:
+                output.put(line)
+                if ready_marker in line:
+                    return
+        finally:
+            output.put(None)
+
+    Thread(target=read_startup_output, daemon=True).start()
+    deadline = time.monotonic() + timeout_sec
+
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            line = output.get(timeout=remaining)
+        except Empty:
             return False
-
-        line = process.stdout.readline()
-        if not line:
-            continue
+        if line is None:
+            return False
 
         line = line.rstrip("\n")
         if line:
             print(f"[Notifier] {line}")
             log_capture.add_line(line)
-
-            for marker in required_markers:
-                if marker in line:
-                    seen.add(marker)
-
-            if len(seen) == len(required_markers):
+            if ready_marker in line:
                 return True
 
     return False
@@ -298,7 +302,11 @@ def test_chat_push_e2e_flow() -> None:
         ready = wait_for_notifier_ready(
             notifier_process, NOTIFIER_START_TIMEOUT_SEC, log_capture
         )
-        assert ready, "notifier did not become ready in time"
+        assert ready, (
+            "notifier did not become ready in time "
+            f"(exit code: {notifier_process.poll()})\n"
+            + "\n".join(log_capture.logs)
+        )
 
         # Spawn frontend client after notifier is listening so the create event
         # is observed by the worker.

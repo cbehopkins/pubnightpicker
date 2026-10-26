@@ -14,14 +14,18 @@ This README is the contributor's starting point: it maps the repository and gets
 | [`cellar/`](cellar/) | Go library for durable, scheduled, retryable background work. | [Cellar README](cellar/README.md) |
 | [`durable_email/`](durable_email/) | Go library for durable email submission, recovery, and delivery tracking, built on Cellar. | [Durable email README](durable_email/README.md) |
 | [`email_clients/`](email_clients/) | Go provider-neutral email interfaces and provider clients, including Sweego and Mailtrap. | [Email clients README](email_clients/README.md) |
-| [`e2e/`](e2e/) | End-to-end harness for the frontend and Python notification worker. | [E2E README](e2e/README.md) |
+| [`e2e/`](e2e/) | End-to-end harness for React browser journeys and the Python notification worker. | [E2E README](e2e/README.md) |
 | [`schema/firestore/`](schema/firestore/) | Firestore schema notes and references. | [Firestore schema README](schema/firestore/README.md) |
 
 The Go projects are separate modules. `last_orders` uses the local `cellar`, `durable_email`, and `email_clients` modules via Go `replace` directives. Read the nearest project `README.md` and `AGENTS.md` before making project-specific changes.
 
+The first React browser journey is documented in [the E2E README](e2e/README.md).
+It uses fresh Firebase emulators and the Python bootstrap CLI, without starting
+either backend.
+
 ## Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 18+ and npm for React development; Node.js 20+ for the Cucumber/Playwright E2E journey
 - Firebase CLI (`npm install -g firebase-tools`)
 - Java, required by the Firebase emulators
 - Python 3.12+ and Poetry, for the Python worker and its tests
@@ -112,9 +116,32 @@ The dummy modes prevent real email and push delivery. See the [worker README](fi
 
 - Keep changes focused in the relevant project; update its README or design docs when behavior or setup changes.
 - Check for a nearer `AGENTS.md` and follow the project's formatting and architecture conventions.
-- Run the narrowest relevant checks for your change. The root [`run-tests.ps1`](run-tests.ps1) provides `-Node`, `-Typecheck`, `-Lint`, `-Unit`, `-Integration`, and `-E2E` options; project READMEs document Go commands and additional checks.
+- Run the narrowest relevant checks for your change. The root [`run-tests.ps1`](run-tests.ps1) provides `-Node`, `-Typecheck`, `-Lint`, `-Unit`, `-Integration`, `-E2E`, and `-Go` options. `-Go` runs `go test ./...` in `cellar`, `durable_email`, `email_clients`, and `last_orders`; `-VerboseOutput` adds `-v`. With no options, the runner runs integration and Go tests; `-All` includes Go tests too. Project READMEs document additional checks.
 - Integration and E2E runners manage emulator lifecycles and seed test data. Check whether emulators are already in use before running them.
 - Never commit `.env` files, credentials, tokens, emulator data exports, or local database files.
+
+## Dependency maintenance
+
+Use the separate [dependency maintenance script](update-dependencies.ps1) from the repository root:
+
+```powershell
+./update-dependencies.ps1                            # Report available updates
+./update-dependencies.ps1 -Go                         # Report Go updates only
+./update-dependencies.ps1 -Mode Update -Apply          # Upgrade within existing constraints
+./update-dependencies.ps1 -Mode Tidy -Apply            # Tidy without requesting upgrades
+```
+
+Select any combination of `-Go`, `-Node`, and `-Python`; omitting selectors includes all projects. Modifying modes require `-Apply` and a clean Git working tree, including untracked files. Failures are reported per project and produce a non-zero exit code; successful changes are not rolled back.
+
+| Mode | Go modules | npm projects (`react`, `e2e`) | Poetry (`firebase_sub`) |
+| --- | --- | --- | --- |
+| `Check` (default) | `go list -mod=readonly -m -u all` | `npm outdated` | `poetry show --outdated` |
+| `Update` | `go get -u ./...` | `npm update --ignore-scripts` | `poetry update` |
+| `Tidy` | `go mod tidy` | `npm prune --ignore-scripts` | `poetry sync --no-root` |
+
+Go updates stay within existing module paths; npm and Poetry updates honour manifest constraints. Major-version migrations and globally installed or transient `npx` tools are not upgraded automatically. Check mode contacts registries and may populate tool caches (Go may also add missing checksum entries), but does not request manifest or lockfile upgrades.
+
+Tidy reconciles Go dependency metadata, removes extraneous npm packages, and synchronises the Python environment with its existing lockfile; these are not equivalent operations. Updates do not automatically run tidy or tests. npm lifecycle scripts are disabled during maintenance; the updater explicitly installs the matching Playwright Chromium browser after E2E updates. Other dependencies that need installation scripts may need an explicit rebuild afterwards. Review manifest and lockfile changes, then run the relevant checks using [the test runner](run-tests.ps1).
 
 ## Project documentation
 

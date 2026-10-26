@@ -7,7 +7,7 @@
     "ui": {
       "enabled": false
     },
-    "singleProjectMode": true,
+    "singleProjectMode": false,
     "firestore": {
       "port": 9080
     }
