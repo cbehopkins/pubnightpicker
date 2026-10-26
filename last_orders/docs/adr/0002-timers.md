@@ -144,6 +144,20 @@ Local idempotency record
 
 The timer infrastructure should therefore not require Firebase-specific idempotency.
 
+## V1 automatic poll-completion recovery
+
+For automatic poll completion, the daily timer is a discovery opportunity, not
+the durable business obligation itself. The backend also enqueues that
+discovery after its required projections are ready on each process start. Each
+discovery scans open polls whose date is between the persisted `PollsSince`
+cutoff and the current `Europe/London` date, inclusive. This catches eligible
+polls after downtime without replaying every missed daily timer occurrence.
+
+Each discovered poll occurrence is identified by poll ID and poll date. Repeated
+startup and scheduled scans therefore converge through the existing local
+idempotency mechanism. Polls older than `PollsSince` remain outside the
+processing scope.
+
 ---
 
 # Timer event identity
@@ -476,7 +490,6 @@ The following are deferred:
 * Exact Go interfaces for timer schedules and timer observations.
 * Exact local idempotency schema.
 * Whether V1 timer observations require a separate Check Cell, given that the local database is authoritative.
-* How timers discover overdue business obligations after downtime.
 * Whether timer schedules are evaluated using UTC or another clock representation.
 * How recurring business events construct their logical keys.
 * Whether a timer may have multiple outstanding logical obligations simultaneously.

@@ -1,6 +1,6 @@
 # CDD: Injectable External Dependencies
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-22
 **Related ADR:** [0006-startup.md](../adr/0006-startup.md), [0008-app-structure.md](../adr/0008-app-structure.md)
 
@@ -194,9 +194,17 @@ deadline from genuine faults) is separate work and needs its own ADR.
 
 ---
 
-## 8. Open Questions
+## 8. Resolved Design Questions
 
-* Should `eventvenues.Source` expose the venue query as a parameter, or keep the
-  `venueType == "event"` predicate internal to the Firestore implementation?
-* Do the poll listeners share one `Source` interface, or keep one each? They observe
-  different collections but have near-identical stream semantics.
+* `eventvenues.Source` keeps the `venueType == "event"` predicate inside the
+  Firestore implementation; callers use the listener-specific source contract.
+* The poll listeners keep separate source interfaces because they represent
+  distinct collection contracts, despite having similar stream mechanics.
+
+## 9. Implementation Status (2026-10-26)
+
+Implemented: consumer-owned recurrence interfaces, source interfaces for the
+poll and event-venue listeners, an injected autocomplete source, individual
+optional `Config` collaborators with construction-time errors, test stand-ins,
+and app tests using injected collaborators. The Firestore-backed wiring remains
+covered by the app emulator test.

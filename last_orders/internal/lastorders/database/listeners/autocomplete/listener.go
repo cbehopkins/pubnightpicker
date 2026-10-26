@@ -36,6 +36,9 @@ func New(store cellar.Store, logger *slog.Logger) (*Listener, error) {
 }
 
 func (listener *Listener) RunOnce(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	truth := truths.DailyPollAutoCompleteDue{ObservedOn: time.Now().In(listener.location).Format(time.DateOnly)}
 	envelope, err := truths.NewEnvelope(truths.DailyPollAutoCompleteDueFanout, truth)
 	if err != nil {

@@ -13,11 +13,12 @@ import (
 // Source is an in-memory poll store. Reads of documents a test has not seeded fail
 // loudly rather than returning empty state.
 type Source struct {
-	mu     sync.Mutex
-	Polls  map[string]map[string]any
-	Votes  map[string]map[string]any
-	Venues map[string]map[string]any
-	Audits []autocomplete.AuditEntry
+	mu         sync.Mutex
+	PollsSince string
+	Polls      map[string]map[string]any
+	Votes      map[string]map[string]any
+	Venues     map[string]map[string]any
+	Audits     []autocomplete.AuditEntry
 }
 
 func New() *Source {
@@ -34,7 +35,7 @@ func (s *Source) SeedPoll(pollID string, data map[string]any) {
 	s.Polls[pollID] = data
 }
 
-func (s *Source) ListOpenPollsOn(_ context.Context, date string) ([]autocomplete.Document, error) {
+func (s *Source) ListOpenPollsThrough(_ context.Context, observedOn string) ([]autocomplete.Document, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	open := make([]autocomplete.Document, 0, len(s.Polls))
@@ -42,7 +43,7 @@ func (s *Source) ListOpenPollsOn(_ context.Context, date string) ([]autocomplete
 		if completed, _ := data["completed"].(bool); completed {
 			continue
 		}
-		if pollDate, _ := data["date"].(string); pollDate != date {
+		if pollDate, _ := data["date"].(string); pollDate < s.PollsSince || pollDate > observedOn {
 			continue
 		}
 		open = append(open, autocomplete.Document{ID: pollID, Data: data})

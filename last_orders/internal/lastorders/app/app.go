@@ -163,6 +163,7 @@ type App struct {
 	cellarRuntime               *cellar.Cellar
 	emailPlugin                 *emailplugin.Plugin
 	diagnosticsConfiguration    *diagnosticsconfig.Service
+	autoCompleteListener        *autocompletelistener.Listener
 	eventVenueListener          *eventvenuelistener.Listener
 	newPollListener             *newpolllistener.Listener
 	completedPollListener       *completedpolllistener.Listener
@@ -444,17 +445,6 @@ func New(cfg Config) (application *App, err error) {
 		return nil, fmt.Errorf("init push plugin: %w", err)
 	}
 
-	autocompleteSource := cfg.AutocompleteSource
-	if autocompleteSource == nil {
-		if firestoreClient == nil {
-			return nil, fmt.Errorf("autocomplete source is required: supply Config.AutocompleteSource or enable firestore")
-		}
-		autocompleteSource, err = autocompletesvc.NewFirestoreSource(firestoreClient)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	eventVenueSource := cfg.EventVenueSource
 	if eventVenueSource == nil {
 		if firestoreClient == nil {
@@ -467,7 +457,9 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	var pollsSince string
-	if cfg.NewPollSource == nil || cfg.CompletedPollSource == nil || cfg.ChatMessageSource == nil {
+	needsPollScope := cfg.NewPollSource == nil || cfg.CompletedPollSource == nil || cfg.ChatMessageSource == nil ||
+		(cfg.AutocompleteSource == nil && firestoreClient != nil)
+	if needsPollScope {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("poll and chat message sources are required: supply them in Config or enable firestore")
 		}
@@ -482,6 +474,17 @@ func New(cfg Config) (application *App, err error) {
 			return nil, fmt.Errorf("resolve polls since: %w", err)
 		}
 		cfg.Logger.Info("listener scope resolved", "polls_since", pollsSince)
+	}
+
+	autocompleteSource := cfg.AutocompleteSource
+	if autocompleteSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("autocomplete source is required: supply Config.AutocompleteSource or enable firestore")
+		}
+		autocompleteSource, err = autocompletesvc.NewFirestoreSource(firestoreClient, pollsSince)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	newPollSource := cfg.NewPollSource
@@ -900,6 +903,7 @@ func New(cfg Config) (application *App, err error) {
 		cellarRuntime:               cellarRuntime,
 		emailPlugin:                 emailPlugin,
 		diagnosticsConfiguration:    diagnosticsConfiguration,
+		autoCompleteListener:        autoCompleteListener,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
@@ -1046,6 +1050,18 @@ func (a *App) Run(ctx context.Context) error {
 		case <-runCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
+		}
+	}
+
+	// Treat each process start as an opportunity to discover overdue polls. The
+	// source bounds this scan by the persisted PollsSince floor and today's
+	// London date; the observation identity converges with the scheduled scan.
+	if a.autoCompleteListener != nil {
+		if err := a.autoCompleteListener.RunOnce(runCtx); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil
+			}
+			return fmt.Errorf("enqueue startup auto-completion discovery: %w", err)
 		}
 	}
 

@@ -126,7 +126,7 @@ func TestDiscoveryCreatesPerPollTruthWorkAgainstEmulator(t *testing.T) {
 		t.Fatalf("seed other-day poll: %v", err)
 	}
 
-	result := (DiscoveryHandler{Source: emulatorSource(t, client)}).Handle(ctx, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-09-01"})
+	result := (DiscoveryHandler{Source: emulatorSource(t, client, "2026-09-01")}).Handle(ctx, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-09-01"})
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 1 {
 		t.Fatalf("result = %#v, want one locally idempotent poll Truth Cell", result)
@@ -141,6 +141,36 @@ func TestDiscoveryCreatesPerPollTruthWorkAgainstEmulator(t *testing.T) {
 	}
 	if check.Key != pollID+"_2026-09-01" || check.Truth.FanoutName != truths.PollAutoCompletionDueFanout {
 		t.Fatalf("discovery payload = %+v", check)
+	}
+}
+
+func TestDiscoveryCatchesUpWithinPollsSinceAgainstEmulator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := emulatorClient(t, ctx)
+	seed := func(id, date string) {
+		t.Helper()
+		if _, err := client.Collection("polls").Doc(id).Set(ctx, map[string]any{
+			"date": date, "completed": false, "pubs": map[string]any{"venue-1": map[string]any{}},
+		}); err != nil {
+			t.Fatalf("seed poll %s: %v", id, err)
+		}
+	}
+	seed("poll-before-floor", "2026-08-31")
+	seed("poll-in-window", "2026-09-02")
+	seed("poll-after-today", "2026-09-04")
+
+	result := (DiscoveryHandler{Source: emulatorSource(t, client, "2026-09-01")}).Handle(ctx, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-09-03"})
+	complete, ok := result.(cellar.Complete)
+	if !ok || len(complete.NewCells) != 1 {
+		t.Fatalf("result = %#v, want one work Cell for the in-window overdue poll", result)
+	}
+	check, err := cellar.JSONCodec[idempotency.CheckPayload]().Unmarshal(complete.NewCells[0].Steps[0].Payload)
+	if err != nil {
+		t.Fatalf("decode idempotency payload: %v", err)
+	}
+	if check.Key != "poll-in-window_2026-09-02" {
+		t.Fatalf("discovery key = %q, want poll-in-window_2026-09-02", check.Key)
 	}
 }
 
@@ -186,9 +216,13 @@ func TestCloseCompletesPollAndWritesAuditAgainstEmulator(t *testing.T) {
 	}
 }
 
-func emulatorSource(t *testing.T, client *firestore.Client) Source {
+func emulatorSource(t *testing.T, client *firestore.Client, configuredPollsSince ...string) Source {
 	t.Helper()
-	source, err := NewFirestoreSource(client)
+	pollsSince := "2026-01-01"
+	if len(configuredPollsSince) > 0 {
+		pollsSince = configuredPollsSince[0]
+	}
+	source, err := NewFirestoreSource(client, pollsSince)
 	if err != nil {
 		t.Fatalf("new autocomplete source: %v", err)
 	}

@@ -24,7 +24,9 @@ type AuditEntry struct {
 
 // Source is the poll state the auto-completion handlers read and write.
 type Source interface {
-	ListOpenPollsOn(ctx context.Context, date string) ([]Document, error)
+	// ListOpenPollsThrough returns open polls with dates within the source's
+	// configured PollsSince floor and on or before observedOn.
+	ListOpenPollsThrough(ctx context.Context, observedOn string) ([]Document, error)
 	GetPoll(ctx context.Context, pollID string) (Document, error)
 	GetVotes(ctx context.Context, pollID string) (Document, bool, error)
 	GetVenue(ctx context.Context, venueID string) (Document, bool, error)
@@ -35,18 +37,30 @@ type Source interface {
 }
 
 type FirestoreSource struct {
-	client *firestore.Client
+	client     *firestore.Client
+	pollsSince string
 }
 
-func NewFirestoreSource(client *firestore.Client) (*FirestoreSource, error) {
+func NewFirestoreSource(client *firestore.Client, pollsSince string) (*FirestoreSource, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &FirestoreSource{client: client}, nil
+	if _, err := time.Parse(time.DateOnly, pollsSince); err != nil {
+		return nil, fmt.Errorf("polls-since %q must be YYYY-MM-DD: %w", pollsSince, err)
+	}
+	return &FirestoreSource{client: client, pollsSince: pollsSince}, nil
 }
 
-func (s *FirestoreSource) ListOpenPollsOn(ctx context.Context, date string) ([]Document, error) {
-	docs, err := s.client.Collection("polls").Where("completed", "==", false).Where("date", "==", date).Documents(ctx).GetAll()
+func (s *FirestoreSource) ListOpenPollsThrough(ctx context.Context, observedOn string) ([]Document, error) {
+	if _, err := time.Parse(time.DateOnly, observedOn); err != nil {
+		return nil, fmt.Errorf("observed-on date %q must be YYYY-MM-DD: %w", observedOn, err)
+	}
+	if observedOn < s.pollsSince {
+		return nil, nil
+	}
+	docs, err := s.client.Collection("polls").Where("completed", "==", false).
+		Where("date", ">=", s.pollsSince).Where("date", "<=", observedOn).
+		Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
 	}
