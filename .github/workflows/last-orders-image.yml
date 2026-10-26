@@ -105,3 +105,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=last_orders
           cache-to: type=gha,mode=max,scope=last_orders
+
+  deploy:
+    name: Deploy tagged image to Scaleway
+    needs: build-and-push
+    # Only an explicitly versioned Last Orders release tag deploys production.
+    if: startsWith(github.ref, 'refs/tags/last_orders-v')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: last-orders-scaleway-production
+      cancel-in-progress: false
+    steps:
+      - name: Update image and redeploy Scaleway container
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_REGION: ${{ vars.SCW_CONTAINERS_REGION }}
+          SCW_CONTAINER_ID: ${{ vars.SCW_CONTAINER_ID }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/last_orders:${GITHUB_REF_NAME}"
+
+          : "${SCW_SECRET_KEY:?Set the SCW_SECRET_KEY repository secret}"
+          : "${SCW_REGION:?Set the SCW_CONTAINERS_REGION repository variable}"
+          : "${SCW_CONTAINER_ID:?Set the SCW_CONTAINER_ID repository variable}"
+
+          API="https://api.scaleway.com/containers/v1/regions/${SCW_REGION}/containers/${SCW_CONTAINER_ID}"
+
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "X-Auth-Token: ${SCW_SECRET_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "$(jq -n --arg image "${IMAGE}" '{image: $image}')" \
+            "${API}"
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "X-Auth-Token: ${SCW_SECRET_KEY}" \
+            "${API}/redeploy"
