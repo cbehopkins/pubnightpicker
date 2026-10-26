@@ -30,6 +30,7 @@ type CursorClaims struct {
 	Generation string `json:"generation"`
 	Sequence   int64  `json:"sequence"`
 	Date       string `json:"date,omitempty"`
+	Position   string `json:"position,omitempty"`
 }
 
 // CursorExpectation describes the scope and upper sequence bound for a cursor.
@@ -153,7 +154,7 @@ func RequestCursor(r *http.Request) (value string, supplied bool) {
 }
 
 func validClaims(claims CursorClaims) bool {
-	if claims.Stream == "" || claims.Resource == "" || claims.Generation == "" || claims.Sequence < 0 || strings.ContainsAny(claims.Stream+claims.Resource+claims.Generation+claims.Date, "\x00\r\n") {
+	if claims.Stream == "" || claims.Resource == "" || claims.Generation == "" || claims.Sequence < 0 || strings.ContainsAny(claims.Stream+claims.Resource+claims.Generation+claims.Date+claims.Position, "\x00\r\n") {
 		return false
 	}
 	if claims.Date != "" {

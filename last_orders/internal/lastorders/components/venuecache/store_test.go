@@ -40,12 +40,15 @@ func newTestStore(t *testing.T) *Store {
 func TestStorePutGetReplaceAndDelete(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	projection := VenueProjection{ID: "venue-1", Name: "The Crown", Website: "https://example.test"}
+	projection := VenueProjection{
+		ID: "venue-1", Name: "The Crown", Website: "https://example.test",
+		VisibleGroupIDs: []string{"group-1"}, PreviousVenueIDs: []string{"venue-old"},
+	}
 	if err := store.Put(ctx, projection); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	got, err := store.Get(ctx, projection.ID)
-	if err != nil || got != projection {
+	if err != nil || !got.Equal(projection) {
 		t.Fatalf("get = %#v, %v; want %#v", got, err, projection)
 	}
 
@@ -54,7 +57,7 @@ func TestStorePutGetReplaceAndDelete(t *testing.T) {
 		t.Fatalf("replace: %v", err)
 	}
 	got, err = store.Get(ctx, projection.ID)
-	if err != nil || got != projection {
+	if err != nil || !got.Equal(projection) {
 		t.Fatalf("get after replace = %#v, %v; want %#v", got, err, projection)
 	}
 	if err := store.Delete(ctx, projection.ID); err != nil {

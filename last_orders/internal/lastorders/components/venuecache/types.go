@@ -31,6 +31,8 @@ type VenueProjection struct {
 	OutOfTown          *bool
 	Banned             *bool
 	DeletedOn          string
+	VisibleGroupIDs    []string
+	PreviousVenueIDs   []string
 }
 
 func (projection VenueProjection) Equal(other VenueProjection) bool {
@@ -51,7 +53,9 @@ func (projection VenueProjection) Equal(other VenueProjection) bool {
 		equalOptional(projection.BeerGarden, other.BeerGarden) &&
 		equalOptional(projection.OutOfTown, other.OutOfTown) &&
 		equalOptional(projection.Banned, other.Banned) &&
-		projection.DeletedOn == other.DeletedOn
+		projection.DeletedOn == other.DeletedOn &&
+		slices.Equal(projection.VisibleGroupIDs, other.VisibleGroupIDs) &&
+		slices.Equal(projection.PreviousVenueIDs, other.PreviousVenueIDs)
 }
 
 func equalOptional[Value comparable](left, right *Value) bool {
@@ -84,6 +88,14 @@ func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 		NextOccurrenceDate: optionalString(doc.Data, "next_occurrence_date"),
 	}
 	projection.Notes, err = optionalField[string](doc.Data, "notes")
+	if err != nil {
+		return VenueProjection{}, err
+	}
+	projection.VisibleGroupIDs, err = optionalStrings(doc.Data, "visible_group_ids")
+	if err != nil {
+		return VenueProjection{}, err
+	}
+	projection.PreviousVenueIDs, err = optionalStrings(doc.Data, "previous_venue_ids")
 	if err != nil {
 		return VenueProjection{}, err
 	}
@@ -120,6 +132,29 @@ func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 		}
 	}
 	return projection, nil
+}
+
+func optionalStrings(data map[string]any, field string) ([]string, error) {
+	value, ok := data[field]
+	if !ok || value == nil {
+		return nil, nil
+	}
+	switch values := value.(type) {
+	case []string:
+		return append([]string(nil), values...), nil
+	case []any:
+		result := make([]string, len(values))
+		for index, item := range values {
+			text, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("venue field %q has invalid item type %T", field, item)
+			}
+			result[index] = text
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("venue field %q has invalid type %T", field, value)
+	}
 }
 
 func FromDocument(doc *firestore.DocumentSnapshot) (VenueProjection, error) {

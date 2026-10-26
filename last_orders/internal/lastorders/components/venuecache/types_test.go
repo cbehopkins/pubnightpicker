@@ -76,6 +76,20 @@ func TestProjectionFromDocumentPreservesOptionalFields(t *testing.T) {
 	}
 }
 
+func TestProjectionFromDocumentMapsVenueRelationships(t *testing.T) {
+	projection, err := ProjectionFromDocument(Document{ID: "venue-1", Data: map[string]any{
+		"name":               "The Crown",
+		"visible_group_ids":  []any{"group-a", "group-b"},
+		"previous_venue_ids": []any{"old-venue"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(projection.VisibleGroupIDs, []string{"group-a", "group-b"}) || !slices.Equal(projection.PreviousVenueIDs, []string{"old-venue"}) {
+		t.Fatalf("relationship fields not mapped: %+v", projection)
+	}
+}
+
 func TestProjectionFromDocumentRejectsInvalidOptionalFields(t *testing.T) {
 	for _, field := range []string{"notes", "parking", "food", "dog_friend", "beer_gerden", "out_of_town", "banned"} {
 		t.Run(field, func(t *testing.T) {

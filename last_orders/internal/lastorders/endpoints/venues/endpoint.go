@@ -2,11 +2,15 @@ package venues
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +56,8 @@ type venue struct {
 	BeerGarden         *bool           `json:"beer_garden,omitempty"`
 	OutOfTown          *bool           `json:"out_of_town,omitempty"`
 	Banned             *bool           `json:"banned,omitempty"`
+	VisibleGroupIDs    []string        `json:"visible_group_ids"`
+	PreviousVenueIDs   []string        `json:"previous_venue_ids"`
 }
 
 type listResponse struct {
@@ -62,6 +68,21 @@ type listResponse struct {
 type streamResponse struct {
 	Venues []venue `json:"venues"`
 	Cursor string  `json:"cursor"`
+}
+
+type venueListFilters struct {
+	LocationID  string `json:"location_id"`
+	VenueType   string `json:"venue_type"`
+	Name        string `json:"name"`
+	Food        *bool  `json:"food"`
+	DogFriendly *bool  `json:"dog_friendly"`
+	BeerGarden  *bool  `json:"beer_garden"`
+	Limit       int    `json:"limit"`
+}
+
+type venuePagePosition struct {
+	Name string `json:"name"`
+	ID   string `json:"id"`
 }
 
 type streamEndpoint struct {
@@ -304,54 +325,170 @@ func (e *Endpoint) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to read venues.")
 		return
 	}
-	booleanFilters := map[string]bool{}
-	for _, parameter := range []string{"food", "dog_friendly", "beer_garden"} {
-		if raw, supplied := r.URL.Query()[parameter]; supplied {
-			if len(raw) != 1 {
-				writeError(w, http.StatusBadRequest, "bad_request", "Boolean filters must appear once.")
-				return
-			}
-			value, parseErr := strconv.ParseBool(raw[0])
-			if parseErr != nil {
-				writeError(w, http.StatusBadRequest, "bad_request", "Boolean filters must be true or false.")
-				return
-			}
-			booleanFilters[parameter] = value
+	filters, cursor, err := parseVenueListFilters(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	resource, err := venueListResource(filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to prepare venue query.")
+		return
+	}
+	var position venuePagePosition
+	if cursor != "" {
+		claims, err := e.Cursors.Validate(cursor, sse.CursorExpectation{
+			Stream: "venues:list", Resource: resource, Generation: snapshot.State.Generation,
+			HighWater: snapshot.State.Sequence,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cursor", "The venue list cursor is invalid or expired.")
+			return
+		}
+		if claims.Sequence != snapshot.State.Sequence {
+			writeError(w, http.StatusBadRequest, "invalid_cursor", "The venue list changed after this cursor was issued.")
+			return
+		}
+		decoded, err := base64.RawURLEncoding.Strict().DecodeString(claims.Position)
+		if err != nil || json.Unmarshal(decoded, &position) != nil || position.ID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_cursor", "The venue list cursor is invalid or expired.")
+			return
 		}
 	}
-	items := make([]venue, 0, len(snapshot.Venues))
+	filtered := make([]venuecache.VenueProjection, 0, len(snapshot.Venues))
 	for _, item := range snapshot.Venues {
-		if value := r.URL.Query().Get("location_id"); value != "" && item.LocationID != value {
+		if filters.LocationID != "" && item.LocationID != filters.LocationID {
 			continue
 		}
-		if value := r.URL.Query().Get("venue_type"); value != "" && item.VenueType != value {
+		if filters.VenueType != "" && effectiveVenueType(item.VenueType) != filters.VenueType {
 			continue
 		}
-		if value := r.URL.Query().Get("name"); value != "" && !strings.Contains(strings.ToLower(item.Name), strings.ToLower(value)) {
+		if filters.Name != "" && !strings.Contains(strings.ToLower(item.Name), strings.ToLower(filters.Name)) {
 			continue
 		}
-		matches := true
-		for parameter, expected := range booleanFilters {
-			var actual *bool
-			switch parameter {
-			case "food":
-				actual = item.Food
-			case "dog_friendly":
-				actual = item.DogFriendly
-			case "beer_garden":
-				actual = item.BeerGarden
-			}
-			if actual == nil || *actual != expected {
-				matches = false
-				break
-			}
-		}
-		if !matches {
+		if !matchesOptionalBool(item.Food, filters.Food) || !matchesOptionalBool(item.DogFriendly, filters.DogFriendly) || !matchesOptionalBool(item.BeerGarden, filters.BeerGarden) {
 			continue
 		}
+		filtered = append(filtered, item)
+	}
+	sort.Slice(filtered, func(i, j int) bool { return venueLess(filtered[i], filtered[j]) })
+	if position.ID != "" {
+		start := sort.Search(len(filtered), func(i int) bool { return venueAfter(filtered[i], position) })
+		filtered = filtered[start:]
+	}
+	hasNext := len(filtered) > filters.Limit
+	if hasNext {
+		filtered = filtered[:filters.Limit]
+	}
+	items := make([]venue, 0, len(filtered))
+	for _, item := range filtered {
 		items = append(items, fromProjection(item))
 	}
-	writeJSON(w, http.StatusOK, listResponse{Venues: items})
+	var nextCursor *string
+	if hasNext && len(filtered) > 0 {
+		last := filtered[len(filtered)-1]
+		encodedPosition, err := json.Marshal(venuePagePosition{Name: strings.ToLower(last.Name), ID: last.ID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue cursor.")
+			return
+		}
+		sequence := base64.RawURLEncoding.EncodeToString(encodedPosition)
+		token, err := e.Cursors.Encode(sse.CursorClaims{Stream: "venues:list", Resource: resource,
+			Generation: snapshot.State.Generation, Sequence: snapshot.State.Sequence, Position: sequence})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue cursor.")
+			return
+		}
+		nextCursor = &token
+	}
+	writeJSON(w, http.StatusOK, listResponse{Venues: items, NextCursor: nextCursor})
+}
+
+func parseVenueListFilters(r *http.Request) (venueListFilters, string, error) {
+	filters := venueListFilters{Limit: 50}
+	query := r.URL.Query()
+	for key, target := range map[string]*string{"location_id": &filters.LocationID, "venue_type": &filters.VenueType, "name": &filters.Name} {
+		values, exists := query[key]
+		if !exists {
+			continue
+		}
+		if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+			return venueListFilters{}, "", fmt.Errorf("%s must be supplied once with a non-empty value", key)
+		}
+		*target = values[0]
+	}
+	if filters.VenueType != "" && filters.VenueType != "pub" && filters.VenueType != "restaurant" && filters.VenueType != "event" {
+		return venueListFilters{}, "", errors.New("venue_type is invalid")
+	}
+	for key, target := range map[string]**bool{"food": &filters.Food, "dog_friendly": &filters.DogFriendly, "beer_garden": &filters.BeerGarden} {
+		values, exists := query[key]
+		if !exists {
+			continue
+		}
+		if len(values) != 1 {
+			return venueListFilters{}, "", fmt.Errorf("%s may only be supplied once", key)
+		}
+		if values[0] != "true" && values[0] != "false" {
+			return venueListFilters{}, "", fmt.Errorf("%s must be true or false", key)
+		}
+		value := values[0] == "true"
+		*target = &value
+	}
+	if values, exists := query["limit"]; exists {
+		if len(values) != 1 {
+			return venueListFilters{}, "", errors.New("limit may only be supplied once")
+		}
+		limit, err := strconv.Atoi(values[0])
+		if err != nil || limit < 1 || limit > 100 {
+			return venueListFilters{}, "", errors.New("limit must be between 1 and 100")
+		}
+		filters.Limit = limit
+	}
+	var cursor string
+	if values, exists := query["cursor"]; exists {
+		if len(values) != 1 || values[0] == "" {
+			return venueListFilters{}, "", errors.New("cursor may only be supplied once and must not be empty")
+		}
+		cursor = values[0]
+	}
+	return filters, cursor, nil
+}
+
+func venueListResource(filters venueListFilters) (string, error) {
+	encoded, err := json.Marshal(filters)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("filter:%x", sum[:]), nil
+}
+
+func matchesOptionalBool(actual, expected *bool) bool {
+	if expected == nil {
+		return true
+	}
+	value := actual != nil && *actual
+	return value == *expected
+}
+
+func effectiveVenueType(value string) string {
+	if value == "" {
+		return "pub"
+	}
+	return value
+}
+
+func venueLess(left, right venuecache.VenueProjection) bool {
+	leftName, rightName := strings.ToLower(left.Name), strings.ToLower(right.Name)
+	if leftName != rightName {
+		return leftName < rightName
+	}
+	return left.ID < right.ID
+}
+
+func venueAfter(item venuecache.VenueProjection, position venuePagePosition) bool {
+	name := strings.ToLower(item.Name)
+	return name > position.Name || (name == position.Name && item.ID > position.ID)
 }
 
 func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +519,7 @@ func (e *Endpoint) snapshot(ctx context.Context, input sse.CursorInput) (sse.Vie
 			return sse.ViewSnapshot{}, sse.ErrInvalidCursor
 		}
 	}
+	sort.Slice(state.Venues, func(i, j int) bool { return venueLess(state.Venues[i], state.Venues[j]) })
 	cursor, err := e.Cursors.Encode(sse.CursorClaims{Stream: "venues", Resource: "all", Generation: state.State.Generation, Sequence: state.State.Sequence})
 	if err != nil {
 		return sse.ViewSnapshot{}, err
@@ -410,10 +548,16 @@ func fromProjection(item venuecache.VenueProjection) venue {
 		MapURL: optionalString(item.Map), Address: item.Address, LocationID: item.LocationID, ImageURL: optionalString(item.PhotoURL), NextOccurrenceDate: item.NextOccurrenceDate,
 		Notes: item.Notes, Parking: item.Parking, Food: &food, DogFriendly: item.DogFriendly,
 		BeerGarden: item.BeerGarden, OutOfTown: item.OutOfTown, Banned: item.Banned}
-	result.Banned = &banned
-	if result.VenueType == "" {
-		result.VenueType = "pub"
+	result.VisibleGroupIDs = item.VisibleGroupIDs
+	if result.VisibleGroupIDs == nil {
+		result.VisibleGroupIDs = []string{}
 	}
+	result.PreviousVenueIDs = item.PreviousVenueIDs
+	if result.PreviousVenueIDs == nil {
+		result.PreviousVenueIDs = []string{}
+	}
+	result.Banned = &banned
+	result.VenueType = effectiveVenueType(result.VenueType)
 	if item.RecurrenceJSON != "" {
 		result.Recurrence = json.RawMessage(item.RecurrenceJSON)
 	}

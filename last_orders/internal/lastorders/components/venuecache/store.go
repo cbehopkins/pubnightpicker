@@ -57,7 +57,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 	rows, err := tx.QueryContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json
 		FROM venue_cache WHERE deleted = 0
 		ORDER BY name COLLATE NOCASE, venue_id COLLATE NOCASE
 	`)
@@ -67,12 +67,22 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 	venues := make([]VenueProjection, 0)
 	for rows.Next() {
 		var venue VenueProjection
+		var visibleGroupIDsJSON, previousVenueIDsJSON string
 		if err := rows.Scan(&venue.ID, &venue.Name, &venue.VenueType, &venue.Website,
 			&venue.Map, &venue.Address, &venue.LocationID, &venue.PhotoURL, &venue.RecurrenceJSON,
 			&venue.NextOccurrenceDate, &venue.Notes, &venue.Parking, &venue.Food,
-			&venue.DogFriendly, &venue.BeerGarden, &venue.OutOfTown, &venue.Banned); err != nil {
+			&venue.DogFriendly, &venue.BeerGarden, &venue.OutOfTown, &venue.Banned,
+			&visibleGroupIDsJSON, &previousVenueIDsJSON); err != nil {
 			rows.Close()
 			return nil, basestore.SyncState{}, err
+		}
+		if err := json.Unmarshal([]byte(visibleGroupIDsJSON), &venue.VisibleGroupIDs); err != nil {
+			rows.Close()
+			return nil, basestore.SyncState{}, fmt.Errorf("decode venue visible groups: %w", err)
+		}
+		if err := json.Unmarshal([]byte(previousVenueIDsJSON), &venue.PreviousVenueIDs); err != nil {
+			rows.Close()
+			return nil, basestore.SyncState{}, fmt.Errorf("decode venue history: %w", err)
 		}
 		venues = append(venues, venue)
 	}
@@ -96,10 +106,11 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (VenueProjection, bool, error) {
 	var projection VenueProjection
 	var deleted bool
+	var visibleGroupIDsJSON, previousVenueIDsJSON string
 	err := queryer.QueryRowContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned, deleted
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json, deleted
 		FROM venue_cache WHERE venue_id = ?
 	`, venueID).Scan(
 		&projection.ID, &projection.Name, &projection.VenueType, &projection.Website,
@@ -107,8 +118,14 @@ func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (
 		&projection.RecurrenceJSON, &projection.NextOccurrenceDate,
 		&projection.Notes, &projection.Parking, &projection.Food,
 		&projection.DogFriendly, &projection.BeerGarden, &projection.OutOfTown,
-		&projection.Banned, &deleted,
+		&projection.Banned, &visibleGroupIDsJSON, &previousVenueIDsJSON, &deleted,
 	)
+	if err == nil {
+		err = json.Unmarshal([]byte(visibleGroupIDsJSON), &projection.VisibleGroupIDs)
+		if err == nil {
+			err = json.Unmarshal([]byte(previousVenueIDsJSON), &projection.PreviousVenueIDs)
+		}
+	}
 	return projection, deleted, err
 }
 
@@ -204,12 +221,21 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 	if err != nil {
 		return err
 	}
+	visibleGroupIDsJSON, err := json.Marshal(projection.VisibleGroupIDs)
+	if err != nil {
+		return fmt.Errorf("encode venue visible groups: %w", err)
+	}
+	previousVenueIDsJSON, err := json.Marshal(projection.PreviousVenueIDs)
+	if err != nil {
+		return fmt.Errorf("encode venue history: %w", err)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO venue_cache(
 			venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned, change_version
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json,
+			previous_venue_ids_json, change_version
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(venue_id) DO UPDATE SET
 			name = excluded.name,
 			venue_type = excluded.venue_type,
@@ -227,13 +253,16 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 			beer_garden = excluded.beer_garden,
 			out_of_town = excluded.out_of_town,
 			banned = excluded.banned,
+			visible_group_ids_json = excluded.visible_group_ids_json,
+			previous_venue_ids_json = excluded.previous_venue_ids_json,
 			change_version = excluded.change_version,
 			deleted = 0
 	`, projection.ID, projection.Name, projection.VenueType, projection.Website,
 		projection.Map, projection.Address, projection.LocationID, projection.PhotoURL,
 		projection.RecurrenceJSON, projection.NextOccurrenceDate, projection.Notes,
 		projection.Parking, projection.Food, projection.DogFriendly,
-		projection.BeerGarden, projection.OutOfTown, projection.Banned, sequence)
+		projection.BeerGarden, projection.OutOfTown, projection.Banned,
+		string(visibleGroupIDsJSON), string(previousVenueIDsJSON), sequence)
 	return err
 }
 
@@ -268,6 +297,12 @@ func normaliseVenue(projection VenueProjection) (VenueProjection, error) {
 		if err != nil {
 			return VenueProjection{}, err
 		}
+	}
+	if projection.VisibleGroupIDs == nil {
+		projection.VisibleGroupIDs = []string{}
+	}
+	if projection.PreviousVenueIDs == nil {
+		projection.PreviousVenueIDs = []string{}
 	}
 	return projection, nil
 }

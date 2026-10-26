@@ -550,7 +550,7 @@ paths:
         - name: name
           in: query
           required: false
-          description: Name search; matching semantics are implementation-defined for this draft.
+          description: Case-insensitive substring match.
           schema:
             type: string
         - name: food
@@ -579,6 +579,7 @@ paths:
         - name: cursor
           in: query
           required: false
+          description: Signed pagination cursor returned by the previous page; bound to the query filters and projection generation.
           schema:
             type: string
       responses:
@@ -1424,9 +1425,6 @@ components:
           type: string
         notes:
           type: string
-        deleted_on:
-          type: [string, 'null']
-          format: date-time
     LocationWrite:
       type: object
       required: [name, notes]
@@ -1465,7 +1463,7 @@ components:
       additionalProperties: true
     Venue:
       type: object
-      required: [id, name, venue_type, address, food, banned]
+      required: [id, name, venue_type, address, food, banned, visible_group_ids, previous_venue_ids]
       properties:
         id:
           type: string
@@ -1515,9 +1513,6 @@ components:
           type: array
           items:
             type: string
-        deleted_on:
-          type: [string, 'null']
-          format: date-time
     VenueWrite:
       type: object
       required: [name, venue_type, address]
