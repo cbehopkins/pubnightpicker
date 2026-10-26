@@ -28,6 +28,53 @@ for the architecture this codebase follows.
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
+## System model
+
+The public API and background processing have separate runtime roles. In the
+current Docker deployment, `last-orders` runs both roles in one process. The
+component subcommands run either role on its own. A split Scaleway deployment
+uses the same image for two containers:
+
+```mermaid
+flowchart LR
+    Browser[Frontend / browser] -->|public HTTPS| Public[Scaleway public endpoint]
+    Browser -. DNS lookup .-> CF[Cloudflare DNS]
+    CF -. resolves hostname to endpoint .-> Browser
+
+    subgraph VPC[Scaleway VPC]
+      subgraph PN[Private Network]
+        HP[HandPump container<br/>public API + read projections]
+        LH[Landlord container<br/>notifications + housekeeping + email]
+        HPDB[(HandPump local projection cache)]
+        LHDB[(Landlord /data SQLite<br/>durable work + email status)]
+        HP --> HPDB
+        LH --> LHDB
+        HP -->|email history HTTP call + bearer token| LH
+      end
+      DNS[Scaleway private DNS<br/>*.internal]
+      HP -. resolves LANDLORD_INTERNAL_URL .-> DNS
+      FS[(Firestore)]
+      HP <--> FS
+      LH <--> FS
+    end
+
+    Public --> HP
+```
+
+In the split deployment, only HandPump has the public endpoint and custom
+domain. Landlord's `private_endpoint` is reachable from the VPC and is the value
+used for `LANDLORD_INTERNAL_URL`; Landlord's public endpoint should be disabled.
+HandPump forwards email-history requests to Landlord, which queries its own
+SQLite state. HandPump and Landlord use separate database paths and volumes.
+
+In combined mode, the public endpoint still serves HandPump routes, while the
+internal email-history call goes to a loopback-only Landlord listener in the
+same process. The Docker image's default command selects this combined mode.
+
+See Scaleway's [Serverless Containers Private Networks guide](https://www.scaleway.com/en/docs/serverless-containers/how-to/use-private-networks/)
+for enabling and retrieving the private endpoint, and its [private DNS guide](https://www.scaleway.com/en/docs/vpc/reference-content/dns/)
+for the `.internal` hostname format.
+
 ## Run
 
 Install dependencies and run tests:

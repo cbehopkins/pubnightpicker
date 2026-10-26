@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
+	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
 )
 
 type testAuthVerifier struct{}
@@ -211,6 +214,146 @@ func TestAuthenticatedEmailHistoryEndToEnd(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("app did not stop")
 	}
+}
+
+func TestSplitLandlordAndHandPumpEmailHistoryEndToEnd(t *testing.T) {
+	root := t.TempDir()
+	landlordDBPath := filepath.Join(root, "landlord.db")
+	handPumpDBPath := filepath.Join(root, "handpump.db")
+	internalToken := strings.Repeat("a", 48)
+
+	landlordConfig := testConfig(t, landlordDBPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	landlordConfig.Component = "landlord"
+	landlordConfig.InternalHTTPAddr = "127.0.0.1:0"
+	landlordConfig.InternalAPIToken = internalToken
+	landlord, err := app.New(landlordConfig)
+	if err != nil {
+		t.Fatalf("create Landlord: %v", err)
+	}
+	defer landlord.Close()
+	if landlord.HTTPAddr() != "" {
+		t.Fatalf("Landlord exposed a public HTTP listener at %q", landlord.HTTPAddr())
+	}
+	if landlord.InternalHTTPAddr() == "" {
+		t.Fatal("Landlord did not bind its internal HTTP listener")
+	}
+
+	handPump, err := app.New(app.Config{
+		Component:                 "handpump",
+		DBPath:                    handPumpDBPath,
+		HTTPAddr:                  "127.0.0.1:0",
+		AuthVerifier:              testAuthVerifier{},
+		LandlordInternalURL:       "http://" + landlord.InternalHTTPAddr(),
+		InternalAPIToken:          internalToken,
+		VenueSource:               venuecachetest.New(),
+		NotificationProfileSource: notificationprofiletest.New(),
+		Logger:                    testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("create HandPump: %v", err)
+	}
+	defer handPump.Close()
+	if handPump.CellarStore() != nil {
+		t.Fatal("HandPump constructed a Cellar worker store")
+	}
+
+	db := openSQLite(t, landlordDBPath)
+	for index := range 24 {
+		token := fmt.Sprintf("split-send-%02d", index)
+		if _, err := db.Exec(`INSERT INTO email_requests (idempotency_token, message_id, sender_email, sender_name, subject, template_id, text, variables, headers) VALUES (?, ?, '', '', ?, '', '', '{}', '{}')`, token, token, token); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO email_progress (idempotency_token, recipient, recipient_name, state, variables) VALUES (?, 'shared@example.com', '', 'Pending', '{}')`, token); err != nil {
+			t.Fatal(err)
+		}
+		if index == 23 {
+			continue
+		}
+		uid := "verified-user"
+		if index == 22 {
+			uid = "another-user"
+		}
+		if _, err := db.Exec(`INSERT INTO email_ownership VALUES (?, ?, 'shared@example.com', ?)`, uid, token, time.Date(2026, 10, 1, index, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	landlordDone := make(chan error, 1)
+	handPumpDone := make(chan error, 1)
+	go func() { landlordDone <- landlord.Run(ctx) }()
+	go func() { handPumpDone <- handPump.Run(ctx) }()
+	defer func() {
+		cancel()
+		for _, done := range []chan error{handPumpDone, landlordDone} {
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Errorf("component stopped with error: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Error("component did not stop after cancellation")
+			}
+		}
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	waitForHealth(t, client, landlord.InternalHTTPAddr(), landlordDone)
+	waitForHealth(t, client, handPump.HTTPAddr(), handPumpDone)
+
+	request, err := http.NewRequest(http.MethodPost, "http://"+handPump.HTTPAddr()+"/api/email-history", strings.NewReader(`{"request_id":"bca1207e-0519-4512-b9b5-c1b8a1d6fd00"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		UID     string `json:"uid"`
+		Entries []struct {
+			Subject string `json:"subject"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || body.UID != "verified-user" || len(body.Entries) != 20 {
+		t.Fatalf("status=%d body=%+v", response.StatusCode, body)
+	}
+	for index, entry := range body.Entries {
+		if entry.Subject != fmt.Sprintf("split-send-%02d", 21-index) {
+			t.Fatalf("entry %d = %+v", index, entry)
+		}
+	}
+}
+
+func waitForHealth(t *testing.T, client *http.Client, addr string, done chan error) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			done <- err
+			t.Fatalf("component stopped before becoming ready: %v", err)
+		default:
+		}
+		response, err := client.Get("http://" + addr + "/healthz")
+		if err == nil {
+			response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for health endpoint at %s", addr)
 }
 
 func TestAuthenticatedPingEndToEnd(t *testing.T) {
