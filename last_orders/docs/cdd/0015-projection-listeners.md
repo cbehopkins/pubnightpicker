@@ -232,8 +232,11 @@ explicit and observable.
 - Listeners that transform source events into truths, notifications, or other
   asynchronous work rather than maintaining a local projection.
 - A generic backend-wide readiness barrier.
-- Guaranteeing convergence across separate backend instances with independent
-  local databases.
+- Coordinating projection updates across backend instances with independent
+  local databases. V1 deploys one backend instance. Each future instance is
+  expected to run its own source listener and reconcile its own projection, but
+  the shared runner does not coordinate instances or guarantee cross-instance
+  convergence or propagation time.
 
 ## 5. Open Design Questions
 

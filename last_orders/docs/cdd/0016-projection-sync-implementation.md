@@ -175,8 +175,10 @@ repair leftovers in the meantime; do not depend on it for push eligibility.
 Specify opaque encoding and stream scope. Validate generation and sequence
 position; return consistent full snapshots on every connection. Define
 pagination boundaries and full-view responses. Re-authorise each connection.
-After a committed authorization change, signal active streams for that UID
-through an in-memory hub, send a generic reset, and close so the client reconnects.
+After a committed permission or membership change, signal active streams for
+that UID through an in-memory hub. After a visibility change, signal streams
+in the affected authorization scope, including anonymous streams. Send a
+generic reset and close so clients reconnect.
 
 If a later version enables incremental cursor resume, bind a durable per-UID
 authorization epoch into each cursor and compare it before returning deltas.
@@ -739,17 +741,23 @@ notification eligibility. No new public API is exposed by this stage.
 
 ### Handover to Stages 6-7
 
-Keep these as design gates rather than silently deciding them during Stage 5:
+CDD-0013, CDD-0014 and CDD-0017 now record the agreed stream lifecycle and
+prototype decisions. The remaining production gates are:
 
-- Specify public/self/private API representations and authorisation. The
-  combined internal identity does not expose private settings or endpoint
-  credentials to public consumers.
-- Define per-UID in-memory stream invalidation after committed authorization
-  changes. Every reconnect receives a complete, currently authorised snapshot,
-  so no durable invalidation marker is required.
-- Specify opaque cursor encoding, generation/stream scope, valid sequence
-  bounds, high-water marks, pagination and full-refresh envelopes in OpenAPI.
-- Design snapshot-to-live handover, post-commit dispatcher notifications,
-  slow-client policy and the applicable London-midnight reset behaviour.
+- Specify public/self/private API representations and authorization in
+  OpenAPI. The combined internal identity does not expose private settings or
+  endpoint credentials to public consumers.
+- Finalize the opaque cursor and recovery envelopes in OpenAPI, including
+  stream scope, database generation, sequence bounds, high-water marks,
+  pagination and full-refresh behavior.
+- Integrate per-UID invalidation after permission or membership changes and
+  authorization-scope invalidation after visibility changes, including
+  anonymous streams. Each reconnect receives a complete, currently authorized
+  snapshot, so no durable invalidation marker is required in V1.
+- Resolve production HTTP write deadlines, browser authentication transport,
+  CORS for streaming GET requests, readiness gates, snapshot-to-live
+  handover, slow-client policy and the London-midnight reset behavior.
 
-Do not implement cursor or SSE contracts until those decisions are explicit.
+CDD-0017's isolated stream lifecycle prototype may proceed before these
+production gates are closed. Do not wire production cursor parsing or SSE
+endpoints until the applicable OpenAPI and integration decisions are explicit.

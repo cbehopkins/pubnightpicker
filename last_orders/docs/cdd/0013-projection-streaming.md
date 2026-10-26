@@ -64,16 +64,18 @@ It is not an implementation-ready cursor or wire contract.
   not freeze or encode the client's permissions.
 - **Open-stream authorization invalidation:** The HTTP request handler owns the
   long-lived stream; no extra goroutine is needed just to keep it open. Keep an
-  in-memory hub keyed by authenticated UID, with a buffered invalidation signal
-  registered for each
+  in-memory hub indexed by authenticated UID and authorization scope, with a
+  buffered invalidation signal registered for each
   active stream. Register before checking current authorization so a racing
   invalidation is either observed by the check or delivered to the stream.
-  After an authorization change commits, publish an invalidation for the
-  affected UID. The hub non-blockingly signals every registered stream; it does
-  not close per-stream channels. At the next event boundary, the handler sends
-  a generic `view_reset` with no event ID and `data: {}`, then closes the
-  response. The client reconnects and receives a full view after fresh
-  authorization. If no stream is registered, no invalidation state is retained.
+  After a permission or membership change commits, publish an invalidation for
+  the affected UID. After a visibility change, invalidate the affected
+  authorization scope so anonymous streams are covered too. The hub
+  non-blockingly signals the relevant registered streams; it does not close
+  per-stream channels. At the next event boundary, the handler sends a generic
+  `view_reset` with no event ID and `data: {}`, then closes the response. The
+  client reconnects and receives a full view after fresh authorization. If no
+  stream is registered, no invalidation state is retained.
 - Authorization invalidation is in-memory, not durable. A write already in
   flight when invalidation is published may complete; V1 does not promise
   retraction or a strict post-commit send barrier. A stronger guarantee would
@@ -103,9 +105,12 @@ It is not an implementation-ready cursor or wire contract.
 The following original checklist is retained for traceability; current status
 and decisions are recorded below. Sequence allocation and atomic projection
 versions are implemented. Snapshot handover, complete-view event semantics,
-startup gating, single-instance deployment and bounded-client behaviour are
-decided for V1. Cursor encoding remains a proposal. Authorization invalidation
-is decided as a per-UID in-memory stream signal; no durable marker is required
+startup gating, single-instance V1 deployment and bounded-client behaviour are
+decided. Future instances are expected to own independent listeners,
+projections and stream hubs, but cross-instance convergence is not guaranteed
+in V1. Cursor encoding remains a proposal. Permission invalidation is a
+per-UID in-memory signal; visibility invalidation is scoped to the affected
+view boundary, including anonymous streams. No durable marker is required
 because every reconnect receives a complete snapshot.
 
 1. **Sequence writes:** Define the shared SQLite mechanism for allocating a
@@ -124,9 +129,11 @@ because every reconnect receives a complete snapshot.
 5. **Removal and visibility changes:** Define tombstone or equivalent handling
   for deletions and collection-boundary changes, retention, and how sync tells
   clients to remove data that is no longer visible after re-authorization.
-  Publish per-UID stream invalidation only after the authorization change
-  commits. The handler emits a generic reset and closes; reconnect always gets
-  a full snapshot, so no durable marker is required.
+  Publish per-UID stream invalidation only after a permission or membership
+  change commits. Publish authorization-scope invalidation after visibility
+  changes, including for anonymous streams. The handler emits a generic reset
+  and closes; reconnect always gets a full snapshot, so no durable marker is
+  required.
 6. **Recovery:** Define the full-view response and replacement cursor when no
   cursor is supplied or incremental continuation is unsafe, including expired
   cursors, missing deletion history, authorization invalidation, date-boundary
@@ -159,20 +166,23 @@ because every reconnect receives a complete snapshot.
   and the `cursor` field in snapshot/event JSON. `Last-Event-ID` takes
   precedence over `after`. Past-Meet pagination cursors are separate.
 - **Startup/runtime:** Do not accept SSE until required local projections have
-  committed startup baselines. V1 assumes one backend instance and one
-  persistent SQLite database. Close active streams during shutdown. Bound
+  committed startup baselines. V1 deploys one backend instance and one
+  persistent SQLite database. Future instances use independent local databases
+  and listeners; V1 does not guarantee cross-instance convergence. Close active
+  streams during shutdown. Bound
   subscriber buffers; close a slow client's stream on overflow so it can
   reconnect for a complete view.
 - **Public attendance:** Public Group Meet details and attendance counts are
   available anonymously. Anonymous attendance responses and streams never
   expose attendee identities; authenticated GET responses may include attendee
   details.
-- **Authorization invalidation:** After an authorization change commits,
-  non-blockingly signal each active stream registered for the affected UID.
-  The handler sends a generic reset with no event ID and `data: {}`, then
-  closes. The client reconnects and receives a complete snapshot after fresh
-  authorization. No durable marker is needed. An event already in flight may
-  complete.
+- **Authorization invalidation:** After a permission or membership change
+  commits, non-blockingly signal each active stream registered for the affected
+  UID. After a visibility change, signal every stream in the affected
+  authorization scope, including anonymous streams. The handler sends a generic
+  reset with no event ID and `data: {}`, then closes. The client reconnects and
+  receives a complete snapshot after fresh authorization. No durable marker is
+  needed. An event already in flight may complete.
 - **Future incremental resume (not V1):** Cursors remain useful when the
   authorization has not changed. The selected invalidation mechanism is a
   durable per-UID authorization epoch, advanced atomically with the committed

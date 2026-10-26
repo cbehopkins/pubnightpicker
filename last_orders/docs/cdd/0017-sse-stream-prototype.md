@@ -34,7 +34,20 @@ calling endpoint/application layer.
   authorisation commits.
 - The server does not accept stream requests until projection startup readiness
   is complete. Shutdown ends active streams.
-- V1 assumes one backend instance and one persistent SQLite database.
+- The prototype exercises one hub and one persistent SQLite database. V1
+  production also deploys one backend instance. The design keeps listeners,
+  projections and hubs instance-local so future instances can each observe
+  source changes independently, but V1 does not guarantee multi-instance
+  operation or cross-instance convergence. A future reconnect may reach another
+  instance and receive that instance's current local view after authorization
+  is checked there.
+
+UID invalidation covers application permission or membership changes for an
+authenticated caller. Authorization-scope invalidation covers visibility
+changes and includes anonymous streams. Neither mechanism detects Firebase
+ID-token revocation or expiry. That token-lifetime behavior must be resolved
+separately for a long-lived connection; validating the token when the stream
+starts does not imply the server learns of remote token revocation later.
 
 The prototype's first slice deliberately has no cursor parsing or incremental
 resume. Cursor production and consumption are a later, separately tested slice;
@@ -51,8 +64,10 @@ goroutine merely to keep each connection open.
 A small internal component, proposed at
 `internal/lastorders/components/sse`, owns:
 
-- A hub that registers subscriptions by view key and, for authenticated
-  subscriptions, by UID.
+- A hub that registers subscriptions by view key, authorization scope and, for
+  authenticated subscriptions, UID. An authorization scope identifies the
+  resource boundary whose visibility controls the view, such as a Group. This
+  lets visibility changes reset anonymous as well as authenticated streams.
 - A subscription with distinct view-changed, authorisation-invalidated and
   server-shutdown signals.
 - Idempotent unregistration when the request ends.
@@ -69,13 +84,22 @@ The endpoint/application adapter supplies:
 - The view key and SSE event name, such as a Group's current-Meets view or a
   Meet's attendance summary.
 
-The hub has two notification routes:
+The hub has notification routes for view changes and authorization changes:
 
 - `PublishChanged(viewKey)` wakes subscribers to that view. A one-slot signal
   may coalesce repeated notifications because the handler rereads and sends the
   latest complete state.
 - `InvalidateUID(uid)` non-blockingly signals every active subscription for
   that UID, across view keys. It must not wait for a slow client.
+- `InvalidateAllAuthenticated()` non-blockingly signals every active
+  authenticated subscription on this instance. Use this conservative fallback
+  when an authorization-source listener cannot establish which UIDs were
+  affected, and when it reconnects after a period in which changes may have
+  been missed. It must not wait for slow clients.
+- `InvalidateScope(scopeKey)` non-blockingly signals every subscription in the
+  affected authorization scope, including anonymous subscriptions, then causes
+  the generic reset and closes each stream. Use this after a visibility change
+  that may change access to the view. It must not wait for slow clients.
 
 A separate shutdown signal ends all subscriptions. Do not close per-subscription
 channels. Signal them non-blockingly and unregister under synchronised hub
@@ -133,6 +157,10 @@ coordination; do not rely on sleeps or live Firestore. The prototype must test:
 - Multiple changes coalescing to the newest snapshot without losing final state.
 - Invalidation delivered to all active streams for one UID, but not another
   UID; each invalidated stream emits one generic reset and ends.
+- Conservative all-authenticated-stream invalidation resets every authenticated
+  subscription on that hub and does not reset anonymous subscriptions.
+- Scope invalidation resets both authenticated and anonymous subscriptions in
+  the affected scope, without resetting subscriptions in another scope.
 - Registration-before-authorisation races, including invalidation after
   registration but before the initial snapshot is written.
 - Invalidation during a snapshot read and while a response write is in flight;
@@ -176,6 +204,10 @@ remain subject to the cursor design and tests.
   Native `EventSource` cannot set an arbitrary bearer header; a fetch-based
   streaming client is one option. Do not put bearer tokens in cursor/query
   strings.
+- Decide whether Firebase token validity is checked only at stream creation or
+  needs a separate mid-connection expiry/revocation policy. The per-UID hub
+  handles application permission changes, not Firebase token revocation by
+  itself.
 - Update or wrap API CORS policy for authenticated `GET` streaming and its
   preflight behaviour. The current CORS middleware is tailored to `POST` routes.
 - Wire the readiness gate to app startup after the required local projection

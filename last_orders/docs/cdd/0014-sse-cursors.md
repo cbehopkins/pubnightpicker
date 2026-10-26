@@ -85,7 +85,44 @@ The sequence is global, but event delivery remains subject to authorization and 
 
 Only clients with the appropriate authorization and an active relevant subscription should receive resource notifications. A gap in observed sequence numbers does not, by itself, indicate that events were lost, since intervening changes may be irrelevant to that client.
 
-Changes to a client's authorization or subscription scope must not leave it relying on a cursor that no longer represents a complete view of its accessible data. Such changes may require a full refresh.
+For V1, every stream connection checks the caller's current authorization and
+returns a complete current view. After a permission or membership change
+commits, an in-memory hub keyed by UID signals all that user's active streams.
+After a visibility change, the hub invalidates the affected authorization
+scope, including anonymous streams. Each handler sends a generic `view_reset`
+with no event ID and `data: {}`, then closes. The client reconnects and
+receives a complete view under freshly checked authorization. Register a stream before its authorization
+check so an invalidation racing with setup is either caught by the check or
+delivered to the registered stream. The hub signals buffered channels; it does
+not close them. A response write already in flight may complete, so V1 does not
+promise a strict post-commit send barrier. Since reconnects always get a full
+view, V1 needs no durable authorization marker.
+
+Each HandPump instance has its own authorization cache, Firestore source
+listener and in-memory stream hub. The listener on each instance invalidates
+that instance's authorization cache when it observes a role-document change,
+and publishes stream invalidation for UIDs whose effective authorization may
+have changed. An instance's listener does not directly clear another
+instance's cache or signal its hub. Each instance observes Firestore changes
+independently; until it does, authorization or projected data there may
+temporarily be stale. After a cache invalidation, the next protected API
+request checks authorization by refreshing the needed permission from
+Firestore; it does not force ordinary data reads to bypass the local
+projection. The authorization TTL is the fallback for requests on an instance
+whose listener is delayed or has missed a change.
+
+When a roles listener reconnects after an interruption, it invalidates the
+local permission cache and resets all authenticated streams on that instance,
+since changes may have been missed during the interruption. Each stream
+reconnects and receives a fresh authorization check.
+
+For future incremental resume, use a durable per-UID authorization epoch.
+Advance it atomically with the local authorization projection and bind it into
+each cursor. Before returning deltas, compare the cursor's epoch with the
+current durable epoch; a mismatch forces a full, freshly authorised snapshot.
+Retain the epoch across user deletion and do not reset or reuse it within a
+database generation. The in-memory hub remains necessary to close already-open
+streams; it does not invalidate cursors held by disconnected clients.
 
 ## Consequences
 
