@@ -168,7 +168,7 @@ func TestStoreRejectsUnknownSchemaWithoutChangingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := venueSyncState(t, store.base)
-	if _, err := store.base.DB().Exec(`UPDATE venue_cache_schema SET version = 2`); err != nil {
+	if _, err := store.base.DB().Exec(`UPDATE venue_cache_schema SET version = 3`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(store.base); err == nil {

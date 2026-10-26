@@ -46,17 +46,64 @@ func (s *Store) Get(ctx context.Context, venueID string) (VenueProjection, error
 	return projection, nil
 }
 
+// Snapshot returns the complete public venue collection and its committed
+// projection position from one SQLite read transaction.
+func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.SyncState, error) {
+	tx, err := s.base.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, basestore.SyncState{}, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
+			recurrence_json, next_occurrence_date, notes, parking, food,
+			dog_friendly, beer_garden, out_of_town, banned
+		FROM venue_cache WHERE deleted = 0
+		ORDER BY name COLLATE NOCASE, venue_id COLLATE NOCASE
+	`)
+	if err != nil {
+		return nil, basestore.SyncState{}, err
+	}
+	venues := make([]VenueProjection, 0)
+	for rows.Next() {
+		var venue VenueProjection
+		if err := rows.Scan(&venue.ID, &venue.Name, &venue.VenueType, &venue.Website,
+			&venue.Map, &venue.Address, &venue.LocationID, &venue.PhotoURL, &venue.RecurrenceJSON,
+			&venue.NextOccurrenceDate, &venue.Notes, &venue.Parking, &venue.Food,
+			&venue.DogFriendly, &venue.BeerGarden, &venue.OutOfTown, &venue.Banned); err != nil {
+			rows.Close()
+			return nil, basestore.SyncState{}, err
+		}
+		venues = append(venues, venue)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, basestore.SyncState{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, basestore.SyncState{}, err
+	}
+	state, err := s.base.ReadSyncState(ctx, tx)
+	if err != nil {
+		return nil, basestore.SyncState{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, basestore.SyncState{}, err
+	}
+	return venues, state, nil
+}
+
 func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (VenueProjection, bool, error) {
 	var projection VenueProjection
 	var deleted bool
 	err := queryer.QueryRowContext(ctx, `
-		SELECT venue_id, name, venue_type, website, map, address, photo_url,
+		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
 			dog_friendly, beer_garden, out_of_town, banned, deleted
 		FROM venue_cache WHERE venue_id = ?
 	`, venueID).Scan(
 		&projection.ID, &projection.Name, &projection.VenueType, &projection.Website,
-		&projection.Map, &projection.Address, &projection.PhotoURL,
+		&projection.Map, &projection.Address, &projection.LocationID, &projection.PhotoURL,
 		&projection.RecurrenceJSON, &projection.NextOccurrenceDate,
 		&projection.Notes, &projection.Parking, &projection.Food,
 		&projection.DogFriendly, &projection.BeerGarden, &projection.OutOfTown,
@@ -159,16 +206,17 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO venue_cache(
-			venue_id, name, venue_type, website, map, address, photo_url,
+			venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
 			dog_friendly, beer_garden, out_of_town, banned, change_version
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(venue_id) DO UPDATE SET
 			name = excluded.name,
 			venue_type = excluded.venue_type,
 			website = excluded.website,
 			map = excluded.map,
 			address = excluded.address,
+			location_id = excluded.location_id,
 			photo_url = excluded.photo_url,
 			recurrence_json = excluded.recurrence_json,
 			next_occurrence_date = excluded.next_occurrence_date,
@@ -182,7 +230,7 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 			change_version = excluded.change_version,
 			deleted = 0
 	`, projection.ID, projection.Name, projection.VenueType, projection.Website,
-		projection.Map, projection.Address, projection.PhotoURL,
+		projection.Map, projection.Address, projection.LocationID, projection.PhotoURL,
 		projection.RecurrenceJSON, projection.NextOccurrenceDate, projection.Notes,
 		projection.Parking, projection.Food, projection.DogFriendly,
 		projection.BeerGarden, projection.OutOfTown, projection.Banned, sequence)

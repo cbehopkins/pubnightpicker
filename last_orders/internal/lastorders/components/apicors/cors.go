@@ -47,19 +47,20 @@ func Wrap(origins []string, next http.Handler, previewSites ...string) (http.Han
 		if r.Method == http.MethodOptions {
 			w.Header().Add("Vary", "Access-Control-Request-Method")
 			w.Header().Add("Vary", "Access-Control-Request-Headers")
-			if r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
+			method := r.Header.Get("Access-Control-Request-Method")
+			if method != http.MethodGet && method != http.MethodPost && method != http.MethodPatch && method != http.MethodDelete {
 				firebaseauth.WriteError(w, http.StatusForbidden, "forbidden_preflight", "This API method is not allowed.")
 				return
 			}
 			for _, name := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				name = strings.ToLower(strings.TrimSpace(name))
-				if name != "" && name != "authorization" && name != "content-type" {
+				if name != "" && name != "authorization" && name != "content-type" && name != "last-event-id" {
 					firebaseauth.WriteError(w, http.StatusForbidden, "forbidden_preflight", "This API header is not allowed.")
 					return
 				}
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return

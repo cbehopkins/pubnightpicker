@@ -29,6 +29,7 @@ import (
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/ratelimit"
 	"last_orders/internal/lastorders/components/recurrence"
+	"last_orders/internal/lastorders/components/sse"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
@@ -45,6 +46,7 @@ import (
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
+	venuesendpoint "last_orders/internal/lastorders/endpoints/venues"
 	admindeleteplugin "last_orders/internal/lastorders/plugins/admindelete"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
@@ -109,6 +111,9 @@ type Config struct {
 	AllowAuthEmulator      bool
 	AllowedAPIOrigins      []string
 	AllowedAPIPreviewSites []string
+	// CursorSigningKey is the raw key used to sign public API resumption cursors.
+	// Production normally supplies LAST_ORDERS_CURSOR_HMAC_KEY instead.
+	CursorSigningKey []byte
 	// EmailClient selects the provider used for durable email delivery.
 	EmailClient emailplugin.ClientKind
 	// Email contains provider credentials and options. EmailClient remains as a
@@ -174,6 +179,8 @@ type App struct {
 	adminDeleteEvaluateOnce     bool
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
+	venueStreamHub              *sse.Hub
+	venueCursorCodec            *sse.CursorCodec
 	notificationProfileListener *notificationprofilelistener.Listener
 	httpServer                  *http.Server
 	httpListener                net.Listener
@@ -339,7 +346,8 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger)
+	venueStreamHub := sse.NewHub()
+	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger, venueStreamHub)
 	if err != nil {
 		return nil, err
 	}
@@ -915,6 +923,7 @@ func New(cfg Config) (application *App, err error) {
 		component:                   cfg.Component,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
+		venueStreamHub:              venueStreamHub,
 		notificationProfileListener: notificationProfileListener,
 	}
 
@@ -958,9 +967,29 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		return nil
 	}
 	apiMux := http.NewServeMux()
-	apiMux.Handle("POST /api/ping", &pingendpoint.Endpoint{Logger: cfg.Logger})
-	apiMux.Handle("POST /api/email-history", &emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger})
-	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, firebaseauth.Middleware(cfg.AuthVerifier, apiMux), cfg.AllowedAPIPreviewSites...)
+	authenticated := func(handler http.Handler) http.Handler { return firebaseauth.Middleware(cfg.AuthVerifier, handler) }
+	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
+	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
+	key := cfg.CursorSigningKey
+	if len(key) == 0 {
+		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")
+		if venueCursorSecret == "" {
+			return fmt.Errorf("LAST_ORDERS_CURSOR_HMAC_KEY is required when the public API is enabled")
+		}
+		var err error
+		key, err = sse.ParseCursorKey(venueCursorSecret)
+		if err != nil {
+			return fmt.Errorf("parse venue stream cursor key: %w", err)
+		}
+	}
+	codec, err := sse.NewCursorCodec(key)
+	if err != nil {
+		return err
+	}
+	application.venueCursorCodec = codec
+	venueEndpoint := &venuesendpoint.Endpoint{Reader: application.venueCacheService, Ready: application.venueCacheListener.Ready(), Hub: application.venueStreamHub, Cursors: application.venueCursorCodec, Auth: cfg.AuthVerifier}
+	venueEndpoint.Register(apiMux)
+	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {
 		return err
 	}
@@ -1257,6 +1286,9 @@ func (a *App) Close() error {
 
 func (a *App) closeListeners() error {
 	var closeErrs []error
+	if a.venueStreamHub != nil {
+		a.venueStreamHub.Shutdown()
+	}
 	if a.diagnosticsConfiguration != nil {
 		closeErrs = append(closeErrs, a.diagnosticsConfiguration.Close())
 	}

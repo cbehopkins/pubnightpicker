@@ -164,6 +164,11 @@ credential contents. The supplied credentials are shared by Firestore, API token
 verification and optional admin Auth deletion. Emulator clients retain their
 existing unauthenticated behaviour and Auth emulator safety checks.
 
+When the public HTTP API is enabled, set `LAST_ORDERS_CURSOR_HMAC_KEY` to an
+unpadded base64url encoding of at least 32 random bytes. The venue collection
+stream signs its opaque resumption cursors with this secret. Keep the value
+stable across restarts and identical across instances serving the same API.
+
 `GOOGLE_CLOUD_PROJECT` overrides the Firestore project; otherwise production uses
 the credential's project ID. Auth uses `FIREBASE_AUTH_PROJECT_ID` when set, then
 `GOOGLE_CLOUD_PROJECT`, then the credential's project ID. Firestore emulator mode

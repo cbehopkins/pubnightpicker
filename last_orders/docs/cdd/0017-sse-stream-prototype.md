@@ -1,6 +1,6 @@
 # CDD: Reusable SSE Stream Prototype
 
-**Status:** Lifecycle and cursor component prototypes implemented; endpoint integration pending
+**Status:** Lifecycle and cursor components implemented; venue collection endpoint integration in progress
 **Date:** 2026-10-26
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);

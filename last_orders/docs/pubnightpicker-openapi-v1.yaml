@@ -530,9 +530,9 @@ paths:
       operationId: listVenues
       summary: Search venues
       description: |
-        Lists venues visible to the caller. Excludes soft-deleted and banned
-        venues by default. Private venue visibility is evaluated against group
-        access. Only pub venues participate in automatic venue selection.
+        Authentication is optional and does not change the returned data. Lists
+        all non-deleted venues, including banned venues. Only pub venues
+        participate in automatic venue selection.
       security:
         - bearerAuth: []
         - {}
@@ -596,7 +596,7 @@ paths:
       tags: [Venues]
       operationId: createVenue
       summary: Create a venue
-      description: Requires the appropriate global administrative permission.
+      description: Requires the caller's `canManagePubs` permission or global `admin` role.
       security:
         - bearerAuth: []
       requestBody:
@@ -653,7 +653,7 @@ paths:
       tags: [Venues]
       operationId: updateVenue
       summary: Update a venue
-      description: Requires the appropriate global administrative permission.
+      description: Requires the caller's `canManagePubs` permission or global `admin` role.
       security:
         - bearerAuth: []
       requestBody:
@@ -685,7 +685,7 @@ paths:
       tags: [Venues]
       operationId: deleteVenue
       summary: Soft-delete a venue
-      description: Requires the appropriate global administrative permission. This is distinct from the `banned` domain property.
+      description: Requires the caller's `canManagePubs` permission or global `admin` role. This is distinct from the `banned` domain property.
       security:
         - bearerAuth: []
       responses:
@@ -701,6 +701,30 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /venues/stream:
+    get:
+      tags: [Venues]
+      operationId: streamVenues
+      summary: Stream the complete venue list
+      description: |
+        Public full-snapshot stream for the venue list page. The initial event
+        and each subsequent event contain the complete non-deleted venue list,
+        sorted by name. Any committed venue addition, edit or deletion causes
+        a replacement snapshot. `id` and `cursor` carry the same opaque
+        resumption cursor. The stream uses the same public data for every caller.
+      security:
+        - {}
+      responses:
+        '200':
+          description: Server-sent events containing complete venue snapshots.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          description: The supplied resumption cursor is invalid or expired.
+        '503':
+          description: The venue projection is not ready.
   /meets/{group_id}/current:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -1476,6 +1500,8 @@ components:
         dog_friendly:
           type: boolean
         beer_garden:
+          type: boolean
+        out_of_town:
           type: boolean
         banned:
           type: boolean

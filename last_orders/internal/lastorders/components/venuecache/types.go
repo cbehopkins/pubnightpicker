@@ -19,6 +19,7 @@ type VenueProjection struct {
 	Website            string
 	Map                string
 	Address            string
+	LocationID         string
 	PhotoURL           string
 	RecurrenceJSON     string
 	NextOccurrenceDate string
@@ -29,6 +30,7 @@ type VenueProjection struct {
 	BeerGarden         *bool
 	OutOfTown          *bool
 	Banned             *bool
+	DeletedOn          string
 }
 
 func (projection VenueProjection) Equal(other VenueProjection) bool {
@@ -38,6 +40,7 @@ func (projection VenueProjection) Equal(other VenueProjection) bool {
 		projection.Website == other.Website &&
 		projection.Map == other.Map &&
 		projection.Address == other.Address &&
+		projection.LocationID == other.LocationID &&
 		projection.PhotoURL == other.PhotoURL &&
 		projection.RecurrenceJSON == other.RecurrenceJSON &&
 		projection.NextOccurrenceDate == other.NextOccurrenceDate &&
@@ -47,7 +50,8 @@ func (projection VenueProjection) Equal(other VenueProjection) bool {
 		equalOptional(projection.DogFriendly, other.DogFriendly) &&
 		equalOptional(projection.BeerGarden, other.BeerGarden) &&
 		equalOptional(projection.OutOfTown, other.OutOfTown) &&
-		equalOptional(projection.Banned, other.Banned)
+		equalOptional(projection.Banned, other.Banned) &&
+		projection.DeletedOn == other.DeletedOn
 }
 
 func equalOptional[Value comparable](left, right *Value) bool {
@@ -75,6 +79,7 @@ func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 		Website:            optionalString(doc.Data, "web_site"),
 		Map:                optionalString(doc.Data, "map"),
 		Address:            optionalString(doc.Data, "address"),
+		LocationID:         optionalString(doc.Data, "location_id"),
 		PhotoURL:           optionalString(doc.Data, "pubImage"),
 		NextOccurrenceDate: optionalString(doc.Data, "next_occurrence_date"),
 	}
@@ -102,6 +107,16 @@ func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 		projection.RecurrenceJSON, err = normaliseRecurrence(recurrence)
 		if err != nil {
 			return VenueProjection{}, err
+		}
+	}
+	if deleted, ok := doc.Data["deleted_on"]; ok && deleted != nil {
+		switch value := deleted.(type) {
+		case time.Time:
+			projection.DeletedOn = value.UTC().Format(time.RFC3339Nano)
+		case string:
+			projection.DeletedOn = value
+		default:
+			return VenueProjection{}, fmt.Errorf("venue field %q has invalid type %T", "deleted_on", deleted)
 		}
 	}
 	return projection, nil
@@ -230,4 +245,9 @@ func normaliseRecurrence(value any) (string, error) {
 		return "", fmt.Errorf("encode normalised recurrence: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// NormalizeRecurrence validates and canonicalizes an API recurrence value.
+func NormalizeRecurrence(value any) (string, error) {
+	return normaliseRecurrence(value)
 }

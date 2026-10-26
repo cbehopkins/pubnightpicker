@@ -55,6 +55,40 @@ func Middleware(verifier Verifier, next http.Handler) http.Handler {
 	})
 }
 
+// OptionalMiddleware validates a supplied bearer token but allows anonymous
+// requests. It does not grant or change resource visibility.
+func OptionalMiddleware(verifier Verifier, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		values := r.Header.Values("Authorization")
+		if len(values) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if len(values) != 1 || verifier == nil {
+			WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
+			return
+		}
+		parts := strings.Fields(values[0])
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
+			return
+		}
+		verificationCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		principal, err := verifier.Verify(verificationCtx, parts[1])
+		if errors.Is(err, ErrUnauthenticated) || (err == nil && principal.UID == "") {
+			WriteError(w, http.StatusUnauthorized, "unauthenticated", "The sign-in token was refused. Please sign in again.")
+			return
+		}
+		if err != nil {
+			WriteError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication is temporarily unavailable.")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
+	})
+}
+
 func WriteError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

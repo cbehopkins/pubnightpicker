@@ -491,13 +491,11 @@ PATCH  /venues/{venue_id}
 DELETE /venues/{venue_id}
 ```
 
-Venue writes require the appropriate Venue-edit permission or global-administrator authority, as described in section 12.2.
+Creating, editing and deleting Venues require the caller's `canManagePubs` permission or global `admin` role. The server must enforce this permission for all three operations; frontend route guards are not an authorization boundary. This matches the current frontend implementation in `react/src/components/pages/EditPub.js` and `react/src/dbtools/pubs.js`.
 
 ### 12.1 Public discovery
 
-Anonymous users may discover non-deleted public Venues and non-deleted Venues visible to at least one public Group. Global administrators can see all Venues, including deleted records through administrative access.
-
-When a query is scoped to a particular Group, the results must be filtered by that Group's Venue visibility rules.
+In the current API version, venue reads are unrestricted: anonymous and authenticated callers receive the same venue data. Ordinary reads and streams include all non-deleted Venues, including banned Venues. Group visibility does not filter reads in this version.
 
 Potential filters include:
 
@@ -514,11 +512,11 @@ Public Venue responses should contain descriptive information needed by clients,
 
 ### 12.2 Venue visibility
 
-A Venue is created as public or as belonging to a Group. Its Group permission list identifies the Groups that can use or discover it; the exact public/Group representation belongs in OpenAPI.
+A Venue may be associated with Groups for application use. The current API version does not use that association to restrict reads.
 
 The bootstrap process should add the `ampubnight` Group to the visibility list for existing Venues.
 
-Global administrators can always see and edit every Venue and its Group permission list. A non-global administrator must have permission to edit the Venue and be able to see the relevant Group to edit its entry in the Group permission list. Merely seeing a Group does not grant Venue-edit permission. The API must enforce these rules on the server.
+Global administrators can always see and edit every Venue. A caller with `canManagePubs` can create, edit and delete Venues. Merely seeing a Group does not grant `canManagePubs`. The API must enforce this rule on the server.
 
 ### 12.3 Soft deletion
 

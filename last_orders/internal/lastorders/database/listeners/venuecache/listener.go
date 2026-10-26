@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/database/listeners/projectionwatch"
@@ -22,6 +23,7 @@ var errPersistence = errors.New("persist venue cache projection")
 type Listener struct {
 	service   *venuecache.Service
 	store     *venuecache.Store
+	hub       *sse.Hub
 	logger    *slog.Logger
 	ready     chan struct{}
 	failed    chan error
@@ -29,7 +31,7 @@ type Listener struct {
 	lifecycle.Controller
 }
 
-func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logger) (*Listener, error) {
+func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("venue cache service is required")
 	}
@@ -39,7 +41,11 @@ func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logg
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}, nil
+	listener := &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}
+	if len(hubs) > 0 {
+		listener.hub = hubs[0]
+	}
+	return listener, nil
 }
 
 // Ready closes once the first full venue snapshot has been applied.
@@ -86,12 +92,23 @@ func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, 
 				l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
 				continue
 			}
+			if projection.DeletedOn != "" {
+				mutations = append(mutations, mutation)
+				continue
+			}
 			mutation.Projection = &projection
 		}
 		mutations = append(mutations, mutation)
 	}
 	if err := l.store.ApplyBatch(ctx, mutations, baseline); err != nil {
 		return errors.Join(errPersistence, err)
+	}
+	if l.hub != nil && len(changes) > 0 {
+		snapshot, err := l.service.ListSnapshot(ctx)
+		if err != nil {
+			return errors.Join(errPersistence, err)
+		}
+		l.hub.PublishChanged("venues:all", snapshot.State.Sequence)
 	}
 	return nil
 }

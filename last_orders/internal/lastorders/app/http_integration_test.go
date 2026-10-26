@@ -243,6 +243,7 @@ func TestSplitLandlordAndHandPumpEmailHistoryEndToEnd(t *testing.T) {
 		DBPath:                    handPumpDBPath,
 		HTTPAddr:                  "127.0.0.1:0",
 		AuthVerifier:              testAuthVerifier{},
+		CursorSigningKey:          []byte("test-only-cursor-signing-key-32-bytes"),
 		LandlordInternalURL:       "http://" + landlord.InternalHTTPAddr(),
 		InternalAPIToken:          internalToken,
 		VenueSource:               venuecachetest.New(),
