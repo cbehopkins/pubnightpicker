@@ -19,6 +19,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $WorkspaceRoot = $PSScriptRoot
+$MaintenanceNpmVersion = "11.6.2"
 
 if ($Mode -eq "Check" -and $Apply) {
     throw "-Apply requires -Mode Update or -Mode Tidy."
@@ -47,6 +48,10 @@ function Invoke-DependencyCommand {
         [string[]]$CommandArguments,
         [int[]]$AllowedExitCodes = @(0)
     )
+
+    if ($Executable -eq "npm") {
+        $CommandArguments = @("exec", "--yes", "--package=npm@$MaintenanceNpmVersion", "--", "npm") + $CommandArguments
+    }
 
     Write-Host "[Runner] $Executable $($CommandArguments -join ' ')" -ForegroundColor Gray
     & $Executable @CommandArguments

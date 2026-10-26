@@ -141,6 +141,8 @@ Select any combination of `-Go`, `-Node`, and `-Python`; omitting selectors incl
 
 Go updates stay within existing module paths; npm and Poetry updates honour manifest constraints. Major-version migrations and globally installed or transient `npx` tools are not upgraded automatically. Check mode contacts registries and may populate tool caches (Go may also add missing checksum entries), but does not request manifest or lockfile upgrades.
 
+The script runs npm commands through `npm exec --yes --package=npm@11.6.2 -- npm ...`, using a pinned resolver without replacing the globally installed npm. This avoids the `edgesOut` peer-resolution crash reproduced with npm 10.8.2 and 10.9.4. The first run may download npm into its cache. npm 11.6.2 requires Node `^20.17.0 || >=22.9.0`; individual dependencies may require a newer Node version.
+
 Tidy reconciles Go dependency metadata, removes extraneous npm packages, and synchronises the Python environment with its existing lockfile; these are not equivalent operations. Updates do not automatically run tidy or tests. npm lifecycle scripts are disabled during maintenance; the updater explicitly installs the matching Playwright Chromium browser after E2E updates. Other dependencies that need installation scripts may need an explicit rebuild afterwards. Review manifest and lockfile changes, then run the relevant checks using [the test runner](run-tests.ps1).
 
 ## Project documentation
