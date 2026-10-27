@@ -11,20 +11,31 @@ class BrowserWorld extends World {
         ? { channel: process.env.E2E_BROWSER_CHANNEL }
         : {}),
     });
-    this.page = await this.browser.newPage();
-    this.page.setDefaultTimeout(15_000);
-    this.page.setDefaultNavigationTimeout(30_000);
-    this.page.on("console", (message) => {
+    this.actors = new Map();
+    this.page = await this.openActor("default");
+  }
+
+  async openActor(name) {
+    if (this.actors.has(name)) {
+      return this.actors.get(name);
+    }
+    const context = await this.browser.newContext();
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    page.setDefaultNavigationTimeout(30_000);
+    page.on("console", (message) => {
       if (message.type() === "error") {
-        console.error(`[Browser console] ${message.text()}`);
+        console.error(`[${name} browser console] ${message.text()}`);
       }
     });
-    this.page.on("pageerror", (error) => {
-      console.error(`[Browser uncaught error] ${error.stack || error.message}`);
+    page.on("pageerror", (error) => {
+      console.error(`[${name} browser uncaught error] ${error.stack || error.message}`);
     });
-    this.page.on("requestfailed", (request) => {
-      console.error(`[Browser request failed] ${request.url()}: ${request.failure()?.errorText}`);
+    page.on("requestfailed", (request) => {
+      console.error(`[${name} browser request failed] ${request.url()}: ${request.failure()?.errorText}`);
     });
+    this.actors.set(name, page);
+    return page;
   }
 
   async closeBrowser() {

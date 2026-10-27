@@ -67,7 +67,7 @@ poetry run python e2e/run_e2e_tests.py
 ./run-tests.ps1 -Unit             # Unit tests only
 ```
 
-### Admin browser journey
+### Browser journeys
 
 From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 
@@ -93,6 +93,16 @@ process group in cleanup and checks the reserved emulator ports for leftover
 Java/Node emulator processes, including when the scenario fails.
 The only Python application code it invokes is
 `firebase_sub/cli/bootstrap.py`; neither backend is started.
+
+The runner discovers all `features/**/*.feature` files. The chat-permissions
+journey registers Alice through the UI, checks that she has no Chat Page link,
+and signs the bootstrapped admin into a separate Playwright browser context.
+The admin finds Alice in Manage Users and grants Can Chat on her user-detail
+page. Alice's existing session must then show the Chat Page link and open chat,
+without a reload or another login. Each scenario gets a new browser, and named
+actors have isolated browser contexts. Alice uses a unique email address so
+the journey does not depend on other scenarios' accounts; emulator data is
+fresh per run, not reset between scenarios.
 
 ## Test Flow
 
@@ -167,7 +177,7 @@ os.environ["FIRESTORE_EMULATOR_HOST"] = "127.0.0.1:8180"
 
 app = initialize_app(
     credential=google.oauth2.credentials.Credentials(token="owner"),
-    options={"projectId": "demo-firebase-sub-integration"}
+    options={"projectId": "demo-firebase-sub-integration"},
 )
 
 db = firestore.client()

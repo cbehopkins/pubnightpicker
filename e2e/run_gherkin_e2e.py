@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the admin preferences browser journey inside fresh Firebase emulators."""
+"""Run browser journeys inside fresh Firebase emulators."""
 
 import os
 import platform
@@ -270,12 +270,12 @@ def _run_browser_journey() -> int:
     )
     try:
         _wait_for_frontend(frontend)
-        print("[Journey] React dev server is ready; running the Gherkin scenario", flush=True)
+        print("[Journey] React dev server is ready; running the Gherkin scenarios", flush=True)
         cucumber = E2E_DIR / "node_modules" / "@cucumber" / "cucumber" / "bin" / "cucumber.js"
         if not cucumber.exists():
             raise FileNotFoundError("E2E dependencies are missing; run npm ci in e2e/")
         return subprocess.run(
-            [node, str(cucumber), "features/admin-preferences.feature"],
+            [node, str(cucumber), "features/**/*.feature"],
             cwd=E2E_DIR,
             env=env,
             check=False,
