@@ -104,6 +104,25 @@ actors have isolated browser contexts. Alice uses a unique email address so
 the journey does not depend on other scenarios' accounts; emulator data is
 fresh per run, not reset between scenarios.
 
+The poll-lifecycle journey keeps Bob, Claire and the admin in separate browser
+contexts. Bob and Claire register through the UI, and the admin grants both
+Can Add/Delete Poll Pubs and Can Create/Delete Poll; only Claire receives
+Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
+to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
+for both; Bob sees those totals and adds his vote. Claire chooses the winning
+pub, both users see the poll disappear from Active Polls, and both find the
+meet in Current Events. Vote totals are checked without granting Can Show
+Voters or administrator access to either member.
+
+Only the venue catalogue is seeded directly: two pubs and a restaurant, using
+the Firebase Web SDK authenticated as the bootstrapped admin against the
+emulators. Unique venue names and account emails keep the fixture separate
+from other scenarios. The restaurant verifies that the Pub filter excludes
+other venue types. These fixture pubs serve food, so completion needs no
+separate restaurant plan. Since no notifier backend runs, the journey accepts
+the application's explicit notification-handshake warning when completing
+the poll; it does not test email or push delivery.
+
 ## Test Flow
 
 1. **Initialize Firebase**: Connect to emulators (Firestore on 8180, Auth on 9199)

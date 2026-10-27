@@ -4,22 +4,24 @@ import { When, Then } from "@cucumber/cucumber";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
-When("Alice creates an account", async function () {
-    this.aliceEmail = `alice-${randomUUID()}@test.local`;
-    const alice = await this.openActor("Alice");
-    await alice.goto(BASE_URL, { waitUntil: "domcontentloaded" });
-    await alice.getByRole("link", { name: "Register", exact: true }).click();
-    await alice.getByLabel("Full Name", { exact: true }).fill("Alice");
-    await alice.getByLabel("Email Address").fill(this.aliceEmail);
-    await alice.getByLabel("Password", { exact: true }).fill("alice-journey-only-password-2026");
-    await alice.getByRole("button", { name: "Register", exact: true }).click();
+When("{word} creates an account", async function (name) {
+    this.actorEmails ??= new Map();
+    const email = `${name.toLowerCase()}-${randomUUID()}@test.local`;
+    this.actorEmails.set(name, email);
+    const page = await this.openActor(name);
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+    await page.getByRole("link", { name: "Register", exact: true }).click();
+    await page.getByLabel("Full Name", { exact: true }).fill(name);
+    await page.getByLabel("Email Address").fill(email);
+    await page.getByLabel("Password", { exact: true }).fill("journey-only-user-password-2026");
+    await page.getByRole("button", { name: "Register", exact: true }).click();
 });
 
-Then("Alice is logged in", async function () {
-    const alice = this.actors.get("Alice");
-    await alice.waitForURL(`${BASE_URL}/`);
-    await alice.getByRole("link", { name: "My Preferences", exact: true }).waitFor();
-    assert.equal(await alice.getByRole("link", { name: "Login", exact: true }).count(), 0);
+Then("{word} is logged in", async function (name) {
+    const page = this.actors.get(name);
+    await page.waitForURL(`${BASE_URL}/`);
+    await page.getByRole("link", { name: "My Preferences", exact: true }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "Login", exact: true }).count(), 0);
 });
 
 Then("Alice cannot see the Chat Page", async function () {
@@ -29,7 +31,11 @@ Then("Alice cannot see the Chat Page", async function () {
 
 When("the journey admin logs in through a separate browser context", async function () {
     const admin = await this.openActor("admin");
-    assert.notEqual(admin.context(), this.actors.get("Alice").context());
+    for (const [name, page] of this.actors) {
+        if (name !== "admin") {
+            assert.notEqual(admin.context(), page.context());
+        }
+    }
     await admin.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await admin.getByRole("link", { name: "Login", exact: true }).click();
     await admin.getByLabel("Email Address").fill(process.env.E2E_ADMIN_EMAIL);
@@ -41,10 +47,10 @@ Then("the admin sees Alice on the Manage Users page", async function () {
     const admin = this.actors.get("admin");
     await admin.getByRole("link", { name: "Manage Users", exact: true }).click();
     await admin.getByRole("heading", { name: "Manage Users", exact: true }).waitFor();
-    await admin.getByText(this.aliceEmail, { exact: true }).waitFor();
+    await admin.getByText(this.actorEmails.get("Alice"), { exact: true }).waitFor();
     await admin.getByRole("link", { name: "Alice", exact: true }).click();
     await admin.getByRole("heading", { name: "Manage User", exact: true }).waitFor();
-    await admin.getByText(this.aliceEmail, { exact: true }).waitFor();
+    await admin.getByText(this.actorEmails.get("Alice"), { exact: true }).waitFor();
     const canChat = admin.getByRole("checkbox", { name: "Can Chat", exact: true });
     await canChat.waitFor();
     assert.equal(await canChat.isChecked(), false, "Alice must start without CanChat rights");
