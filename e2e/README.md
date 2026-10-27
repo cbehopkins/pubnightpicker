@@ -69,6 +69,11 @@ poetry run python e2e/run_e2e_tests.py
 
 ### Browser journeys
 
+The proposed [Last Orders implementation plan](docs/last-orders-implementation-plan.md)
+describes mandatory backend-dependent journeys, safe orchestration, recurrence,
+voluntary push opt-in and dummy notification assertions. It is a plan, not the
+current runner behaviour described below.
+
 From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 
 ```bash
@@ -122,6 +127,20 @@ other venue types. These fixture pubs serve food, so completion needs no
 separate restaurant plan. Since no notifier backend runs, the journey accepts
 the application's explicit notification-handshake warning when completing
 the poll; it does not test email or push delivery.
+
+The venue-management outline runs independently for Pub, Restaurant and Event.
+Two members register through the UI and receive Can Manage Venues from the
+admin. One creates a venue; the other edits its name, address, website, map,
+notes and attributes. The creator sees the renamed venue without reloading,
+and both members reopen the saved details. The second member also corrects
+the venue type (Pub to Restaurant, Restaurant to Event, or Event to Pub),
+preserving the venue's identity. Type filters and the poll picker must reflect
+the correction. Restaurant food availability is implicit rather than an
+editable checkbox. The creator also receives poll creation and venue-selection
+permissions to check the picker using a temporary poll, which is deleted
+afterwards. Venue data is created entirely through the UI with unique names.
+Recurrence configuration and backend-computed event dates are deliberately
+excluded until the backend is connected to these journeys.
 
 ## Test Flow
 
