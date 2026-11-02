@@ -29,28 +29,25 @@ class TestSeedSmokeIntegration:
 
     def test_smoke_admin_private_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = (
-            firestore_client.collection("users")
-            .document(SMOKE_ADMIN_UID)
-            .get()
-            .to_dict()
-        )
+        snapshot = firestore_client.collection("users").document(SMOKE_ADMIN_UID).get()
+        doc = snapshot.to_dict()
         assert doc is not None
-        assert doc["uid"] == SMOKE_ADMIN_UID
-        assert doc["name"] == "Smoke Admin"
+        assert snapshot.id == SMOKE_ADMIN_UID
+        assert "uid" not in doc
+        assert "name" not in doc
         assert doc["webPushEnabled"] is False
         assert doc["pushPreferences"]["globalChat"] is False
 
     def test_smoke_admin_public_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = (
-            firestore_client.collection("user-public")
-            .document(SMOKE_ADMIN_UID)
-            .get()
-            .to_dict()
+        snapshot = (
+            firestore_client.collection("user-public").document(SMOKE_ADMIN_UID).get()
         )
+        doc = snapshot.to_dict()
         assert doc is not None
-        assert doc["uid"] == SMOKE_ADMIN_UID
+        assert snapshot.id == SMOKE_ADMIN_UID
+        assert "uid" not in doc
+        assert doc["name"] == "Smoke Admin"
 
     def test_smoke_admin_roles(self, firestore_client):
         seed_smoke_data(firestore_client)

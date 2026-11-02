@@ -125,7 +125,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", undefined, undefined);
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "2026-03-30", undefined, undefined);
     });
   });
 
@@ -148,7 +148,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r1", "18:30");
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "2026-03-30", "r1", "18:30");
     });
   });
 
@@ -173,7 +173,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", undefined, undefined);
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "2026-03-30", undefined, undefined);
     });
 
     completePollMock.mockClear();
@@ -183,7 +183,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r2", "18:30");
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "2026-03-30", "r2", "18:30");
     });
   });
 
@@ -207,7 +207,7 @@ describe("ActivePolls", () => {
     fireEvent.click(screen.getByText("confirm-complete"));
 
     await waitFor(() => {
-      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "r1", "19:00");
+      expect(completePollMock).toHaveBeenCalledWith("selected-venue", "poll-1", "2026-03-30", "r1", "19:00");
     });
   });
 });

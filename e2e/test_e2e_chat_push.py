@@ -157,11 +157,8 @@ def run_notifier_subprocess(firebase_sub_dir: Path) -> subprocess.Popen:
     """
     print("[Orchestrator] Starting notifier subprocess in dummy mode...")
 
-    # Build command to run notifier via poetry
     cmd = [
-        "poetry",
-        "run",
-        "python",
+        sys.executable,
         "-m",
         "firebase_sub.cli.sub_events",
         "--dummy-push",
@@ -175,7 +172,6 @@ def run_notifier_subprocess(firebase_sub_dir: Path) -> subprocess.Popen:
     env.setdefault("FIREBASE_AUTH_EMULATOR_HOST", AUTH_EMULATOR_HOST)
     env.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
 
-    # Change to firebase_sub directory to run poetry command
     try:
         process = subprocess.Popen(
             cmd,
@@ -199,12 +195,7 @@ def wait_for_notifier_ready(
     process: subprocess.Popen, timeout_sec: float, log_capture: NotifierLogCapture
 ) -> bool:
     """Wait for notifier startup logs that indicate listeners are active."""
-    required_markers = (
-        "Notification request/ack mirror listener started",
-        "Poll listeners using recent history",
-        "Chat message push listener started",
-    )
-    seen: set[str] = set()
+    ready_marker = "sub_events runtime started"
     start = time.time()
 
     while time.time() - start < timeout_sec:
@@ -220,11 +211,7 @@ def wait_for_notifier_ready(
             print(f"[Notifier] {line}")
             log_capture.add_line(line)
 
-            for marker in required_markers:
-                if marker in line:
-                    seen.add(marker)
-
-            if len(seen) == len(required_markers):
+            if ready_marker in line:
                 return True
 
     return False
@@ -344,7 +331,15 @@ def test_chat_push_e2e_flow() -> None:
         # Cleanup: terminate notifier subprocess
         if notifier_process and notifier_process.poll() is None:
             print("\n[Orchestrator] Terminating notifier subprocess...")
-            notifier_process.terminate()
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(notifier_process.pid), "/T", "/F"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                notifier_process.terminate()
             try:
                 notifier_process.wait(timeout=5)
             except subprocess.TimeoutExpired:

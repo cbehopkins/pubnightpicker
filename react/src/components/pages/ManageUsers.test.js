@@ -126,9 +126,9 @@ describe("ManageUsers responsive layout", () => {
 
         const links = screen.getAllByRole("link");
         expect(links[0].textContent).toContain("Alpha User");
-        expect(links[0].getAttribute("href")).toBe("/manage_users/uid-a");
+        expect(links[0].getAttribute("href")).toBe("/admin/users/uid-a");
         expect(links[1].textContent).toContain("Bravo User");
-        expect(links[1].getAttribute("href")).toBe("/manage_users/uid-b");
+        expect(links[1].getAttribute("href")).toBe("/admin/users/uid-b");
         expect(useIsMobileViewMock).toHaveBeenCalledWith(1200);
     });
 
@@ -143,7 +143,7 @@ describe("ManageUsers responsive layout", () => {
 
         expect(screen.getByRole("table")).toBeTruthy();
         const alphaLink = screen.getByRole("link", { name: "Alpha User" });
-        expect(alphaLink.getAttribute("href")).toBe("/manage_users/uid-a");
+        expect(alphaLink.getAttribute("href")).toBe("/admin/users/uid-a");
     });
 
     it("does not fall back to private names when a public profile is missing", () => {
@@ -188,15 +188,15 @@ describe("ManageUsers responsive layout", () => {
         useIsMobileViewMock.mockReturnValue(false);
 
         render(
-            <MemoryRouter initialEntries={["/manage_users/uid-a"]}>
+            <MemoryRouter initialEntries={["/admin/users/uid-a"]}>
                 <Routes>
-                    <Route path="/manage_users/:userId" element={<ManageUserDetail />} />
+                    <Route path="/admin/users/:userId" element={<ManageUserDetail />} />
                 </Routes>
             </MemoryRouter>
         );
 
         expect(screen.getByRole("heading", { name: "Manage User" })).toBeTruthy();
-        expect(screen.getByRole("link", { name: "Back to Manage Users" }).getAttribute("href")).toBe("/manage_users");
+        expect(screen.getByRole("link", { name: "Back to Manage Users" }).getAttribute("href")).toBe("/admin/users");
         expect(screen.getByRole("checkbox", { name: "Admin" })).toBeTruthy();
         expect(screen.getByRole("checkbox", { name: "Can Chat" })).toBeTruthy();
     });

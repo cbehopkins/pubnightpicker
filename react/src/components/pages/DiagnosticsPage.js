@@ -540,21 +540,33 @@ export function AdminDeletePanel() {
     );
 }
 
+export function AdminConfigPage() {
+    return (
+        <div className="py-3">
+            <h1 className="h3 mb-4">Config</h1>
+            <EmailSuppressionPanel />
+            <AdminDeletePanel />
+        </div>
+    );
+}
+
+export function AdminLogsPage() {
+    return (
+        <div className="py-3">
+            <h1 className="h3 mb-4">Logs</h1>
+            <PollActionAuditPanel />
+        </div>
+    );
+}
+
 function DiagnosticsPage() {
     const uid = useSelector((state) => state.auth.uid);
 
     return (
-        <div className="container py-4 py-md-5">
-            <h1 className="display-6 fw-bold mb-3">Diagnostics</h1>
-            <p className="text-body-secondary mb-4">
-                Admin-only tools for backend diagnostics and runtime controls.
-            </p>
+        <div className="py-3">
+            <h1 className="h3 mb-4">Diagnostics</h1>
 
             <BackendPingPanel />
-
-            <EmailSuppressionPanel />
-
-            <AdminDeletePanel />
 
             <NotificationPingPanel
                 title="Admin Diagnostics"
@@ -586,8 +598,6 @@ function DiagnosticsPage() {
             )}
 
             <AutopopulateCandidateListsPanel />
-
-            <PollActionAuditPanel />
         </div>
     );
 }
