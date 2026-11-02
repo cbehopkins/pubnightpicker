@@ -211,7 +211,7 @@ function ManageUsersList({ sortedUsers }) {
                 return (
                     <NavLink
                         key={uid}
-                        to={`/manage_users/${uid}`}
+                        to={`/admin/users/${uid}`}
                         className="list-group-item list-group-item-action d-flex flex-column"
                     >
                         <span className="fw-semibold">{displayName}</span>
@@ -270,7 +270,7 @@ function ManageUsersTable({
                                         </Button>
                                     </td>
                                     <td>
-                                        <NavLink to={`/manage_users/${key}`} className="link-primary">
+                                        <NavLink to={`/admin/users/${key}`} className="link-primary">
                                             {value?.name || value?.email || key}
                                         </NavLink>
                                     </td>
@@ -345,8 +345,8 @@ function ManageUsers() {
     } = useManageUsersState();
 
     return (
-        <div className="container py-3 text-body">
-            <h1 className="mb-3">Manage Users</h1>
+        <div className="py-3 text-body">
+            <h1 className="h3 mb-4">Manage Users</h1>
 
             {lastDeleteSummaryLines.length > 0 && (
                 <Alert variant="info" className="mb-3">
@@ -409,8 +409,8 @@ function ManageUserDetailPage() {
 
     if (!user && !hasLoadedUsers) {
         return (
-            <div className="container py-3 text-body">
-                <h1 className="mb-3">Manage User</h1>
+            <div className="py-3 text-body">
+                <h1 className="h3 mb-4">Manage User</h1>
                 <p>Loading user details...</p>
             </div>
         );
@@ -418,18 +418,18 @@ function ManageUserDetailPage() {
 
     if (!user) {
         return (
-            <div className="container py-3 text-body">
-                <h1 className="mb-3">Manage User</h1>
+            <div className="py-3 text-body">
+                <h1 className="h3 mb-4">Manage User</h1>
                 <p className="mb-3">User not found.</p>
-                <NavLink to="/manage_users" className="btn btn-secondary">Back to Manage Users</NavLink>
+                <NavLink to="/admin/users" className="btn btn-secondary">Back to Manage Users</NavLink>
             </div>
         );
     }
 
     return (
-        <div className="container py-3 text-body">
+        <div className="py-3 text-body">
             <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
-                <NavLink to="/manage_users" className="btn btn-secondary">Back to Manage Users</NavLink>
+                <NavLink to="/admin/users" className="btn btn-secondary">Back to Manage Users</NavLink>
                 <Button type="button" variant="info" onClick={() => setSelectedUID(userId)}>View UID</Button>
                 <Button
                     type="button"
@@ -460,7 +460,7 @@ function ManageUserDetailPage() {
                 </Alert>
             )}
 
-            <h1 className="mb-1">Manage User</h1>
+            <h1 className="h3 mb-1">Manage User</h1>
             <h2 className="h4 mb-1">{user?.name || user?.email || userId}</h2>
             <p className="text-body-secondary mb-3 text-break">{user?.email || "No email"}</p>
 
@@ -538,7 +538,7 @@ function ManageUserDetailPage() {
                             });
                             setDeleteProgress("Deletion request queued");
                             notifyInfo("User app data deleted and auth deletion request queued for backend processing.");
-                            navigate("/manage_users", {
+                            navigate("/admin/users", {
                                 state: {
                                     lastDeleteSummaryLines: summaryLines,
                                     lastDeleteUserLabel: user?.email || userId,

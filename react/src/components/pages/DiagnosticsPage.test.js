@@ -84,7 +84,7 @@ vi.mock("../../dbtools/diagnosticsConfig", () => ({
     setAdminDeletePaused: setAdminDeleteMock,
 }));
 
-import DiagnosticsPage, { AdminDeletePanel, AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
+import DiagnosticsPage, { AdminConfigPage, AdminLogsPage, AdminDeletePanel, AutopopulateCandidateListsPanel, EmailSuppressionPanel, PollActionAuditPanel } from "./DiagnosticsPage";
 
 describe("AdminDeletePanel", () => {
     const checkbox = () => screen.getByRole("checkbox", { name: "Pause admin deletions" });
@@ -252,7 +252,24 @@ it("includes the direct Last Orders API panel on diagnostics", () => {
     onSnapshotMock.mockImplementation(() => () => { });
     render(<DiagnosticsPage />);
     expect(screen.getByRole("region", { name: "Last Orders API" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Admin Deletions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Poll Action Audit" })).not.toBeInTheDocument();
+    cleanup();
+});
+
+it("keeps runtime controls on Config", () => {
+    render(<AdminConfigPage />);
     expect(screen.getByRole("region", { name: "Admin Deletions" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Silence notifications" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Last Orders API" })).not.toBeInTheDocument();
+    cleanup();
+});
+
+it("keeps the poll action audit on Logs", () => {
+    onSnapshotMock.mockImplementation(() => () => { });
+    render(<AdminLogsPage />);
+    expect(screen.getByRole("heading", { name: "Poll Action Audit" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Silence notifications" })).not.toBeInTheDocument();
     cleanup();
 });
 

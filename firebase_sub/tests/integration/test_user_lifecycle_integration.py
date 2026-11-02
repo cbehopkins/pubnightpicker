@@ -89,11 +89,12 @@ class TestBootstrappedUserFirestoreDocs:
 
     def test_create_admin_writes_private_user_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = (
-            firestore_client.collection("users").document("smoke-admin").get().to_dict()
-        )
+        snapshot = firestore_client.collection("users").document("smoke-admin").get()
+        doc = snapshot.to_dict()
         assert doc is not None
-        assert doc["uid"] == "smoke-admin"
+        assert snapshot.id == "smoke-admin"
+        assert "uid" not in doc
+        assert "name" not in doc
         assert doc["webPushEnabled"] is False
         # Required notification fields
         assert "notificationEmailEnabled" in doc
@@ -101,15 +102,14 @@ class TestBootstrappedUserFirestoreDocs:
 
     def test_create_admin_writes_public_user_doc(self, firestore_client):
         seed_smoke_data(firestore_client)
-        doc = (
-            firestore_client.collection("user-public")
-            .document("smoke-admin")
-            .get()
-            .to_dict()
+        snapshot = (
+            firestore_client.collection("user-public").document("smoke-admin").get()
         )
+        doc = snapshot.to_dict()
         assert doc is not None
-        assert doc["uid"] == "smoke-admin"
-        assert "name" in doc
+        assert snapshot.id == "smoke-admin"
+        assert "uid" not in doc
+        assert doc["name"] == "Smoke Admin"
 
     def test_create_admin_grants_admin_role(self, firestore_client):
         seed_smoke_data(firestore_client)
