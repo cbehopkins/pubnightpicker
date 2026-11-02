@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminLayout from "./AdminLayout";
@@ -76,13 +76,43 @@ describe("Admin layout", () => {
         expect(screen.getByRole("button", { name: "Config" })).toHaveAttribute("aria-expanded", "true");
     });
 
-    it("keeps Manage Users selected for user detail routes", () => {
+    it("collapses and reopens the current section without changing its route", async () => {
+        renderAdmin("/admin/config");
+        const content = screen.getByRole("heading", { name: "Config content" });
+        const header = screen.getByRole("button", { name: "Config" });
+        const panel = content.closest(".accordion-collapse");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(screen.getByLabelText("Current path")).toHaveTextContent("/admin/config");
+        await waitFor(() => expect(panel).toHaveClass("collapse"));
+        expect(panel).not.toHaveClass("show");
+        expect(content).toBeInTheDocument();
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "true");
+        await waitFor(() => expect(panel).toHaveClass("show"));
+    });
+
+    it("opens another section after collapsing and follows browser history", () => {
+        renderAdmin();
+        fireEvent.click(screen.getByRole("button", { name: "Manage Users" }));
+        expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "false");
+        fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+        expect(screen.getByRole("button", { name: "Logs" })).toHaveAttribute("aria-expanded", "true");
+        fireEvent.click(screen.getByRole("button", { name: "Back" }));
+        expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "true");
+        fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+        expect(screen.getByRole("button", { name: "Logs" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("preserves user detail routes when collapsing and reopening Manage Users", () => {
         renderAdmin("/admin/users/example-user");
         expect(screen.getByRole("heading", { name: "User detail content" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "true");
         fireEvent.click(screen.getByRole("button", { name: "Manage Users" }));
-        expect(screen.getByRole("heading", { name: "User detail content" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "false");
         expect(screen.getByLabelText("Current path")).toHaveTextContent("/admin/users/example-user");
+        fireEvent.click(screen.getByRole("button", { name: "Manage Users" }));
+        expect(screen.getByRole("heading", { name: "User detail content" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "true");
     });
 

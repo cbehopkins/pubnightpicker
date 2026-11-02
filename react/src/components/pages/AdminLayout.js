@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Accordion } from "react-bootstrap";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import ProtectedRoute from "../ProtectedRoute";
@@ -10,17 +11,24 @@ const sections = [
 ];
 
 function AdminLayout() {
-    const { pathname } = useLocation();
+    const location = useLocation();
+    const { pathname } = location;
     const navigate = useNavigate();
+    const [collapsedLocationKey, setCollapsedLocationKey] = useState(null);
     const currentSection = sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`));
 
     return (
         <div className="container-fluid px-3 px-md-4 py-4">
             <h1 className="h5 fw-semibold mb-3">Admin</h1>
             <Accordion
-                activeKey={currentSection?.path}
+                activeKey={collapsedLocationKey === location.key ? null : currentSection?.path}
                 onSelect={(path) => {
-                    if (path && path !== currentSection?.path) {
+                    if (!path) {
+                        setCollapsedLocationKey(location.key);
+                        return;
+                    }
+                    setCollapsedLocationKey(null);
+                    if (path !== currentSection?.path) {
                         navigate(path);
                     }
                 }}
