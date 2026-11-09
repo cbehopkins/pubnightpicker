@@ -158,11 +158,8 @@ def run_notifier_subprocess(firebase_sub_dir: Path) -> subprocess.Popen:
     """
     print("[Orchestrator] Starting notifier subprocess in dummy mode...")
 
-    # Build command to run notifier via poetry
     cmd = [
-        "poetry",
-        "run",
-        "python",
+        sys.executable,
         "-m",
         "firebase_sub.cli.sub_events",
         "--dummy-email",
@@ -177,7 +174,6 @@ def run_notifier_subprocess(firebase_sub_dir: Path) -> subprocess.Popen:
     env.setdefault("FIREBASE_AUTH_EMULATOR_HOST", AUTH_EMULATOR_HOST)
     env.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
 
-    # Change to firebase_sub directory to run poetry command
     try:
         process = subprocess.Popen(
             cmd,
@@ -304,8 +300,7 @@ def test_chat_push_e2e_flow() -> None:
         )
         assert ready, (
             "notifier did not become ready in time "
-            f"(exit code: {notifier_process.poll()})\n"
-            + "\n".join(log_capture.logs)
+            f"(exit code: {notifier_process.poll()})\n" + "\n".join(log_capture.logs)
         )
 
         # Spawn frontend client after notifier is listening so the create event
@@ -352,7 +347,15 @@ def test_chat_push_e2e_flow() -> None:
         # Cleanup: terminate notifier subprocess
         if notifier_process and notifier_process.poll() is None:
             print("\n[Orchestrator] Terminating notifier subprocess...")
-            notifier_process.terminate()
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(notifier_process.pid), "/T", "/F"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                notifier_process.terminate()
             try:
                 notifier_process.wait(timeout=5)
             except subprocess.TimeoutExpired:

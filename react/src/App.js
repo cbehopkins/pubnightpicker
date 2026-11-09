@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useLocation, useParams } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "./firebase";
@@ -38,6 +38,13 @@ const ManageUserDetail = lazy(() =>
 const PrivacyPage = lazy(() => import("./components/pages/PrivacyPage"));
 const ChatPage = lazy(() => import("./components/pages/ChatPage"));
 const DiagnosticsPage = lazy(() => import("./components/pages/DiagnosticsPage"));
+const AdminLayout = lazy(() => import("./components/pages/AdminLayout"));
+const AdminLogsPage = lazy(() =>
+  import("./components/pages/DiagnosticsPage").then((module) => ({ default: module.AdminLogsPage })),
+);
+const AdminConfigPage = lazy(() =>
+  import("./components/pages/DiagnosticsPage").then((module) => ({ default: module.AdminConfigPage })),
+);
 const CurrentEvents = lazy(() => import("./components/pages/CurrentEvents"));
 const PastEvents = lazy(() =>
   import("./components/pages/CurrentEvents").then((module) => ({
@@ -57,6 +64,12 @@ function LegacyPubRouteRedirect() {
     return <Navigate to="/venues" replace />;
   }
   return <Navigate to={`/venues/${pubId}`} replace />;
+}
+
+function LegacyUserRouteRedirect() {
+  const { userId } = useParams();
+  const location = useLocation();
+  return <Navigate to={userId ? `/admin/users/${userId}` : "/admin/users"} state={location.state} replace />;
 }
 
 function App() {
@@ -157,21 +170,33 @@ function App() {
           ],
         },
         {
+          path: "admin",
+          element: <LazyRoute><AdminLayout /></LazyRoute>,
+          children: [
+            { index: true, element: <Navigate to="/admin/users" replace /> },
+            { path: "users", element: <LazyRoute><ManageUsers /></LazyRoute> },
+            { path: "users/:userId", element: <LazyRoute><ManageUserDetail /></LazyRoute> },
+            { path: "diagnostics", element: <LazyRoute><DiagnosticsPage /></LazyRoute> },
+            { path: "logs", element: <LazyRoute><AdminLogsPage /></LazyRoute> },
+            { path: "config", element: <LazyRoute><AdminConfigPage /></LazyRoute> },
+          ],
+        },
+        {
           path: "manage_users",
           children: [
             {
               index: true,
-              element: <LazyRoute><ManageUsers /></LazyRoute>,
+              element: <LegacyUserRouteRedirect />,
             },
             {
               path: ":userId",
-              element: <LazyRoute><ManageUserDetail /></LazyRoute>,
+              element: <LegacyUserRouteRedirect />,
             },
           ],
         },
         {
           path: "diagnostics",
-          element: <LazyRoute><DiagnosticsPage /></LazyRoute>,
+          element: <Navigate to="/admin/diagnostics" replace />,
         },
         {
           path: "chat",

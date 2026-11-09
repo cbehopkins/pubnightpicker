@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import authReducer, { authAdded } from "./store/authSlice";
+import { useLocation, useParams } from "react-router-dom";
 
 const {
   createBrowserRouterMock,
@@ -33,6 +34,7 @@ vi.mock("react-router-dom", () => {
     createBrowserRouter: createBrowserRouterMock,
     RouterProvider: () => <div data-testid="router-provider" />,
     Navigate,
+    useLocation: vi.fn(() => ({ state: null })),
     useParams: vi.fn(() => ({ pubId: "venue-1" })),
   };
 });
@@ -168,6 +170,30 @@ describe("App routes", () => {
 
     const indexChild = pubsRoute.children.find((child) => child.index);
     expect(indexChild.element.props.to).toBe("/venues");
+  });
+
+  it("registers admin sections and redirects the old diagnostics URL", () => {
+    render(<App />);
+
+    const children = createBrowserRouterMock.mock.calls[0][0][0].children;
+    const admin = children.find((child) => child.path === "admin");
+    expect(admin.element).toBeTruthy();
+    expect(admin.children.find((child) => child.index).element.props.to).toBe("/admin/users");
+    expect(admin.children.filter((child) => child.path).map((child) => child.path)).toEqual([
+      "users", "users/:userId", "diagnostics", "logs", "config",
+    ]);
+    expect(children.find((child) => child.path === "diagnostics").element.props.to).toBe("/admin/diagnostics");
+    const legacyUsers = children.find((child) => child.path === "manage_users");
+    expect(legacyUsers.children.find((child) => child.index).element.type().props.to).toBe("/admin/users");
+    vi.mocked(useParams).mockReturnValue({ userId: "user-123" });
+    const state = { lastDeleteSummaryLines: ["Deletion complete"] };
+    vi.mocked(useLocation).mockReturnValue({ state });
+    const redirect = legacyUsers.children.find((child) => child.path === ":userId").element.type();
+    expect(redirect.props.to).toBe("/admin/users/user-123");
+    expect(redirect.props.state).toBe(state);
+    expect(redirect.props.replace).toBe(true);
+    vi.mocked(useParams).mockReturnValue({ pubId: "venue-1" });
+    vi.mocked(useLocation).mockReturnValue({ state: null });
   });
 
   it("registers the dedicated event chat route", () => {

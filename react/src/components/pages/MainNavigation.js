@@ -64,8 +64,7 @@ function MainNavigation() {
               <Nav.Link as={NavLink} to="/venues" end className={navLinkClassName} onClick={() => setExpanded(false)}>
                 {loggedIn ? "Manage Venues" : "View Venues"}
               </Nav.Link>
-              {admin && <Nav.Link as={NavLink} to="/manage_users" end className={navLinkClassName} onClick={() => setExpanded(false)}>Manage Users</Nav.Link>}
-              {admin && <Nav.Link as={NavLink} to="/diagnostics" end className={navLinkClassName} onClick={() => setExpanded(false)}>Diagnostics</Nav.Link>}
+              {admin && <Nav.Link as={NavLink} to="/admin" className={navLinkClassName} onClick={() => setExpanded(false)}>Admin</Nav.Link>}
               {!loggedIn && <Nav.Link as={NavLink} to="/login" end className={navLinkClassName} onClick={() => setExpanded(false)}>Login</Nav.Link>}
               {loggedIn && <Nav.Link as={NavLink} to="/active_polls" end className={navLinkClassName} onClick={() => setExpanded(false)}>Active Polls</Nav.Link>}
               <Nav.Link as={NavLink} to="/current_events" end className={navLinkClassName} onClick={() => setExpanded(false)}>Current Events</Nav.Link>

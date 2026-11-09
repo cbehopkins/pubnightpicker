@@ -45,8 +45,8 @@ When("the journey admin logs in through a separate browser context", async funct
 
 Then("the admin sees Alice on the Manage Users page", async function () {
     const admin = this.actors.get("admin");
-    await admin.getByRole("link", { name: "Manage Users", exact: true }).click();
-    await admin.getByRole("heading", { name: "Manage Users", exact: true }).waitFor();
+    await admin.getByRole("link", { name: "Admin", exact: true }).click();
+    await admin.getByRole("heading", { name: "Manage Users", exact: true, level: 1 }).waitFor();
     await admin.getByText(this.actorEmails.get("Alice"), { exact: true }).waitFor();
     await admin.getByRole("link", { name: "Alice", exact: true }).click();
     await admin.getByRole("heading", { name: "Manage User", exact: true }).waitFor();
@@ -69,5 +69,5 @@ Then("Alice can open the Chat Page without reloading or signing in again", async
     await alice.getByRole("link", { name: "Chat Page", exact: true }).click();
     await alice.waitForURL("**/chat");
     await alice.getByRole("heading", { name: "Chat Page", exact: true }).waitFor();
-    assert.equal(await alice.getByRole("link", { name: "Manage Users", exact: true }).count(), 0);
+    assert.equal(await alice.getByRole("link", { name: "Admin", exact: true }).count(), 0);
 });

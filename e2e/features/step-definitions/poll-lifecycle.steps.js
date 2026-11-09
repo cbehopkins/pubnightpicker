@@ -57,8 +57,8 @@ Given("the following journey venues are available:", async function (table) {
 
 When("the admin grants {word} the following permissions:", async function (name, table) {
     const admin = this.actors.get("admin");
-    await admin.getByRole("link", { name: "Manage Users", exact: true }).click();
-    await admin.getByRole("heading", { name: "Manage Users", exact: true }).waitFor();
+    await admin.getByRole("link", { name: "Admin", exact: true }).click();
+    await admin.getByRole("heading", { name: "Manage Users", exact: true, level: 1 }).waitFor();
     await admin.getByText(this.actorEmails.get(name), { exact: true }).waitFor();
     await admin.getByRole("link", { name, exact: true }).click();
     await admin.getByRole("heading", { name: "Manage User", exact: true }).waitFor();
