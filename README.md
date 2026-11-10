@@ -19,12 +19,6 @@ This README is the contributor's starting point: it maps the repository and gets
 
 The Go projects are separate modules. `last_orders` uses the local `cellar`, `durable_email`, and `email_clients` modules via Go `replace` directives. Read the nearest project `README.md` and `AGENTS.md` before making project-specific changes.
 
-The root `go.work` groups these modules for Go tooling and VS Code's Go language
-server (`gopls`); the repository root is not itself a Go module. After adding or
-changing the workspace file, run **Go: Restart Language Server** from VS Code's
-Command Palette. Continue running module-specific commands from the relevant
-module directory.
-
 The browser suite is documented in [the E2E README](e2e/README.md). Its default
 command and `./run-tests.ps1 -E2E` run frontend-only and Last Orders groups in
 separate fresh Firebase emulator lifetimes. Python supplies the bootstrap CLI,
