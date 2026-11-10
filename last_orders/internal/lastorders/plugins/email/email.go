@@ -205,7 +205,27 @@ func (p *Plugin) submissionPolicy(_ context.Context, submission durableemail.Sub
 		}
 	}
 	p.logger.Info("email submission selected", "client", p.clientKind, "mode", mode, "actor_exception", actorException, "idempotency_token", submission.IdempotencyToken, "recipient_count", submission.RecipientCount)
+	if p.clientKind == ClientDummy {
+		decision.Client = dummyEvidenceClient{client: decision.Client, logger: p.logger, token: submission.IdempotencyToken}
+	}
 	return decision, nil
+}
+
+type dummyEvidenceClient struct {
+	client clients.EmailClient
+	logger *slog.Logger
+	token  string
+}
+
+func (client dummyEvidenceClient) Send(ctx context.Context, email clients.Email) (clients.SendResult, error) {
+	client.logger.Info("dummy email submission prepared",
+		"idempotency_token", client.token,
+		"message_id", email.Headers[durableemail.MessageIDHeader],
+		"subject", email.Subject,
+		"variables", email.Variables,
+		"recipient_count", len(email.To),
+	)
+	return client.client.Send(ctx, email)
 }
 
 func (p *Plugin) guardSubmission(_ context.Context, submission durableemail.Submission) (time.Duration, error) {

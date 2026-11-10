@@ -60,7 +60,8 @@ When("the admin grants {word} the following permissions:", async function (name,
     await admin.getByRole("link", { name: "Admin", exact: true }).click();
     await admin.getByRole("heading", { name: "Manage Users", exact: true, level: 1 }).waitFor();
     await admin.getByText(this.actorEmails.get(name), { exact: true }).waitFor();
-    await admin.getByRole("link", { name, exact: true }).click();
+    await admin.getByRole("row").filter({ hasText: this.actorEmails.get(name) })
+        .getByRole("link", { name, exact: true }).click();
     await admin.getByRole("heading", { name: "Manage User", exact: true }).waitFor();
     await admin.getByText(this.actorEmails.get(name), { exact: true }).waitFor();
     for (const { permission } of table.hashes()) {

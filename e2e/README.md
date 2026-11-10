@@ -181,6 +181,47 @@ IDs and endpoint IDs only, not endpoint URLs or subscription keys. These tests
 verify backend submission to the dummy transport; they do not prove delivery to
 the browser or display by the operating system.
 
+The separate `@last_orders` poll-push feature creates and manually completes a
+poll through the UI. Five members cover both poll categories enabled, opens
+only, completions only, neither category, and push disabled with an inactive
+endpoint. Exact recipient and payload assertions include the opted-in poll
+actor and a non-voter. The poll-reschedule-push feature independently verifies
+a main-venue change, adding a restaurant without changing the main venue, and
+changing only the restaurant meetup time. Reschedules use completion preferences.
+Poll auto-completion and manual-completion reminder pushes are not covered.
+
+Before each poll action, these journeys wait for committed backend projection
+evidence for the members' poll preferences and endpoint states. Manual completion
+requires a matching notification request/acknowledgement; an unacknowledged
+browser warning is dismissed, never accepted. Push assertions wait for the
+backend-written `push` key in `open_actions` or `comp_actions`, which follows
+terminal delivery processing, then compare all dummy submissions for that poll
+against the cumulative expected endpoint/payload set. This checks exclusions
+and unexpected repeat submissions without fixed sleeps. Each scenario disables
+its members' push subscriptions through the UI and waits for projection evidence,
+so those accounts do not receive pushes from later scenarios sharing the emulator.
+These journeys verify dummy submission only, not provider or browser delivery.
+
+The `@last_orders` poll-email and poll-reschedule-email features cover the same
+UI-created polls, manual completions, venue changes and independent restaurant
+and meetup-time changes through the dummy email client. Four members cover both
+email opt-ins, opens only, completions only and neither. Each saves a synthetic
+notification address distinct from their login email; personal messages must go
+to that address, including the opted-in actor and a non-voter. Completion and
+reschedule assertions also require exactly one mailing-list copy without a
+personal unsubscribe link. Personal copies include the recipient's unsubscribe
+URL. Subject templates and variables, rendered content, independent preferences
+and cumulative submission counts are checked. Push remains disabled for these
+members, and email preferences are disabled through the UI before each scenario
+ends. Auto-completion email is not covered.
+
+Email assertions wait for the backend's `email` action marker and, on completion
+or rescheduling, its separate `pemail` marker. Dummy-only preparation records
+join the poll's idempotency token and subject variables to the durable message
+ID in each `dummy email sent` record; preparation alone is not delivery evidence.
+Suppressed/dry-run submissions fail these assertions. No real email provider,
+SMTP server or mailbox is contacted, even for the mailing-list recipient.
+
 The frontend-only push feature covers allowed permission and saved categories,
 denied permission, and disabling push, with fresh accounts in each scenario.
 It checks that no permission request or subscription occurs before clicking

@@ -493,8 +493,10 @@ func TestPushProjectionLogsCommittedStateWithoutEndpointSecrets(t *testing.T) {
 	ctx := t.Context()
 	if err := listener.applyUsers(ctx, []notificationprofile.Change{
 		userChange(notificationprofile.ChangeAdded, "synthetic-user", map[string]any{
-			"webPushEnabled":  true,
-			"pushPreferences": map[string]any{"globalChat": true, "eventChat": false, "eventChatMutedPollIds": []any{"poll-muted"}},
+			"openPollEmailEnabled":     true,
+			"notificationEmailEnabled": false,
+			"webPushEnabled":           true,
+			"pushPreferences":          map[string]any{"pollOpens": false, "pollCompletes": true, "globalChat": true, "eventChat": false, "eventChatMutedPollIds": []any{"poll-muted"}},
 		}),
 	}, false); err != nil {
 		t.Fatal(err)
@@ -527,6 +529,8 @@ func TestPushProjectionLogsCommittedStateWithoutEndpointSecrets(t *testing.T) {
 		"msg": "notification profile projection applied", "projection": "notification_profile",
 		"contribution": "private_user", "user_id": "synthetic-user",
 		"web_push_enabled": true, "global_chat": true, "event_chat": false,
+		"poll_opens": false, "poll_completes": true,
+		"open_poll_email_enabled": true, "notification_email_enabled": false,
 	} {
 		if preferenceRecord[key] != value {
 			t.Errorf("preference record %s = %v, want %v", key, preferenceRecord[key], value)

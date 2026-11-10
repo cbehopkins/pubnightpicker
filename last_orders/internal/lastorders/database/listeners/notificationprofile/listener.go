@@ -151,6 +151,10 @@ func (l *Listener) applyUsers(ctx context.Context, changes []notificationprofile
 			preferences := mutation.User.Preferences()
 			attributes = append(attributes,
 				"web_push_enabled", preferences.WebPushEnabled,
+				"open_poll_email_enabled", preferences.OpenPollEmailEnabled,
+				"notification_email_enabled", preferences.NotificationEmailEnabled,
+				"poll_opens", preferences.PollOpens,
+				"poll_completes", preferences.PollCompletes,
 				"global_chat", preferences.GlobalChat,
 				"event_chat", preferences.EventChat,
 				"event_chat_muted_poll_ids", preferences.EventChatMutedPollIDs,
