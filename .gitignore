@@ -16,3 +16,4 @@ last_orders/last-orders-live-debug.db-shm
 last_orders/last-orders-live-debug.db-wal
 .agents/
 skills-lock.json
+.scratch/
