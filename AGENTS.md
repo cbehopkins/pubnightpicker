@@ -30,3 +30,17 @@ The PowerShell convenience runner is `./run-tests.ps1`; it supports `-Unit`, `-I
 
 - `run_integration_tests.py` copies canonical Firestore rules and indexes from `react/` into `firebase_sub/` before starting integration tests.
 - Root README and project docs are the source of truth for setup details; update the relevant docs when a change alters a workflow or behavior.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context layout. See `docs/agents/domain.md`.
