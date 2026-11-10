@@ -1,0 +1,8 @@
+go 1.27.3
+
+use (
+	./cellar
+	./durable_email
+	./email_clients
+	./last_orders
+)
