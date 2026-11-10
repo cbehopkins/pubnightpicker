@@ -1,8 +1,11 @@
 package pushevents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +149,36 @@ func TestProcessedChatIsSkipped(t *testing.T) {
 	ChatPushHandler{Source: source, Profiles: &fakeProfiles{}, Push: pusher}.Handle(context.Background(), truths.ChatMessagePosted{MessageID: "msg-1"})
 	if pusher.notification.ID != "" {
 		t.Fatal("an already processed chat message was populated")
+	}
+}
+
+func TestChatProcessedHandlerLogsAfterPersistingCompletion(t *testing.T) {
+	source := pushsourcestest.New()
+	var logs bytes.Buffer
+	handler := ChatProcessedHandler{Source: source, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	result := handler.Handle(context.Background(), chatProcessed{MessageID: "synthetic-message", ScopeType: "event", ScopeID: "synthetic-poll"})
+	if _, ok := result.(cellar.Complete); !ok {
+		t.Fatalf("result = %T, want completion", result)
+	}
+	history, err := source.ChatHistory(context.Background(), "synthetic-message")
+	if err != nil || !history.Processed {
+		t.Fatalf("processed history = %+v, err=%v", history, err)
+	}
+	line := strings.TrimSpace(logs.String())
+	var record map[string]any
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		t.Fatalf("decode processing record: %v", err)
+	}
+	for key, value := range map[string]string{
+		"msg": "chat push processing completed", "message_id": "synthetic-message",
+		"scope_type": "event", "scope_id": "synthetic-poll",
+	} {
+		if record[key] != value {
+			t.Errorf("record %s = %v, want %q", key, record[key], value)
+		}
+	}
+	if strings.Contains(line, "message text") || strings.Contains(line, "recipient") {
+		t.Fatalf("processing record contains unrelated data: %s", line)
 	}
 }
 

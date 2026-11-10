@@ -1,19 +1,21 @@
 # Last Orders Browser Journey Implementation Plan
 
-Status: phases 1-3 implemented. The default browser runner executes frontend-only
+Status: phases 1-3 implemented; phase 4's projection/chat evidence and the chat
+push slice of phase 5 are implemented. The default browser runner executes frontend-only
 and Last Orders groups sequentially in separate fresh emulator lifetimes. Two
 backend recurrence scenarios cover calculation/editing and due-poll
 materialisation. Three frontend-only push scenarios cover voluntary opt-in,
-saved categories, denied permission and disabling push. Phases 4-9 below remain
-planned, including their explicit
-readiness/correlation decision gates. The Python notifier worker and its legacy
+saved categories, denied permission and disabling push. Two backend chat-push
+scenarios cover global and event chat recipient selection. Remaining phase 4-9
+work is planned below, including other notification kinds and their explicit
+readiness/correlation gates. The Python notifier worker and its legacy
 E2E scripts are retired; Python is used for bootstrap and orchestration only.
 
-Local verification: both recurrence scenarios passed independently; the default
-command passed nine frontend and two backend scenarios. Focused harness and
-calendar/wait/push-fixture checks accompany the runner. A dedicated CI workflow runs both
-groups and retains synthetic failure artifacts for seven days; its hosted run
-is not implied by local verification.
+Local verification: the default command passed nine frontend and four backend
+scenarios (207 steps). Focused listener/plugin/app Go tests, orchestration
+harness and calendar/wait/push/evidence support checks pass. A dedicated CI
+workflow runs both groups and retains synthetic failure artifacts for seven
+days; its hosted run is not implied by local verification.
 
 ## Goals
 
@@ -219,6 +221,19 @@ denied paths are observable, and no external push service is contacted.
 
 ## Phase 4: Structured Delivery Evidence
 
+Implemented for notification-profile readiness and chat processing: successful
+private-user and endpoint projection commits emit structured JSONL records with
+user ID, committed chat preferences/mutes, and endpoint ID/active state. No
+email, endpoint URL or subscription encryption material is included. Chat
+processing emits a message/scope completion record only after the existing
+`chat_push_actions.processed` write succeeds. The E2E reader waits on these
+records, ignores only an incomplete trailing line, and fails on malformed
+complete records. Recipient identity is joined through the scenario's own
+synthetic endpoint rather than inferred from a display name.
+
+Remaining work: generalise evidence predicates to other notification kinds and
+add any correlation fields still required for poll/open/completion/email sends.
+
 Last Orders already uses a JSON `slog` handler on stdout. Its dummy email adapter
 records `msg`, `dry_run`, `recipient`, `message_id` and rendered `message`. The
 dummy push sender records endpoint, topic, TTL and message payload. Start with
@@ -247,6 +262,22 @@ free-form log formatting. Correlation gaps are resolved explicitly before
 claiming recipient-specific coverage; no separate test HTTP API is assumed.
 
 ## Phase 5: Poll-Opening Notifications
+
+The chat-push portion is implemented in `chat-push.feature`. It creates unique
+users and synthetic subscriptions through the UI, waits for committed private
+preference and endpoint projection evidence, and sends uniquely identified
+global and event messages through the React UI. Each assertion waits for the
+correlated message's processed record before checking dummy sends, so exclusions
+are checked only after recipient delivery work is terminal. Global coverage
+excludes the author and a user with global chat off. Event coverage includes
+participants, event chat opt-out and a per-event mute, excluding the author and
+ineligible users. The dummy payload is matched by message ID, event type, body,
+poll ID and destination route; sends are matched to synthetic endpoints.
+`config/diagnostics` is asserted absent or unsilenced in the fresh emulator.
+These tests prove submission to the dummy transport, not browser receipt.
+
+The broader planned poll-opening email/push, mailing-list and preference cases
+below remain unimplemented.
 
 Add backend-tagged scenarios with independently registered, uniquely named
 users and separate browser contexts.

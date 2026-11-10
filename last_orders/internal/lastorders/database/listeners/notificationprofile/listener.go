@@ -139,6 +139,25 @@ func (l *Listener) applyUsers(ctx context.Context, changes []notificationprofile
 	if err := l.store.ApplyPrivateUsers(ctx, mutations, baseline); err != nil {
 		return fmt.Errorf("%w: %w", errPersistence, err)
 	}
+	for _, mutation := range mutations {
+		attributes := []any{
+			"projection", "notification_profile",
+			"contribution", "private_user",
+			"user_id", mutation.UserID,
+			"baseline", baseline,
+			"deleted", mutation.User == nil,
+		}
+		if mutation.User != nil {
+			preferences := mutation.User.Preferences()
+			attributes = append(attributes,
+				"web_push_enabled", preferences.WebPushEnabled,
+				"global_chat", preferences.GlobalChat,
+				"event_chat", preferences.EventChat,
+				"event_chat_muted_poll_ids", preferences.EventChatMutedPollIDs,
+			)
+		}
+		l.logger.Info("notification profile projection applied", attributes...)
+	}
 	return nil
 }
 
@@ -185,6 +204,21 @@ func (l *Listener) applyEndpoints(ctx context.Context, changes []notificationpro
 	}
 	if err := l.store.ApplyEndpointContributions(ctx, mutations, baseline); err != nil {
 		return fmt.Errorf("%w: %w", errPersistence, err)
+	}
+	for _, mutation := range mutations {
+		active := false
+		if mutation.Endpoint != nil && mutation.Endpoint.Active != nil {
+			active = *mutation.Endpoint.Active
+		}
+		l.logger.Info("notification profile projection applied",
+			"projection", "notification_profile",
+			"contribution", "push_endpoint",
+			"user_id", mutation.UserID,
+			"endpoint_id", mutation.EndpointID,
+			"baseline", baseline,
+			"deleted", mutation.Endpoint == nil,
+			"active", active,
+		)
 	}
 	return nil
 }

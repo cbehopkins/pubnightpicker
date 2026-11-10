@@ -170,6 +170,17 @@ authenticated emulator SDK and correlate by venue ID and occurrence date;
 computed results are never seeded. These scenarios do not prove restart/replay
 idempotency or notification delivery.
 
+The `@last_orders` chat-push feature covers global and event messages sent
+through the UI. Before sending, it waits for structured backend evidence that
+each synthetic user's chat preferences and endpoint have been committed to the
+notification projection. After sending, it waits for a correlated message
+processing record before asserting dummy push submissions and exclusions. The
+checks include author exclusion, global opt-out, event opt-out, event
+participation and a per-event mute. Backend evidence contains synthetic user
+IDs and endpoint IDs only, not endpoint URLs or subscription keys. These tests
+verify backend submission to the dummy transport; they do not prove delivery to
+the browser or display by the operating system.
+
 The frontend-only push feature covers allowed permission and saved categories,
 denied permission, and disabling push, with fresh accounts in each scenario.
 It checks that no permission request or subscription occurs before clicking

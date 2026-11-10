@@ -745,7 +745,7 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(pushevents.HandlerChatPush, pushevents.ChatPushHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources}); err != nil {
+	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(pushevents.HandlerPushTest, pushevents.PushTestHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {

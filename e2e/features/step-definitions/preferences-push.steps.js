@@ -22,7 +22,7 @@ async function actorPushState(world, name, db) {
     const [user, endpoints] = await Promise.all([
         getDocFromServer(doc(db, "users", uid)), getDocsFromServer(collection(db, "users", uid, "push_endpoints")),
     ]);
-    return { user: user.data(), endpoints: endpoints.docs.map((snapshot) => snapshot.data()) };
+    return { user: user.data(), endpoints: endpoints.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() })) };
 }
 
 async function waitForPushState(world, name, matches, description) {
@@ -89,17 +89,19 @@ Then("{word} has an active synthetic push endpoint and enabled preference", asyn
 
 When("{word} saves these push notification categories:", async function (name, table) {
     const page = this.actors.get(name);
-    this.pushCategories = table.hashes().map(({ category, enabled }) => {
+    this.pushCategoriesByActor ??= new Map();
+    const categories = table.hashes().map(({ category, enabled }) => {
         assert.ok(CATEGORY_FIELDS.has(category));
         assert.ok(["true", "false"].includes(enabled));
         return { category, enabled: enabled === "true" };
     });
-    for (const { category, enabled } of this.pushCategories) {
+    this.pushCategoriesByActor.set(name, categories);
+    for (const { category, enabled } of categories) {
         await page.getByRole("checkbox", { name: category, exact: true }).setChecked(enabled);
     }
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.waitForURL(`${BASE_URL}/`);
-    await waitForPushState(this, name, ({ user }) => this.pushCategories.every(({ category, enabled }) => user.pushPreferences?.[CATEGORY_FIELDS.get(category)] === enabled), "saved push category preferences");
+    await waitForPushState(this, name, ({ user }) => categories.every(({ category, enabled }) => user.pushPreferences?.[CATEGORY_FIELDS.get(category)] === enabled), "saved push category preferences");
 });
 
 When("{word} reloads My Preferences", async function (name) {
@@ -112,7 +114,7 @@ When("{word} reloads My Preferences", async function (name) {
 Then("{word} sees the saved push notification categories", async function (name) {
     const page = this.actors.get(name);
     await page.getByText("Status: Enabled | Permission: Granted", { exact: true }).waitFor();
-    for (const { category, enabled } of this.pushCategories) {
+    for (const { category, enabled } of this.pushCategoriesByActor.get(name) ?? []) {
         const checkbox = page.getByRole("checkbox", { name: category, exact: true });
         await checkbox.waitFor();
         await checkbox.and(page.locator(enabled ? ":checked" : ":not(:checked)")).waitFor();

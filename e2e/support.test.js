@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { displayDate, londonDate, recurrenceDates, shiftDate } from "./features/support/calendar.js";
 import { waitForValue } from "./features/support/emulator.js";
 import { createPushIdentity } from "./features/support/push-fixture.js";
+import { parseCompleteBackendRecords } from "./features/support/backend-evidence.js";
 
 test("London dates distinguish summer midnight from UTC midnight", () => {
     assert.equal(londonDate(new Date("2026-06-30T23:30:00Z")), "2026-07-01");
@@ -43,4 +44,12 @@ test("synthetic push identities are unique and have serialisable browser keys", 
     assert.equal(Buffer.from(first.keys.p256dh, "base64url")[0], 4);
     assert.equal(Buffer.from(first.keys.auth, "base64url").length, 16);
     assert.equal(JSON.parse(JSON.stringify(first)).endpoint, first.endpoint);
+});
+
+test("backend JSONL parsing ignores only a partial final record", () => {
+    const records = parseCompleteBackendRecords('{"msg":"ready"}\n{"msg":"partial"}');
+    assert.equal(records.length, 1);
+    assert.equal(records[0].msg, "ready");
+    assert.throws(() => parseCompleteBackendRecords('{"msg":"ready"}\nnot-json\n'), /Malformed complete backend JSONL record at line 2/);
+    assert.throws(() => parseCompleteBackendRecords('[]\n'), /is not an object/);
 });

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -207,12 +208,22 @@ func truncate(text string, length int) string {
 // ChatProcessedHandler records that every delivery for a message has finished.
 type ChatProcessedHandler struct {
 	Source pushsources.Source
+	Logger *slog.Logger
 }
 
 func (h ChatProcessedHandler) Handle(ctx context.Context, processed chatProcessed) cellar.Result {
 	if err := h.Source.MarkChatProcessed(ctx, processed.MessageID, processed.ScopeType, processed.ScopeID); err != nil {
 		return cellar.ErrorResult{Message: "mark chat push processed", Err: err}
 	}
+	logger := h.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info("chat push processing completed",
+		"message_id", processed.MessageID,
+		"scope_type", processed.ScopeType,
+		"scope_id", processed.ScopeID,
+	)
 	return cellar.Complete{}
 }
 

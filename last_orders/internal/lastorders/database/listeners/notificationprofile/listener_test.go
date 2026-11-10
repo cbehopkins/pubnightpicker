@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -482,6 +483,71 @@ func TestMalformedPublicDeltaRetainsContributionAndLogsRejection(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "skip malformed public profile document") || !strings.Contains(logs.String(), `"doc_id":"user"`) {
 		t.Fatalf("invalid public delta was not observable: %s", logs.String())
+	}
+}
+
+func TestPushProjectionLogsCommittedStateWithoutEndpointSecrets(t *testing.T) {
+	store, listener, db := newSourceHarness(t, &fakeSource{})
+	var logs bytes.Buffer
+	listener.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx := t.Context()
+	if err := listener.applyUsers(ctx, []notificationprofile.Change{
+		userChange(notificationprofile.ChangeAdded, "synthetic-user", map[string]any{
+			"webPushEnabled":  true,
+			"pushPreferences": map[string]any{"globalChat": true, "eventChat": false, "eventChatMutedPollIds": []any{"poll-muted"}},
+		}),
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.applyEndpoints(ctx, []notificationprofile.Change{
+		endpointChange(notificationprofile.ChangeAdded, "synthetic-user", "synthetic-endpoint"),
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Preferences(ctx, "synthetic-user"); err != nil {
+		t.Fatalf("preference projection was not committed before acknowledgement: %v", err)
+	}
+	var active bool
+	if err := db.QueryRowContext(ctx, `SELECT active FROM notification_endpoints WHERE user_id = ? AND endpoint_id = ?`, "synthetic-user", "synthetic-endpoint").Scan(&active); err != nil || !active {
+		t.Fatalf("endpoint projection was not committed before acknowledgement: active=%v err=%v", active, err)
+	}
+
+	records := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(records) != 2 {
+		t.Fatalf("projection records = %d, want private user and endpoint: %s", len(records), logs.String())
+	}
+	var preferenceRecord, endpointRecord map[string]any
+	if err := json.Unmarshal([]byte(records[0]), &preferenceRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(records[1]), &endpointRecord); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]any{
+		"msg": "notification profile projection applied", "projection": "notification_profile",
+		"contribution": "private_user", "user_id": "synthetic-user",
+		"web_push_enabled": true, "global_chat": true, "event_chat": false,
+	} {
+		if preferenceRecord[key] != value {
+			t.Errorf("preference record %s = %v, want %v", key, preferenceRecord[key], value)
+		}
+	}
+	if muted, ok := preferenceRecord["event_chat_muted_poll_ids"].([]any); !ok || len(muted) != 1 || muted[0] != "poll-muted" {
+		t.Errorf("event mute projection = %v, want [poll-muted]", preferenceRecord["event_chat_muted_poll_ids"])
+	}
+	for key, value := range map[string]any{
+		"msg": "notification profile projection applied", "projection": "notification_profile",
+		"contribution": "push_endpoint", "user_id": "synthetic-user",
+		"endpoint_id": "synthetic-endpoint", "active": true,
+	} {
+		if endpointRecord[key] != value {
+			t.Errorf("endpoint record %s = %v, want %v", key, endpointRecord[key], value)
+		}
+	}
+	for _, secretField := range []string{"endpoint_url", "p256dh", "auth", "email"} {
+		if _, present := endpointRecord[secretField]; present {
+			t.Errorf("endpoint record includes sensitive field %q", secretField)
+		}
 	}
 }
 

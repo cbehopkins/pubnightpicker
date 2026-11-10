@@ -214,11 +214,12 @@ func TestChatMessageListenerFiltersRecipientsAndMarksProcessed(t *testing.T) {
 		t.Fatalf("run app: %v", err)
 	}
 
-	if pushes := strings.Count(logs.String(), `"msg":"dummy push sent"`); pushes != 1 {
+	pushLogs := dummyPushLogs(logs.String())
+	if pushes := strings.Count(pushLogs, `"msg":"dummy push sent"`); pushes != 1 {
 		t.Fatalf("dummy pushes = %d, want only bob's endpoint", pushes)
 	}
-	if !strings.Contains(logs.String(), "https://push.test/bob-phone") || strings.Contains(logs.String(), "muted-phone") {
-		t.Fatalf("chat push recipient filtering was wrong: %s", logs.String())
+	if !strings.Contains(pushLogs, "https://push.test/bob-phone") || strings.Contains(pushLogs, "muted-phone") {
+		t.Fatalf("chat push recipient filtering was wrong: %s", pushLogs)
 	}
 }
 
@@ -369,9 +370,21 @@ func TestChatExceptionRetainsPreferencesAndAuthorExclusion(t *testing.T) {
 	application := newApp(t, cfg)
 	defer application.Close()
 	runUntil(t, application, func() bool { return source.Processed("live-chat") })
-	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 || !strings.Contains(logs.String(), "reader-phone") || strings.Contains(logs.String(), "author-phone") || strings.Contains(logs.String(), "muted-phone") {
-		t.Fatalf("unexpected chat recipients: %s", logs.String())
+	pushLogs := dummyPushLogs(logs.String())
+	if strings.Count(pushLogs, `"msg":"dummy push sent"`) != 1 || !strings.Contains(pushLogs, "reader-phone") || strings.Contains(pushLogs, "author-phone") || strings.Contains(pushLogs, "muted-phone") {
+		t.Fatalf("unexpected chat recipients: %s", pushLogs)
 	}
+}
+
+func dummyPushLogs(logs string) string {
+	var selected strings.Builder
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, `"msg":"dummy push sent"`) {
+			selected.WriteString(line)
+			selected.WriteByte('\n')
+		}
+	}
+	return selected.String()
 }
 
 func endpointDocument(userID, endpointID string) notificationprofile.Change {

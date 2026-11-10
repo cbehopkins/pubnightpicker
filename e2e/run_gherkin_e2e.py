@@ -461,6 +461,9 @@ def _run_group(
             env=env,
         )
         _wait_for_url(BASE_URL, services)
+        cucumber_env = env
+        if group == "last-orders":
+            cucumber_env = {**env, "E2E_BACKEND_LOG_PATH": str(artifacts / "last-orders.jsonl")}
         return _run_command(
             [
                 _tool("node"),
@@ -473,7 +476,7 @@ def _run_group(
                 *(["--name", name] if name else []),
             ],
             E2E_DIR,
-            env,
+            cucumber_env,
             services,
             timeout=1200,
         )
