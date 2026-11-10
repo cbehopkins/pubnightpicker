@@ -1,4 +1,4 @@
-import { After, Before, setDefaultTimeout, setWorldConstructor, World } from "@cucumber/cucumber";
+import { After, Before, setDefaultTimeout, setWorldConstructor, Status, World } from "@cucumber/cucumber";
 import { chromium } from "playwright";
 
 setDefaultTimeout(30_000);
@@ -19,7 +19,7 @@ class BrowserWorld extends World {
     if (this.actors.has(name)) {
       return this.actors.get(name);
     }
-    const context = await this.browser.newContext();
+    const context = await this.browser.newContext({ locale: "en-GB", timezoneId: "Europe/London" });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     page.setDefaultNavigationTimeout(30_000);
@@ -49,6 +49,17 @@ Before(async function () {
   await this.openBrowser();
 });
 
-After(async function () {
-  await this.closeBrowser();
+After(async function ({ result }) {
+  try {
+    if (result?.status === Status.FAILED) {
+      for (const [name, page] of this.actors ?? []) {
+        if (!page.isClosed()) {
+          await this.attach(`${name}: ${page.url()}`, "text/plain");
+          await this.attach(await page.screenshot({ fullPage: true }), "image/png");
+        }
+      }
+    }
+  } finally {
+    await this.closeBrowser();
+  }
 });

@@ -14,14 +14,16 @@ This README is the contributor's starting point: it maps the repository and gets
 | [`cellar/`](cellar/) | Go library for durable, scheduled, retryable background work. | [Cellar README](cellar/README.md) |
 | [`durable_email/`](durable_email/) | Go library for durable email submission, recovery, and delivery tracking, built on Cellar. | [Durable email README](durable_email/README.md) |
 | [`email_clients/`](email_clients/) | Go provider-neutral email interfaces and provider clients, including Sweego and Mailtrap. | [Email clients README](email_clients/README.md) |
-| [`e2e/`](e2e/) | End-to-end harness for React browser journeys and the Python notification worker. | [E2E README](e2e/README.md) |
+| [`e2e/`](e2e/) | React browser journeys with fresh Firebase emulators and isolated Last Orders backend coverage. | [E2E README](e2e/README.md) |
 | [`schema/firestore/`](schema/firestore/) | Firestore schema notes and references. | [Firestore schema README](schema/firestore/README.md) |
 
 The Go projects are separate modules. `last_orders` uses the local `cellar`, `durable_email`, and `email_clients` modules via Go `replace` directives. Read the nearest project `README.md` and `AGENTS.md` before making project-specific changes.
 
-The first React browser journey is documented in [the E2E README](e2e/README.md).
-It uses fresh Firebase emulators and the Python bootstrap CLI, without starting
-either backend.
+The browser suite is documented in [the E2E README](e2e/README.md). Its default
+command and `./run-tests.ps1 -E2E` run frontend-only and Last Orders groups in
+separate fresh Firebase emulator lifetimes. Python supplies the bootstrap CLI,
+not a notifier backend; Last Orders uses temporary SQLite state and dummy
+delivery only.
 
 ## Prerequisites
 
@@ -153,4 +155,4 @@ Tidy reconciles Go dependency metadata, removes extraneous npm packages, and syn
 - [Cellar durable execution library](cellar/README.md)
 - [Durable email library](durable_email/README.md)
 - [Email provider clients](email_clients/README.md)
-- [Frontend and notifier E2E harness](e2e/README.md)
+- [Frontend E2E browser journeys](e2e/README.md)

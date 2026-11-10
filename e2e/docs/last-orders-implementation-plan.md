@@ -1,7 +1,17 @@
 # Last Orders Browser Journey Implementation Plan
 
-Status: proposed implementation plan. This document does not enable the backend
-or change the current test runner.
+Status: phases 1-2 implemented. The default browser runner executes frontend-only
+and Last Orders groups sequentially in separate fresh emulator lifetimes. Two
+backend recurrence scenarios cover calculation/editing and due-poll
+materialisation. Phases 3-9 below remain planned, including their explicit
+readiness/correlation decision gates. The Python notifier worker and its legacy
+E2E scripts are retired; Python is used for bootstrap and orchestration only.
+
+Local verification: both recurrence scenarios passed independently; the default
+command passed six frontend and two backend scenarios. Focused harness and
+calendar/wait checks accompany the runner. A dedicated CI workflow runs both
+groups and retains synthetic failure artifacts for seven days; its hosted run
+is not implied by local verification.
 
 ## Goals
 
@@ -9,12 +19,14 @@ or change the current test runner.
 - Keep journeys which do not need Last Orders free of backend side effects.
 - Exercise the real React application, Firebase emulators and Last Orders work
   processing, substituting only external email and browser push delivery.
-- Verify recurrence first, followed by voluntary push opt-in and poll-opening
-  notifications.
+- Verify recurrence first, then voluntary push opt-in, poll-open and
+  completion/reschedule notifications, test email/history, and diagnostics.
+- Keep auto-completion out of scope until a deterministic clock-control design
+  is agreed separately.
 - Prevent access to production Firebase, real email providers and real push
   services.
 
-## Agreed Suite Structure
+## Suite Structure
 
 `npm run test:journey` will run both groups automatically:
 
@@ -28,7 +40,13 @@ in either group fails the standard command. Missing Go tools, failed backend
 startup or missing backend dependencies must fail rather than skip the group.
 Focused developer commands may select one group, but the default and CI must
 include both. Update the documented root E2E entry point if it does not already
-invoke this browser runner; keep the existing Python notifier flow separate.
+invoke this browser runner without launching the retired Python notifier
+worker.
+
+The current Cucumber/Playwright tests are Gherkin features, not test classes.
+Mark backend-dependent features with `@last_orders`; run frontend-only features
+with `not @last_orders`. Keep scenario steps and browser contexts in the existing
+Cucumber framework rather than introducing a second browser-test framework.
 
 Run the groups sequentially in separate emulator lifetimes. Start Last Orders
 once for its group, not once per scenario. Use a fresh temporary SQLite database
@@ -37,9 +55,10 @@ scenarios must remain independently runnable, use unique identities and scope
 assertions to their own records. Do not assume empty collections after another
 scenario has run. The backend must not run while shared emulator data is reset.
 
-The frontend-only completion journey currently expects the missing-notifier
-warning. Preserve that assertion there. Backend-dependent completion checks
-must instead expect the real handshake acknowledgement, if added later.
+The frontend-only completion journey expects the notification-handshake
+warning because no application backend runs in that group. Preserve that
+assertion there. Backend-dependent completion checks must instead wait for and
+assert the Last Orders acknowledgement and correlated work outcome.
 
 ## Phase 1: Safe Backend Orchestration
 
@@ -66,7 +85,7 @@ Primary implementation locations:
 6. Await `/healthz` with a bounded timeout while monitoring process exit.
    Readiness confirms initial projections and listeners have started, not that
    later work has finished.
-7. Start Vite and run the backend-tagged Cucumber scenarios.
+7. Start Vite and run the selected Cucumber tag group.
 8. On success, failure, timeout or interruption, stop and wait for every owned
    process, including Windows child processes. Stop the backend before its
    emulators. Release temporary files after processes close them.
@@ -101,6 +120,23 @@ Primary implementation locations:
 Acceptance: the standard command runs both groups, the frontend-only group never
 starts Last Orders, backend failure cannot be reported as a successful skip,
 and neither success nor failure leaves owned services running.
+
+### Cucumber Group Selection And Legacy Harness Retirement
+
+- Add focused frontend-only and `@last_orders` commands. Run Cucumber with
+  `not @last_orders` for frontend-only features and `@last_orders` for backend
+  features, using the existing feature glob and step definitions.
+- Make `npm run test:journey` execute both groups sequentially by default. Keep
+  `run-tests.ps1 -E2E` pointed at this orchestrator; Go/backend startup failure
+  must fail the command rather than skip the tagged group.
+- Remove `e2e/run_e2e_tests.py` and `e2e/test_e2e_chat_push.py` from supported
+  E2E execution. Remove the worker-specific harness and standalone
+  `frontend-client.js` test script; keep only Python utilities used for
+  bootstrap, debug or orchestration.
+- Python may be used for emulator bootstrap, debug utilities and this
+  orchestration only. Do not start the Python notifier worker as a test backend.
+- Run each group in a separate fresh emulator lifetime. Never run Last Orders
+  while resetting emulator state or reuse frontend-group Firestore data.
 
 ## Phase 2: Recurrence Journeys
 
@@ -229,6 +265,79 @@ states are supporting evidence, not sufficient alone: processing can finish
 without recipients or with notifications suppressed. These tests prove selection
 and submission to dummy transports, not actual inbox or browser delivery.
 
+## Phase 6: Completion And Reschedule Notifications
+
+Add backend-tagged browser scenarios which complete and reschedule polls through
+the React UI. Reuse the frontend poll-lifecycle steps where practical, but keep
+these scenarios in `@last_orders` so they expect Last Orders processing rather
+than the frontend-only missing-backend warning.
+
+- Complete a poll and verify the selected venue and poll state in the UI.
+- Await the correlated dummy mailing-list email, personal completion email and
+  eligible push notification. Exercise personal opt-in and opt-out separately
+  from the mailing-list send; include at least one recipient using the login
+  email and one using an override address.
+- Reschedule a current event through the UI. Verify its new date in Current
+  Events and a correlated `poll_rescheduled` push submission. Assert that the
+  reschedule is not misclassified as a normal poll completion.
+- For all negative recipient assertions, wait for a positive processing barrier
+  before asserting that no dummy send exists. Match poll ID and recipient rather
+  than searching the whole log for an email address.
+
+Acceptance: completion and reschedule produce only their intended dummy sends,
+with recipient selection matching the saved preferences. These assertions
+prove backend submission, not real provider or device delivery.
+
+## Phase 7: Test Email And Email History
+
+Add a Preferences journey for a signed-in user to request a test email. Match
+the backend acknowledgement to the generated request ID and verify one dummy
+email send to the effective destination (login email by default or the saved
+override). Keep provider delivery mocked.
+
+After creating a known send, open email history through the normal UI and verify
+the owner can see its status and timestamp. Use a second account to verify that
+the first account's history is not exposed. Keep the assertion within the
+history window the interface promises; do not require old records outside it.
+
+Acceptance: the UI request, acknowledgement, dummy send and history view are
+correlated to one user/request, and a different user cannot read that history.
+
+## Phase 8: Diagnostics
+
+From the Diagnostics page, verify that the Last Orders ping endpoint responds
+and reports the Firestore emulator check as healthy. Assert the displayed
+health/result state and a structured, non-sensitive backend record where useful;
+do not assert against free-form log text. A failure-state scenario is optional
+and must use an isolated, controllable failure rather than destabilising the
+shared emulators.
+
+Acceptance: a healthy backend and its emulator database are visible through the
+real diagnostic UI, with no request leaving the local demo environment.
+
+## Phase 9: Admin User Deletion
+
+Keep deletion out of the default backend browser group until the harness has a
+separate, explicit deletion configuration. Begin with a dry-run journey:
+
+- An admin deletes a synthetic target through Manage Users.
+- Verify the UI summary and app-data scrub: votes and attendance are removed,
+  messages are anonymised, push endpoints and role entries are removed, and
+  private/public profile documents are deleted.
+- Verify the queued request reaches `dry_run_validated` and its audit evidence
+  is recorded. In dry-run mode the Firebase Auth account remains; do not assert
+  that the target can no longer sign in.
+
+Only add real Auth deletion as a separate opt-in emulator acceptance command.
+It must require explicit Auth-emulator routing and deletion flags, use a unique
+synthetic account, and verify that account is removed while another account
+remains usable. The standard E2E command must never enable this mode or target a
+live Firebase project.
+
+Acceptance: default deletion coverage proves safe data scrubbing and dry-run
+validation only. Auth deletion is tested solely in a separately guarded demo
+Auth emulator run.
+
 ## Validation And Rollout
 
 Implement phases in order, preserving a working default suite at each stage.
@@ -244,7 +353,11 @@ supported change before extending the relevant phase.
 ## Deferred Work
 
 - Real provider delivery, native push prompts and OS notification display.
-- Automatic completion, timer advancement and date-boundary scheduling tests.
-- Destructive housekeeping and Auth account deletion journeys.
+- Automatic completion and its timer/date-boundary tests remain deferred until
+  a separate deterministic clock-control design is agreed. Existing internal
+  `ObservedOn` values are not, by themselves, a Playwright clock-control plan.
+- Destructive housekeeping.
+- Generic daily poll creation until its product contract and Go implementation
+  are defined.
 - Notification retries, failure injection and restart/replay delivery guarantees.
 - Split HandPump/Landlord deployment coverage; start with the combined binary.

@@ -65,6 +65,9 @@ From `react/`, run `npm test` for the unit-test watch mode or `npm run test:unit
 for a one-shot unit run. These tests use mocked Firebase behavior and do not
 start emulators.
 
+The unit suite uses at most four workers to limit concurrent jsdom memory and
+CPU contention. Individual tests retain Vitest's default timeout.
+
 Firestore security-rule tests are named `*.rules.test.js` and run separately:
 
 ```

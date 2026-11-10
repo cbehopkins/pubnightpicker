@@ -177,40 +177,17 @@ if ($E2E) {
         Pop-Location
     }
 
-    # Run E2E test runner
-    Push-Location $FirebaseSubDir
-    try {
-        $cmd = @("poetry", "run", "python", "..\e2e\run_e2e_tests.py")
-        
-        if ($VerboseOutput) {
-            $cmd += "--verbose"
-        }
-        
-        Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
-        
-        if ($LASTEXITCODE -ne 0) {
-            $FailedSuites += "E2E Tests"
-            Write-Host "[FAILED] E2E tests FAILED" -ForegroundColor Red
-        } else {
-            Write-Host "[OK] E2E tests PASSED" -ForegroundColor Green
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    # Run the isolated React user journey against fresh Auth/Firestore emulators.
+    # Run browser journeys against fresh Auth/Firestore emulators.
     Push-Location $E2EDir
     try {
-        Write-Host "[Runner] Starting Gherkin admin preferences journey..." -ForegroundColor Gray
+        Write-Host "[Runner] Starting Cucumber/Playwright browser journeys..." -ForegroundColor Gray
         & python run_gherkin_e2e.py
 
         if ($LASTEXITCODE -ne 0) {
-            $FailedSuites += "Gherkin Admin Preferences Journey"
-            Write-Host "[FAILED] Gherkin admin preferences journey FAILED" -ForegroundColor Red
+            $FailedSuites += "Cucumber/Playwright Browser Journeys"
+            Write-Host "[FAILED] Browser journeys FAILED" -ForegroundColor Red
         } else {
-            Write-Host "[OK] Gherkin admin preferences journey PASSED" -ForegroundColor Green
+            Write-Host "[OK] Browser journeys PASSED" -ForegroundColor Green
         }
     }
     finally {

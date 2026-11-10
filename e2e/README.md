@@ -1,36 +1,24 @@
-# E2E Test Suite
+# E2E Browser Journeys
 
-End-to-end tests for PubNightPicker. This folder contains both the notifier
-integration flow and browser journeys written in Gherkin.
-
-## Architecture
-
-The E2E test harness uses a mixed approach:
-
-1. **Node Frontend Client** (`frontend-client.js`) — Firebase Web SDK connects to Auth emulator, authenticates, and posts a chat message to Firestore
-2. **Python Orchestrator** (`test_e2e_chat_push.py`) — Coordinates the test flow:
-   - Seeds smoke users via firebase-admin
-   - Spawns Node frontend client
-   - Spawns Python notifier subprocess in dummy mode
-   - Waits for notifier to process the message
-   - Asserts on either Firestore side effects (`chat_push_actions`) or notifier logs
-3. **E2E Runner** (`run_e2e_tests.py`) — Manages emulator lifecycle and test execution
-
-The browser journey uses Cucumber.js and Playwright. Its runner starts fresh
-Auth and Firestore emulators, creates an admin using the Python bootstrap CLI,
-starts the React dev server, then executes the feature. It does not start or
-call either application backend.
+End-to-end browser journeys for PubNightPicker use Cucumber.js and Playwright.
+The supported E2E path runs the React application against fresh Auth and
+Firestore emulators. Backend-tagged scenarios also run the combined Last Orders
+binary with dummy email and push delivery. The retired Python notifier worker
+is never started.
 
 ## Setup
 
 ### Prerequisites
 
 - Node.js 20+ with npm (required by the Cucumber/Playwright browser journey)
-- Python 3.12+ with Poetry
+- Python 3.12+ with Poetry (used by the emulator bootstrap utility)
 - Firebase CLI (`npm install -g firebase-tools`)
-- The existing notifier flow uses emulators on ports 8180 (Firestore) and 9199 (Auth).
-  The browser journey starts its own emulators on 8080 and 9099 and requires those
-  ports to be free.
+- Java 21+ for the Firebase emulators
+- Go as specified by `last_orders/go.mod`, with `GOTOOLCHAIN=auto` if needed
+  (not required for the focused frontend-only command)
+- The browser journey starts emulators on ports 8080 and 9099, plus Firebase hub
+  port 4400, logging port 4500 and Firestore websocket port 9150. Vite uses 3000
+  and Last Orders uses 8081. The selected group's ports must be free.
 - For the browser journey: the React dependencies installed. Installing the E2E
   npm dependencies also installs the matching Playwright Chromium browser.
 
@@ -38,6 +26,9 @@ call either application backend.
 
 ```bash
 # Install Node dependencies
+cd react
+npm ci
+cd ..
 cd e2e
 npm ci
 cd ..
@@ -49,13 +40,6 @@ cd ..
 ```
 
 ## Running E2E Tests
-
-### Direct E2E Tests Only
-
-```bash
-# From repository root
-poetry run python e2e/run_e2e_tests.py
-```
 
 ### Via Consolidated Test Runner
 
@@ -69,16 +53,45 @@ poetry run python e2e/run_e2e_tests.py
 
 ### Browser journeys
 
-The proposed [Last Orders implementation plan](docs/last-orders-implementation-plan.md)
-describes mandatory backend-dependent journeys, safe orchestration, recurrence,
-voluntary push opt-in and dummy notification assertions. It is a plan, not the
-current runner behaviour described below.
+The [Last Orders implementation plan](docs/last-orders-implementation-plan.md)
+tracks the implemented orchestration and recurrence milestone and the later
+push, notification, email-history, diagnostics and deletion phases.
 
 From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 
 ```bash
 npm run test:journey
 ```
+
+The default command (also `npm test` and root `./run-tests.ps1 -E2E`) runs both
+mandatory groups sequentially:
+
+| Group | Cucumber selection | Infrastructure |
+| --- | --- | --- |
+| Frontend-only | `not @last_orders` | Fresh emulators and Vite; no backend |
+| Backend-dependent | `@last_orders` | Different fresh emulators, Vite and Last Orders |
+
+Both groups must discover scenarios. A build, startup, scenario or cleanup
+failure fails the command rather than skipping the backend group. Last Orders
+is built before services start and runs once for its group, using a temporary
+SQLite database. No emulator data is imported, exported or reset between
+scenarios. The initial poll-history floor is UTC today; expected recurrence
+dates use Europe/London. A London midnight crossing explicitly fails the
+recurrence scenario so it can be rerun with fresh data.
+
+Focused developer commands, from `e2e/`:
+
+```bash
+npm run test:journey:frontend
+npm run test:journey:last-orders
+npm run test:journey:last-orders -- --name "monthly Event"
+npm run test:harness
+npm run test:support
+```
+
+The harness checks use standard-library Python `unittest`; support checks use
+Node's built-in test runner. Discovery runs before services start. CI runs both
+checks and the default browser command, not just one tag group.
 
 The `postinstall` hook installs the browser required by the local Playwright
 version. If npm lifecycle scripts were disabled or the browser cache was removed,
@@ -90,14 +103,20 @@ The journey uses a fresh, empty emulator database (no import) with project ID
 `demo-pubnightpicker-journey`. It creates `journey-admin@test.local` with the
 bootstrap CLI and an E2E-only password, opens the homepage, signs in, and checks
 that the administrator can reach My Preferences. Firestore and Auth use the
-ports already configured by the React app (8080 and 9099), plus Firebase's hub
-port (4400) and Firestore websocket port (9150); the run fails if those ports
-are occupied rather than reusing or terminating another process. On Windows,
-the runner interrupts the Firebase CLI
-process group in cleanup and checks the reserved emulator ports for leftover
-Java/Node emulator processes, including when the scenario fails.
-The only Python application code it invokes is
-`firebase_sub/cli/bootstrap.py`; neither backend is started.
+ports already configured by the React app (8080 and 9099). The runner refuses
+occupied ports rather than reusing or terminating another service. On Windows,
+each owned process tree is enclosed in a kill-on-close Job Object; POSIX uses
+process groups. Cleanup stops and waits for backend/frontend children before
+their emulators, including on failure or interruption. It never kills a
+process merely because its name or port resembles an emulator.
+
+Children receive allowlisted OS/tool settings and explicit demo configuration,
+not inherited credentials or provider/deployment settings. An E2E Vite wrapper
+also disables developer env-file loading. The backend uses explicit loopback
+Firestore/Auth endpoints and Auth-emulator permission, a generated cursor key,
+dummy push, and dummy email verified from structured startup evidence. Admin
+deletion stays disabled and dry-run stays enabled. No backend VAPID private key
+or real-delivery configuration is supplied.
 
 The runner discovers all `features/**/*.feature` files. The chat-permissions
 journey registers Alice through the UI, checks that she has no Chat Page link,
@@ -111,22 +130,24 @@ fresh per run, not reset between scenarios.
 
 The poll-lifecycle journey keeps Bob, Claire and the admin in separate browser
 contexts. Bob and Claire register through the UI, and the admin grants both
-Can Add/Delete Poll Pubs and Can Create/Delete Poll; only Claire receives
-Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
+Can Add/Delete Poll Pubs, Can Create/Delete Poll and Can Chat; only Claire
+receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
 to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
 for both; Bob sees those totals and adds his vote. Claire chooses the winning
 pub, both users see the poll disappear from Active Polls, and both find the
-meet in Current Events. Vote totals are checked without granting Can Show
-Voters or administrator access to either member.
+meet in Current Events. They then exchange messages in global and event chat,
+verify that messages remain in their intended scope, and reopen event chat to
+check persistence. Vote totals are checked without granting Can Show Voters or
+administrator access to either member.
 
 Only the venue catalogue is seeded directly: two pubs and a restaurant, using
 the Firebase Web SDK authenticated as the bootstrapped admin against the
 emulators. Unique venue names and account emails keep the fixture separate
 from other scenarios. The restaurant verifies that the Pub filter excludes
 other venue types. These fixture pubs serve food, so completion needs no
-separate restaurant plan. Since no notifier backend runs, the journey accepts
-the application's explicit notification-handshake warning when completing
-the poll; it does not test email or push delivery.
+separate restaurant plan. Since Last Orders does not run in the frontend-only
+group, the journey accepts the application's explicit notification-handshake
+warning when completing the poll; it does not test email or push delivery.
 
 The venue-management outline runs independently for Pub, Restaurant and Event.
 Two members register through the UI and receive Can Manage Venues from the
@@ -139,118 +160,40 @@ the correction. Restaurant food availability is implicit rather than an
 editable checkbox. The creator also receives poll creation and venue-selection
 permissions to check the picker using a temporary poll, which is deleted
 afterwards. Venue data is created entirely through the UI with unique names.
-Recurrence configuration and backend-computed event dates are deliberately
-excluded until the backend is connected to these journeys.
-
-## Test Flow
-
-1. **Initialize Firebase**: Connect to emulators (Firestore on 8180, Auth on 9199)
-2. **Seed Smoke Users**: Create deterministic test users (smoke-admin, smoke-user-a, smoke-user-b) with push endpoints
-3. **Frontend Client**: Authenticate as smoke-user-b and post a global chat message
-4. **Notifier Subprocess**: Start Python notifier in `--dummy-push` mode (logs instead of sending actual web pushes)
-5. **Wait for Processing**: Poll for either:
-   - `chat_push_actions/{messageId}` document written to Firestore (side effect)
-   - Or "Chat push delivery:" log message from notifier (evidence of processing)
-6. **Assert Success**: Exit with status 0 if evidence found, 1 otherwise
-
-## Test Data
-
-### Smoke Users (Seeded by `seed_smoke_data()`)
-
-| UID | Email | Role | Push Enabled | Global Chat | Event Chat |
-|-----|-------|------|--------------|-------------|-----------|
-| `smoke-admin` | smoke-admin@test.local | admin (all roles) | N/A | N/A | N/A |
-| `smoke-user-a` | smoke-user-a@test.local | none | false | N/A | N/A |
-| `smoke-user-b` | smoke-user-b@test.local | none | **true** | **true** | **true** |
-
-Smoke-user-b has a deterministic push endpoint at `users/smoke-user-b/push_endpoints/smoke-endpoint-b`.
-
-## Notifier Log Patterns
-
-The E2E test assertions key off these log messages:
-
-```
-Chat push delivery: delivered=1 retryable_failures=0
-```
+This outline remains frontend-only. The separate `@last_orders` recurrence
+feature registers its own actors and creates Events entirely through the UI.
+It verifies calculation and another member's edit of a monthly occurrence
+beyond the poll-creation window, then independently verifies a weekly Event
+due tomorrow materialises a poll, votes and attendance. Read assertions use the
+authenticated emulator SDK and correlate by venue ID and occurrence date;
+computed results are never seeded. These scenarios do not prove restart/replay
+idempotency or notification delivery.
 
 ## Debugging
 
-### Enable Verbose Logging
+The runner reports progress and the per-run `e2e/artifacts/<run>/<group>/`
+directory. It contains discovery and Cucumber JSON reports, failure screenshots
+embedded in the latter, and backend stdout JSON Lines plus separate stderr for
+the backend group. Backend failure output includes bounded log tails. Artifacts
+are ignored by Git; CI retains synthetic failure artifacts for seven days.
 
-```bash
-cd e2e
-poetry run python test_e2e_chat_push.py
-```
-
-Output includes:
-- Notifier subprocess logs (prefixed with `[Notifier]`)
-- Orchestrator progress (prefixed with `[Orchestrator]`)
-- Firestore side effect checks
-
-### Manual Emulator Start
-
-```bash
-cd firebase_sub
-firebase emulators:exec --project demo-firebase-sub-integration --only firestore,auth
-```
-
-Then in another terminal:
-```bash
-cd e2e
-node frontend-client.js "Test message"
-```
-
-### Inspect Firestore Emulator Data
-
-Navigate to http://localhost:4000 (Firebase Emulator UI, if enabled).
-
-Or use firebase-admin to query directly:
-
-```python
-import os
-from firebase_admin import credentials, firestore, initialize_app
-import google.oauth2.credentials
-
-os.environ["FIRESTORE_EMULATOR_HOST"] = "127.0.0.1:8180"
-
-app = initialize_app(
-    credential=google.oauth2.credentials.Credentials(token="owner"),
-    options={"projectId": "demo-firebase-sub-integration"},
-)
-
-db = firestore.client()
-docs = db.collection("messages").stream()
-for doc in docs:
-    print(doc.id, doc.to_dict())
-```
-
-## Integration with CI/CD
-
-The consolidated runner (`run-tests.ps1`) makes it easy to integrate all test suites:
-
-```yaml
-# Example GitHub Actions workflow (Azure DevOps)
-- name: Run All Tests
-  run: ./run-tests.ps1 -All
-```
+The E2E emulator UI is disabled. Local logs and artifacts contain synthetic
+journey users and generated subscriptions only; do not introduce real identities
+or provider credentials into fixtures.
 
 ## Troubleshooting
 
 ### Emulator fails to start
-- Check if ports 8180 and 9199 are already in use
-- Stop an emulator session from the terminal that started it with Ctrl+C.
-- The admin browser journey owns its emulator process group and cleans up its
-  reserved ports when it exits, including after a failed scenario.
+- Check whether ports 8080, 9099, 4400, 4500, 9150, 3000 and (for backend) 8081
+  are occupied.
+- Stop only the emulator process that you started; the runner refuses occupied
+  ports and cleans up its own emulator process group on exit.
 
-### Frontend client: "User not found"
-- Verify smoke users were seeded: check `users/{uid}` in Firestore
-- Ensure Auth emulator is running on port 9199
+### Poetry bootstrap fails
+- Ensure Poetry is installed and the `firebase_sub` environment is installed.
 
-### Notifier subprocess doesn't process message
-- Check if `messages/{messageId}` document exists in Firestore (frontend should have written it)
-- Verify notifier logs appear (even dummy-mode errors would show in output)
-- Extend `CHAT_PUSH_TIMEOUT_SEC` in `test_e2e_chat_push.py` if system is slow
-
-### poetry commands fail
-- Ensure Poetry is installed: `pip install poetry`
-- From `firebase_sub` directory, run `poetry install`
+### Last Orders fails to start
+- Check the reported backend stderr artifact and Go prerequisites. Backend
+  startup failures are errors, never successful skips.
+- The runner supplies its own temporary database, poll-history floor and cursor
+  key. Do not work around failures with production env files or credentials.

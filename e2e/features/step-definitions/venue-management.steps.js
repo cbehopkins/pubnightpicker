@@ -5,7 +5,7 @@ import { When, Then } from "@cucumber/cucumber";
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const TEXT_FIELDS = ["Name", "Address", "Venue Web Site", "Map", "Notes"];
 
-async function fillVenue(page, details) {
+export async function fillVenue(page, details) {
     await page.getByLabel("Venue Type", { exact: true }).selectOption({ label: details["Venue Type"] });
     for (const field of TEXT_FIELDS) {
         await page.getByLabel(field, { exact: true }).fill(details[field]);
@@ -16,7 +16,7 @@ async function fillVenue(page, details) {
     }
 }
 
-async function saveVenue(page) {
+export async function saveVenue(page) {
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.waitForURL(`${BASE_URL}/venues`);
 }

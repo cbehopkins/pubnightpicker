@@ -3,6 +3,7 @@ import viteConfig from "./vite.config.js";
 
 export default mergeConfig(viteConfig, defineConfig({
     test: {
+        maxWorkers: 4,
         include: ["src/**/*.test.js"],
         exclude: [
             "**/node_modules/**",

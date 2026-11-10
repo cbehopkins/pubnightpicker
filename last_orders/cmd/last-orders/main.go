@@ -174,6 +174,7 @@ func main() {
 
 	logger.Info("last-orders starting", "db_path", *dbPath)
 	logger.Info("last-orders component selected", "component", component)
+	logger.Info("push client selected", "client", *pushClient)
 	if addr := application.HTTPAddr(); addr != "" {
 		logger.Info("http endpoints listening", "addr", addr)
 	}
