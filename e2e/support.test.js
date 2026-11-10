@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { displayDate, londonDate, recurrenceDates, shiftDate } from "./features/support/calendar.js";
 import { waitForValue } from "./features/support/emulator.js";
+import { createPushIdentity } from "./features/support/push-fixture.js";
 
 test("London dates distinguish summer midnight from UTC midnight", () => {
     assert.equal(londonDate(new Date("2026-06-30T23:30:00Z")), "2026-07-01");
@@ -30,5 +31,16 @@ test("condition waits return the observed matching value", async () => {
 });
 
 test("a stalled read is bounded and retains its assertion context", async () => {
-    await assert.rejects(waitForValue(() => new Promise(() => {}), () => false, "synthetic stalled read", 20), /synthetic stalled read/);
+    await assert.rejects(waitForValue(() => new Promise(() => { }), () => false, "synthetic stalled read", 20), /synthetic stalled read/);
+});
+
+test("synthetic push identities are unique and have serialisable browser keys", () => {
+    const first = createPushIdentity();
+    const second = createPushIdentity();
+    assert.notEqual(first.endpoint, second.endpoint);
+    assert.equal(new URL(first.endpoint).hostname, "push.example.test");
+    assert.equal(Buffer.from(first.keys.p256dh, "base64url").length, 65);
+    assert.equal(Buffer.from(first.keys.p256dh, "base64url")[0], 4);
+    assert.equal(Buffer.from(first.keys.auth, "base64url").length, 16);
+    assert.equal(JSON.parse(JSON.stringify(first)).endpoint, first.endpoint);
 });

@@ -1,5 +1,6 @@
 """Local-only safety checks for browser journey orchestration."""
 
+import base64
 import json
 import os
 import socket
@@ -51,6 +52,24 @@ class JourneyRunnerTests(unittest.TestCase):
         ):
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 runner._validate_environment({**runner._environment(), key: value})
+
+    def test_push_uses_one_stable_test_public_key_without_private_credentials(self) -> None:
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ) as preflight, patch.object(runner, "_discover"), patch.object(
+            runner, "_run_group", return_value=0
+        ):
+            self.assertEqual(runner.main(["--group", "frontend"]), 0)
+            self.assertEqual(runner.main(["--group", "frontend"]), 0)
+        env: dict[str, str] = preflight.call_args_list[0].args[1]
+        next_env: dict[str, str] = preflight.call_args_list[1].args[1]
+        public_key = env["VITE_WEB_PUSH_PUBLIC_KEY"]
+        decoded = base64.urlsafe_b64decode(public_key + "=" * (-len(public_key) % 4))
+        self.assertEqual(env["VITE_ENABLE_WEB_PUSH"], "true")
+        self.assertEqual(public_key, next_env["VITE_WEB_PUSH_PUBLIC_KEY"])
+        self.assertEqual(len(decoded), 65)
+        self.assertEqual(decoded[0], 4)
+        self.assertNotIn("WEB_PUSH_VAPID_PRIVATE_KEY", env)
 
     def test_occupied_port_is_rejected_without_stopping_listener(self) -> None:
         with socket.socket() as listener:

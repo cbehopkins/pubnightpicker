@@ -1,5 +1,6 @@
 import { After, Before, setDefaultTimeout, setWorldConstructor, Status, World } from "@cucumber/cucumber";
 import { chromium } from "playwright";
+import { installPushBoundary } from "./push-fixture.js";
 
 setDefaultTimeout(30_000);
 
@@ -20,6 +21,8 @@ class BrowserWorld extends World {
       return this.actors.get(name);
     }
     const context = await this.browser.newContext({ locale: "en-GB", timezoneId: "Europe/London" });
+    this.pushIdentities ??= new Map();
+    this.pushIdentities.set(name, await installPushBoundary(context, this.pushPermissionResponses?.get(name) ?? "denied"));
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     page.setDefaultNavigationTimeout(30_000);

@@ -1,15 +1,17 @@
 # Last Orders Browser Journey Implementation Plan
 
-Status: phases 1-2 implemented. The default browser runner executes frontend-only
+Status: phases 1-3 implemented. The default browser runner executes frontend-only
 and Last Orders groups sequentially in separate fresh emulator lifetimes. Two
 backend recurrence scenarios cover calculation/editing and due-poll
-materialisation. Phases 3-9 below remain planned, including their explicit
+materialisation. Three frontend-only push scenarios cover voluntary opt-in,
+saved categories, denied permission and disabling push. Phases 4-9 below remain
+planned, including their explicit
 readiness/correlation decision gates. The Python notifier worker and its legacy
 E2E scripts are retired; Python is used for bootstrap and orchestration only.
 
 Local verification: both recurrence scenarios passed independently; the default
-command passed six frontend and two backend scenarios. Focused harness and
-calendar/wait checks accompany the runner. A dedicated CI workflow runs both
+command passed nine frontend and two backend scenarios. Focused harness and
+calendar/wait/push-fixture checks accompany the runner. A dedicated CI workflow runs both
 groups and retains synthetic failure artifacts for seven days; its hosted run
 is not implied by local verification.
 
@@ -177,6 +179,14 @@ separate replay/restart scenario proving one poll per venue/occurrence; observin
 one poll once is not proof of replay idempotency.
 
 ## Phase 3: Voluntary Push Opt-In
+
+Implemented in `preferences-push.feature` with a test-only browser boundary for
+Notification permission and PushManager methods. Local service-worker
+registration, application opt-in logic and Firestore writes remain real.
+Permission/subscription counters survive reloads; synthetic endpoint requests
+are blocked and checked. One generated public-only test VAPID key is reused,
+not regenerated per actor or run. Each actor has distinct synthetic subscription
+encryption keys and an endpoint. This does not test signing or provider delivery.
 
 Create an independent frontend-only Preferences journey and reusable opt-in
 steps for notification journeys. Opt-in itself does not require Last Orders.

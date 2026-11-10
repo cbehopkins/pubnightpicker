@@ -57,7 +57,7 @@ Then("Last Orders persists the expected occurrence for the journey Event", { tim
             assertSameLondonDay(this);
             return getDocFromServer(doc(db, "pubs", id));
         }, (snapshot) => snapshot.exists() && snapshot.data().next_occurrence_date === this.expectedOccurrence,
-        `venue ${id} next_occurrence_date=${this.expectedOccurrence}`);
+            `venue ${id} next_occurrence_date=${this.expectedOccurrence}`);
     });
     assertSameLondonDay(this);
 });

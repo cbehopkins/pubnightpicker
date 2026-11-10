@@ -54,8 +54,9 @@ cd ..
 ### Browser journeys
 
 The [Last Orders implementation plan](docs/last-orders-implementation-plan.md)
-tracks the implemented orchestration and recurrence milestone and the later
-push, notification, email-history, diagnostics and deletion phases.
+tracks the implemented orchestration, recurrence and voluntary push opt-in
+milestones, and the later delivery-evidence, notification, email-history,
+diagnostics and deletion phases.
 
 From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 
@@ -168,6 +169,27 @@ due tomorrow materialises a poll, votes and attendance. Read assertions use the
 authenticated emulator SDK and correlate by venue ID and occurrence date;
 computed results are never seeded. These scenarios do not prove restart/replay
 idempotency or notification delivery.
+
+The frontend-only push feature covers allowed permission and saved categories,
+denied permission, and disabling push, with fresh accounts in each scenario.
+It checks that no permission request or subscription occurs before clicking
+Enable Push, and verifies the app's persisted preference and endpoint documents
+after enabling, saving, revisiting and disabling.
+
+Every browser context installs a test-only permission/PushManager fixture before
+application scripts. Unconfigured actors default to denying permission. The
+fixture preserves real local service-worker registration and all application
+Firestore writes, but supplies observable synthetic subscriptions instead of
+contacting browser push services. Attempts to contact the synthetic delivery
+endpoint are blocked and fail the push assertions.
+
+The runner reuses one generated **public-only test VAPID key**; it does not
+generate a new VAPID pair per scenario or keep a VAPID private key. Per-actor
+`p256dh` and `auth` values are synthetic subscription encryption keys, not VAPID
+credentials. They distinguish browser endpoints and exercise serialisation.
+These tests do not establish native permission-dialog behaviour, VAPID signing,
+provider delivery or OS notification display. Production VAPID key rotation is
+not part of this fixture.
 
 ## Debugging
 
