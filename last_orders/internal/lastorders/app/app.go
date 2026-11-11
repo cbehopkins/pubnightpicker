@@ -41,6 +41,7 @@ import (
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
+	versionendpoint "last_orders/internal/lastorders/endpoints/version"
 	admindeleteplugin "last_orders/internal/lastorders/plugins/admindelete"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
@@ -841,6 +842,10 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
+		versionHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, versionendpoint.Endpoint{}, cfg.AllowedAPIPreviewSites...)
+		if err != nil {
+			return nil, err
+		}
 		listener, err := net.Listen("tcp", cfg.HTTPAddr)
 		if err != nil {
 			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
@@ -851,6 +856,7 @@ func New(cfg Config) (application *App, err error) {
 			w.Header().Set("Cache-Control", "no-store")
 			_, _ = w.Write([]byte("ok"))
 		})
+		mux.Handle("GET /api/version", versionHandler)
 		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
 		mux.Handle("/api/", apiHandler)
 		application.httpListener = listener

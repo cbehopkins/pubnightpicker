@@ -30,6 +30,12 @@
             "schemaFile": "collections/config.schema.json"
         },
         {
+            "name": "config",
+            "documentId": "deployment",
+            "status": "authoritative",
+            "schemaFile": "collections/deployment.schema.json"
+        },
+        {
             "name": "polls",
             "status": "authoritative",
             "schemaFile": "collections/polls.schema.json"

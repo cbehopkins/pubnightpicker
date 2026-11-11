@@ -3,6 +3,9 @@ FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG BUILD_TAG
+ARG BUILD_COMMIT
+ARG BUILD_KIND=development
 
 WORKDIR /src
 
@@ -22,7 +25,7 @@ COPY last_orders ./last_orders
 
 WORKDIR /src/last_orders
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-	go build -trimpath -ldflags="-s -w" -o /out/last-orders ./cmd/last-orders \
+	go build -trimpath -ldflags="-s -w -X last_orders/internal/lastorders/endpoints/version.Tag=${BUILD_TAG} -X last_orders/internal/lastorders/endpoints/version.Commit=${BUILD_COMMIT} -X last_orders/internal/lastorders/endpoints/version.Build=${BUILD_KIND}" -o /out/last-orders ./cmd/last-orders \
 	&& mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot

@@ -114,6 +114,39 @@ The workflow rejects missing or malformed configuration before building. Images
 retain the release tag and long commit-SHA tag; deployment should pin the digest.
 Publishing an image does not change the running Serverless Container.
 
+### Backend Version Diagnostics
+
+The admin diagnostics page shows the frontend build, the intended backend and
+the backend responding to the public `GET /api/version` endpoint. A match means
+the release tag and source commit agree; it does not prove that the image
+digest, health or every instance in a rolling deployment matches. The page
+distinguishes an unreachable backend from a connected development build.
+Local development reports the Git commit and modified state when available:
+the frontend captures them when Vite starts, and the backend when it is built.
+These identify the base commit, not the contents of uncommitted changes. A
+missing local deployment expectation is normal and the comparison is unknown.
+
+The intended backend is stored in the `config/deployment` Firestore document
+for the Firebase project. Before activating or rolling back a published image,
+fetch the release tag and use the updater from the repository root:
+
+```powershell
+git fetch origin --tags
+node react/scripts/set-deployment-expectation.mjs --project pubnightpicker --tag last_orders-v1.2.3
+node react/scripts/set-deployment-expectation.mjs --project pubnightpicker --tag last_orders-v1.2.3 --apply
+```
+
+The first command is a dry run. The second requires Google Application Default
+Credentials with Firestore write access; set `GOOGLE_APPLICATION_CREDENTIALS`
+or use an authenticated local ADC account. The updater verifies that the local
+and origin tags resolve to the same commit, but does not check the registry or
+activate the image. Select the corresponding published image by digest in
+Scaleway, then refresh diagnostics. Write the new expectation before activation
+so a failed deployment remains visible as a mismatch. Future deployment
+automation should perform this step as part of activation rather than on image
+publication. The endpoint and source identifiers are public; Firestore reads
+and the diagnostics page are restricted to admins.
+
 ### Backend Deployment Considerations
 
 Backend activation remains manual. The current host is Scaleway Serverless

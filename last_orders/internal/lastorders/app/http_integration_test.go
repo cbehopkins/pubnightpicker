@@ -18,6 +18,41 @@ import (
 
 type testAuthVerifier struct{}
 
+func TestVersionEndpointPublic(t *testing.T) {
+	cfg := testConfig(t, t.TempDir()+"/version.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.AllowedAPIOrigins = []string{"http://localhost:3000"}
+	application, err := app.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go application.Run(ctx)
+	request, err := http.NewRequest(http.MethodGet, "http://"+application.HTTPAddr()+"/api/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Origin", "http://localhost:3000")
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		Tag    string `json:"tag"`
+		Commit string `json:"commit"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || response.Header.Get("Access-Control-Allow-Origin") != "http://localhost:3000" || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d headers=%v", response.StatusCode, response.Header)
+	}
+}
+
 func TestHealthEndpointEndToEnd(t *testing.T) {
 	cfg := testConfig(t, t.TempDir()+"/health.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
 	cfg.HTTPAddr = "127.0.0.1:0"

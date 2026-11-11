@@ -153,6 +153,15 @@ Remove the flag or environment variable immediately after recovery: while enable
 it deletes the database on every process start, including health-check restarts.
 No shell or filesystem access inside the container is required.
 
+### Build version
+
+`GET /api/version` is unauthenticated and returns JSON with `tag`, `commit` and
+`build` strings and `Cache-Control: no-store`. Published images use the `release`
+build kind; local builds default to `development` and use embedded Git metadata
+when available, including an optional boolean `modified`. Missing identifiers
+are empty. Browser requests follow the configured API origin policy. This reports
+the source build, not the container digest or service health.
+
 ### Container health checks
 
 Configure the cloud service's HTTP probe to use `GET /healthz` on the application
