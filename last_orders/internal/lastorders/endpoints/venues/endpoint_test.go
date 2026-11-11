@@ -296,6 +296,33 @@ func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
 	}
 }
 
+func TestVenueManagerCanEditVenueCreatedByAnotherManager(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{
+			ID: "venue-created-by-another-manager", Name: "Original venue",
+		}}},
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-created-by-another-manager", strings.NewReader(`{"name":"Corrected venue"}`))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s, want 200", response.Code, response.Body)
+	}
+	var patched venue
+	if err := json.Unmarshal(response.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.ID != "venue-created-by-another-manager" || patched.Name != "Corrected venue" {
+		t.Fatalf("patched venue=%+v", patched)
+	}
+}
+
 func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
 	reader := &testReader{canManage: true}
 	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}

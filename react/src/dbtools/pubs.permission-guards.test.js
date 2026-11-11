@@ -2,19 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
     assertCurrentUserPermissionMock,
-    addDocMock,
-    collectionMock,
-    deleteDocMock,
-    docMock,
-    updateDocMock,
+    requestLastOrdersMock,
 } = vi.hoisted(() => {
     return {
         assertCurrentUserPermissionMock: vi.fn(),
-        addDocMock: vi.fn(async () => undefined),
-        collectionMock: vi.fn(() => ({ id: "pubs-collection" })),
-        deleteDocMock: vi.fn(async () => undefined),
-        docMock: vi.fn(() => ({ id: "pub-doc" })),
-        updateDocMock: vi.fn(async () => undefined),
+        requestLastOrdersMock: vi.fn(async () => undefined),
     };
 });
 
@@ -27,19 +19,9 @@ vi.mock("../permissions", () => {
     };
 });
 
-vi.mock("../firebase", () => {
+vi.mock("../utils/lastOrdersApi", () => {
     return {
-        db: {},
-    };
-});
-
-vi.mock("firebase/firestore", () => {
-    return {
-        addDoc: addDocMock,
-        collection: collectionMock,
-        deleteDoc: deleteDocMock,
-        doc: docMock,
-        updateDoc: updateDocMock,
+        requestLastOrders: requestLastOrdersMock,
     };
 });
 
@@ -48,11 +30,8 @@ import { addNewPub, deletePub, modifyPub } from "./pubs";
 describe("pub dbtools permission guards", () => {
     beforeEach(() => {
         assertCurrentUserPermissionMock.mockReset();
-        addDocMock.mockClear();
-        collectionMock.mockClear();
-        deleteDocMock.mockClear();
-        docMock.mockClear();
-        updateDocMock.mockClear();
+        requestLastOrdersMock.mockReset();
+        requestLastOrdersMock.mockResolvedValue(undefined);
     });
 
     it("guards addNewPub with canManagePubs", async () => {
@@ -62,8 +41,9 @@ describe("pub dbtools permission guards", () => {
             "canManagePubs",
             "creating a pub",
         );
-        expect(addDocMock).toHaveBeenCalledTimes(1);
-        expect(collectionMock).toHaveBeenCalledTimes(1);
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues", {
+            body: { name: "The Test Arms" },
+        });
     });
 
     it("guards modifyPub with canManagePubs", async () => {
@@ -73,8 +53,11 @@ describe("pub dbtools permission guards", () => {
             "canManagePubs",
             "editing a pub",
         );
-        expect(updateDocMock).toHaveBeenCalledTimes(1);
-        expect(docMock).toHaveBeenCalledWith({}, "pubs", "pub-1");
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-1", {
+            method: "PATCH",
+            contentType: "application/merge-patch+json",
+            body: { name: "Updated Name" },
+        });
     });
 
     it("guards deletePub with canManagePubs", async () => {
@@ -84,7 +67,8 @@ describe("pub dbtools permission guards", () => {
             "canManagePubs",
             "deleting a pub",
         );
-        expect(deleteDocMock).toHaveBeenCalledTimes(1);
-        expect(docMock).toHaveBeenCalledWith({}, "pubs", "pub-2");
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-2", {
+            method: "DELETE",
+        });
     });
 });

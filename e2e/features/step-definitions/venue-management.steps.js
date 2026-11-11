@@ -1,9 +1,86 @@
 import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
-import { When, Then } from "@cucumber/cucumber";
+import { Given, When, Then } from "@cucumber/cucumber";
+import { doc, setDoc } from "firebase/firestore";
+import { nextAvailablePollDate, withEmulatorAdmin } from "../support/emulator.js";
+import { londonDate, shiftDate } from "../support/calendar.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const TEXT_FIELDS = ["Name", "Address", "Venue Web Site", "Map", "Notes"];
+
+Given("a venue is available to current and past events", async function () {
+    const fixtureId = randomUUID();
+    this.publicVenueId = `public-access-${fixtureId}`;
+    this.publicVenueName = `Public Access Venue ${fixtureId}`;
+    const today = londonDate();
+
+    await withEmulatorAdmin(async (db, auth) => {
+        const venueResponse = await fetch(new URL("api/venues", process.env.VITE_LAST_ORDERS_API_BASE_URL), {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${await auth.currentUser.getIdToken()}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                name: this.publicVenueName,
+                venue_type: "pub",
+                address: "Public Access Road",
+            }),
+        });
+        const venueBody = await venueResponse.text();
+        assert.equal(venueResponse.status, 201, venueBody);
+        this.publicVenueId = JSON.parse(venueBody).id;
+
+        await Promise.all([
+            setDoc(doc(db, "polls", `public-current-${fixtureId}`), {
+                date: today,
+                completed: true,
+                selected: this.publicVenueId,
+            }),
+            setDoc(doc(db, "polls", `public-past-${fixtureId}`), {
+                date: shiftDate(today, -1),
+                completed: true,
+                selected: this.publicVenueId,
+            }),
+        ]);
+    });
+});
+
+When("{word} views the public venue in Current Events", async function (name) {
+    const page = this.actors.get(name) ?? await this.openActor(name);
+    await page.goto(`${BASE_URL}/current_events`);
+    await page.getByRole("heading", { name: "Current Events", exact: true }).waitFor();
+});
+
+Then("{word} sees the public venue details in Current Events", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByText(this.publicVenueName, { exact: true }).waitFor();
+    await page.getByText("Public Access Road", { exact: true }).first().waitFor();
+});
+
+When("{word} views the public venue in Past Events", async function (name) {
+    const page = this.actors.get(name);
+    await page.goto(`${BASE_URL}/past_events`);
+    await page.getByRole("heading", { name: "Past Events", exact: true }).waitFor();
+});
+
+Then("{word} sees the public venue in Past Events", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByText(this.publicVenueName, { exact: true }).waitFor();
+});
+
+When("{word} views the venue catalogue without management permission", async function (name) {
+    const page = this.actors.get(name);
+    await page.goto(`${BASE_URL}/venues`);
+});
+
+Then("{word} sees the public venue without management actions", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByText(this.publicVenueName, { exact: true }).waitFor();
+    await page.getByRole("link", { name: "New Venue", exact: true }).waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Delete", exact: true }).waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("link", { name: this.publicVenueName, exact: true }).count(), 0);
+});
 
 export async function fillVenue(page, details) {
     await page.getByLabel("Venue Type", { exact: true }).selectOption({ label: details["Venue Type"] });
@@ -116,7 +193,7 @@ Then("{word} no longer sees the journey venue under {string}", async function (n
 
 Then("{word} can select the edited journey venue in the poll picker", async function (name) {
     const page = this.actors.get(name);
-    const pollDate = "2099-12-30";
+    const pollDate = await withEmulatorAdmin(nextAvailablePollDate);
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
     await page.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
     await page.locator('input[type="date"]').fill(pollDate);

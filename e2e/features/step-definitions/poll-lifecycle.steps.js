@@ -15,7 +15,7 @@ import {
     where,
     writeBatch,
 } from "firebase/firestore";
-import { waitForValue, withEmulatorAdmin } from "../support/emulator.js";
+import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
@@ -100,17 +100,18 @@ When("{word} opens Active Polls", async function (name) {
 When("Bob creates a poll on a clear date", async function () {
     const bob = this.actors.get("Bob");
     assert.notEqual(bob.context(), this.actors.get("Claire").context());
-    this.pollDate = "2099-12-30";
+    this.pollDate = await withEmulatorAdmin(nextAvailablePollDate);
     await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
     await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
     await bob.locator('input[type="date"]').fill(this.pollDate);
     await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
     await bob.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
-    this.pollId = await withEmulatorAdmin(async (db) => {
-        const polls = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.pollDate)));
-        assert.equal(polls.size, 1);
-        return polls.docs[0].id;
-    });
+    const poll = await withEmulatorAdmin(async (db) => waitForValue(
+        () => getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.pollDate))),
+        (polls) => polls.size === 1,
+        `the poll on ${this.pollDate} to be committed`,
+    ));
+    this.pollId = poll.docs[0].id;
 });
 
 Then("{word} sees the poll on Active Polls", async function (name) {
