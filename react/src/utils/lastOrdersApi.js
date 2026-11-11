@@ -8,7 +8,7 @@ export class LastOrdersApiError extends Error {
     }
 }
 
-export function lastOrdersApiURL(path) {
+export function lastOrdersApiURL(path, query = null) {
     const configured = import.meta.env.VITE_LAST_ORDERS_API_BASE_URL || "http://localhost:8081";
     try {
         const base = new URL(configured);
@@ -22,6 +22,9 @@ export function lastOrdersApiURL(path) {
         if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || target.search || target.hash) {
             throw new Error("Invalid API path");
         }
+        if (query !== null) {
+            target.search = new URLSearchParams(query).toString();
+        }
         return target.toString();
     } catch {
         throw new LastOrdersApiError("configuration_error", "The Last Orders API URL is not configured correctly.");
@@ -32,9 +35,10 @@ export async function requestLastOrders(path, {
     method = "POST",
     body = null,
     contentType = "application/json",
+    query = null,
     signal = new AbortController().signal,
 } = {}) {
-    const url = lastOrdersApiURL(path);
+    const url = lastOrdersApiURL(path, query);
     const user = auth.currentUser;
     if (!user) {
         throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");

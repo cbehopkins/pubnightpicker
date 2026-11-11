@@ -42,7 +42,7 @@ func main() {
 		landlordURL          = flag.String("landlord-url", os.Getenv("LANDLORD_INTERNAL_URL"), "Landlord private API base URL (HandPump mode; defaults to LANDLORD_INTERNAL_URL)")
 		allowAuthEmulator    = flag.Bool("allow-auth-emulator", false, "allow unsigned Firebase Auth tokens from a loopback emulator (development only)")
 		pushClient           = flag.String("push-client", string(pushplugin.ClientDummy), "push delivery client: dummy or webpush")
-		pollsSince           = flag.String("polls-since", "", "YYYY-MM-DD: ignore polls dated, and chat messages created, before this date; persisted in Firestore and may only move forward (empty uses the stored value)")
+		pollsSince           = flag.String("polls-since", "", "YYYY-MM-DD: initialize or advance the persisted poll/chat cutoff (empty uses stored state, then oldest poll or current app date)")
 		adminDeleteOnce      = flag.Bool("admin-delete-evaluate-once", false, "evaluate pending admin-delete requests once, wait for their durable outcomes, then exit")
 		enableRealAuthDelete = flag.Bool("enable-real-auth-delete", false, "explicitly permit real Firebase Auth deletion when admin delete is enabled and not in dry-run mode")
 	)

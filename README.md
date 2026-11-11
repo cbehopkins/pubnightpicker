@@ -96,10 +96,20 @@ $env:GOOGLE_CLOUD_PROJECT = "pubnightpicker"
 $env:FIREBASE_AUTH_PROJECT_ID = "pubnightpicker"
 $env:FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
 $env:FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099"
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$env:LAST_ORDERS_CURSOR_HMAC_KEY = [Convert]::ToBase64String($bytes).TrimEnd([char]'=').Replace('+', '-').Replace('/', '_')
+$rng.Dispose()
 go run ./cmd/last-orders '-http-addr=127.0.0.1:8081' -allow-auth-emulator
 ```
 
-The frontend defaults to the API at `http://localhost:8081`. The emulator opt-in flag is for local development only; never use emulator settings with production credentials or services.
+The cursor key signs opaque Venue pagination and stream cursors; it is not an API
+authentication credential. Keep the generated value stable while testing across
+backend restarts, and never commit or reuse it as a production secret. The
+frontend defaults to the API at `http://localhost:8081`. The emulator opt-in flag
+is for local development only; never use emulator settings with production
+credentials or services.
 
 ### Python notification worker
 

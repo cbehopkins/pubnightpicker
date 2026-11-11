@@ -15,19 +15,23 @@ import (
 const pollsSinceField = "pollsSince"
 
 type FirestoreStore struct {
-	doc *firestore.DocumentRef
+	doc   *firestore.DocumentRef
+	polls *firestore.CollectionRef
 }
 
 func NewFirestoreStore(client *firestore.Client, collectionRoot, namespace string) (*FirestoreStore, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &FirestoreStore{doc: client.Collection(collectionRoot).Doc(namespace)}, nil
+	return &FirestoreStore{
+		doc:   client.Collection(collectionRoot).Doc(namespace),
+		polls: client.Collection("polls"),
+	}, nil
 }
 
-// ResolvePollsSince returns the effective cutoff (YYYY-MM-DD). A non-empty requested
-// value is persisted; it may not move the stored cutoff backwards.
-func (s *FirestoreStore) ResolvePollsSince(ctx context.Context, requested string) (string, error) {
+// ResolvePollsSince returns the effective cutoff (YYYY-MM-DD). An uninitialised
+// store uses the oldest poll date, or fallbackDate when no polls exist.
+func (s *FirestoreStore) ResolvePollsSince(ctx context.Context, requested, fallbackDate string) (string, error) {
 	if requested != "" {
 		if _, err := time.Parse(time.DateOnly, requested); err != nil {
 			return "", fmt.Errorf("polls-since %q must be YYYY-MM-DD: %w", requested, err)
@@ -38,18 +42,59 @@ func (s *FirestoreStore) ResolvePollsSince(ctx context.Context, requested string
 	if err != nil {
 		return "", err
 	}
+	if requested == "" {
+		if stored != "" {
+			return stored, nil
+		}
+		oldestPollDate, err := s.oldestPollDate(ctx)
+		if err != nil {
+			return "", err
+		}
+		requested, err = initialPollsSince(oldestPollDate, fallbackDate)
+		if err != nil {
+			return "", err
+		}
+	}
 	switch {
-	case requested == "" && stored == "":
-		return "", fmt.Errorf("no %s stored in Firestore: supply -polls-since", pollsSinceField)
-	case requested == "" || requested == stored:
+	case requested == stored:
 		return stored, nil
-	case requested < stored:
+	case stored != "" && requested < stored:
 		return "", fmt.Errorf("polls-since %s would move the stored cutoff %s backwards", requested, stored)
 	}
 	if _, err := s.doc.Set(ctx, map[string]any{pollsSinceField: requested}, firestore.MergeAll); err != nil {
 		return "", fmt.Errorf("write %s: %w", pollsSinceField, err)
 	}
 	return requested, nil
+}
+
+func (s *FirestoreStore) oldestPollDate(ctx context.Context) (string, error) {
+	documents, err := s.polls.OrderBy("date", firestore.Asc).Limit(1).Documents(ctx).GetAll()
+	if err != nil {
+		return "", fmt.Errorf("read oldest poll date: %w", err)
+	}
+	if len(documents) == 0 {
+		return "", nil
+	}
+	value, err := documents[0].DataAt("date")
+	if err != nil {
+		return "", fmt.Errorf("read oldest poll date: %w", err)
+	}
+	date, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("oldest poll date is not a string")
+	}
+	return date, nil
+}
+
+func initialPollsSince(oldestPollDate, fallbackDate string) (string, error) {
+	date := oldestPollDate
+	if date == "" {
+		date = fallbackDate
+	}
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return "", fmt.Errorf("initial polls-since date %q must be YYYY-MM-DD: %w", date, err)
+	}
+	return date, nil
 }
 
 func (s *FirestoreStore) stored(ctx context.Context) (string, error) {

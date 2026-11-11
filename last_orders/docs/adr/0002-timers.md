@@ -153,6 +153,12 @@ discovery scans open polls whose date is between the persisted `PollsSince`
 cutoff and the current `Europe/London` date, inclusive. This catches eligible
 polls after downtime without replaying every missed daily timer occurrence.
 
+On first startup, an explicit `-polls-since` value initializes the persisted
+cutoff when supplied. Otherwise, the backend initializes it from the oldest
+existing poll date; if there are no polls, it uses the current
+`Europe/London` date. Subsequent startups use the persisted cutoff, and explicit
+updates may only move it forward.
+
 Each discovered poll occurrence is identified by poll ID and poll date. Repeated
 startup and scheduled scans therefore converge through the existing local
 idempotency mechanism. Polls older than `PollsSince` remain outside the

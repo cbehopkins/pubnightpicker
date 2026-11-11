@@ -141,6 +141,11 @@ describe("Last Orders API URL", () => {
         expect(() => lastOrdersApiURL("../elsewhere")).toThrow();
         expect(() => lastOrdersApiURL("https://evil.example/api/ping")).toThrow();
     });
+    it("encodes explicit query parameters without accepting queries in the path", () => {
+        expect(lastOrdersApiURL("api/venues", { limit: "100", cursor: "opaque / cursor" }))
+            .toBe("http://localhost:8081/api/venues?limit=100&cursor=opaque+%2F+cursor");
+        expect(() => lastOrdersApiURL("api/venues?admin=true")).toThrow();
+    });
     it.each(["http://backend.example", "https://user:secret@backend.example", "https://backend.example?key=value"])("rejects insecure or credential-bearing config %s", (url) => {
         vi.stubEnv("VITE_LAST_ORDERS_API_BASE_URL", url);
         expect(() => lastOrdersApiURL("api/ping")).toThrow();
@@ -183,6 +188,24 @@ describe("BackendPingPanel", () => {
             body: JSON.stringify({ venue_type: "event" }),
             credentials: "omit",
         }));
+    });
+
+    it("sends Last Orders list query parameters on authenticated GET requests", async () => {
+        const page = { venues: [], next_cursor: null };
+        fetchMock.mockResolvedValue(jsonResponse(page));
+
+        await expect(requestLastOrders("api/venues", {
+            method: "GET",
+            query: { limit: "100", cursor: "opaque-cursor" },
+        })).resolves.toEqual(page);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8081/api/venues?limit=100&cursor=opaque-cursor",
+            expect.objectContaining({
+                method: "GET",
+                headers: { Authorization: "Bearer firebase-id-token" },
+            }),
+        );
     });
 
     it("accepts an empty 204 delete response without parsing JSON", async () => {

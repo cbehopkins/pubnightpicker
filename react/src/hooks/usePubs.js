@@ -11,6 +11,7 @@ const initialState = {
 let state = initialState;
 let source = null;
 let hasSnapshot = false;
+let hasLoggedStreamError = false;
 const subscribers = new Set();
 
 function publish(nextState) {
@@ -49,7 +50,7 @@ function normalizeVenue(venue) {
 function markStreamError(message) {
   publish({
     ...state,
-    isLoading: !hasSnapshot,
+    isLoading: false,
     isStale: hasSnapshot,
     errorMessage: message,
   });
@@ -57,8 +58,10 @@ function markStreamError(message) {
 
 function startStream() {
   try {
-    source = new EventSource(lastOrdersApiURL("api/venues/stream"));
-    source.addEventListener("venues", (event) => {
+    const url = lastOrdersApiURL("api/venues/stream");
+    const eventSource = new EventSource(url);
+    source = eventSource;
+    eventSource.addEventListener("venues", (event) => {
       let payload;
       try {
         payload = JSON.parse(event.data);
@@ -85,6 +88,7 @@ function startStream() {
       }
 
       hasSnapshot = true;
+      hasLoggedStreamError = false;
       publish({
         venues: Object.fromEntries(entries),
         isLoading: false,
@@ -92,10 +96,42 @@ function startStream() {
         errorMessage: null,
       });
     });
-    source.onerror = () => markStreamError("Venue updates are temporarily unavailable.");
-  } catch {
+    eventSource.onerror = () => {
+      if (!hasLoggedStreamError) {
+        console.error("Last Orders venue stream failed", {
+          url: eventSource.url,
+          readyState: eventSource.readyState,
+        });
+        hasLoggedStreamError = true;
+      }
+      if (eventSource.readyState === EventSource.CLOSED && source === eventSource) {
+        eventSource.close();
+        source = null;
+      }
+      markStreamError("Venue updates are temporarily unavailable. Try again to reconnect.");
+    };
+  } catch (error) {
+    if (!hasLoggedStreamError) {
+      console.error("Unable to create Last Orders venue stream", error);
+      hasLoggedStreamError = true;
+    }
     source = null;
     markStreamError("Unable to connect to the Last Orders venue stream.");
+  }
+}
+
+function retryStream() {
+  source?.close();
+  source = null;
+  hasLoggedStreamError = false;
+  publish({
+    ...state,
+    isLoading: !hasSnapshot,
+    isStale: hasSnapshot,
+    errorMessage: null,
+  });
+  if (subscribers.size > 0) {
+    startStream();
   }
 }
 
@@ -110,6 +146,7 @@ function subscribe(subscriber) {
       source?.close();
       source = null;
       hasSnapshot = false;
+      hasLoggedStreamError = false;
       state = initialState;
     }
   };
@@ -120,7 +157,8 @@ function getSnapshot() {
 }
 
 export function usePubsState() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const currentState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return { ...currentState, retry: retryStream };
 }
 
 function usePubs() {

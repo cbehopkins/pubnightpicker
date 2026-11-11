@@ -7,8 +7,11 @@ import usePubs, { usePubsState } from "./usePubs";
 const eventSources = [];
 
 class FakeEventSource {
+  static CLOSED = 2;
+
   constructor(url) {
     this.url = url;
+    this.readyState = 0;
     this.listeners = new Map();
     this.close = vi.fn();
     eventSources.push(this);
@@ -115,6 +118,35 @@ describe("usePubs", () => {
       venues: { "venue-2": { name: "The Crown", venueType: "event" } },
       isStale: false,
     });
+  });
+
+  it("reports stream failures without staying in loading and allows an explicit retry", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => { });
+    const { result } = renderHook(() => usePubsState());
+    const failedSource = eventSources[0];
+    failedSource.readyState = FakeEventSource.CLOSED;
+
+    act(() => {
+      failedSource.interrupt();
+      failedSource.interrupt();
+    });
+
+    expect(result.current).toMatchObject({
+      isLoading: false,
+      errorMessage: "Venue updates are temporarily unavailable. Try again to reconnect.",
+    });
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith("Last Orders venue stream failed", {
+      url: "http://localhost:8081/api/venues/stream",
+      readyState: failedSource.readyState,
+    });
+    expect(failedSource.close).toHaveBeenCalledOnce();
+
+    act(() => result.current.retry());
+
+    expect(failedSource.close).toHaveBeenCalledOnce();
+    expect(eventSources).toHaveLength(2);
+    expect(result.current).toMatchObject({ isLoading: true, errorMessage: null });
   });
 
   it("ignores malformed snapshots without clearing loaded venues", () => {

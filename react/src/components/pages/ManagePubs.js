@@ -12,7 +12,7 @@ import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../..
 
 const ManagePubs = (params) => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
-  const { venues: pub_parameters, isLoading, isStale, errorMessage } = usePubsState();
+  const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
   const sortedPubsByName = Object.entries(pub_parameters)
     .filter(([, value]) => {
       if (venueTypeFilter === "all") {
@@ -42,7 +42,12 @@ const ManagePubs = (params) => {
       </div>
 
       {isLoading && <p role="status">Loading venues...</p>}
-      {errorMessage && <p role="alert">{errorMessage}</p>}
+      {errorMessage && (
+        <div className="alert alert-warning" role="alert">
+          <p className="mb-2">{errorMessage}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={retry}>Retry</Button>
+        </div>
+      )}
       {isStale && (
         <p className="alert alert-warning py-2" role="status">
           Showing the last loaded venue list. Updates may be delayed while the connection recovers.

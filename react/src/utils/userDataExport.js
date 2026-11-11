@@ -1,6 +1,36 @@
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import getUserDoc from "../dbtools/getUserDoc";
+import { requestLastOrders } from "./lastOrdersApi";
+
+/** @returns {Promise<Record<string, Record<string, unknown>>>} */
+async function fetchPublicVenuesById() {
+    /** @type {Record<string, Record<string, unknown>>} */
+    const venuesById = {};
+    let cursor = null;
+
+    do {
+        const page = await requestLastOrders("api/venues", {
+            method: "GET",
+            query: { limit: "100", ...(cursor ? { cursor } : {}) },
+        });
+        const nextCursor = page?.next_cursor ?? null;
+        if (!Array.isArray(page?.venues) || (nextCursor !== null && typeof nextCursor !== "string")) {
+            throw new Error("Last Orders returned an unexpected venue list.");
+        }
+
+        page.venues.forEach((venue) => {
+            if (!venue || typeof venue.id !== "string" || !venue.id) {
+                throw new Error("Last Orders returned an unexpected venue list.");
+            }
+            venuesById[venue.id] = venue;
+        });
+
+        cursor = nextCursor;
+    } while (cursor);
+
+    return venuesById;
+}
 
 /**
  * @param {string} userId
@@ -222,13 +252,13 @@ function buildLookupSection(votesByPoll, attendanceByPoll, pollsById, pubsById) 
  * @param {string} uid
  */
 export async function buildCurrentUserDataExport(uid) {
-    const [privateUserDoc, publicUserSnapshot, votesSnapshot, attendanceSnapshot, pollsSnapshot, pubsSnapshot, messagesSnapshot] = await Promise.all([
+    const [privateUserDoc, publicUserSnapshot, votesSnapshot, attendanceSnapshot, pollsSnapshot, pubsById, messagesSnapshot] = await Promise.all([
         getUserDoc(uid),
         getDoc(doc(db, "user-public", uid)),
         getDocs(collection(db, "votes")),
         getDocs(collection(db, "attendance")),
         getDocs(collection(db, "polls")),
-        getDocs(collection(db, "pubs")),
+        fetchPublicVenuesById(),
         getDocs(query(collection(db, "messages"), where("uid", "==", uid))),
     ]);
 
@@ -238,11 +268,6 @@ export async function buildCurrentUserDataExport(uid) {
         acc[pollDoc.id] = pollDoc.data();
         return acc;
     }, {});
-    const pubsById = pubsSnapshot.docs.reduce((acc, pubDoc) => {
-        acc[pubDoc.id] = pubDoc.data();
-        return acc;
-    }, {});
-
     const votesByPoll = votesSnapshot.docs.reduce((acc, voteDoc) => {
         const userVotes = extractVotesForUser(uid, voteDoc.data());
         if (Object.keys(userVotes).length > 0) {

@@ -88,7 +88,8 @@ type Config struct {
 	FirestoreForceIPv4  bool
 	FirebaseCredentials *google.Credentials
 	EnableFirestore     bool
-	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
+	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward.
+	// If empty on first startup, the oldest poll date is used, or today's app date when no polls exist.
 	PollsSince        string
 	IdempotencyRemote firebaseidempotency.Remote
 	// CompletionActions is the durable completed-poll action history shared with Python.
@@ -476,7 +477,8 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		resolveCtx, cancelResolve := context.WithTimeout(context.Background(), 30*time.Second)
-		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince)
+		fallbackDate := time.Now().In(recurrenceService.Location()).Format(time.DateOnly)
+		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince, fallbackDate)
 		cancelResolve()
 		if err != nil {
 			return nil, fmt.Errorf("resolve polls since: %w", err)
