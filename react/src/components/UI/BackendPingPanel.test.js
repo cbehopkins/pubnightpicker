@@ -164,6 +164,46 @@ describe("BackendPingPanel", () => {
         }));
     });
 
+    it("sends Venue patches with merge-patch JSON and returns the response", async () => {
+        const venue = { id: "venue-1", venue_type: "event" };
+        fetchMock.mockResolvedValue(jsonResponse(venue));
+
+        await expect(requestLastOrders("api/venues/venue-1", {
+            method: "PATCH",
+            contentType: "application/merge-patch+json",
+            body: { venue_type: "event" },
+        })).resolves.toEqual(venue);
+
+        expect(fetchMock).toHaveBeenCalledWith("http://localhost:8081/api/venues/venue-1", expect.objectContaining({
+            method: "PATCH",
+            headers: {
+                Authorization: "Bearer firebase-id-token",
+                "Content-Type": "application/merge-patch+json",
+            },
+            body: JSON.stringify({ venue_type: "event" }),
+            credentials: "omit",
+        }));
+    });
+
+    it("accepts an empty 204 delete response without parsing JSON", async () => {
+        const response = {
+            status: 204,
+            ok: true,
+            headers: new Headers(),
+            json: vi.fn(() => Promise.reject(new Error("204 has no body"))),
+        };
+        fetchMock.mockResolvedValue(response);
+
+        await expect(requestLastOrders("api/venues/venue-1", { method: "DELETE" })).resolves.toBeUndefined();
+
+        expect(response.json).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledWith("http://localhost:8081/api/venues/venue-1", expect.objectContaining({
+            method: "DELETE",
+            headers: { Authorization: "Bearer firebase-id-token" },
+            credentials: "omit",
+        }));
+    });
+
     it.each([[401, "Authentication Refused"], [403, "Access Refused"], [500, "Error"], [503, "Error"]])("handles HTTP %s without automatic retries", async (status, label) => {
         fetchMock.mockResolvedValue(jsonResponse({}, status));
         render(<BackendPingPanel />);

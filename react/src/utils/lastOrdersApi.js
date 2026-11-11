@@ -28,7 +28,12 @@ export function lastOrdersApiURL(path) {
     }
 }
 
-export async function requestLastOrders(path, { body = null, signal = new AbortController().signal } = {}) {
+export async function requestLastOrders(path, {
+    method = "POST",
+    body = null,
+    contentType = "application/json",
+    signal = new AbortController().signal,
+} = {}) {
     const url = lastOrdersApiURL(path);
     const user = auth.currentUser;
     if (!user) {
@@ -53,12 +58,17 @@ export async function requestLastOrders(path, { body = null, signal = new AbortC
                 throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
             }
             ensureCurrentSession();
+            const hasBody = body !== null || method === "POST";
+            const headers = { Authorization: `Bearer ${token}` };
+            if (hasBody) {
+                headers["Content-Type"] = contentType;
+            }
             let response;
             try {
                 response = await fetch(url, {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
+                    method,
+                    headers,
+                    ...(hasBody ? { body: JSON.stringify(body) } : {}),
                     credentials: "omit",
                     cache: "no-store",
                     redirect: "error",
@@ -78,8 +88,11 @@ export async function requestLastOrders(path, { body = null, signal = new AbortC
             if (!response.ok) {
                 throw new LastOrdersApiError("backend_error", "Last Orders could not complete the request. Please try again.");
             }
-            const contentType = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
-            if (contentType !== "application/json") {
+            if (response.status === 204) {
+                return undefined;
+            }
+            const responseContentType = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+            if (responseContentType !== "application/json") {
                 throw new LastOrdersApiError("invalid_response", "Last Orders returned an unexpected response.");
             }
             let data;

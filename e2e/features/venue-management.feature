@@ -1,3 +1,4 @@
+@last_orders
 Feature: Authorised members create and edit venues
   As members maintaining the venue catalogue
   We want to edit venues regardless of who created them
@@ -26,6 +27,10 @@ Feature: Authorised members create and edit venues
       | Map            | https://maps.example.test/original    |
       | Notes          | Original venue details                |
       | Parking        | false                                 |
+      | Dog Friendly   | true                                  |
+      | Beer Garden    | false                                 |
+      | Out Of Town (Cambridge) | true                           |
+      | Banned         | true                                  |
       | Food           | <initial food>                        |
     Then <editor> sees the journey venue listed as "<type>"
     When <editor> opens the journey venue for editing
@@ -37,6 +42,10 @@ Feature: Authorised members create and edit venues
       | Map            | https://maps.example.test/updated    |
       | Notes          | Details corrected by another member |
       | Parking        | true                                 |
+      | Dog Friendly   | false                                |
+      | Beer Garden    | true                                 |
+      | Out Of Town (Cambridge) | false                         |
+      | Banned         | true                                 |
       | Food           | true                                 |
     Then <creator> sees the renamed journey venue without reloading
     When <creator> opens the journey venue for editing
@@ -51,6 +60,9 @@ Feature: Authorised members create and edit venues
     When <editor> opens the journey venue for editing
     Then <editor> sees the saved journey venue details
     And <creator> can select the edited journey venue in the poll picker
+    And <creator> opens Manage Venues
+    When <editor> deletes the journey venue
+    Then <creator> no longer sees the journey venue without reloading
 
     Examples:
       | creator | editor | type       | corrected type | initial food |

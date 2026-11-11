@@ -11,9 +11,10 @@ work is planned below, including other notification kinds and their explicit
 readiness/correlation gates. The Python notifier worker and its legacy
 E2E scripts are retired; Python is used for bootstrap and orchestration only.
 
-Local verification: the default command passed nine frontend and four backend
-scenarios (207 steps). Focused listener/plugin/app Go tests, orchestration
-harness and calendar/wait/push/evidence support checks pass. A dedicated CI
+Local verification on 2026-11-11: the frontend-only group passed five scenarios
+(49 steps), and the Last Orders group passed fourteen scenarios (383 steps).
+Focused listener/plugin/app Go tests, orchestration harness and
+calendar/wait/push/evidence support checks pass. A dedicated CI
 workflow runs both groups and retains synthetic failure artifacts for seven
 days; its hosted run is not implied by local verification.
 
@@ -59,10 +60,10 @@ scenarios must remain independently runnable, use unique identities and scope
 assertions to their own records. Do not assume empty collections after another
 scenario has run. The backend must not run while shared emulator data is reset.
 
-The frontend-only completion journey expects the notification-handshake
-warning because no application backend runs in that group. Preserve that
-assertion there. Backend-dependent completion checks must instead wait for and
-assert the Last Orders acknowledgement and correlated work outcome.
+The poll-lifecycle journey is tagged `@last_orders` because it consumes the
+live Venue API stream. It waits for Last Orders' notification acknowledgement
+before completing. Frontend-only completion journeys must continue to expect
+the notification-handshake warning when no application backend runs.
 
 ## Phase 1: Safe Backend Orchestration
 

@@ -10,7 +10,9 @@ export async function fillVenue(page, details) {
     for (const field of TEXT_FIELDS) {
         await page.getByLabel(field, { exact: true }).fill(details[field]);
     }
-    await page.getByRole("checkbox", { name: "Parking", exact: true }).setChecked(details.Parking === "true");
+    for (const field of ["Parking", "Dog Friendly", "Beer Garden", "Out Of Town (Cambridge)", "Banned"]) {
+        await page.getByRole("checkbox", { name: field, exact: true }).setChecked(details[field] === "true");
+    }
     if (details["Venue Type"] !== "Restaurant") {
         await page.getByRole("checkbox", { name: "Food", exact: true }).setChecked(details.Food === "true");
     }
@@ -67,7 +69,9 @@ Then("{word} sees the saved journey venue details", async function (name) {
     }
     const selectedType = await page.getByLabel("Venue Type", { exact: true }).locator("option:checked").innerText();
     assert.equal(selectedType, this.venueDetails["Venue Type"]);
-    assert.equal(await page.getByRole("checkbox", { name: "Parking", exact: true }).isChecked(), this.venueDetails.Parking === "true");
+    for (const field of ["Parking", "Dog Friendly", "Beer Garden", "Out Of Town (Cambridge)", "Banned"]) {
+        assert.equal(await page.getByRole("checkbox", { name: field, exact: true }).isChecked(), this.venueDetails[field] === "true", field);
+    }
     if (selectedType === "Restaurant") {
         assert.equal(await page.getByRole("checkbox", { name: "Food", exact: true }).count(), 0);
     } else {
@@ -112,15 +116,17 @@ Then("{word} no longer sees the journey venue under {string}", async function (n
 
 Then("{word} can select the edited journey venue in the poll picker", async function (name) {
     const page = this.actors.get(name);
-    const pollDate = await page.evaluate(() => {
-        const date = new Date();
-        date.setDate(date.getDate() + 2);
-        return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
-    });
+    const pollDate = "2099-12-30";
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
     await page.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
     await page.locator('input[type="date"]').fill(pollDate);
-    await page.getByRole("button", { name: "Add Poll", exact: true }).click();
+    const addPollButton = page.getByRole("button", { name: "Add Poll", exact: true });
+    await page.waitForFunction((date) => {
+        const input = document.querySelector('input[type="date"]');
+        const button = [...document.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Add Poll");
+        return input?.value === date && button && !button.disabled;
+    }, pollDate);
+    await addPollButton.click();
     const heading = page.getByRole("heading", { name: pollDate, exact: true });
     await heading.waitFor();
     const poll = heading.locator("../..");
@@ -131,6 +137,23 @@ Then("{word} can select the edited journey venue in the poll picker", async func
     await picker.selectOption({ label: this.venueDetails.Name });
     assert.equal(await picker.getByRole("option", { name: this.originalVenueName, exact: true }).count(), 0);
     assert.equal(await picker.locator("option:checked").innerText(), this.venueDetails.Name);
+    await poll.getByRole("button", { name: "Add Venue To Poll", exact: true }).click();
+    await page.getByRole("alert").getByText(/marked as banned/i).waitFor();
     await poll.getByRole("button", { name: "Delete Poll", exact: true }).click();
     await heading.waitFor({ state: "hidden" });
+});
+
+When("{word} deletes the journey venue", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByRole("link", { name: "Manage Venues", exact: true }).click();
+    const venueLink = page.getByRole("link", { name: this.venueDetails.Name, exact: true });
+    await venueLink.waitFor();
+    await venueLink.locator("..").getByRole("button", { name: "Delete", exact: true }).click();
+    await venueLink.waitFor({ state: "hidden" });
+});
+
+Then("{word} no longer sees the journey venue without reloading", async function (name) {
+    const page = this.actors.get(name);
+    assert.equal(page.url(), `${BASE_URL}/venues`);
+    await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).waitFor({ state: "hidden" });
 });

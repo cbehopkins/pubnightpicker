@@ -1550,6 +1550,8 @@ components:
           type: boolean
         beer_garden:
           type: boolean
+        out_of_town:
+          type: boolean
         banned:
           type: boolean
         location_id:
@@ -1595,6 +1597,8 @@ components:
         dog_friendly:
           type: boolean
         beer_garden:
+          type: boolean
+        out_of_town:
           type: boolean
         banned:
           type: boolean

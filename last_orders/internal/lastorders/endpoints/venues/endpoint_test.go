@@ -595,6 +595,25 @@ func TestDecodeWriteRejectsInvalidVenueFields(t *testing.T) {
 	}
 }
 
+func TestDecodeWritePreservesVenueAttributes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(
+		`{"dog_friendly":true,"beer_garden":false,"out_of_town":true}`,
+	))
+	fields, err := decodeWrite(request, true)
+	if err != nil {
+		t.Fatalf("decodeWrite returned error: %v", err)
+	}
+	for field, want := range map[string]bool{
+		"dog_friend":   true,
+		"beer_gerden":  false,
+		"out_of_town": true,
+	} {
+		if got, ok := fields[field].(bool); !ok || got != want {
+			t.Errorf("field %q = %v, want %v", field, fields[field], want)
+		}
+	}
+}
+
 func mustCursor(t *testing.T, endpoint *Endpoint, query string) *string {
 	t.Helper()
 	response := httptest.NewRecorder()

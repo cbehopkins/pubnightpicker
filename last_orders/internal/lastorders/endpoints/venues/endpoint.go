@@ -126,7 +126,7 @@ var venueFields = map[string]string{
 	"address": "address", "notes": "notes", "image_url": "pubImage", "recurrence": "recurrence",
 	"next_occurrence_date": "next_occurrence_date", "parking": "parking", "food": "food",
 	"dog_friendly": "dog_friend", "beer_garden": "beer_gerden", "banned": "banned",
-	"location_id": "location_id", "visible_group_ids": "visible_group_ids",
+	"location_id": "location_id", "visible_group_ids": "visible_group_ids", "out_of_town": "out_of_town",
 }
 
 var nullableFields = map[string]bool{
@@ -184,7 +184,7 @@ func decodeWrite(r *http.Request, patch bool) (map[string]any, error) {
 					return nil, errors.New("next_occurrence_date must be an ISO date")
 				}
 			}
-		case "parking", "food", "dog_friend", "beer_gerden", "banned":
+		case "parking", "food", "dog_friend", "beer_gerden", "out_of_town", "banned":
 			if _, ok := value.(bool); !ok {
 				return nil, errors.New("venue feature fields must be booleans")
 			}

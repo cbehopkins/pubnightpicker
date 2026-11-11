@@ -129,8 +129,8 @@ actors have isolated browser contexts. Alice uses a unique email address so
 the journey does not depend on other scenarios' accounts; emulator data is
 fresh per run, not reset between scenarios.
 
-The poll-lifecycle journey keeps Bob, Claire and the admin in separate browser
-contexts. Bob and Claire register through the UI, and the admin grants both
+The `@last_orders` poll-lifecycle journey keeps Bob, Claire and the admin in
+separate browser contexts. Bob and Claire register through the UI, and the admin grants both
 Can Add/Delete Poll Pubs, Can Create/Delete Poll and Can Chat; only Claire
 receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
 to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
@@ -146,23 +146,26 @@ the Firebase Web SDK authenticated as the bootstrapped admin against the
 emulators. Unique venue names and account emails keep the fixture separate
 from other scenarios. The restaurant verifies that the Pub filter excludes
 other venue types. These fixture pubs serve food, so completion needs no
-separate restaurant plan. Since Last Orders does not run in the frontend-only
-group, the journey accepts the application's explicit notification-handshake
-warning when completing the poll; it does not test email or push delivery.
+separate restaurant plan. The journey uses a poll date that cannot collide
+with recurrence-generated polls, then verifies Last Orders mirrors the
+completion request before the browser completes the poll. It does not test
+email or push delivery.
 
-The venue-management outline runs independently for Pub, Restaurant and Event.
-Two members register through the UI and receive Can Manage Venues from the
-admin. One creates a venue; the other edits its name, address, website, map,
-notes and attributes. The creator sees the renamed venue without reloading,
-and both members reopen the saved details. The second member also corrects
-the venue type (Pub to Restaurant, Restaurant to Event, or Event to Pub),
-preserving the venue's identity. Type filters and the poll picker must reflect
-the correction. Restaurant food availability is implicit rather than an
-editable checkbox. The creator also receives poll creation and venue-selection
-permissions to check the picker using a temporary poll, which is deleted
-afterwards. Venue data is created entirely through the UI with unique names.
-This outline remains frontend-only. The separate `@last_orders` recurrence
-feature registers its own actors and creates Events entirely through the UI.
+The `@last_orders` venue-management outline runs independently for Pub,
+Restaurant and Event. Two members register through the UI and receive Can
+Manage Venues from the admin. One creates a venue; the other edits its name,
+address, website, map, notes and attributes through Last Orders. The creator
+sees the renamed venue without reloading, and both members reopen the saved
+details. The second member also corrects the venue type (Pub to Restaurant,
+Restaurant to Event, or Event to Pub), preserving the venue's identity. Type
+filters and the poll picker must reflect the correction. Restaurant food
+availability is implicit rather than an editable checkbox. Banned venues
+remain manually selectable with a warning. The creator also receives poll
+creation and venue-selection permissions to check the picker using a temporary
+poll, which is deleted afterwards. The editor then soft-deletes the venue and
+the creator sees it disappear without reloading. Venue data is created
+entirely through the UI with unique names. The separate `@last_orders`
+recurrence feature registers its own actors and creates Events entirely through the UI.
 It verifies calculation and another member's edit of a monthly occurrence
 beyond the poll-creation window, then independently verifies a weekly Event
 due tomorrow materialises a poll, votes and attendance. Read assertions use the

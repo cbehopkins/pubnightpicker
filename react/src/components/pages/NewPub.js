@@ -89,9 +89,7 @@ export async function action({ request, params }) {
 
     pubParams[key] = Boolean(data.get(key));
   }
-  if (pubParams.venueType === "event" && recurrence) {
-    pubParams.recurrence = recurrence;
-  }
+  pubParams.recurrence = pubParams.venueType === "event" ? recurrence ?? null : null;
   console.log("Submitted parameters", pubParams)
   try {
     if (method === "POST") {

@@ -1,9 +1,10 @@
+@last_orders
 Feature: Members organise and chat about a meet
   As members organising a pub night
   We want to create a poll, vote and choose a pub
   So that everyone can see the agreed meet
 
-  Scenario: Bob and Claire organise tomorrow's meet and exchange chat messages
+  Scenario: Bob and Claire organise a future meet and exchange chat messages
     Given a fresh emulator database has been bootstrapped with the journey admin
     And the following journey venues are available:
       | name             | type       |
@@ -27,13 +28,13 @@ Feature: Members organise and chat about a meet
       | Can Complete/Reschedule  |
       | Can Chat                 |
     And Claire opens Active Polls
-    And Bob creates a poll for tomorrow
-    Then Claire sees tomorrow's poll on Active Polls
+    And Bob creates a poll on a clear date
+    Then Claire sees the poll on Active Polls
     When Bob filters the venue picker to Pub and adds:
       | venue            |
       | Journey Red Lion |
       | Journey Crown    |
-    Then Claire sees the following pubs in tomorrow's poll:
+    Then Claire sees the following pubs in the poll:
       | venue            |
       | Journey Red Lion |
       | Journey Crown    |
@@ -52,13 +53,13 @@ Feature: Members organise and chat about a meet
       | venue            | votes |
       | Journey Red Lion | 2     |
       | Journey Crown    | 1     |
-    When Claire completes tomorrow's poll by choosing "Journey Red Lion"
-    Then Claire no longer sees tomorrow's poll on Active Polls
-    And Bob no longer sees tomorrow's poll on Active Polls
+    When Claire completes the poll by choosing "Journey Red Lion"
+    Then Claire no longer sees the poll on Active Polls
+    And Bob no longer sees the poll on Active Polls
     When Claire opens Current Events
-    Then Claire sees tomorrow's meet at "Journey Red Lion"
+    Then Claire sees the meet at "Journey Red Lion"
     When Bob opens Current Events
-    Then Bob sees tomorrow's meet at "Journey Red Lion"
+    Then Bob sees the meet at "Journey Red Lion"
     When Bob opens Chat Page
     And Claire opens Chat Page
     And Bob sends a global chat message

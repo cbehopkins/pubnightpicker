@@ -3,18 +3,30 @@ import { randomUUID } from "node:crypto";
 import { Given, When, Then } from "@cucumber/cucumber";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from "firebase/auth";
-import { getFirestore, connectFirestoreEmulator, doc, writeBatch, terminate } from "firebase/firestore";
+import {
+    collection,
+    connectFirestoreEmulator,
+    doc,
+    getDocFromServer,
+    getDocsFromServer,
+    getFirestore,
+    query,
+    terminate,
+    where,
+    writeBatch,
+} from "firebase/firestore";
+import { waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
-function tomorrowPoll(world, actor) {
+function journeyPoll(world, actor) {
     return world.actors.get(actor)
         .getByRole("heading", { name: world.pollDate, exact: true })
         .locator("../..");
 }
 
 function venueRow(world, actor, venue) {
-    return tomorrowPoll(world, actor).getByRole("row")
+    return journeyPoll(world, actor).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
 }
 
@@ -85,22 +97,23 @@ When("{word} opens Active Polls", async function (name) {
     await page.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
 });
 
-When("Bob creates a poll for tomorrow", async function () {
+When("Bob creates a poll on a clear date", async function () {
     const bob = this.actors.get("Bob");
     assert.notEqual(bob.context(), this.actors.get("Claire").context());
-    this.pollDate = await bob.evaluate(() => {
-        const date = new Date();
-        date.setDate(date.getDate() + 1);
-        return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
-    });
+    this.pollDate = "2099-12-30";
     await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
     await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
     await bob.locator('input[type="date"]').fill(this.pollDate);
     await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
     await bob.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
+    this.pollId = await withEmulatorAdmin(async (db) => {
+        const polls = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.pollDate)));
+        assert.equal(polls.size, 1);
+        return polls.docs[0].id;
+    });
 });
 
-Then("{word} sees tomorrow's poll on Active Polls", async function (name) {
+Then("{word} sees the poll on Active Polls", async function (name) {
     const page = this.actors.get(name);
     assert.equal(page.url(), `${BASE_URL}/active_polls`);
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
@@ -108,7 +121,7 @@ Then("{word} sees tomorrow's poll on Active Polls", async function (name) {
 
 When("Bob filters the venue picker to Pub and adds:", async function (table) {
     const bob = this.actors.get("Bob");
-    const poll = tomorrowPoll(this, "Bob");
+    const poll = journeyPoll(this, "Bob");
     await poll.getByLabel("Filter by venue type:", { exact: true }).selectOption({ label: "Pub" });
     const picker = poll.getByRole("combobox").filter({
         has: bob.getByRole("option", { name: "Select a venue to add here", exact: true }),
@@ -125,7 +138,7 @@ When("Bob filters the venue picker to Pub and adds:", async function (table) {
     }
 });
 
-Then("{word} sees the following pubs in tomorrow's poll:", async function (name, table) {
+Then("{word} sees the following pubs in the poll:", async function (name, table) {
     for (const { venue } of table.hashes()) {
         await venueRow(this, name, venue).waitFor();
         await venueRow(this, name, venue).getByRole("cell", { name: "0", exact: true }).waitFor();
@@ -148,23 +161,25 @@ Then("{word} sees the following vote totals:", async function (name, table) {
     }
 });
 
-When("Claire completes tomorrow's poll by choosing {string}", async function (venue) {
+When("Claire completes the poll by choosing {string}", async function (venue) {
     const claire = this.actors.get("Claire");
     const displayName = this.journeyVenues.get(venue);
     assert.equal(await venueRow(this, "Bob", venue).getByRole("button", { name: displayName, exact: true }).count(), 0);
     await venueRow(this, "Claire", venue).getByRole("button", { name: displayName, exact: true }).click();
     await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor();
-    const warningPromise = claire.waitForEvent("dialog");
-    const confirming = claire.getByRole("button", { name: "Confirm", exact: true }).click();
-    const warning = await warningPromise;
-    assert.equal(warning.type(), "confirm");
-    assert.match(warning.message(), /^Notification tool has not acknowledged the completion handshake yet\./);
-    await warning.accept();
-    await confirming;
+    await withEmulatorAdmin((db) => waitForValue(async () => {
+        const [request, ack] = await Promise.all([
+            getDocFromServer(doc(db, "notification_req", this.pollId)),
+            getDocFromServer(doc(db, "notification_ack", this.pollId)),
+        ]);
+        const requestedCompletion = request.data()?.complete;
+        return requestedCompletion !== undefined && requestedCompletion === ack.data()?.complete;
+    }, Boolean, "Last Orders completion acknowledgement"));
+    await claire.getByRole("button", { name: "Confirm", exact: true }).click();
     await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor({ state: "hidden" });
 });
 
-Then("{word} no longer sees tomorrow's poll on Active Polls", async function (name) {
+Then("{word} no longer sees the poll on Active Polls", async function (name) {
     const page = this.actors.get(name);
     assert.equal(page.url(), `${BASE_URL}/active_polls`);
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor({ state: "hidden" });
@@ -176,7 +191,7 @@ When("{word} opens Current Events", async function (name) {
     await page.getByRole("heading", { name: "Current Events", exact: true }).waitFor();
 });
 
-Then("{word} sees tomorrow's meet at {string}", async function (name, venue) {
+Then("{word} sees the meet at {string}", async function (name, venue) {
     const page = this.actors.get(name);
     const event = page.getByRole("article").filter({
         has: page.getByRole("heading", { name: this.journeyVenues.get(venue), exact: true }),
