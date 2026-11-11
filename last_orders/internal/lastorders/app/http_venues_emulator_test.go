@@ -187,9 +187,61 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	if len(remaining.Venues) != 1 || remaining.Venues[0].ID != "seed-venue" {
 		t.Fatalf("venues after soft delete=%+v", remaining.Venues)
 	}
+
+	readReconnectSnapshot := func(cursor string) venueSSEFrame {
+		reconnectCtx, cancelReconnect := context.WithCancel(ctx)
+		request, err := http.NewRequestWithContext(reconnectCtx, http.MethodGet, baseURL+"/api/venues/stream", nil)
+		if err != nil {
+			cancelReconnect()
+			t.Fatal(err)
+		}
+		request.Header.Set("Last-Event-ID", cursor)
+		response, err := client.Do(request)
+		if err != nil {
+			cancelReconnect()
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		defer cancelReconnect()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("reconnect stream status=%d", response.StatusCode)
+		}
+		if contentType := response.Header.Get("Content-Type"); contentType != "text/event-stream; charset=utf-8" {
+			t.Fatalf("reconnect stream Content-Type=%q", contentType)
+		}
+		return readVenueSSEFrame(t, bufio.NewReader(response.Body))
+	}
+	assertFullReconnectSnapshot := func(frame venueSSEFrame) {
+		t.Helper()
+		if frame.event != "venues" || frame.id == "" {
+			t.Fatalf("reconnect stream frame=%+v, want venues event with cursor ID", frame)
+		}
+		var snapshot struct {
+			Cursor string `json:"cursor"`
+			Venues []struct {
+				ID string `json:"id"`
+			} `json:"venues"`
+		}
+		if err := json.Unmarshal([]byte(frame.data), &snapshot); err != nil {
+			t.Fatalf("decode reconnect snapshot %q: %v", frame.data, err)
+		}
+		if snapshot.Cursor != frame.id || len(snapshot.Venues) != 1 || snapshot.Venues[0].ID != "seed-venue" {
+			t.Fatalf("reconnect snapshot=%+v event ID=%q, want complete current snapshot and matching cursor", snapshot, frame.id)
+		}
+	}
+
+	invalidCursor := "not-a-valid-venue-cursor"
+	invalidCursorFrame := readReconnectSnapshot(invalidCursor)
+	if invalidCursorFrame.id == invalidCursor {
+		t.Fatal("invalid cursor was not replaced with a fresh Venue stream cursor")
+	}
+	assertFullReconnectSnapshot(invalidCursorFrame)
+	validCursorFrame := readReconnectSnapshot(invalidCursorFrame.id)
+	assertFullReconnectSnapshot(validCursorFrame)
 }
 
 type venueSSEFrame struct {
+	id    string
 	event string
 	data  string
 }
@@ -208,6 +260,8 @@ func readVenueSSEFrame(t *testing.T, reader *bufio.Reader) venueSSEFrame {
 		}
 		key, value, _ := strings.Cut(line, ": ")
 		switch key {
+		case "id":
+			frame.id = value
 		case "event":
 			frame.event = value
 		case "data":
