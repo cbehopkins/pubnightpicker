@@ -1,6 +1,6 @@
 # CDD: Reusable SSE Stream Prototype
 
-**Status:** Lifecycle and cursor components implemented; venue collection endpoint integration in progress
+**Status:** Lifecycle, cursor components and Venue collection recovery implemented
 **Date:** 2026-10-26
 **Related:** [Local Projection Streaming](0013-projection-streaming.md);
 [Global Change Tracking and Opaque SSE Cursors](0014-sse-cursors.md);
@@ -192,17 +192,19 @@ another. No production test hooks or reflection are introduced.
 
 ## 7. Cursor Follow-up
 
-**Implementation status:** The component now provides the cursor codec,
+**Implementation status:** The reusable components provide the cursor codec,
 request-cursor precedence helper, sequence-aware hub handover, and SSE event-ID
-framing. Production snapshot adapters, runtime secret loading, GET snapshots,
-and SSE endpoint integration remain pending.
+framing. The Venue collection integration, including its production snapshot
+adapter, runtime cursor-secret loading, full GET snapshot, and SSE endpoint, is
+implemented. Production snapshot adapters and endpoint integrations for other
+resource streams, such as Current-Meets and attendance, remain pending.
 
-After the lifecycle prototype is accepted, add the V1 opaque-cursor slice
-described below. This slice adds cursor production and validation to full
-snapshots; it does not add incremental delta replay. Every connection continues
-to return a complete, currently authorised view, including when the supplied
-cursor is valid. This matches the existing stream and snapshot definitions in
-`docs/pubnightpicker-openapi-v1.yaml`.
+The V1 opaque-cursor behavior described below is implemented for the Venue
+collection stream and applies to the remaining resource integrations as they
+are added. It adds cursor production to full snapshots, not incremental delta
+replay. Every connection continues to return a complete, currently authorised
+view, including when the supplied cursor is valid. This matches the existing
+stream and snapshot definitions in `docs/pubnightpicker-openapi-v1.yaml`.
 
 Each snapshot adapter returns its serialized view and cursor as one result. It
 reads the view and the shared sync state (`generation`, global `sequence`) in
@@ -232,13 +234,14 @@ recover by returning a full current view. Test code injects a fixed key rather
 than relying on environment state.
 
 On connection, `Last-Event-ID` takes precedence over the `after` query value.
-Validate a supplied cursor's MAC, version, stream contract, resource scope,
-database generation, non-negative sequence bound, current high-water bound,
-and (for Current-Meets) London date. A malformed, tampered, future,
-wrong-scope, wrong-generation, wrong-date or old-key cursor is not an HTTP
-error: return a complete current snapshot and a newly issued cursor. The cursor
-does not skip the initial snapshot in V1. No cursor expiry is needed while
-tombstones are retained indefinitely.
+A supplied cursor does not skip the initial snapshot in V1. A malformed,
+tampered, future, wrong-scope, wrong-generation, wrong-date or old-key cursor
+must not fail an SSE request: return a complete current snapshot and a newly
+issued cursor. In particular, `GET /api/venues/stream` recovers this way and
+does not validate the supplied cursor before returning its full snapshot.
+Paginated `GET /api/venues?cursor=...` is a separate contract; invalid or stale
+list cursors continue to return `400 invalid_cursor`. No cursor expiry is
+needed while tombstones are retained indefinitely.
 
 The endpoint adapter owns resource-specific snapshot queries and authorization,
 and obtains the snapshot's committed generation and sequence from the same

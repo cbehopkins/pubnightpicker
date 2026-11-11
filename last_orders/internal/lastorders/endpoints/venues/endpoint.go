@@ -15,10 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
+
+	"cloud.google.com/go/firestore"
 )
 
 type reader interface {
@@ -85,27 +86,6 @@ type venuePagePosition struct {
 	ID   string `json:"id"`
 }
 
-type streamEndpoint struct {
-	handler *sse.Handler
-	reader  reader
-	codec   *sse.CursorCodec
-}
-
-func (e *streamEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if value, supplied := sse.RequestCursor(r); supplied {
-		snapshot, err := e.reader.ListSnapshot(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to read venues.")
-			return
-		}
-		if _, err := e.codec.Validate(value, sse.CursorExpectation{Stream: "venues", Resource: "all", Generation: snapshot.State.Generation, HighWater: snapshot.State.Sequence}); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_cursor", "The venue stream cursor is invalid or expired.")
-			return
-		}
-	}
-	e.handler.ServeHTTP(w, r)
-}
-
 func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/venues", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.list)))
 	mux.Handle("GET /api/venues/{venue_id}", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.get)))
@@ -137,7 +117,7 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 			EventName: "venues", Snapshot: e.snapshot,
 			Authorize: func(context.Context) (bool, int) { return true, http.StatusNotFound },
 		}
-		mux.Handle("GET /api/venues/stream", firebaseauth.OptionalMiddleware(e.Auth, &streamEndpoint{handler: stream, reader: e.Reader, codec: e.Cursors}))
+		mux.Handle("GET /api/venues/stream", firebaseauth.OptionalMiddleware(e.Auth, stream))
 	}
 }
 
@@ -508,16 +488,10 @@ func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, fromProjection(item))
 }
 
-func (e *Endpoint) snapshot(ctx context.Context, input sse.CursorInput) (sse.ViewSnapshot, error) {
+func (e *Endpoint) snapshot(ctx context.Context, _ sse.CursorInput) (sse.ViewSnapshot, error) {
 	state, err := e.Reader.ListSnapshot(ctx)
 	if err != nil {
 		return sse.ViewSnapshot{}, err
-	}
-	if input.Supplied {
-		_, err = e.Cursors.Validate(input.Value, sse.CursorExpectation{Stream: "venues", Resource: "all", Generation: state.State.Generation, HighWater: state.State.Sequence})
-		if err != nil {
-			return sse.ViewSnapshot{}, sse.ErrInvalidCursor
-		}
 	}
 	sort.Slice(state.Venues, func(i, j int) bool { return venueLess(state.Venues[i], state.Venues[j]) })
 	cursor, err := e.Cursors.Encode(sse.CursorClaims{Stream: "venues", Resource: "all", Generation: state.State.Generation, Sequence: state.State.Sequence})

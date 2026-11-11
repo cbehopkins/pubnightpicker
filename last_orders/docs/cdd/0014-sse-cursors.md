@@ -40,7 +40,7 @@ The cursor will be scoped to a logical stream contract, such as `app-changes-v1`
 
 The cursor is an API-level abstraction. It must not expose a dependency on SQLite row IDs, sequence implementation, timestamps, or other internal storage details. Its internal representation may initially map directly to the global change sequence.
 
-Cursors from incompatible stream contracts must not be treated as interchangeable. The server may reject an invalid cursor or instruct the client to perform a full refresh.
+Cursors from incompatible stream contracts must not be treated as interchangeable. An invalid or unusable SSE cursor requires a full current view and a newly issued cursor; it must not cause the stream request to fail. This recovery rule does not apply to paginated list cursors, whose errors follow the list endpoint contract.
 
 The cursor format and stream contract will be versionable independently of the underlying storage implementation.
 

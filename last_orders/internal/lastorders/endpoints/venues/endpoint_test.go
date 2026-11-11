@@ -456,7 +456,7 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 	_ = reconnected.Body.Close()
 }
 
-func TestVenueStreamRouteRejectsInvalidCursorAndWaitsForReadiness(t *testing.T) {
+func TestVenueStreamRouteWaitsForReadinessWithInvalidCursor(t *testing.T) {
 	codec, err := sse.NewCursorCodec([]byte("test-only-cursor-signing-key-32-bytes"))
 	if err != nil {
 		t.Fatal(err)
@@ -473,14 +473,73 @@ func TestVenueStreamRouteRejectsInvalidCursorAndWaitsForReadiness(t *testing.T) 
 	invalidRequest.Header.Set("Last-Event-ID", "not-a-signed-cursor")
 	invalid := httptest.NewRecorder()
 	mux.ServeHTTP(invalid, invalidRequest)
-	if invalid.Code != http.StatusBadRequest {
-		t.Fatalf("invalid cursor status=%d body=%s, want 400", invalid.Code, invalid.Body)
+	if invalid.Code != http.StatusServiceUnavailable {
+		t.Fatalf("not-ready stream with invalid cursor status=%d body=%s, want 503", invalid.Code, invalid.Body)
 	}
 
 	starting := httptest.NewRecorder()
 	mux.ServeHTTP(starting, httptest.NewRequest(http.MethodGet, "/api/venues/stream", nil))
 	if starting.Code != http.StatusServiceUnavailable || starting.Header().Get("Retry-After") != "1" {
 		t.Fatalf("not-ready stream status=%d retry-after=%q body=%s", starting.Code, starting.Header().Get("Retry-After"), starting.Body)
+	}
+}
+
+func TestVenueStreamRouteRecoversInvalidCursorWithFreshSnapshot(t *testing.T) {
+	codec, err := sse.NewCursorCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleCursor, err := codec.Encode(sse.CursorClaims{
+		Stream: "venues", Resource: "all", Generation: "old-generation", Sequence: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	close(ready)
+	reader := &testReader{snapshot: venuecache.Snapshot{
+		State:  basestore.SyncState{Generation: "generation-1", Sequence: 9},
+		Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current Pub"}},
+	}}
+	hub := sse.NewHub()
+	defer hub.Shutdown()
+	endpoint := &Endpoint{Reader: reader, Ready: ready, Hub: hub, Cursors: codec}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, cursor := range []string{"malformed-cursor", staleCursor} {
+		t.Run(cursor, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/venues/stream", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Last-Event-ID", cursor)
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d body=%s, want 200", response.StatusCode, response.Body)
+			}
+			event := readSSEEvent(t, bufio.NewReader(response.Body))
+			if event.name != "venues" {
+				t.Fatalf("event name=%q, want venues", event.name)
+			}
+			claims, err := eventCursor(codec, event.id)
+			if err != nil || claims.Sequence != 9 {
+				t.Fatalf("fresh cursor claims=%+v err=%v", claims, err)
+			}
+			var snapshot streamResponse
+			if err := json.Unmarshal([]byte(event.data), &snapshot); err != nil || len(snapshot.Venues) != 1 || snapshot.Venues[0].Name != "Current Pub" {
+				t.Fatalf("recovered snapshot=%+v err=%v", snapshot, err)
+			}
+		})
 	}
 }
 
