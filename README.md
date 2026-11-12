@@ -49,6 +49,152 @@ poetry run python -m firebase_sub.cli.sub_events --loglevel info
 - `react/README.md`: Frontend setup, Firebase emulator usage, and deployment notes.
 - `firebase_sub/README.md`: Python notifier setup, Docker runbook, and diagnostics.
 
+## Production Releases
+
+Merging to `main` no longer deploys the frontend or publishes the Last Orders
+image. Same-repository PRs continue to build and deploy Firebase Hosting previews.
+Backend PR/main CI continues to run independently of image publication.
+
+Push a release tag on a commit that belongs to `main`:
+
+| Tag | Result |
+|-----|--------|
+| `release-v1.2.3` | Deploy production frontend, Firestore rules/indexes, and publish Last Orders image |
+| `frontend-v1.2.3` | Deploy production frontend and Firestore rules/indexes only |
+| `last_orders-v1.2.3` | Publish Last Orders image only |
+| `v1.2.3` | Legacy backend image alias; also triggers the separate Python notifier image workflow |
+
+Versions must contain three non-negative integers without leading zeroes,
+prerelease suffixes or build metadata. Matching prefixes with invalid versions
+fail validation before deployment/publication. There is no manual workflow
+dispatch bypass for these two release workflows. The Python notifier workflow
+is unchanged and can still publish images independently.
+
+For example, after all required PR/main checks have passed for the chosen commit:
+
+```bash
+git fetch origin main
+git tag -a release-v1.2.3 origin/main -m "Release 1.2.3"
+git push origin release-v1.2.3
+```
+
+Frontend releases run the existing build/typecheck gates; backend image releases
+run vet and tests for all four Go modules. Tag validation checks ancestry, not
+whether every independent CI workflow has passed. Do not tag an unverified commit.
+Protect `main` with required CI checks, and use GitHub tag rulesets to restrict
+creation, updates and deletion of release tags. Never move or reuse a release tag.
+Configure the GitHub `production` environment with required reviewers and tag
+deployment restrictions if approval is required. Frontend production deployments
+are serialised and are not cancelled by subsequent releases.
+
+A shared tag starts two independent workflows, not an atomic deployment. The
+frontend can become live before the backend image is ready or activated. Use it
+only for backwards-compatible changes. For breaking changes, prepare Firestore
+indexes first and wait for them to become ready, then publish and activate a
+backwards-compatible backend using a component tag before releasing its frontend.
+Rules deployed with the frontend must also support the previous frontend while
+existing browser sessions remain open.
+
+### Scaleway Container Registry
+
+Last Orders release images are now published to Scaleway Container Registry,
+not GHCR. Existing GHCR images and the Python notifier image workflow are unchanged.
+Before pushing a backend release tag:
+
+1. Create a private Scaleway Container Registry namespace in the deployment region.
+2. Set the GitHub Actions repository variable `SCALEWAY_REGISTRY_ENDPOINT` to the
+	namespace endpoint, for example `rg.fr-par.scw.cloud/pubnightpicker`, without
+	`https://` or a trailing slash. Copy the actual endpoint from Scaleway.
+3. Create a dedicated Scaleway IAM application with permission to push images to
+	that registry, scoped as narrowly as possible. Store its API secret key in the
+	GitHub Actions secret `SCALEWAY_API_KEY`, not in source control or chat. Docker
+	login uses the literal username `nologin`; the access key ID is not needed.
+
+The workflow rejects missing or malformed configuration before building. Images
+retain the release tag and long commit-SHA tag; deployment should pin the digest.
+Publishing an image does not change the running Serverless Container.
+
+### Backend Version Diagnostics
+
+The admin diagnostics page shows the frontend build, the intended backend and
+the backend responding to the public `GET /api/version` endpoint. A match means
+the release tag and source commit agree; it does not prove that the image
+digest, health or every instance in a rolling deployment matches. The page
+distinguishes an unreachable backend from a connected development build.
+Local development reports the Git commit and modified state when available:
+the frontend captures them when Vite starts, and the backend when it is built.
+These identify the base commit, not the contents of uncommitted changes. A
+missing local deployment expectation is normal and the comparison is unknown.
+
+The intended backend is stored in the `config/deployment` Firestore document
+for the Firebase project. Before activating or rolling back a published image,
+fetch the release tag and use the updater from the repository root:
+
+```powershell
+git fetch origin --tags
+node react/scripts/set-deployment-expectation.mjs --project pubnightpicker --tag last_orders-v1.2.3
+node react/scripts/set-deployment-expectation.mjs --project pubnightpicker --tag last_orders-v1.2.3 --apply
+```
+
+The first command is a dry run. The second requires Google Application Default
+Credentials with Firestore write access; set `GOOGLE_APPLICATION_CREDENTIALS`
+or use an authenticated local ADC account. The updater verifies that the local
+and origin tags resolve to the same commit, but does not check the registry or
+activate the image. Select the corresponding published image by digest in
+Scaleway, then refresh diagnostics. Write the new expectation before activation
+so a failed deployment remains visible as a mismatch. Future deployment
+automation should perform this step as part of activation rather than on image
+publication. The endpoint and source identifiers are public; Firestore reads
+and the diagnostics page are restricted to admins.
+
+### Backend Deployment Considerations
+
+Backend activation remains manual. The current host is Scaleway Serverless
+Containers, whose local filesystem is ephemeral. A `/data` directory in an image
+is not a persistent volume. For Firebase-backed Truths, Firebase is the durable
+deduplication authority; the local idempotency store is a cache and processing
+marker. After local state is lost, an existing Firebase key prevents the Truth
+from being emitted again. Losing this cache alone does not replay completed work.
+
+Losing SQLite can instead discard queued work, timers and recovery state. A Truth
+already claimed in Firebase can remain suppressed even if its unfinished local
+work has been lost. Rebuilding Firestore projections does not restore that work.
+At the current scale, this recovery-state loss is an accepted operational risk;
+persistent storage is not a prerequisite for deployment automation. Platform
+replacement can also lose local state outside planned quiet-period restarts.
+
+Scaleway also uses rolling deployments, during which old and new workers can
+overlap. A maximum scale of one is not proof of no overlap across revisions.
+The existing `/healthz` probe checks startup and HTTP responsiveness, not database
+durability or exclusive worker ownership.
+
+Before automating activation, verify a stop-before-start procedure through the
+Scaleway API, retaining an approval gate to schedule quiet-period releases. If
+durability requirements increase, options include a single Scaleway Instance with
+persistent block storage and one Docker worker, or a separately designed change
+to the application's storage/worker coordination suitable for serverless hosting.
+Do not substitute an object-storage or network-filesystem mount for SQLite WAL
+storage without validating its locking and filesystem semantics.
+
+After those prerequisites are resolved, select the published
+`<SCALEWAY_REGISTRY_ENDPOINT>/last_orders:<release-tag>` image (prefer its digest),
+verify the old worker has stopped before starting its replacement, and retain the
+existing `GET /healthz` probe plus a functional smoke test. Record the previous
+image digest and back up durable state where available before deployment. Do not
+enable database reset during a routine release.
+
+See Scaleway's [ephemeral storage and rolling update documentation](https://www.scaleway.com/en/docs/serverless-containers/concepts/)
+and [GitHub Actions registry integration guide](https://www.scaleway.com/en/docs/tutorials/use-container-registry-github-actions/).
+
+For rollback, redeploy the recorded backend digest or restore the previous Firebase
+Hosting release through Firebase's release history. Hosting rollback does not
+restore Firestore rules/indexes or backend state; manage those separately and
+check database compatibility before rolling back a backend image.
+
+PR previews still use the configured Firebase project and backend URL; they are
+not isolated staging environments. Do not use them for destructive production-data
+testing. A separate staging project/backend needs separate resources and credentials.
+
 ## Web Push Notifications (Poll Lifecycle)
 
 Web push is implemented across both subprojects:

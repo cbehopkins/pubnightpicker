@@ -74,6 +74,25 @@ describe("diagnostics configuration rules", () => {
     });
 });
 
+describe("deployment expectation rules", () => {
+    it("allows only admin reads and denies all browser writes", async () => {
+        const data = { tag: "release-v1.2.3", commit: "0123456789abcdef0123456789abcdef01234567" };
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), "config", "deployment"), data);
+        });
+        const admin = doc(testEnv.authenticatedContext("admin-user").firestore(), "config", "deployment");
+        expect((await assertSucceeds(getDoc(admin))).data()).toEqual(data);
+        await assertFails(setDoc(admin, data));
+        await assertFails(updateDoc(admin, { tag: "release-v1.2.4" }));
+        await assertFails(deleteDoc(admin));
+        for (const context of [testEnv.authenticatedContext("ordinary-user"), testEnv.unauthenticatedContext()]) {
+            const ref = doc(context.firestore(), "config", "deployment");
+            await assertFails(getDoc(ref));
+            await assertFails(setDoc(ref, data));
+        }
+    });
+});
+
 describe("admin deletion configuration rules", () => {
     it("allows admin initialization and boolean updates", async () => {
         const db = testEnv.authenticatedContext("admin-user").firestore();

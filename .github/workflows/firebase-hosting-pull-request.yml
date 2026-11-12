@@ -45,7 +45,9 @@ jobs:
             echo "Web push build flag disabled"
           fi
       - working-directory: ./react
-        run: npm ci  && npm run build
+        run: |
+          export VITE_BUILD_COMMIT="$(git rev-parse HEAD)"
+          npm ci && npm run build
         env:
           # Note: Using REACT_APP_ prefix for compatibility with Create React App environment variable naming conventions
           VITE_FIREBASE_API_KEY: ${{ secrets.REACT_APP_FIREBASE_API_KEY }}

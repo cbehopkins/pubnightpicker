@@ -11,6 +11,7 @@
 #   ./run-tests.ps1 -Black                            # Run black linting only
 #   ./run-tests.ps1 -Typecheck                        # Run React TypeScript typecheck
 #   ./run-tests.ps1 -Lint                             # Run React ESLint (rules-of-hooks etc.)
+#   ./run-tests.ps1 -Govulncheck                      # Scan last_orders for Go vulnerabilities
 #   ./run-tests.ps1 -All                              # Run all test suites
 #   ./run-tests.ps1 -Integration -VerboseOutput      # Integration with verbose output
 #   ./run-tests.ps1 -Integration -k test_chat         # Forward pytest args (integration only)
@@ -25,6 +26,7 @@ param(
     [switch]$Black,
     [switch]$Typecheck,
     [switch]$Lint,
+    [switch]$Govulncheck,
     [switch]$All,
     [switch]$VerboseOutput,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -38,9 +40,10 @@ $WorkspaceRoot = $PSScriptRoot
 $FirebaseSubDir = Join-Path $WorkspaceRoot "firebase_sub"
 $E2EDir = Join-Path $WorkspaceRoot "e2e"
 $ReactDir = Join-Path $WorkspaceRoot "react"
+$LastOrdersDir = Join-Path $WorkspaceRoot "last_orders"
 
 # Default to Integration if no suite specified
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $All) {
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $All) {
     $Integration = $true
 }
 
@@ -54,9 +57,38 @@ if ($All) {
     $Black = $true
     $Typecheck = $true
     $Lint = $true
+    $Govulncheck = $true
 }
 
 $FailedSuites = @()
+
+# ======================
+# Go Vulnerability Scan
+# ======================
+if ($Govulncheck) {
+    Write-Host "`n=== Running last_orders Vulnerability Scan ===" -ForegroundColor Cyan
+
+    if (-not (Get-Command govulncheck -ErrorAction SilentlyContinue)) {
+        $FailedSuites += "Go Vulnerability Scan"
+        Write-Host "[FAILED] govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0" -ForegroundColor Red
+    } else {
+        Push-Location $LastOrdersDir
+        try {
+            Write-Host "[Runner] Command: govulncheck ./..." -ForegroundColor Gray
+            & govulncheck ./...
+
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "Go Vulnerability Scan"
+                Write-Host "[FAILED] Go vulnerability scan FAILED" -ForegroundColor Red
+            } else {
+                Write-Host "[OK] Go vulnerability scan PASSED" -ForegroundColor Green
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
 
 # ======================
 # Unit Tests
