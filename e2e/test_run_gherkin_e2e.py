@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import run_gherkin_e2e as runner
+import process_owner
 from process_owner import ProcessTree
 
 
@@ -277,6 +279,32 @@ class JourneyRunnerTests(unittest.TestCase):
             ),
             3221225786,
         )
+
+    def test_posix_cleanup_waits_for_running_descendants_but_not_zombies(self) -> None:
+        owner = ProcessTree.__new__(ProcessTree)
+        owner.process = Mock(pid=12345, stdin=None)
+        owner.job = None
+        with patch.object(process_owner.os, "name", "posix"), patch.object(
+            process_owner.os, "killpg", create=True
+        ) as kill_group, patch.object(
+            process_owner.signal, "SIGKILL", 9, create=True
+        ), patch.object(
+            process_owner.subprocess,
+            "run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0, stdout="R\n"),
+                subprocess.CompletedProcess([], 0, stdout="Z\n"),
+            ],
+        ) as inspect_group, patch.object(process_owner.time, "sleep"):
+            owner.stop()
+        kill_group.assert_any_call(owner.process.pid, 9)
+        self.assertEqual(inspect_group.call_count, 2)
+
+    def test_posix_cleanup_reports_descendant_timeout(self) -> None:
+        with patch.object(process_owner.os, "killpg", create=True), patch.object(
+            process_owner.time, "monotonic", side_effect=[0, 16]
+        ), self.assertRaisesRegex(TimeoutError, "POSIX process tree"):
+            process_owner._wait_for_posix_group(12345)
 
     def test_descendant_does_not_survive_launcher_exit(self) -> None:
         child_code = (

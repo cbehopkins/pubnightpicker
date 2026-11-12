@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { aggregateVenueAttendance, getVenueIdsForPoll } from "./useAttendanceVenueStats";
+
+vi.mock("../firebase", () => ({ db: {} }));
 
 describe("useAttendanceVenueStats helpers", () => {
   it("includes poll shortlist venues and ignores the global any key", () => {

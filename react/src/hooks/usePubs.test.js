@@ -4,6 +4,10 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import usePubs, { usePubsState } from "./usePubs";
 
+vi.mock("../firebase", () => {
+  throw new Error("Public venue streams must not initialise Firebase.");
+});
+
 const eventSources = [];
 
 class FakeEventSource {

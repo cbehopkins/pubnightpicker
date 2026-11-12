@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { lastOrdersApiURL } from "../utils/lastOrdersApi";
+import { lastOrdersApiURL } from "../utils/lastOrdersApiURL";
 
 const initialState = {
   venues: {},

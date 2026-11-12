@@ -631,8 +631,8 @@ func TestDecodeWritePreservesVenueAttributes(t *testing.T) {
 		t.Fatalf("decodeWrite returned error: %v", err)
 	}
 	for field, want := range map[string]bool{
-		"dog_friend":   true,
-		"beer_gerden":  false,
+		"dog_friend":  true,
+		"beer_gerden": false,
 		"out_of_town": true,
 	} {
 		if got, ok := fields[field].(bool); !ok || got != want {

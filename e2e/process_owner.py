@@ -75,6 +75,8 @@ class ProcessTree:
             except ProcessLookupError:
                 pass
         process.wait(timeout=15)
+        if os.name != "nt":
+            _wait_for_posix_group(process.pid)
         if self.job is not None:
             try:
                 _stop_windows_job(self.job)
@@ -82,6 +84,36 @@ class ProcessTree:
                 self.job = None
         if process.stdin is not None:
             process.stdin.close()
+
+
+def _wait_for_posix_group(group_id: int) -> None:
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            os.killpg(group_id, 0)
+        except ProcessLookupError:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                "Owned POSIX process tree did not terminate within 15 seconds"
+            )
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-g", str(group_id)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=remaining,
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            result.check_returncode()
+        if not any(
+            state.strip() and not state.strip().startswith("Z")
+            for state in result.stdout.splitlines()
+        ):
+            return
+        time.sleep(0.01)
 
 
 def _windows_job(name: str, *, assign: bool = True) -> int:

@@ -7,7 +7,7 @@
 #   ./run-tests.ps1 -Integration                      # Run integration tests
 #   ./run-tests.ps1 -Unit                             # Run Python unit tests
 #   ./run-tests.ps1 -Node                             # Run Node/React unit tests (vitest)
-#   ./run-tests.ps1 -Go                               # Run tests in all Go modules
+#   ./run-tests.ps1 -Go                               # Check formatting and test all Go modules
 #   ./run-tests.ps1 -E2E                              # Run E2E tests
 #   ./run-tests.ps1 -Tox                              # Run tox (full test suite + linting)
 #   ./run-tests.ps1 -Black                            # Run black linting only
@@ -74,6 +74,21 @@ if ($Go) {
 
         Push-Location (Join-Path $WorkspaceRoot $module)
         try {
+            Write-Host "[Runner] Checking Go formatting..." -ForegroundColor Gray
+            $unformattedFiles = & gofmt -l .
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "Go Formatting ($module)"
+                Write-Host "[FAILED] Go formatting check ($module) FAILED" -ForegroundColor Red
+            }
+            elseif ($unformattedFiles) {
+                $FailedSuites += "Go Formatting ($module)"
+                Write-Host "[FAILED] Unformatted Go files ($module):" -ForegroundColor Red
+                $unformattedFiles | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            }
+            else {
+                Write-Host "[OK] Go formatting ($module) PASSED" -ForegroundColor Green
+            }
+
             $cmd = @("go", "test", "./...")
             if ($VerboseOutput) {
                 $cmd += "-v"

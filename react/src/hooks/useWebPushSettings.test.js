@@ -152,7 +152,7 @@ describe("useWebPushSettings", () => {
         let resolveFirst;
         hasCurrentWebPushSubscriptionMock
             .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
-            .mockReturnValue(new Promise(() => {}));
+            .mockReturnValue(new Promise(() => { }));
 
         const { result, rerender } = renderHook(
             ({ initialEnabled }) => useWebPushSettings("user-1", initialEnabled),

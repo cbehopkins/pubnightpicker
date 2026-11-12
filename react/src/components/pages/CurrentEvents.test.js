@@ -81,6 +81,14 @@ vi.mock("../../hooks/useAdmin", () => {
   };
 });
 
+vi.mock("../../hooks/useUserPrivateData", () => ({ default: () => null }));
+
+vi.mock("./EventChatModal", () => ({ default: () => null }));
+
+vi.mock("../../firebase", () => {
+  throw new Error("CurrentEvents unit tests must not initialise Firebase.");
+});
+
 vi.mock("react-redux", () => {
   return {
     useSelector: useSelectorMock,

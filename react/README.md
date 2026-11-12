@@ -65,6 +65,11 @@ From `react/`, run `npm test` for the unit-test watch mode or `npm run test:unit
 for a one-shot unit run. These tests use mocked Firebase behavior and do not
 start emulators.
 
+The unit configuration ignores local env files and forces an empty Firebase API
+key. Mock Firebase-backed dependencies explicitly so local configuration cannot
+hide accidental Firebase initialisation. This also applies to the repository's
+`./run-tests.ps1 -Node` and `-All` commands.
+
 The unit suite uses at most four workers to limit concurrent jsdom memory and
 CPU contention. Individual tests retain Vitest's default timeout.
 

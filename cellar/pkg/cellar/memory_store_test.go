@@ -10,8 +10,8 @@ import (
 func TestMemoryStoreAddPreservesID(t *testing.T) {
 	store := NewMemoryStore(NewSequentialAllocator("test-", 1))
 	request := CellRequest{
-		ID:          "background-worker",
-		Steps:       []CellStep{{HandlerName: "worker", Payload: []byte("payload")}},
+		ID:    "background-worker",
+		Steps: []CellStep{{HandlerName: "worker", Payload: []byte("payload")}},
 	}
 
 	if _, err := store.Add([]CellRequest{request}); err != nil {

@@ -107,7 +107,9 @@ that the administrator can reach My Preferences. Firestore and Auth use the
 ports already configured by the React app (8080 and 9099). The runner refuses
 occupied ports rather than reusing or terminating another service. On Windows,
 each owned process tree is enclosed in a kill-on-close Job Object; POSIX uses
-process groups. Cleanup stops and waits for backend/frontend children before
+process groups and requires `ps` to wait for live descendants after signalling
+the group, even if its launcher has already exited. Zombies are treated as
+terminated because their resources have been released. Cleanup stops and waits for backend/frontend children before
 their emulators, including on failure or interruption. It never kills a
 process merely because its name or port resembles an emulator.
 
