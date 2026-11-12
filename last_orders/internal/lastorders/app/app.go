@@ -218,11 +218,11 @@ func New(cfg Config) (application *App, err error) {
 	if cfg.Component == "handpump" {
 		cfg.InternalHTTPAddr = ""
 		if cfg.LandlordInternalURL == "" {
-			return nil, fmt.Errorf("Landlord internal URL is required in handpump mode")
+			return nil, fmt.Errorf("landlord internal URL is required in handpump mode")
 		}
 		parsed, err := url.Parse(cfg.LandlordInternalURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return nil, fmt.Errorf("Landlord internal URL must be an http(s) base URL without credentials, query, or fragment")
+			return nil, fmt.Errorf("landlord internal URL must be an http(s) base URL without credentials, query, or fragment")
 		}
 	}
 	if cfg.InternalAPIToken == "" && cfg.Component != "all" {

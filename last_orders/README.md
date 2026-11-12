@@ -112,6 +112,7 @@ The temporary build pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
 Go 1.27 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
 uses an older, incompatible x/tools version. The executable is installed into
 `GOBIN` (or `GOPATH\bin` by default); no tooling module remains in the repository.
+From the repository root, run `./run-tests.ps1 -Staticcheck` to execute it.
 
 Run the application:
 

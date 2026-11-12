@@ -14,6 +14,7 @@
 #   ./run-tests.ps1 -Typecheck                        # Run React TypeScript typecheck
 #   ./run-tests.ps1 -Lint                             # Run React ESLint (rules-of-hooks etc.)
 #   ./run-tests.ps1 -Govulncheck                      # Scan last_orders for Go vulnerabilities
+#   ./run-tests.ps1 -Staticcheck                      # Run Staticcheck on last_orders
 #   ./run-tests.ps1 -NpmAudit                         # Scan React and E2E npm dependencies
 #   ./run-tests.ps1 -All                              # Run all test suites
 #   ./run-tests.ps1 -Integration -VerboseOutput      # Integration with verbose output
@@ -31,6 +32,7 @@ param(
     [switch]$Typecheck,
     [switch]$Lint,
     [switch]$Govulncheck,
+    [switch]$Staticcheck,
     [switch]$NpmAudit,
     [switch]$All,
     [switch]$VerboseOutput,
@@ -49,7 +51,7 @@ $GoModules = @("cellar", "durable_email", "email_clients", "last_orders")
 $LastOrdersDir = Join-Path $WorkspaceRoot "last_orders"
 
 # Default to Integration if no suite specified
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $NpmAudit -and -not $All) {
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $Staticcheck -and -not $NpmAudit -and -not $All) {
     $Integration = $true
     $Go = $true
 }
@@ -66,6 +68,7 @@ if ($All) {
     $Typecheck = $true
     $Lint = $true
     $Govulncheck = $true
+    $Staticcheck = $true
     $NpmAudit = $true
 }
 
@@ -140,6 +143,36 @@ if ($Govulncheck) {
             }
             else {
                 Write-Host "[OK] Go vulnerability scan PASSED" -ForegroundColor Green
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
+
+# ======================
+# Go Staticcheck
+# ======================
+if ($Staticcheck) {
+    Write-Host "`n=== Running last_orders Staticcheck ===" -ForegroundColor Cyan
+
+    if (-not (Get-Command staticcheck -ErrorAction SilentlyContinue)) {
+        $FailedSuites += "Go Staticcheck"
+        Write-Host "[FAILED] staticcheck not found. See last_orders/README.md for installation instructions." -ForegroundColor Red
+    }
+    else {
+        Push-Location $LastOrdersDir
+        try {
+            Write-Host "[Runner] Command: staticcheck ./..." -ForegroundColor Gray
+            & staticcheck ./...
+
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "Go Staticcheck"
+                Write-Host "[FAILED] Staticcheck FAILED" -ForegroundColor Red
+            }
+            else {
+                Write-Host "[OK] Staticcheck PASSED" -ForegroundColor Green
             }
         }
         finally {

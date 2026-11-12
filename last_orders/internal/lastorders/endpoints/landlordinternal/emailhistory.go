@@ -72,7 +72,7 @@ func (c *EmailHistoryClient) QueryProgress(ctx context.Context, filter durableem
 		return nil, fmt.Errorf("email history query requires a user id")
 	}
 	if c.Token == "" {
-		return nil, fmt.Errorf("Landlord internal API token is required")
+		return nil, fmt.Errorf("landlord internal API token is required")
 	}
 	body, err := json.Marshal(historyRequest{UserID: filter.UserID})
 	if err != nil {
@@ -96,7 +96,7 @@ func (c *EmailHistoryClient) QueryProgress(ctx context.Context, filter durableem
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, fmt.Errorf("Landlord returned %s", response.Status)
+		return nil, fmt.Errorf("landlord returned %s", response.Status)
 	}
 	var result historyResponse
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
