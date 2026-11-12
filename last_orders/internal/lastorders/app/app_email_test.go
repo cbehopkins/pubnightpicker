@@ -170,7 +170,12 @@ func TestRunRecoversInterruptedEmailSubmissionsBeforeStarting(t *testing.T) {
 		t.Fatalf("seed progress: %v", err)
 	}
 
-	runFor(t, a, 50*time.Millisecond)
+	runUntil(t, a, func() bool {
+		var state string
+		return db.QueryRow(`
+			SELECT state FROM email_progress WHERE idempotency_token = 'send-1' AND recipient = 'alice@example.com'
+		`).Scan(&state) == nil && state == durableemail.StateRecovery
+	})
 
 	var state string
 	if err := db.QueryRow(`
