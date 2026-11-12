@@ -104,13 +104,15 @@ describe("messages firestore rules — creates", () => {
 
     it("denies create without scopeType", async () => {
         const db = testEnv.authenticatedContext("user-a").firestore();
-        const { scopeType: _, ...noScopeType } = globalMessage();
+        const noScopeType = globalMessage();
+        delete noScopeType.scopeType;
         await assertFails(addDoc(collection(db, "messages"), noScopeType));
     });
 
     it("denies create without scopeId", async () => {
         const db = testEnv.authenticatedContext("user-a").firestore();
-        const { scopeId: _, ...noScopeId } = globalMessage();
+        const noScopeId = globalMessage();
+        delete noScopeId.scopeId;
         await assertFails(addDoc(collection(db, "messages"), noScopeId));
     });
 

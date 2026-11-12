@@ -10,7 +10,7 @@ import { notifyError } from "../../utils/notify";
 import { compareVenueNames } from "../../utils/venueSort";
 import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 
-const ManagePubs = (params) => {
+const ManagePubs = () => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
   const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
   const sortedPubsByName = Object.entries(pub_parameters)

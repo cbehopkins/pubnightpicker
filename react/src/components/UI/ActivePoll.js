@@ -123,7 +123,6 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         leastVisited,
         random: randomVenues,
         isLoading: isAutopopulateLoading,
-        error: autopopulateError,
     } = useAutopopulateVenueSelector(poll_id, poll_data.pubs);
     const isAutopopulateEnabled = mostVisited.length > 0 || leastVisited.length > 0 || randomVenues.length > 0;
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
@@ -276,7 +275,6 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                                 isLoading={isAutopopulateLoading}
                                 isEnabled={isAutopopulateEnabled}
                                 onAutopopulate={handleAutopopulate}
-                                error={autopopulateError}
                             />
                         </>
                     )}

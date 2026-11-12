@@ -5,7 +5,7 @@ import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
 
 // FIXME move this and NewPub and Edit Pub somewhere sensible
-export async function loader({ request, params }) {
+export async function loader({ params }) {
   const pubId = params.pubId;
   return {
     pub_id: pubId,

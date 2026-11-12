@@ -1,6 +1,6 @@
 // @ts-check
 
-import React, { useState } from "react";
+import { useState } from "react";
 
 import { doc, collection, addDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../firebase";

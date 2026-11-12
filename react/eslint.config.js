@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 
@@ -8,9 +9,10 @@ export default [
     },
     js.configs.recommended,
     {
-        plugins: { "react-hooks": reactHooks },
+        plugins: { react, "react-hooks": reactHooks },
         rules: {
             ...reactHooks.configs.recommended.rules,
+            "react/jsx-uses-vars": "error",
             // This rule flags intentional "reset state when dep changes" patterns
             // which are common and valid in this codebase.
             "react-hooks/set-state-in-effect": "off",

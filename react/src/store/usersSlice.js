@@ -41,7 +41,7 @@ const usersSlice = createSlice({
       delete state[action.payload.uid];
     },
     /** @returns {UsersState} */
-    clearStore(state) {
+    clearStore() {
       return {};
     },
   },

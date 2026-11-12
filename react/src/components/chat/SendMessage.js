@@ -1,6 +1,6 @@
 // @ts-check
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { db } from "../../firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import styles from "./chat.module.css"
