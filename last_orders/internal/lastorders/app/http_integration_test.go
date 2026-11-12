@@ -336,7 +336,8 @@ func TestSplitLandlordAndHandPumpEmailHistoryEndToEnd(t *testing.T) {
 		}
 	}()
 
-	client := &http.Client{Timeout: time.Second}
+	client := &http.Client{Transport: &http.Transport{}, Timeout: time.Second}
+	defer client.CloseIdleConnections()
 	waitForHealth(t, client, landlord.InternalHTTPAddr(), landlordDone)
 	waitForHealth(t, client, handPump.HTTPAddr(), handPumpDone)
 
