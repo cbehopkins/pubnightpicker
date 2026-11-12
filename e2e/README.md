@@ -113,6 +113,11 @@ terminated because their resources have been released. Cleanup stops and waits f
 their emulators, including on failure or interruption. It never kills a
 process merely because its name or port resembles an emulator.
 
+POSIX port probes use `SO_REUSEADDR` so completed TCP connections in `TIME_WAIT`
+do not make a stopped service appear to be running. Active listeners are still
+rejected. Windows probes do not enable address reuse because Windows permits
+reuse over active listeners.
+
 Children receive allowlisted OS/tool settings and explicit demo configuration,
 not inherited credentials or provider/deployment settings. An E2E Vite wrapper
 also disables developer env-file loading. The backend uses explicit loopback

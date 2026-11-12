@@ -133,6 +133,8 @@ def _find_firebase() -> list[str]:
 def _require_free_ports(ports: tuple[int, ...]) -> None:
     for port in ports:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if os.name != "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(("127.0.0.1", port))
             except OSError as error:

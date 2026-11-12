@@ -74,12 +74,15 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertNotIn("WEB_PUSH_VAPID_PRIVATE_KEY", env)
 
     def test_occupied_port_is_rejected_without_stopping_listener(self) -> None:
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            with self.assertRaisesRegex(RuntimeError, "unavailable"):
-                runner._require_free_ports((listener.getsockname()[1],))
-            self.assertGreater(listener.fileno(), 0)
+        for reuse in (False, True):
+            with self.subTest(reuse=reuse), socket.socket() as listener:
+                if reuse:
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind(("127.0.0.1", 0))
+                listener.listen()
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    runner._require_free_ports((listener.getsockname()[1],))
+                self.assertGreater(listener.fileno(), 0)
 
     def test_frontend_does_not_build_or_launch_backend(self) -> None:
         with patch.object(runner, "E2E_DIR", self.root), patch.object(
@@ -191,6 +194,22 @@ class JourneyRunnerTests(unittest.TestCase):
         ):
             runner._stop_services({"emulators": emulators, "backend": backend}, ())
         self.assertEqual(stopped, ["backend", "emulators"])
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux TCP port reuse regression")
+    def test_cleanup_accepts_closed_service_with_completed_connection(self) -> None:
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            with socket.create_connection(("127.0.0.1", port)) as client:
+                connection, _ = listener.accept()
+                connection.close()
+                self.assertEqual(client.recv(1), b"")
+        with patch.object(
+            runner.time, "monotonic", side_effect=[0, 0, 16]
+        ), patch.object(runner.time, "sleep"):
+            runner._stop_services({}, (port,))
 
     def test_temporary_cleanup_retries_transient_file_locks(self) -> None:
         with patch.object(
