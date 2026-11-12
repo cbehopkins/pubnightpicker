@@ -98,10 +98,16 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertIsNone(group.call_args.args[1])
 
     def test_default_runs_both_groups_with_different_state_paths(self) -> None:
+        def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
+            Path(command[3]).touch()
+            return 0
+
         with patch.object(runner, "E2E_DIR", self.root), patch.object(
             runner, "_preflight"
         ), patch.object(runner, "_discover") as discovery, patch.object(
-            runner, "_build_backend", return_value=self.root / "backend"
+            runner, "_tool", return_value="go"
+        ), patch.object(
+            runner, "_run_command", side_effect=build_command
         ) as build, patch.object(
             runner, "_run_group", side_effect=[2, 0]
         ) as group:

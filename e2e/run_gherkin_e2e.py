@@ -272,7 +272,9 @@ def _discover(
 
 
 def _build_backend(scratch: Path, env: dict[str, str]) -> Path:
-    binary = scratch / ("last-orders.exe" if os.name == "nt" else "last-orders")
+    build_dir = scratch / "bin"
+    build_dir.mkdir()
+    binary = build_dir / ("last-orders.exe" if os.name == "nt" else "last-orders")
     print("[Journey] Building Last Orders", flush=True)
     if _run_command(
         [_tool("go"), "build", "-o", str(binary), "./cmd/last-orders"],
