@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";

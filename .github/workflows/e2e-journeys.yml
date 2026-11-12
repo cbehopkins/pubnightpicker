@@ -1,0 +1,86 @@
+name: Browser E2E Journeys
+
+on:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "react/**"
+      - "last_orders/**"
+      - "cellar/**"
+      - "durable_email/**"
+      - "email_clients/**"
+      - "firebase_sub/**"
+      - "schema/**"
+      - "run-tests.ps1"
+      - ".github/workflows/e2e-journeys.yml"
+  push:
+    branches: [main]
+    paths:
+      - "e2e/**"
+      - "react/**"
+      - "last_orders/**"
+      - "cellar/**"
+      - "durable_email/**"
+      - "email_clients/**"
+      - "firebase_sub/**"
+      - "schema/**"
+      - "run-tests.ps1"
+      - ".github/workflows/e2e-journeys.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-journeys-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            react/package-lock.json
+            e2e/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: last_orders/go.mod
+          cache-dependency-path: "*/go.sum"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install tooling and bootstrap dependencies
+        run: |
+          python -m pip install poetry
+          poetry -C firebase_sub install --only main
+          npm install --global firebase-tools
+      - name: Install browser application and journey dependencies
+        run: |
+          npm ci --prefix react
+          npm ci --prefix e2e
+          cd e2e
+          npx playwright install --with-deps chromium
+      - name: Check orchestration safety
+        run: npm --prefix e2e run test:harness
+      - name: Check calendar and bounded waits
+        run: npm --prefix e2e run test:support
+      - name: Run both browser groups
+        run: npm --prefix e2e run test:journey
+      - name: Retain synthetic journey failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-journey-failure
+          path: e2e/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore

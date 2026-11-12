@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminLayout from "./AdminLayout";
 
@@ -28,6 +28,7 @@ function renderAdmin(path = "/admin/users") {
             <Routes>
                 <Route path="/" element={<h1>Home</h1>} />
                 <Route path="/admin" element={<AdminLayout />}>
+                    <Route index element={<Navigate to="/admin/users" replace />} />
                     <Route path="users" element={<h1>Users content</h1>} />
                     <Route path="users/:userId" element={<h1>User detail content</h1>} />
                     <Route path="diagnostics" element={<h1>Diagnostics content</h1>} />
@@ -55,6 +56,13 @@ describe("Admin layout", () => {
         expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "false");
         expect(screen.getByLabelText("Current path")).toHaveTextContent("/admin/logs");
         expect(screen.queryByRole("heading", { name: "Users content" })).not.toBeInTheDocument();
+    });
+
+    it("opens Manage Users when visiting the Admin entry point", () => {
+        renderAdmin("/admin");
+        expect(screen.getByLabelText("Current path")).toHaveTextContent("/admin/users");
+        expect(screen.getByRole("heading", { name: "Users content" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Manage Users" })).toHaveAttribute("aria-expanded", "true");
     });
 
     it("opens the matching section when visiting a direct URL", () => {

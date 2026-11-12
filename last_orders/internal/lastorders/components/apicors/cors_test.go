@@ -16,9 +16,10 @@ func TestCORS(t *testing.T) {
 		{name: "allowed request", method: "POST", origin: "http://localhost:3000", status: 401, called: true},
 		{name: "non-browser", method: "POST", status: 401, called: true},
 		{name: "allowed preflight", method: "OPTIONS", origin: "http://localhost:3000", requestedMethod: "POST", requestedHeaders: "authorization, content-type", status: 204},
+		{name: "venue stream preflight", method: "OPTIONS", origin: "http://localhost:3000", requestedMethod: "GET", requestedHeaders: "last-event-id", status: 204},
 		{name: "denied origin", method: "POST", origin: "https://evil.example", status: 403},
 		{name: "denied preflight", method: "OPTIONS", origin: "https://evil.example", requestedMethod: "POST", status: 403},
-		{name: "denied method", method: "OPTIONS", origin: "http://localhost:3000", requestedMethod: "DELETE", status: 403},
+		{name: "denied method", method: "OPTIONS", origin: "http://localhost:3000", requestedMethod: "PUT", status: 403},
 		{name: "denied header", method: "OPTIONS", origin: "http://localhost:3000", requestedMethod: "POST", requestedHeaders: "X-User-UID", status: 403},
 	} {
 		t.Run(test.name, func(t *testing.T) {

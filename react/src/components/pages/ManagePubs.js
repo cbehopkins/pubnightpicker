@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { useState } from "react";
 import styles from "./ManagePubs.module.css";
-import usePubs from "../../hooks/usePubs";
+import { usePubsState } from "../../hooks/usePubs";
 import useRole from "../../hooks/useRole";
 import Button from "../UI/Button";
 import { deletePub } from "../../dbtools/pubs";
@@ -10,9 +10,9 @@ import { notifyError } from "../../utils/notify";
 import { compareVenueNames } from "../../utils/venueSort";
 import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 
-const ManagePubs = (params) => {
+const ManagePubs = () => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
-  const pub_parameters = usePubs();
+  const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
   const sortedPubsByName = Object.entries(pub_parameters)
     .filter(([, value]) => {
       if (venueTypeFilter === "all") {
@@ -40,6 +40,19 @@ const ManagePubs = (params) => {
           </NavLink>
         )}
       </div>
+
+      {isLoading && <p role="status">Loading venues...</p>}
+      {errorMessage && (
+        <div className="alert alert-warning" role="alert">
+          <p className="mb-2">{errorMessage}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={retry}>Retry</Button>
+        </div>
+      )}
+      {isStale && (
+        <p className="alert alert-warning py-2" role="status">
+          Showing the last loaded venue list. Updates may be delayed while the connection recovers.
+        </p>
+      )}
 
       <div className={`${styles.filterRow} text-body mb-3`}>
         <label htmlFor="venue-type-filter" className="fw-semibold">Filter by venue type:</label>

@@ -13,6 +13,7 @@ import (
 	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
+	_ "modernc.org/sqlite"
 )
 
 func emulatorService(t *testing.T, ctx context.Context) (*Service, *firestore.Client) {

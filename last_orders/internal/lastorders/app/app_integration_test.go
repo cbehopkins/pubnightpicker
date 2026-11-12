@@ -320,6 +320,7 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 	return app.Config{
 		DBPath:                    dbPath,
 		AuthVerifier:              testAuthVerifier{},
+		CursorSigningKey:          []byte("test-only-cursor-signing-key-32-bytes"),
 		PollDelay:                 5 * time.Millisecond,
 		IdempotencyRemote:         remote,
 		RecurrenceService:         recurrenceService,
@@ -340,8 +341,8 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 	}
 }
 
-// activeWorkCells lists active cells excluding the durable Timers the application
-// always schedules.
+// activeWorkCells lists application work, excluding durable timer records and
+// work emitted by the scheduled daily auto-completion timer.
 func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
 	t.Helper()
 	active, err := store.ListActive()
@@ -351,6 +352,16 @@ func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
 	work := make([]cellar.Cell, 0, len(active))
 	for _, cell := range active {
 		if strings.HasPrefix(string(cell.ID), "timer:") {
+			continue
+		}
+		dailyAutoCompletion := false
+		for _, step := range cell.Steps {
+			if step.HandlerName == truths.DailyPollAutoCompleteDueFanout || bytes.Contains(step.Payload, []byte(truths.DailyPollAutoCompleteDueFanout)) {
+				dailyAutoCompletion = true
+				break
+			}
+		}
+		if dailyAutoCompletion {
 			continue
 		}
 		work = append(work, cell)

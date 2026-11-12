@@ -46,8 +46,38 @@ func TestServiceUsesAuthoritativeSourceOnCacheMiss(t *testing.T) {
 	if _, err := store.Get(context.Background(), "venue-1"); err != nil {
 		t.Fatalf("expected read-through population: %v", err)
 	}
+	if version, deleted := venueVersion(t, store, "venue-1"); version != 1 || deleted {
+		t.Fatalf("read-through version = %d, deleted=%v", version, deleted)
+	}
 	if _, err := service.Get(context.Background(), "venue-1"); err != nil || source.getCalls != 1 {
 		t.Fatalf("cache hit = %v, source calls = %d", err, source.getCalls)
+	}
+	if got := venueSyncState(t, store.base).Sequence; got != 1 {
+		t.Fatalf("cache hit advanced sequence to %d", got)
+	}
+}
+
+func TestServiceReturnsSourceValueWhenPopulationFails(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.base.DB().Exec(`
+		CREATE TRIGGER reject_cache_population BEFORE INSERT ON venue_cache
+		BEGIN SELECT RAISE(ABORT, 'injected population failure'); END;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeSource{doc: Document{ID: "venue-1", Data: map[string]any{"name": "The Crown"}}}
+	service, err := NewService(store, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := service.Get(context.Background(), "venue-1"); err != nil || got.Name != "The Crown" {
+		t.Fatalf("source read after failed population = %+v, %v", got, err)
+	}
+	if got := venueSyncState(t, store.base).Sequence; got != 0 {
+		t.Fatalf("failed population advanced sequence to %d", got)
+	}
+	if _, err := store.Get(context.Background(), "venue-1"); !errors.Is(err, ErrCacheMiss) {
+		t.Fatalf("failed population cached a row: %v", err)
 	}
 }
 

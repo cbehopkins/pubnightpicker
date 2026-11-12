@@ -7,11 +7,10 @@ import Button from "./Button";
  * @param {{
  *   isLoading: boolean,
  *   isEnabled: boolean,
- *   onAutopopulate: () => void,
- *   error?: string | null
+ *   onAutopopulate: () => void
  * }} props
  */
-export default function AutopopulateButton({ isLoading, isEnabled, onAutopopulate, error }) {
+export default function AutopopulateButton({ isLoading, isEnabled, onAutopopulate }) {
     return (
         <Button
             type="button"

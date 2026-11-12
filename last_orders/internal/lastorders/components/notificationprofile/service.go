@@ -62,6 +62,10 @@ func (s *Service) SourceWatchUsers(ctx context.Context) (ChangeStream, error) {
 	return s.source.WatchUsers(ctx)
 }
 
+func (s *Service) SourceWatchPublicUsers(ctx context.Context) (ChangeStream, error) {
+	return s.source.WatchPublicUsers(ctx)
+}
+
 func (s *Service) SourceWatchEndpoints(ctx context.Context) (ChangeStream, error) {
 	return s.source.WatchEndpoints(ctx)
 }

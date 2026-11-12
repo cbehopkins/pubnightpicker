@@ -395,7 +395,7 @@ function DeleteMyAccount() {
   );
 }
 
-function Preferences(params) {
+function Preferences() {
   const auth = getAuth();
   const navigate = useNavigate();
   const [user, loading] = useAuthState(auth);

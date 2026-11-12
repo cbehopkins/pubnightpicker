@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -26,6 +29,7 @@ import (
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/ratelimit"
 	"last_orders/internal/lastorders/components/recurrence"
+	"last_orders/internal/lastorders/components/sse"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
@@ -39,8 +43,10 @@ import (
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
+	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
+	venuesendpoint "last_orders/internal/lastorders/endpoints/venues"
 	versionendpoint "last_orders/internal/lastorders/endpoints/version"
 	admindeleteplugin "last_orders/internal/lastorders/plugins/admindelete"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
@@ -74,6 +80,8 @@ type RecurrenceService interface {
 }
 
 type Config struct {
+	// Component selects all, landlord, or handpump. Empty is the combined mode.
+	Component           string
 	DBPath              string
 	PollDelay           time.Duration
 	Logger              *slog.Logger
@@ -81,7 +89,8 @@ type Config struct {
 	FirestoreForceIPv4  bool
 	FirebaseCredentials *google.Credentials
 	EnableFirestore     bool
-	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward; empty uses the stored value.
+	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward.
+	// If empty on first startup, the oldest poll date is used, or today's app date when no polls exist.
 	PollsSince        string
 	IdempotencyRemote firebaseidempotency.Remote
 	// CompletionActions is the durable completed-poll action history shared with Python.
@@ -93,12 +102,20 @@ type Config struct {
 	AdminDeleteEvaluateOnce bool
 	StartupComponentChecks  []func(*basestore.Store) error
 	// HTTPAddr is the address to serve HTTP endpoints on. An empty value disables HTTP entirely.
-	HTTPAddr               string
+	HTTPAddr string
+	// InternalHTTPAddr is Landlord's private service listener. Empty selects a
+	// loopback ephemeral listener in combined mode or :8080 for Landlord mode.
+	InternalHTTPAddr       string
+	LandlordInternalURL    string
+	InternalAPIToken       string
 	AuthProjectID          string
 	AuthVerifier           firebaseauth.Verifier
 	AllowAuthEmulator      bool
 	AllowedAPIOrigins      []string
 	AllowedAPIPreviewSites []string
+	// CursorSigningKey is the raw key used to sign public API resumption cursors.
+	// Production normally supplies LAST_ORDERS_CURSOR_HMAC_KEY instead.
+	CursorSigningKey []byte
 	// EmailClient selects the provider used for durable email delivery.
 	EmailClient emailplugin.ClientKind
 	// Email contains provider credentials and options. EmailClient remains as a
@@ -153,6 +170,7 @@ type App struct {
 	cellarRuntime               *cellar.Cellar
 	emailPlugin                 *emailplugin.Plugin
 	diagnosticsConfiguration    *diagnosticsconfig.Service
+	autoCompleteListener        *autocompletelistener.Listener
 	eventVenueListener          *eventvenuelistener.Listener
 	newPollListener             *newpolllistener.Listener
 	completedPollListener       *completedpolllistener.Listener
@@ -163,15 +181,63 @@ type App struct {
 	adminDeleteEvaluateOnce     bool
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
+	venueStreamHub              *sse.Hub
+	venueCursorCodec            *sse.CursorCodec
 	notificationProfileListener *notificationprofilelistener.Listener
 	httpServer                  *http.Server
 	httpListener                net.Listener
+	internalHTTPServer          *http.Server
+	internalHTTPListener        net.Listener
+	component                   string
 	runCancel                   context.CancelFunc
 	runDone                     chan struct{}
 	runMu                       sync.Mutex
 }
 
 func New(cfg Config) (application *App, err error) {
+	if cfg.Component == "" {
+		cfg.Component = "all"
+	}
+	switch cfg.Component {
+	case "all", "landlord", "handpump":
+	default:
+		return nil, fmt.Errorf("unknown component %q", cfg.Component)
+	}
+	if cfg.Component == "landlord" {
+		cfg.HTTPAddr = ""
+		if cfg.InternalHTTPAddr == "" {
+			cfg.InternalHTTPAddr = ":8080"
+		}
+	}
+	if cfg.Component == "all" && cfg.HTTPAddr != "" && cfg.InternalHTTPAddr == "" {
+		cfg.InternalHTTPAddr = "127.0.0.1:0"
+	}
+	if cfg.Component == "all" && cfg.HTTPAddr == "" {
+		cfg.InternalHTTPAddr = ""
+	}
+	if cfg.Component == "handpump" {
+		cfg.InternalHTTPAddr = ""
+		if cfg.LandlordInternalURL == "" {
+			return nil, fmt.Errorf("landlord internal URL is required in handpump mode")
+		}
+		parsed, err := url.Parse(cfg.LandlordInternalURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return nil, fmt.Errorf("landlord internal URL must be an http(s) base URL without credentials, query, or fragment")
+		}
+	}
+	if cfg.InternalAPIToken == "" && cfg.Component != "all" {
+		return nil, fmt.Errorf("LANDLORD_INTERNAL_TOKEN is required for separate component mode")
+	}
+	if cfg.Component != "all" && len(cfg.InternalAPIToken) < 32 {
+		return nil, fmt.Errorf("LANDLORD_INTERNAL_TOKEN must contain at least 32 characters")
+	}
+	if cfg.InternalAPIToken == "" {
+		randomToken := make([]byte, 32)
+		if _, err := rand.Read(randomToken); err != nil {
+			return nil, fmt.Errorf("generate local internal API token: %w", err)
+		}
+		cfg.InternalAPIToken = hex.EncodeToString(randomToken)
+	}
 	if cfg.DBPath == "" {
 		return nil, fmt.Errorf("db path is required")
 	}
@@ -234,10 +300,12 @@ func New(cfg Config) (application *App, err error) {
 	// Replace the previous cleanup stack with a new one for the baseStore and subsequent resources.
 	cleanup = newCleanupStack()
 	cleanup.Add(baseStore.Close)
-
-	cellarStore, err := publicsqlite.NewStore(baseStore.DB(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("init cellar store: %w", err)
+	var cellarStore cellar.Store
+	if cfg.Component != "handpump" {
+		cellarStore, err = publicsqlite.NewStore(baseStore.DB(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("init cellar store: %w", err)
+		}
 	}
 
 	var firestoreClient *firestore.Client
@@ -266,22 +334,6 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("init notification profile store: %w", err)
 	}
-	emailOptions := cfg.Email
-	if emailOptions.Client == "" {
-		emailOptions.Client = cfg.EmailClient
-	}
-	if emailOptions.Logger == nil {
-		emailOptions.Logger = cfg.Logger
-	}
-	diagnosticsSource := cfg.DiagnosticsSource
-	if diagnosticsSource == nil && firestoreClient != nil {
-		diagnosticsSource = diagnosticsconfig.FirestoreSource(firestoreClient)
-	}
-	var diagnosticsConfiguration *diagnosticsconfig.Service
-	if diagnosticsSource != nil {
-		diagnosticsConfiguration = diagnosticsconfig.New(diagnosticsSource, cfg.Logger)
-		emailOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
-	}
 	venueSource := cfg.VenueSource
 	if venueSource == nil {
 		if firestoreClient == nil {
@@ -293,6 +345,11 @@ func New(cfg Config) (application *App, err error) {
 		}
 	}
 	venueCacheService, err := venuecache.NewService(venueCacheStore, venueSource, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+	venueStreamHub := sse.NewHub()
+	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger, venueStreamHub)
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +367,49 @@ func New(cfg Config) (application *App, err error) {
 	notificationProfileService, err := notificationprofile.NewService(notificationProfileStore, notificationProfileSource, cfg.Logger)
 	if err != nil {
 		return nil, err
+	}
+	notificationProfileListener, err := notificationprofilelistener.New(notificationProfileService, notificationProfileStore, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Component == "handpump" {
+		application = &App{
+			logger:                      cfg.Logger,
+			baseStore:                   baseStore,
+			firestoreClient:             firestoreClient,
+			venueCacheStore:             venueCacheStore,
+			venueCacheService:           venueCacheService,
+			notificationProfileStore:    notificationProfileStore,
+			notificationProfileService:  notificationProfileService,
+			venueCacheListener:          venueCacheListener,
+			notificationProfileListener: notificationProfileListener,
+			component:                   cfg.Component,
+		}
+		historyClient := &landlordinternal.EmailHistoryClient{BaseURL: cfg.LandlordInternalURL, Token: cfg.InternalAPIToken}
+		if err := configurePublicHTTP(application, cfg, historyClient); err != nil {
+			application = nil
+			return nil, err
+		}
+		cleanup = nil
+		return application, nil
+	}
+
+	emailOptions := cfg.Email
+	if emailOptions.Client == "" {
+		emailOptions.Client = cfg.EmailClient
+	}
+	if emailOptions.Logger == nil {
+		emailOptions.Logger = cfg.Logger
+	}
+	diagnosticsSource := cfg.DiagnosticsSource
+	if diagnosticsSource == nil && firestoreClient != nil {
+		diagnosticsSource = diagnosticsconfig.FirestoreSource(firestoreClient)
+	}
+	var diagnosticsConfiguration *diagnosticsconfig.Service
+	if diagnosticsSource != nil {
+		diagnosticsConfiguration = diagnosticsconfig.New(diagnosticsSource, cfg.Logger)
+		emailOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
 	}
 	pushOptions := cfg.Push
 	if pushOptions.Logger == nil {
@@ -355,17 +455,6 @@ func New(cfg Config) (application *App, err error) {
 		return nil, fmt.Errorf("init push plugin: %w", err)
 	}
 
-	autocompleteSource := cfg.AutocompleteSource
-	if autocompleteSource == nil {
-		if firestoreClient == nil {
-			return nil, fmt.Errorf("autocomplete source is required: supply Config.AutocompleteSource or enable firestore")
-		}
-		autocompleteSource, err = autocompletesvc.NewFirestoreSource(firestoreClient)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	eventVenueSource := cfg.EventVenueSource
 	if eventVenueSource == nil {
 		if firestoreClient == nil {
@@ -378,7 +467,9 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	var pollsSince string
-	if cfg.NewPollSource == nil || cfg.CompletedPollSource == nil || cfg.ChatMessageSource == nil {
+	needsPollScope := cfg.NewPollSource == nil || cfg.CompletedPollSource == nil || cfg.ChatMessageSource == nil ||
+		(cfg.AutocompleteSource == nil && firestoreClient != nil)
+	if needsPollScope {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("poll and chat message sources are required: supply them in Config or enable firestore")
 		}
@@ -387,12 +478,24 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		resolveCtx, cancelResolve := context.WithTimeout(context.Background(), 30*time.Second)
-		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince)
+		fallbackDate := time.Now().In(recurrenceService.Location()).Format(time.DateOnly)
+		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince, fallbackDate)
 		cancelResolve()
 		if err != nil {
 			return nil, fmt.Errorf("resolve polls since: %w", err)
 		}
 		cfg.Logger.Info("listener scope resolved", "polls_since", pollsSince)
+	}
+
+	autocompleteSource := cfg.AutocompleteSource
+	if autocompleteSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("autocomplete source is required: supply Config.AutocompleteSource or enable firestore")
+		}
+		autocompleteSource, err = autocompletesvc.NewFirestoreSource(firestoreClient, pollsSince)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	newPollSource := cfg.NewPollSource
@@ -645,7 +748,7 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(pushevents.HandlerChatPush, pushevents.ChatPushHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources}); err != nil {
+	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(pushevents.HandlerPushTest, pushevents.PushTestHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
@@ -797,16 +900,6 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 
-	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger)
-	if err != nil {
-		return nil, err
-	}
-
-	notificationProfileListener, err := notificationprofilelistener.New(notificationProfileService, notificationProfileStore, cfg.Logger)
-	if err != nil {
-		return nil, err
-	}
-
 	application = &App{
 		logger:                      cfg.Logger,
 		baseStore:                   baseStore,
@@ -821,6 +914,7 @@ func New(cfg Config) (application *App, err error) {
 		cellarRuntime:               cellarRuntime,
 		emailPlugin:                 emailPlugin,
 		diagnosticsConfiguration:    diagnosticsConfiguration,
+		autoCompleteListener:        autoCompleteListener,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
@@ -829,43 +923,97 @@ func New(cfg Config) (application *App, err error) {
 		testEmailListener:           testEmailListener,
 		adminDeleteListener:         adminDeleteListener,
 		adminDeleteEvaluateOnce:     cfg.AdminDeleteEvaluateOnce,
+		component:                   cfg.Component,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
+		venueStreamHub:              venueStreamHub,
 		notificationProfileListener: notificationProfileListener,
 	}
 
-	if cfg.HTTPAddr != "" {
-		apiMux := http.NewServeMux()
-		apiMux.Handle("POST /api/ping", &pingendpoint.Endpoint{Logger: cfg.Logger})
-		apiMux.Handle("POST /api/email-history", &emailhistoryendpoint.Endpoint{Store: emailPlugin, Logger: cfg.Logger})
-		apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, firebaseauth.Middleware(cfg.AuthVerifier, apiMux), cfg.AllowedAPIPreviewSites...)
+	if cfg.InternalHTTPAddr != "" {
+		internalListener, err := net.Listen("tcp", cfg.InternalHTTPAddr)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("listen for Landlord internal API on %q: %w", cfg.InternalHTTPAddr, err)
 		}
-		versionHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, versionendpoint.Endpoint{}, cfg.AllowedAPIPreviewSites...)
-		if err != nil {
-			return nil, err
-		}
-		listener, err := net.Listen("tcp", cfg.HTTPAddr)
-		if err != nil {
-			return nil, fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
-		}
-		mux := http.NewServeMux()
-		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		internalMux := http.NewServeMux()
+		internalMux.Handle("POST "+landlordinternal.EmailHistoryPath, landlordinternal.EmailHistoryHandler{Store: emailPlugin, Token: cfg.InternalAPIToken})
+		internalMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
 			_, _ = w.Write([]byte("ok"))
 		})
-		mux.Handle("GET /api/version", versionHandler)
-		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
-		mux.Handle("/api/", apiHandler)
-		application.httpListener = listener
-		application.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
-		cleanup.Add(listener.Close)
+		application.internalHTTPListener = internalListener
+		application.internalHTTPServer = &http.Server{Handler: internalMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 * 1024}
+		cleanup.Add(internalListener.Close)
+	}
+
+	if cfg.HTTPAddr != "" {
+		if cfg.Component == "all" && application.internalHTTPListener == nil {
+			return nil, fmt.Errorf("combined mode requires Landlord internal listener")
+		}
+		landlordURL := cfg.LandlordInternalURL
+		if cfg.Component == "all" {
+			landlordURL = "http://" + application.internalHTTPListener.Addr().String()
+		}
+		historyClient := &landlordinternal.EmailHistoryClient{BaseURL: landlordURL, Token: cfg.InternalAPIToken}
+		if err := configurePublicHTTP(application, cfg, historyClient); err != nil {
+			return nil, err
+		}
 	}
 
 	cleanup = nil
 	return application, nil
+}
+
+func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpoint.ProgressReader) error {
+	if cfg.HTTPAddr == "" {
+		return nil
+	}
+	apiMux := http.NewServeMux()
+	authenticated := func(handler http.Handler) http.Handler { return firebaseauth.Middleware(cfg.AuthVerifier, handler) }
+	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
+	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
+	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
+	key := cfg.CursorSigningKey
+	if len(key) == 0 {
+		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")
+		if venueCursorSecret == "" {
+			return fmt.Errorf("LAST_ORDERS_CURSOR_HMAC_KEY is required when the public API is enabled")
+		}
+		var err error
+		key, err = sse.ParseCursorKey(venueCursorSecret)
+		if err != nil {
+			return fmt.Errorf("parse venue stream cursor key: %w", err)
+		}
+	}
+	codec, err := sse.NewCursorCodec(key)
+	if err != nil {
+		return err
+	}
+	application.venueCursorCodec = codec
+	venueEndpoint := &venuesendpoint.Endpoint{Reader: application.venueCacheService, Ready: application.venueCacheListener.Ready(), Hub: application.venueStreamHub, Cursors: application.venueCursorCodec, Auth: cfg.AuthVerifier}
+	venueEndpoint.Register(apiMux)
+	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte("ok"))
+	})
+	if application.cellarStore != nil {
+		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
+	}
+	mux.Handle("/api/", apiHandler)
+	application.httpListener = listener
+	application.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	return nil
 }
 
 func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
@@ -876,6 +1024,9 @@ func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
 func (a *App) Run(ctx context.Context) error {
 	if a.baseStore == nil {
 		return fmt.Errorf("app is not initialised")
+	}
+	if a.component == "handpump" {
+		return a.runHandPump(ctx)
 	}
 	if a.adminDeleteEvaluateOnce {
 		return a.RunAdminDeleteEvaluation(ctx)
@@ -935,6 +1086,18 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 
+	// Treat each process start as an opportunity to discover overdue polls. The
+	// source bounds this scan by the persisted PollsSince floor and today's
+	// London date; the observation identity converges with the scheduled scan.
+	if a.autoCompleteListener != nil {
+		if err := a.autoCompleteListener.RunOnce(runCtx); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil
+			}
+			return fmt.Errorf("enqueue startup auto-completion discovery: %w", err)
+		}
+	}
+
 	cellarErr := make(chan error, 1)
 	cellarDone = make(chan struct{})
 	go func() {
@@ -985,6 +1148,13 @@ func (a *App) Run(ctx context.Context) error {
 			}
 		}()
 	}
+	if a.internalHTTPServer != nil {
+		go func() {
+			if err := a.internalHTTPServer.Serve(a.internalHTTPListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				a.logger.Error("Landlord internal HTTP server stopped unexpectedly", "err", err)
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -1004,6 +1174,47 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Warn("cellar scheduler stopped without error, shutting down")
 	}
 	return nil
+}
+
+func (a *App) runHandPump(ctx context.Context) error {
+	defer a.shutdownHTTP()
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for _, projection := range []interface {
+		Start(context.Context) error
+		Ready() <-chan struct{}
+	}{a.notificationProfileListener, a.venueCacheListener} {
+		if err := projection.Start(runCtx); err != nil {
+			return fmt.Errorf("start HandPump projection: %w", err)
+		}
+	}
+	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
+		select {
+		case <-ready:
+		case err := <-a.notificationProfileListener.Errors():
+			return fmt.Errorf("notification profile projection failed: %w", err)
+		case err := <-a.venueCacheListener.Errors():
+			return fmt.Errorf("venue cache projection failed: %w", err)
+		case <-runCtx.Done():
+			return nil
+		}
+	}
+	if a.httpServer == nil {
+		return fmt.Errorf("HandPump requires its public HTTP listener")
+	}
+	go func() {
+		if err := a.httpServer.Serve(a.httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			a.logger.Error("HandPump HTTP server stopped unexpectedly", "err", err)
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-a.notificationProfileListener.Errors():
+		return fmt.Errorf("notification profile projection failed: %w", err)
+	case err := <-a.venueCacheListener.Errors():
+		return fmt.Errorf("venue cache projection failed: %w", err)
+	}
 }
 
 func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
@@ -1079,6 +1290,9 @@ func (a *App) Close() error {
 
 func (a *App) closeListeners() error {
 	var closeErrs []error
+	if a.venueStreamHub != nil {
+		a.venueStreamHub.Shutdown()
+	}
 	if a.diagnosticsConfiguration != nil {
 		closeErrs = append(closeErrs, a.diagnosticsConfiguration.Close())
 	}
@@ -1119,12 +1333,20 @@ func (a *App) closeListeners() error {
 // stopped, per docs/adr/0007-lifecycle.md. It is safe to call more than once and
 // when HTTP is disabled.
 func (a *App) shutdownHTTP() {
-	if a.httpServer == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = a.httpServer.Shutdown(ctx)
+	if a.httpServer != nil {
+		_ = a.httpServer.Shutdown(ctx)
+	}
+	if a.internalHTTPServer != nil {
+		_ = a.internalHTTPServer.Shutdown(ctx)
+	}
+	if a.httpListener != nil {
+		_ = a.httpListener.Close()
+	}
+	if a.internalHTTPListener != nil {
+		_ = a.internalHTTPListener.Close()
+	}
 }
 
 // HTTPAddr returns the bound address of the HTTP server, or "" if HTTP is disabled.
@@ -1133,6 +1355,14 @@ func (a *App) HTTPAddr() string {
 		return ""
 	}
 	return a.httpListener.Addr().String()
+}
+
+// InternalHTTPAddr returns the bound private Landlord API address, or empty if disabled.
+func (a *App) InternalHTTPAddr() string {
+	if a.internalHTTPListener == nil {
+		return ""
+	}
+	return a.internalHTTPListener.Addr().String()
 }
 
 func (a *App) AddCell(request cellar.CellRequest) error {

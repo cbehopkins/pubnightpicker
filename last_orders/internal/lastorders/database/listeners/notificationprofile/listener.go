@@ -11,9 +11,7 @@ import (
 
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"last_orders/internal/lastorders/database/listeners/projectionwatch"
 )
 
 const defaultRetryDelay = 5 * time.Second
@@ -48,11 +46,11 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 		logger = slog.Default()
 	}
 	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1)}
-	listener.unloaded.Store(2)
+	listener.unloaded.Store(3)
 	return listener, nil
 }
 
-// Ready closes once both streams have applied their first full snapshot.
+// Ready closes once all three streams have applied their first full snapshot.
 func (l *Listener) Ready() <-chan struct{} {
 	return l.ready
 }
@@ -65,18 +63,21 @@ func (l *Listener) Start(ctx context.Context) error {
 	return l.Controller.Start(ctx, l.watch)
 }
 
-// watch runs the user and endpoint streams together because the Controller owns a
-// single worker.
+// watch runs all three streams together because the Controller owns a single worker.
 func (l *Listener) watch(ctx context.Context) {
 	var group sync.WaitGroup
-	group.Add(2)
+	group.Add(3)
 	go func() {
 		defer group.Done()
-		l.watchStream(ctx, "user", l.service.SourceWatchUsers, l.applyUser, l.streamLoaded())
+		l.watchStream(ctx, "user", l.service.SourceWatchUsers, l.applyUsers, l.streamLoaded())
 	}()
 	go func() {
 		defer group.Done()
-		l.watchStream(ctx, "endpoint", l.service.SourceWatchEndpoints, l.applyEndpoint, l.streamLoaded())
+		l.watchStream(ctx, "public user", l.service.SourceWatchPublicUsers, l.applyPublicUsers, l.streamLoaded())
+	}()
+	go func() {
+		defer group.Done()
+		l.watchStream(ctx, "endpoint", l.service.SourceWatchEndpoints, l.applyEndpoints, l.streamLoaded())
 	}()
 	group.Wait()
 }
@@ -95,79 +96,133 @@ func (l *Listener) streamLoaded() func() {
 
 type openStream func(context.Context) (notificationprofile.ChangeStream, error)
 
-type applyChange func(context.Context, notificationprofile.Change) error
+type applyBatch func(context.Context, []notificationprofile.Change, bool) error
 
-func (l *Listener) watchStream(ctx context.Context, name string, open openStream, apply applyChange, loaded func()) {
-	for ctx.Err() == nil {
-		if err := l.watchOnce(ctx, open, apply, loaded); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if errors.Is(err, errPersistence) {
-				select {
-				case l.failed <- fmt.Errorf("%s stream: %w", name, err):
-				default:
+func (l *Listener) watchStream(ctx context.Context, name string, open openStream, apply applyBatch, loaded func()) {
+	openTyped := func(ctx context.Context) (projectionwatch.Stream[notificationprofile.Change], error) {
+		return open(ctx)
+	}
+	err := projectionwatch.Run(ctx, projectionwatch.Config[notificationprofile.Change]{
+		Name:            name,
+		Open:            openTyped,
+		Apply:           projectionwatch.ApplyBatch[notificationprofile.Change](apply),
+		BaselineApplied: loaded,
+		RetryDelay:      l.retryDelay,
+		Logger:          l.logger,
+	})
+	if err != nil {
+		select {
+		case l.failed <- fmt.Errorf("%s stream: %w", name, err):
+		default:
+		}
+	}
+}
+
+func (l *Listener) applyUsers(ctx context.Context, changes []notificationprofile.Change, baseline bool) error {
+	mutations := make([]notificationprofile.PrivateUserMutation, 0, len(changes))
+	for _, change := range changes {
+		mutation := notificationprofile.PrivateUserMutation{UserID: change.Doc.ID}
+		if change.Kind != notificationprofile.ChangeRemoved {
+			user, err := notificationprofile.PrivateUserFromDocument(change.Doc)
+			if err != nil {
+				if baseline {
+					return fmt.Errorf("%w: user %q: %v", ErrMalformedDocument, change.Doc.ID, err)
 				}
-				return
+				l.logger.Warn("skip malformed notification profile document",
+					"doc_id", change.Doc.ID, "err", err)
+				continue
 			}
-			l.logger.Error("notification profile watch failed", "stream", name, "err", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(l.retryDelay):
-			}
+			mutation.User = &user
 		}
+		mutations = append(mutations, mutation)
 	}
+	if err := l.store.ApplyPrivateUsers(ctx, mutations, baseline); err != nil {
+		return fmt.Errorf("%w: %w", errPersistence, err)
+	}
+	for _, mutation := range mutations {
+		attributes := []any{
+			"projection", "notification_profile",
+			"contribution", "private_user",
+			"user_id", mutation.UserID,
+			"baseline", baseline,
+			"deleted", mutation.User == nil,
+		}
+		if mutation.User != nil {
+			preferences := mutation.User.Preferences()
+			attributes = append(attributes,
+				"web_push_enabled", preferences.WebPushEnabled,
+				"open_poll_email_enabled", preferences.OpenPollEmailEnabled,
+				"notification_email_enabled", preferences.NotificationEmailEnabled,
+				"poll_opens", preferences.PollOpens,
+				"poll_completes", preferences.PollCompletes,
+				"global_chat", preferences.GlobalChat,
+				"event_chat", preferences.EventChat,
+				"event_chat_muted_poll_ids", preferences.EventChatMutedPollIDs,
+			)
+		}
+		l.logger.Info("notification profile projection applied", attributes...)
+	}
+	return nil
 }
 
-// watchOnce establishes a stream and applies changes until it fails. Firestore
-// replays a full snapshot on each new stream, which is what rebuilds a lost
-// projection.
-func (l *Listener) watchOnce(ctx context.Context, open openStream, apply applyChange, loaded func()) error {
-	stream, err := open(ctx)
-	if err != nil {
-		return err
-	}
-	defer stream.Stop()
-	for {
-		changes, err := stream.Next()
-		if err != nil {
-			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				return nil
-			}
-			return err
-		}
-		for _, change := range changes {
-			if err := apply(ctx, change); err != nil {
-				if errors.Is(err, ErrMalformedDocument) {
-					l.logger.Warn("skip malformed notification profile document",
-						"doc_id", change.Doc.ID, "user_id", change.Doc.UserID, "err", err)
-					continue
+func (l *Listener) applyPublicUsers(ctx context.Context, changes []notificationprofile.Change, baseline bool) error {
+	mutations := make([]notificationprofile.PublicUserMutation, 0, len(changes))
+	for _, change := range changes {
+		mutation := notificationprofile.PublicUserMutation{UserID: change.Doc.ID}
+		if change.Kind != notificationprofile.ChangeRemoved {
+			user, err := notificationprofile.PublicUserFromDocument(change.Doc)
+			if err != nil {
+				if baseline {
+					return fmt.Errorf("%w: public user %q: %v", ErrMalformedDocument, change.Doc.ID, err)
 				}
-				return errors.Join(errPersistence, err)
+				l.logger.Warn("skip malformed public profile document", "doc_id", change.Doc.ID, "err", err)
+				continue
 			}
+			mutation.User = &user
 		}
-		loaded()
+		mutations = append(mutations, mutation)
 	}
+	if err := l.store.ApplyPublicUsers(ctx, mutations, baseline); err != nil {
+		return fmt.Errorf("%w: %w", errPersistence, err)
+	}
+	return nil
 }
 
-func (l *Listener) applyUser(ctx context.Context, change notificationprofile.Change) error {
-	if change.Kind == notificationprofile.ChangeRemoved {
-		return l.store.DeletePreferences(ctx, change.Doc.ID)
+func (l *Listener) applyEndpoints(ctx context.Context, changes []notificationprofile.Change, baseline bool) error {
+	mutations := make([]notificationprofile.EndpointContributionMutation, 0, len(changes))
+	for _, change := range changes {
+		mutation := notificationprofile.EndpointContributionMutation{UserID: change.Doc.UserID, EndpointID: change.Doc.ID}
+		if change.Kind != notificationprofile.ChangeRemoved {
+			endpoint, err := notificationprofile.EndpointContributionFromDocument(change.Doc)
+			if err != nil {
+				if baseline {
+					return fmt.Errorf("%w: endpoint %q for user %q: %v", ErrMalformedDocument, change.Doc.ID, change.Doc.UserID, err)
+				}
+				l.logger.Warn("skip malformed notification profile document",
+					"doc_id", change.Doc.ID, "user_id", change.Doc.UserID, "err", err)
+				continue
+			}
+			mutation.Endpoint = &endpoint
+		}
+		mutations = append(mutations, mutation)
 	}
-	preferences, err := notificationprofile.PreferencesFromDocument(change.Doc)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
+	if err := l.store.ApplyEndpointContributions(ctx, mutations, baseline); err != nil {
+		return fmt.Errorf("%w: %w", errPersistence, err)
 	}
-	return l.store.PutPreferences(ctx, preferences)
-}
-
-func (l *Listener) applyEndpoint(ctx context.Context, change notificationprofile.Change) error {
-	if change.Kind == notificationprofile.ChangeRemoved {
-		return l.store.DeleteEndpoint(ctx, change.Doc.UserID, change.Doc.ID)
+	for _, mutation := range mutations {
+		active := false
+		if mutation.Endpoint != nil && mutation.Endpoint.Active != nil {
+			active = *mutation.Endpoint.Active
+		}
+		l.logger.Info("notification profile projection applied",
+			"projection", "notification_profile",
+			"contribution", "push_endpoint",
+			"user_id", mutation.UserID,
+			"endpoint_id", mutation.EndpointID,
+			"baseline", baseline,
+			"deleted", mutation.Endpoint == nil,
+			"active", active,
+		)
 	}
-	endpoint, err := notificationprofile.EndpointFromDocument(change.Doc)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
-	}
-	return l.store.PutEndpoint(ctx, endpoint)
+	return nil
 }

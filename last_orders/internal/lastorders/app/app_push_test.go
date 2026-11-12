@@ -36,10 +36,16 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 			userDocument("alice", map[string]any{"webPushEnabled": true}),
 			userDocument("bob", map[string]any{"webPushEnabled": true, "pushPreferences": map[string]any{"pollOpens": false}}),
 		},
+		PublicChanges: []notificationprofile.Change{
+			userDocument("alice", map[string]any{"name": "Alice"}),
+			userDocument("public-only", map[string]any{"name": "No private settings", "webPushEnabled": true}),
+		},
 		EndpointChange: []notificationprofile.Change{
 			endpointDocument("alice", "phone"),
 			endpointDocument("alice", "laptop"),
 			endpointDocument("bob", "phone"),
+			endpointDocument("public-only", "public-only-phone"),
+			endpointDocument("orphan", "orphan-phone"),
 		},
 	}
 	a := newApp(t, cfg)
@@ -79,6 +85,11 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 	for _, want := range []string{"https://push.test/phone", "https://push.test/laptop", `\"eventType\":\"poll_opened\"`} {
 		if !strings.Contains(logged, want) {
 			t.Errorf("logs missing %q", want)
+		}
+	}
+	for _, excluded := range []string{"https://push.test/public-only-phone", "https://push.test/orphan-phone"} {
+		if strings.Contains(logged, excluded) {
+			t.Errorf("push delivered without private-user contribution: %s", excluded)
 		}
 	}
 }
@@ -203,11 +214,12 @@ func TestChatMessageListenerFiltersRecipientsAndMarksProcessed(t *testing.T) {
 		t.Fatalf("run app: %v", err)
 	}
 
-	if pushes := strings.Count(logs.String(), `"msg":"dummy push sent"`); pushes != 1 {
+	pushLogs := dummyPushLogs(logs.String())
+	if pushes := strings.Count(pushLogs, `"msg":"dummy push sent"`); pushes != 1 {
 		t.Fatalf("dummy pushes = %d, want only bob's endpoint", pushes)
 	}
-	if !strings.Contains(logs.String(), "https://push.test/bob-phone") || strings.Contains(logs.String(), "muted-phone") {
-		t.Fatalf("chat push recipient filtering was wrong: %s", logs.String())
+	if !strings.Contains(pushLogs, "https://push.test/bob-phone") || strings.Contains(pushLogs, "muted-phone") {
+		t.Fatalf("chat push recipient filtering was wrong: %s", pushLogs)
 	}
 }
 
@@ -251,6 +263,35 @@ func TestPushTestListenerAcknowledgesAndDeletesRequest(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `\"eventType\":\"diagnostic_push_test\"`) {
 		t.Fatalf("diagnostic payload missing: %s", logs.String())
+	}
+}
+
+func TestDiagnosticPushExcludesPublicOnlyProfilesAndOrphanEndpoints(t *testing.T) {
+	logs := &syncBuffer{}
+	pushSources := pushsourcestest.New()
+	requests := pushtesttest.New()
+	requests.Requests["public-only"] = "public-check"
+	requests.Requests["orphan"] = "orphan-check"
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "missing-private-diagnostic.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.PushSources = pushSources
+	cfg.PushTestSource = requests
+	cfg.NotificationProfileSource = &notificationprofiletest.Source{
+		PublicChanges:  []notificationprofile.Change{userDocument("public-only", map[string]any{"name": "Public user", "webPushEnabled": true})},
+		EndpointChange: []notificationprofile.Change{endpointDocument("public-only", "public-phone"), endpointDocument("orphan", "orphan-phone")},
+	}
+	application := newApp(t, cfg)
+	defer application.Close()
+	runUntil(t, application, func() bool {
+		return pushSources.RequestDeleted("public-only") && pushSources.RequestDeleted("orphan")
+	})
+	for _, userID := range []string{"public-only", "orphan"} {
+		if _, acknowledged := pushSources.Ack(userID); acknowledged {
+			t.Fatalf("diagnostic request for %s was acknowledged without a delivery", userID)
+		}
+	}
+	if strings.Contains(logs.String(), `"msg":"dummy push sent"`) {
+		t.Fatalf("diagnostic push sent without a private-user contribution: %s", logs.String())
 	}
 }
 
@@ -329,9 +370,21 @@ func TestChatExceptionRetainsPreferencesAndAuthorExclusion(t *testing.T) {
 	application := newApp(t, cfg)
 	defer application.Close()
 	runUntil(t, application, func() bool { return source.Processed("live-chat") })
-	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 || !strings.Contains(logs.String(), "reader-phone") || strings.Contains(logs.String(), "author-phone") || strings.Contains(logs.String(), "muted-phone") {
-		t.Fatalf("unexpected chat recipients: %s", logs.String())
+	pushLogs := dummyPushLogs(logs.String())
+	if strings.Count(pushLogs, `"msg":"dummy push sent"`) != 1 || !strings.Contains(pushLogs, "reader-phone") || strings.Contains(pushLogs, "author-phone") || strings.Contains(pushLogs, "muted-phone") {
+		t.Fatalf("unexpected chat recipients: %s", pushLogs)
 	}
+}
+
+func dummyPushLogs(logs string) string {
+	var selected strings.Builder
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, `"msg":"dummy push sent"`) {
+			selected.WriteString(line)
+			selected.WriteByte('\n')
+		}
+	}
+	return selected.String()
 }
 
 func endpointDocument(userID, endpointID string) notificationprofile.Change {

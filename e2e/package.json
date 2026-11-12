@@ -1,16 +1,34 @@
 {
     "name": "pubnightpicker-e2e-tests",
     "version": "1.0.0",
-    "description": "End-to-end tests for PubNightPicker chat push notifications",
+    "description": "Cucumber and Playwright browser journeys for PubNightPicker",
     "type": "module",
     "scripts": {
-        "test": "node frontend-client.js"
+        "install:browsers": "playwright install chromium",
+        "postinstall": "npm run install:browsers",
+        "test": "npm run test:journey",
+        "cucumber": "cucumber-js",
+        "test:journey": "python run_gherkin_e2e.py",
+        "test:journey:frontend": "python run_gherkin_e2e.py --group frontend",
+        "test:journey:last-orders": "python run_gherkin_e2e.py --group last-orders",
+        "test:harness": "python -m unittest discover -s . -p test_run_gherkin_e2e.py",
+        "test:support": "node --test support.test.js"
     },
     "dependencies": {
-        "firebase": "^10.0.0"
+        "firebase": "^11.10.0"
     },
-    "devDependencies": {},
+    "overrides": {
+        "@grpc/grpc-js": "^1.13.6"
+    },
+    "devDependencies": {
+        "@cucumber/cucumber": "^13.3.0",
+        "playwright": "^1.56.1"
+    },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=20.0.0"
+    },
+    "allowScripts": {
+        "protobufjs@7.6.6": true,
+        "@firebase/util@1.12.1": true
     }
 }

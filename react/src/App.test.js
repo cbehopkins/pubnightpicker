@@ -29,7 +29,7 @@ const {
 });
 
 vi.mock("react-router-dom", () => {
-  const Navigate = (props) => null;
+  const Navigate = () => null;
   return {
     createBrowserRouter: createBrowserRouterMock,
     RouterProvider: () => <div data-testid="router-provider" />,

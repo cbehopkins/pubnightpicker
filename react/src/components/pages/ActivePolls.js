@@ -1,6 +1,5 @@
 // @ts-check
 
-import React from "react";
 import styles from "./ActivePolls.module.css";
 import usePolls from "../../hooks/usePolls";
 import usePubs from "../../hooks/usePubs";

@@ -352,7 +352,6 @@ function VotablePub({
   pollId,
   pollDate,
   completeHandler,
-  mobile,
   showAttendanceColumns,
   usersByUid,
 }) {
@@ -374,26 +373,45 @@ function VotablePub({
 
   // Override allowGlobalAttendanceControls to include pollPubIds length check
   const allowGlobalAttendanceControls = rowData.canVote && pubId === "any" && pollPubIds.length > 0;
-  const [votedNames, canComeNames, cannotComeNames, etaNames] = showAttendanceColumns
-    ? (() => {
-      const rowAttendance = attendance[pubId] || {};
-      const rowEtaMap = rowAttendance.eta || {};
-      const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
-      const rowCanCome = rowAttendance.canCome || [];
-      const rowCannotCome = rowAttendance.cannotCome || [];
+  const [votedNames, canComeNames, cannotComeNames, etaNames] = showAttendanceColumns
 
-      return [
-        formatPeople(rowVoters, usersByUid),
-        formatPeople(rowCanCome, usersByUid),
-        formatPeople(rowCannotCome, usersByUid),
-        formatPeople(
-          rowCanCome.filter((id) => Boolean(rowEtaMap[normalizeUserId(id)])),
-          usersByUid,
-          rowEtaMap
-        ),
-      ];
-    })()
-    : [[], [], [], []];
+    ? (() => {
+
+      const rowAttendance = attendance[pubId] || {};
+
+      const rowEtaMap = rowAttendance.eta || {};
+
+      const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
+
+      const rowCanCome = rowAttendance.canCome || [];
+
+      const rowCannotCome = rowAttendance.cannotCome || [];
+
+
+      return [
+
+        formatPeople(rowVoters, usersByUid),
+
+        formatPeople(rowCanCome, usersByUid),
+
+        formatPeople(rowCannotCome, usersByUid),
+
+        formatPeople(
+
+          rowCanCome.filter((id) => Boolean(rowEtaMap[normalizeUserId(id)])),
+
+          usersByUid,
+
+          rowEtaMap
+
+        ),
+
+      ];
+
+    })()
+
+    : [[], [], [], []];
+
 
   return (
     <tr>

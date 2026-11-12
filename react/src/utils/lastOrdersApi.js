@@ -1,35 +1,16 @@
 import { auth } from "../firebase";
+import { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
 
-export class LastOrdersApiError extends Error {
-    constructor(code, message) {
-        super(message);
-        this.name = "LastOrdersApiError";
-        this.code = code;
-    }
-}
+export { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
 
-export function lastOrdersApiURL(path) {
-    const configured = import.meta.env.VITE_LAST_ORDERS_API_BASE_URL || "http://localhost:8081";
-    try {
-        const base = new URL(configured);
-        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname);
-        if ((base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) ||
-            base.username || base.password || base.search || base.hash) {
-            throw new Error("Invalid API base URL");
-        }
-        base.pathname = `${base.pathname.replace(/\/+$/, "")}/`;
-        const target = new URL(path, base);
-        if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || target.search || target.hash) {
-            throw new Error("Invalid API path");
-        }
-        return target.toString();
-    } catch {
-        throw new LastOrdersApiError("configuration_error", "The Last Orders API URL is not configured correctly.");
-    }
-}
-
-export async function requestLastOrders(path, { body = null, signal = new AbortController().signal } = {}) {
-    const url = lastOrdersApiURL(path);
+export async function requestLastOrders(path, {
+    method = "POST",
+    body = null,
+    contentType = "application/json",
+    query = null,
+    signal = new AbortController().signal,
+} = {}) {
+    const url = lastOrdersApiURL(path, query);
     const user = auth.currentUser;
     if (!user) {
         throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");
@@ -53,12 +34,17 @@ export async function requestLastOrders(path, { body = null, signal = new AbortC
                 throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
             }
             ensureCurrentSession();
+            const hasBody = body !== null || method === "POST";
+            const headers = { Authorization: `Bearer ${token}` };
+            if (hasBody) {
+                headers["Content-Type"] = contentType;
+            }
             let response;
             try {
                 response = await fetch(url, {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
+                    method,
+                    headers,
+                    ...(hasBody ? { body: JSON.stringify(body) } : {}),
                     credentials: "omit",
                     cache: "no-store",
                     redirect: "error",
@@ -78,8 +64,11 @@ export async function requestLastOrders(path, { body = null, signal = new AbortC
             if (!response.ok) {
                 throw new LastOrdersApiError("backend_error", "Last Orders could not complete the request. Please try again.");
             }
-            const contentType = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
-            if (contentType !== "application/json") {
+            if (response.status === 204) {
+                return undefined;
+            }
+            const responseContentType = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+            if (responseContentType !== "application/json") {
                 throw new LastOrdersApiError("invalid_response", "Last Orders returned an unexpected response.");
             }
             let data;

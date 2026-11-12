@@ -31,7 +31,6 @@ vi.mock("react-redux", () => ({ useSelector: vi.fn() }));
 
 // ─── React / testing ─────────────────────────────────────────────────────────
 
-import React from "react";
 import { render } from "@testing-library/react";
 import ChatBox from "./ChatBox";
 

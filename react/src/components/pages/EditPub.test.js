@@ -2,17 +2,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import EditPubPage from "./EditPub";
+import EditPubPage, { loader } from "./EditPub";
 
 const {
   navigateMock,
-  usePubsMock,
+  usePubsStateMock,
   useRoleMock,
   useRouteLoaderDataMock,
 } = vi.hoisted(() => {
   return {
     navigateMock: vi.fn(),
-    usePubsMock: vi.fn(),
+    usePubsStateMock: vi.fn(),
     useRoleMock: vi.fn(),
     useRouteLoaderDataMock: vi.fn(),
   };
@@ -20,7 +20,6 @@ const {
 
 vi.mock("react-router-dom", () => {
   return {
-    defer: vi.fn((value) => value),
     useNavigate: () => navigateMock,
     useRouteLoaderData: useRouteLoaderDataMock,
   };
@@ -28,7 +27,7 @@ vi.mock("react-router-dom", () => {
 
 vi.mock("../../hooks/usePubs", () => {
   return {
-    default: usePubsMock,
+    usePubsState: usePubsStateMock,
   };
 });
 
@@ -52,9 +51,15 @@ vi.mock("./PubForm", () => {
 });
 
 describe("EditPubPage", () => {
+  it("returns the venue id as loader data", async () => {
+    const data = await loader({ params: { pubId: "venue-1" } });
+
+    expect(data.pub_id).toBe("venue-1");
+  });
+
   beforeEach(() => {
     navigateMock.mockReset();
-    usePubsMock.mockReset();
+    usePubsStateMock.mockReset();
     useRoleMock.mockReset();
     useRouteLoaderDataMock.mockReset();
 
@@ -67,7 +72,12 @@ describe("EditPubPage", () => {
   });
 
   it("shows a loading state until the venue document has loaded", () => {
-    usePubsMock.mockReturnValue({});
+    usePubsStateMock.mockReturnValue({
+      venues: {},
+      isLoading: true,
+      isStale: false,
+      errorMessage: null,
+    });
 
     render(<EditPubPage />);
 
@@ -77,7 +87,8 @@ describe("EditPubPage", () => {
 
   it("renders the form only after the loaded venue is available, preserving venueType", () => {
     let currentPubs = {};
-    usePubsMock.mockImplementation(() => currentPubs);
+    let state = { venues: currentPubs, isLoading: true, isStale: false, errorMessage: null };
+    usePubsStateMock.mockImplementation(() => state);
 
     const { rerender } = render(<EditPubPage />);
 
@@ -90,6 +101,7 @@ describe("EditPubPage", () => {
         venueType: "event",
       },
     };
+    state = { venues: currentPubs, isLoading: false, isStale: false, errorMessage: null };
 
     rerender(<EditPubPage />);
 

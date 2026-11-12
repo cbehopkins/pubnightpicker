@@ -35,7 +35,7 @@ const CURRENT_PUBS_WITH_V1 = { v1: {} };
 describe("useAutopopulateVenueSelector", () => {
     beforeEach(() => {
         vi.useFakeTimers({ toFake: ["Date"] });
-        vi.setSystemTime(new Date(2026, 4, 11, 12));
+        vi.setSystemTime(new Date("2026-05-11T12:00:00Z"));
         vi.clearAllMocks();
         vi.mocked(usePubs).mockReturnValue(MOCK_PUBS);
     });

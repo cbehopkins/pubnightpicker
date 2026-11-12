@@ -13,6 +13,7 @@ const {
     docMock,
     queryMock,
     whereMock,
+    requestLastOrdersMock,
     notifyErrorMock,
 } = vi.hoisted(() => {
     return {
@@ -24,6 +25,7 @@ const {
         docMock: vi.fn((dbArg, name, id) => ({ kind: "doc", name, id })),
         queryMock: vi.fn((base, ...clauses) => ({ kind: "query", base, clauses })),
         whereMock: vi.fn((field, op, value) => ({ field, op, value })),
+        requestLastOrdersMock: vi.fn(),
         notifyErrorMock: vi.fn(),
     };
 });
@@ -54,6 +56,12 @@ vi.mock("../../firebase", () => {
 vi.mock("../../dbtools/getUserDoc", () => {
     return {
         default: getUserDocMock,
+    };
+});
+
+vi.mock("../../utils/lastOrdersApi", () => {
+    return {
+        requestLastOrders: requestLastOrdersMock,
     };
 });
 
@@ -102,6 +110,7 @@ describe("PrivacyPage", () => {
         getUserDocMock.mockReset();
         getDocMock.mockReset();
         getDocsMock.mockReset();
+        requestLastOrdersMock.mockReset();
         notifyErrorMock.mockReset();
         collectionMock.mockClear();
         docMock.mockClear();
@@ -136,6 +145,16 @@ describe("PrivacyPage", () => {
             }),
         });
 
+        requestLastOrdersMock
+            .mockResolvedValueOnce({
+                venues: [{ id: "venueA", name: "Venue A", address: "1 Main St" }],
+                next_cursor: "next-page",
+            })
+            .mockResolvedValueOnce({
+                venues: [{ id: "venueB", name: "Venue B", address: "2 High St" }],
+                next_cursor: null,
+            });
+
         getDocsMock.mockImplementation(async (target) => {
             if (target.kind === "collection" && target.name === "votes") {
                 return createSnapshot([
@@ -165,15 +184,9 @@ describe("PrivacyPage", () => {
                         pubs: {
                             venueA: { name: "Venue A" },
                             venueB: { name: "Venue B" },
+                            deletedVenue: { notes: "Historical venue" },
                         },
                     }),
-                ]);
-            }
-
-            if (target.kind === "collection" && target.name === "pubs") {
-                return createSnapshot([
-                    createDocSnapshot("venueA", { name: "Venue A", address: "1 Main St" }),
-                    createDocSnapshot("venueB", { name: "Venue B", address: "2 High St" }),
                 ]);
             }
 
@@ -288,7 +301,14 @@ describe("PrivacyPage", () => {
 
         expect(payload.lookup.polls["poll-1"].date).toBe("2026-04-04");
         expect(payload.lookup.venues.venueA.name).toBe("Venue A");
+        expect(payload.lookup.venues.venueA.venueRecord.address).toBe("1 Main St");
+        expect(payload.lookup.venues.venueB.venueRecord.address).toBe("2 High St");
         expect(payload.lookup.venues.any.name).toBe("Any venue");
+        expect(payload.lookup.venues.deletedVenue).toEqual({
+            venueId: "deletedVenue",
+            name: null,
+            venueRecord: null,
+        });
 
         expect(payload.expanded.profile.preferredName).toBe("Preferred User");
         expect(payload.expanded.profile.notificationPreferences.votesVisible).toBe(false);
@@ -299,6 +319,36 @@ describe("PrivacyPage", () => {
 
         expect(anchorRecord?.download).toBe("pub-night-picker-data-user-123.json");
         expect(anchorRecord?.href).toBe("blob:privacy-export");
+        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(1, "api/venues", {
+            method: "GET",
+            query: { limit: "100" },
+        });
+        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(2, "api/venues", {
+            method: "GET",
+            query: { limit: "100", cursor: "next-page" },
+        });
+        expect(collectionMock.mock.calls.some(([, name]) => name === "pubs")).toBe(false);
+    });
+
+    it("does not download a partial export when a venue page fails", async () => {
+        requestLastOrdersMock.mockReset();
+        requestLastOrdersMock
+            .mockResolvedValueOnce({
+                venues: [{ id: "venueA", name: "Venue A" }],
+                next_cursor: "stale-cursor",
+            })
+            .mockRejectedValueOnce(new Error("The venue list cursor is no longer usable."));
+
+        render(<PrivacyPage />);
+
+        fireEvent.click(screen.getByText("Download My Data (JSON)"));
+
+        await waitFor(() => {
+            expect(notifyErrorMock).toHaveBeenCalledWith("The venue list cursor is no longer usable.");
+        });
+
+        expect(URL.createObjectURL).not.toHaveBeenCalled();
+        expect(anchorRecord?.click).toBeUndefined();
     });
 
     it("reports export failures via notifyError", async () => {

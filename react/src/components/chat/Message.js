@@ -1,6 +1,5 @@
 // @ts-check
 
-import React from "react";
 import { useSelector } from "react-redux";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase";

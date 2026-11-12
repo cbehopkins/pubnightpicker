@@ -20,6 +20,7 @@ function AdminLayout() {
     return (
         <div className="container-fluid px-3 px-md-4 py-4">
             <h1 className="h5 fw-semibold mb-3">Admin</h1>
+            {!currentSection && <Outlet />}
             <Accordion
                 activeKey={collapsedLocationKey === location.key ? null : currentSection?.path}
                 onSelect={(path) => {

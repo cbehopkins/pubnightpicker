@@ -28,6 +28,53 @@ for the architecture this codebase follows.
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
+## System model
+
+The public API and background processing have separate runtime roles. In the
+current Docker deployment, `last-orders` runs both roles in one process. The
+component subcommands run either role on its own. A split Scaleway deployment
+uses the same image for two containers:
+
+```mermaid
+flowchart LR
+    Browser[Frontend / browser] -->|public HTTPS| Public[Scaleway public endpoint]
+    Browser -. DNS lookup .-> CF[Cloudflare DNS]
+    CF -. resolves hostname to endpoint .-> Browser
+
+    subgraph VPC[Scaleway VPC]
+      subgraph PN[Private Network]
+        HP[HandPump container<br/>public API + read projections]
+        LH[Landlord container<br/>notifications + housekeeping + email]
+        HPDB[(HandPump local projection cache)]
+        LHDB[(Landlord /data SQLite<br/>durable work + email status)]
+        HP --> HPDB
+        LH --> LHDB
+        HP -->|email history HTTP call + bearer token| LH
+      end
+      DNS[Scaleway private DNS<br/>*.internal]
+      HP -. resolves LANDLORD_INTERNAL_URL .-> DNS
+      FS[(Firestore)]
+      HP <--> FS
+      LH <--> FS
+    end
+
+    Public --> HP
+```
+
+In the split deployment, only HandPump has the public endpoint and custom
+domain. Landlord's `private_endpoint` is reachable from the VPC and is the value
+used for `LANDLORD_INTERNAL_URL`; Landlord's public endpoint should be disabled.
+HandPump forwards email-history requests to Landlord, which queries its own
+SQLite state. HandPump and Landlord use separate database paths and volumes.
+
+In combined mode, the public endpoint still serves HandPump routes, while the
+internal email-history call goes to a loopback-only Landlord listener in the
+same process. The Docker image's default command selects this combined mode.
+
+See Scaleway's [Serverless Containers Private Networks guide](https://www.scaleway.com/en/docs/serverless-containers/how-to/use-private-networks/)
+for enabling and retrieving the private endpoint, and its [private DNS guide](https://www.scaleway.com/en/docs/vpc/reference-content/dns/)
+for the `.internal` hostname format.
+
 ## Run
 
 Install dependencies and run tests:
@@ -65,12 +112,39 @@ The temporary build pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
 Go 1.27 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
 uses an older, incompatible x/tools version. The executable is installed into
 `GOBIN` (or `GOPATH\bin` by default); no tooling module remains in the repository.
+From the repository root, run `./run-tests.ps1 -Staticcheck` to execute it.
 
 Run the application:
 
 ```powershell
 go run ./cmd/last-orders -db-path=./last-orders.db
 ```
+
+The default command runs the combined production composition. For component
+debugging, the same binary supports `landlord` and `handpump` subcommands:
+
+```powershell
+$env:LANDLORD_INTERNAL_TOKEN = [guid]::NewGuid().ToString("N")
+go run ./cmd/last-orders landlord -db-path=./landlord.db
+go run ./cmd/last-orders handpump -db-path=./handpump.db -landlord-url=$env:LANDLORD_INTERNAL_URL
+```
+
+Landlord owns the durable email database and serves its authenticated internal
+email-history query on its private listener. HandPump serves the public API and
+calls that query; it must use its own SQLite path and must not share Landlord's
+database file. Set `LANDLORD_INTERNAL_TOKEN` to the same high-entropy value on
+both components (at least 32 characters). In combined mode, the private endpoint
+is automatically bound to loopback and the token is generated for that process.
+
+For Scaleway Serverless Containers, attach Landlord and HandPump to the same
+Private Network and enable Landlord's private endpoint. Set HandPump's
+`LANDLORD_INTERNAL_URL` to the private endpoint shown in the Landlord container's
+`private_endpoint` field, for example
+`http://<landlord-container-id>.<private-network-id>.internal`. Disable Landlord's
+public endpoint; keep the existing public domain routed to HandPump. Configure
+Landlord's internal listener on the container's application port (default 8080).
+The current single-container Docker deployment continues to use the default
+combined command.
 
 The application always connects to Firestore. For local development set
 `FIRESTORE_EMULATOR_HOST` (and optionally `GOOGLE_CLOUD_PROJECT`). For production
@@ -90,6 +164,11 @@ the application does not fall back to other credentials. Errors do not include t
 credential contents. The supplied credentials are shared by Firestore, API token
 verification and optional admin Auth deletion. Emulator clients retain their
 existing unauthenticated behaviour and Auth emulator safety checks.
+
+When the public HTTP API is enabled, set `LAST_ORDERS_CURSOR_HMAC_KEY` to an
+unpadded base64url encoding of at least 32 random bytes. The venue collection
+stream signs its opaque resumption cursors with this secret. Keep the value
+stable across restarts and identical across instances serving the same API.
 
 `GOOGLE_CLOUD_PROJECT` overrides the Firestore project; otherwise production uses
 the credential's project ID. Auth uses `FIREBASE_AUTH_PROJECT_ID` when set, then
@@ -124,6 +203,26 @@ or Dockerfile change is required. Keep the SQLite database on the persistent
 arguments, frontend variables, committed configuration or logs. Runtime environment
 secrets remain accessible to anyone with sufficient container/platform privileges;
 restrict access and rotate the service-account key if exposed.
+
+### Release deployment
+
+The `last_orders image` GitHub Actions workflow builds and pushes Last Orders
+images to GHCR. Pushing a tag such as `last_orders-v1.2.3` also deploys that
+version to the configured Scaleway Serverless Container after the image push
+succeeds. The deploy job updates the container's image reference and requests a
+redeploy; it does not run for branch builds or other tags.
+
+Configure these GitHub repository settings for the deploy job:
+
+- Secret `SCW_SECRET_KEY`: a Scaleway API key with permission to update and
+  redeploy the target Serverless Container.
+- Variable `SCW_CONTAINERS_REGION`: the container region, such as `fr-par`.
+- Variable `SCW_CONTAINER_ID`: the target container UUID.
+
+The image is addressed as
+`ghcr.io/<owner>/<repository>/last_orders:last_orders-v1.2.3`. Ensure the
+Scaleway container can pull that GHCR image. The container ID and region are
+configuration, not secrets; keep the API key in the GitHub secret only.
 
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
 or provide both `SWEEGO_TOKEN` and `SWEEGO_PROVIDER` to enable Sweego;

@@ -12,6 +12,7 @@ export default function useWebPushSettings(uid, initialEnabled = false) {
     const [busy, setBusy] = useState(false);
     const [enabled, setEnabled] = useState(Boolean(initialEnabled));
     const [error, setError] = useState("");
+    const [checkedUid, setCheckedUid] = useState(undefined);
 
     useEffect(() => {
         let cancelled = false;
@@ -19,12 +20,14 @@ export default function useWebPushSettings(uid, initialEnabled = false) {
         const syncLocalEnabledState = async () => {
             if (!uid) {
                 setEnabled(false);
+                setCheckedUid(uid);
                 return;
             }
             try {
                 const hasSubscription = await hasCurrentWebPushSubscription();
                 if (!cancelled) {
                     setEnabled(hasSubscription);
+                    setCheckedUid(uid);
                 }
 
                 if (hasSubscription && !initialEnabled) {
@@ -33,6 +36,7 @@ export default function useWebPushSettings(uid, initialEnabled = false) {
             } catch {
                 if (!cancelled) {
                     setEnabled(false);
+                    setCheckedUid(uid);
                 }
             }
         };
@@ -84,6 +88,7 @@ export default function useWebPushSettings(uid, initialEnabled = false) {
 
     return {
         busy,
+        checking: checkedUid !== uid,
         enable,
         disable,
         enabled,

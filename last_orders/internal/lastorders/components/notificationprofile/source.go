@@ -28,6 +28,7 @@ type ChangeStream interface {
 // Source is the authoritative Firebase data behind the projection.
 type Source interface {
 	WatchUsers(context.Context) (ChangeStream, error)
+	WatchPublicUsers(context.Context) (ChangeStream, error)
 	WatchEndpoints(context.Context) (ChangeStream, error)
 	DeactivateEndpoint(ctx context.Context, userID, endpointID string) error
 }
@@ -46,6 +47,11 @@ func NewFirestoreSource(client *firestore.Client) (*FirestoreSource, error) {
 func (s *FirestoreSource) WatchUsers(ctx context.Context) (ChangeStream, error) {
 	iter := s.client.Collection(usersCollection).Snapshots(ctx)
 	return &firestoreChangeStream{iterator: iter, withParent: false}, nil
+}
+
+func (s *FirestoreSource) WatchPublicUsers(ctx context.Context) (ChangeStream, error) {
+	iter := s.client.Collection("user-public").Snapshots(ctx)
+	return &firestoreChangeStream{iterator: iter}, nil
 }
 
 func (s *FirestoreSource) WatchEndpoints(ctx context.Context) (ChangeStream, error) {

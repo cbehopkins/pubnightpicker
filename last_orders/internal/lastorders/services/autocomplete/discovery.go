@@ -26,7 +26,7 @@ func (handler DiscoveryHandler) Handle(ctx context.Context, truth truths.DailyPo
 	if truth.ObservedOn == "" {
 		return cellar.Complete{}
 	}
-	docs, err := handler.Source.ListOpenPollsOn(ctx, truth.ObservedOn)
+	docs, err := handler.Source.ListOpenPollsThrough(ctx, truth.ObservedOn)
 	if err != nil {
 		return cellar.ErrorResult{Message: "list eligible polls", Err: err}
 	}

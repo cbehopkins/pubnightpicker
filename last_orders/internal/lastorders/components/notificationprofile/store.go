@@ -3,10 +3,9 @@ package notificationprofile
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"last_orders/internal/lastorders/basestore"
 )
@@ -17,154 +16,116 @@ type Store struct {
 	base *basestore.Store
 }
 
+type UserPreferencesMutation struct {
+	UserID      string
+	Preferences *UserPreferences
+}
+
+type EndpointMutation struct {
+	UserID     string
+	EndpointID string
+	Endpoint   *Endpoint
+}
+
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func New(base *basestore.Store) (*Store, error) {
 	if base == nil || base.DB() == nil {
 		return nil, fmt.Errorf("base store is required")
 	}
-	if _, err := base.DB().Exec(`
-		CREATE TABLE IF NOT EXISTS notification_user_prefs (
-			user_id TEXT PRIMARY KEY,
-			web_push_enabled INTEGER NOT NULL DEFAULT 0,
-			poll_opens INTEGER NOT NULL DEFAULT 1,
-			poll_completes INTEGER NOT NULL DEFAULT 1,
-			global_chat INTEGER NOT NULL DEFAULT 0,
-			event_chat INTEGER NOT NULL DEFAULT 0,
-			muted_poll_ids_json TEXT NOT NULL DEFAULT '[]',
-			notification_email TEXT NOT NULL DEFAULT '',
-			open_poll_email INTEGER NOT NULL DEFAULT 0,
-			notification_email_enabled INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME NOT NULL
-		);
-	`); err != nil {
-		return nil, fmt.Errorf("create notification_user_prefs schema: %w", err)
-	}
-	// CREATE TABLE IF NOT EXISTS leaves tables from earlier schemas unchanged.
-	for _, column := range []struct{ name, definition string }{
-		{name: "notification_email", definition: "TEXT NOT NULL DEFAULT ''"},
-		{name: "open_poll_email", definition: "INTEGER NOT NULL DEFAULT 0"},
-		{name: "notification_email_enabled", definition: "INTEGER NOT NULL DEFAULT 0"},
-	} {
-		if err := ensureColumn(base.DB(), "notification_user_prefs", column.name, column.definition); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := base.DB().Exec(`
-		CREATE TABLE IF NOT EXISTS notification_endpoints (
-			user_id TEXT NOT NULL,
-			endpoint_id TEXT NOT NULL,
-			endpoint_url TEXT NOT NULL,
-			p256dh TEXT NOT NULL,
-			auth TEXT NOT NULL,
-			active INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME NOT NULL,
-			PRIMARY KEY(user_id, endpoint_id)
-		);
-	`); err != nil {
-		return nil, fmt.Errorf("create notification_endpoints schema: %w", err)
-	}
-	if _, err := base.DB().Exec(`
-		CREATE INDEX IF NOT EXISTS notification_endpoints_user ON notification_endpoints(user_id);
-	`); err != nil {
-		return nil, fmt.Errorf("create notification_endpoints index: %w", err)
+	if err := migrate(context.Background(), base); err != nil {
+		return nil, err
 	}
 	return &Store{base: base}, nil
 }
 
 func (s *Store) PutPreferences(ctx context.Context, preferences UserPreferences) error {
-	if preferences.UserID == "" {
-		return fmt.Errorf("user ID is required")
+	return s.ApplyPreferences(ctx, []UserPreferencesMutation{{UserID: preferences.UserID, Preferences: &preferences}}, false)
+}
+
+// ApplyPreferences applies one user-preference source batch atomically. A
+// baseline replaces the complete preference projection.
+func (s *Store) ApplyPreferences(ctx context.Context, mutations []UserPreferencesMutation, baseline bool) error {
+	userIDs := make([]string, 0, len(mutations))
+	for _, mutation := range mutations {
+		if mutation.UserID == "" || (mutation.Preferences != nil && mutation.Preferences.UserID != mutation.UserID) {
+			return fmt.Errorf("preference mutation requires matching user IDs")
+		}
+		userIDs = append(userIDs, mutation.UserID)
 	}
-	muted, err := json.Marshal(nonNilStrings(preferences.EventChatMutedPollIDs))
-	if err != nil {
-		return fmt.Errorf("encode muted poll ids: %w", err)
-	}
-	_, err = s.base.DB().ExecContext(ctx, `
-		INSERT INTO notification_user_prefs(
-			user_id, web_push_enabled, poll_opens, poll_completes,
-			global_chat, event_chat, muted_poll_ids_json,
-			notification_email, open_poll_email, notification_email_enabled, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET
-			web_push_enabled = excluded.web_push_enabled,
-			poll_opens = excluded.poll_opens,
-			poll_completes = excluded.poll_completes,
-			global_chat = excluded.global_chat,
-			event_chat = excluded.event_chat,
-			muted_poll_ids_json = excluded.muted_poll_ids_json,
-			notification_email = excluded.notification_email,
-			open_poll_email = excluded.open_poll_email,
-			notification_email_enabled = excluded.notification_email_enabled,
-			updated_at = excluded.updated_at
-	`, preferences.UserID, preferences.WebPushEnabled, preferences.PollOpens,
-		preferences.PollCompletes, preferences.GlobalChat, preferences.EventChat,
-		string(muted), preferences.NotificationEmail, preferences.OpenPollEmailEnabled,
-		preferences.NotificationEmailEnabled, time.Now().UTC())
-	return err
+	return s.applyUserBatch(ctx, "notification_user_prefs", userIDs, baseline, func(tx *sql.Tx) error {
+		for _, mutation := range mutations {
+			if mutation.Preferences == nil {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, mutation.UserID); err != nil {
+					return err
+				}
+			} else if err := writePreferences(ctx, tx, *mutation.Preferences); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) DeletePreferences(ctx context.Context, userID string) error {
-	_, err := s.base.DB().ExecContext(ctx, `DELETE FROM notification_user_prefs WHERE user_id = ?`, userID)
-	return err
+	return s.ApplyPrivateUsers(ctx, []PrivateUserMutation{{UserID: userID}}, false)
 }
 
 func (s *Store) Preferences(ctx context.Context, userID string) (UserPreferences, error) {
-	var preferences UserPreferences
-	var muted string
-	err := s.base.DB().QueryRowContext(ctx, `
-		SELECT user_id, web_push_enabled, poll_opens, poll_completes,
-			global_chat, event_chat, muted_poll_ids_json,
-			notification_email, open_poll_email, notification_email_enabled, updated_at
-		FROM notification_user_prefs WHERE user_id = ?
-	`, userID).Scan(
-		&preferences.UserID, &preferences.WebPushEnabled, &preferences.PollOpens,
-		&preferences.PollCompletes, &preferences.GlobalChat, &preferences.EventChat,
-		&muted, &preferences.NotificationEmail, &preferences.OpenPollEmailEnabled,
-		&preferences.NotificationEmailEnabled, &preferences.UpdatedAt,
-	)
+	user, updatedAt, err := readPrivateUser(ctx, s.base.DB(), userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return UserPreferences{}, ErrNotFound
 		}
 		return UserPreferences{}, err
 	}
-	if err := json.Unmarshal([]byte(muted), &preferences.EventChatMutedPollIDs); err != nil {
-		return UserPreferences{}, fmt.Errorf("decode muted poll ids for %q: %w", userID, err)
-	}
+	preferences := user.Preferences()
+	preferences.UpdatedAt = updatedAt
 	return preferences, nil
 }
 
 func (s *Store) PutEndpoint(ctx context.Context, endpoint Endpoint) error {
-	if endpoint.UserID == "" || endpoint.EndpointID == "" {
-		return fmt.Errorf("endpoint user ID and endpoint ID are required")
+	return s.ApplyEndpoints(ctx, []EndpointMutation{{UserID: endpoint.UserID, EndpointID: endpoint.EndpointID, Endpoint: &endpoint}}, false)
+}
+
+// ApplyEndpoints applies one endpoint source batch atomically. A baseline
+// replaces the complete endpoint projection.
+func (s *Store) ApplyEndpoints(ctx context.Context, mutations []EndpointMutation, baseline bool) error {
+	contributions := make([]EndpointContributionMutation, len(mutations))
+	for index, mutation := range mutations {
+		contributions[index] = EndpointContributionMutation{UserID: mutation.UserID, EndpointID: mutation.EndpointID}
+		if mutation.Endpoint != nil {
+			endpoint := mutation.Endpoint
+			contributions[index].Endpoint = &EndpointContribution{
+				UserID: endpoint.UserID, EndpointID: endpoint.EndpointID, URL: endpoint.URL,
+				P256DH: endpoint.P256DH, Auth: endpoint.Auth, Active: &endpoint.Active,
+			}
+		}
 	}
-	_, err := s.base.DB().ExecContext(ctx, `
-		INSERT INTO notification_endpoints(
-			user_id, endpoint_id, endpoint_url, p256dh, auth, active, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id, endpoint_id) DO UPDATE SET
-			endpoint_url = excluded.endpoint_url,
-			p256dh = excluded.p256dh,
-			auth = excluded.auth,
-			active = excluded.active,
-			updated_at = excluded.updated_at
-	`, endpoint.UserID, endpoint.EndpointID, endpoint.URL, endpoint.P256DH,
-		endpoint.Auth, endpoint.Active, time.Now().UTC())
-	return err
+	return s.ApplyEndpointContributions(ctx, contributions, baseline)
 }
 
 func (s *Store) DeleteEndpoint(ctx context.Context, userID, endpointID string) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		DELETE FROM notification_endpoints WHERE user_id = ? AND endpoint_id = ?
-	`, userID, endpointID)
-	return err
+	return s.ApplyEndpointContributions(ctx, []EndpointContributionMutation{{UserID: userID, EndpointID: endpointID}}, false)
 }
 
 func (s *Store) SetEndpointActive(ctx context.Context, userID, endpointID string, active bool) error {
-	_, err := s.base.DB().ExecContext(ctx, `
-		UPDATE notification_endpoints SET active = ?, updated_at = ?
-		WHERE user_id = ? AND endpoint_id = ?
-	`, active, time.Now().UTC(), userID, endpointID)
-	return err
+	if endpointID == "" {
+		return fmt.Errorf("endpoint ID is required")
+	}
+	return s.writeProfiles(ctx, []string{userID}, func(tx *sql.Tx) error {
+		endpoint, _, err := readEndpointContribution(ctx, tx, userID, endpointID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		endpoint.Active = &active
+		return writeEndpointContribution(ctx, tx, endpoint)
+	})
 }
 
 // EligibleEndpoints returns the active endpoints whose owner has opted in to the
@@ -184,8 +145,9 @@ func (s *Store) EligibleEndpoints(ctx context.Context, selector Selector) ([]End
 		}
 		fmt.Fprintf(&query, `
 			JOIN notification_user_prefs p ON p.user_id = e.user_id
-			WHERE e.active = 1 AND p.web_push_enabled = 1 AND p.%s = 1
+			WHERE e.active = 1 AND p.web_push_enabled = 1 AND COALESCE(p.%s, ?) = 1
 		`, column)
+		args = append(args, selector.Kind == KindPollOpens || selector.Kind == KindPollCompletes)
 	} else {
 		query.WriteString(`
 			JOIN notification_user_prefs p ON p.user_id = e.user_id
@@ -194,7 +156,9 @@ func (s *Store) EligibleEndpoints(ctx context.Context, selector Selector) ([]End
 	}
 
 	if len(selector.UserIDs) > 0 {
-		query.WriteString(` AND e.user_id IN (` + placeholders(len(selector.UserIDs)) + `)`)
+		query.WriteString(` AND e.user_id IN (`)
+		query.WriteString(placeholders(len(selector.UserIDs)))
+		query.WriteString(`)`)
 		for _, userID := range selector.UserIDs {
 			args = append(args, userID)
 		}
@@ -279,33 +243,6 @@ func emailPreferenceColumn(kind EmailKind) (string, error) {
 	default:
 		return "", fmt.Errorf("%w: email %q", ErrUnknownKind, kind)
 	}
-}
-
-func ensureColumn(db *sql.DB, table, column, definition string) error {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
-	if err != nil {
-		return fmt.Errorf("inspect %s schema: %w", table, err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("inspect %s schema: %w", table, err)
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("inspect %s schema: %w", table, err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("inspect %s schema: %w", table, err)
-	}
-	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition)); err != nil {
-		return fmt.Errorf("add %s.%s: %w", table, column, err)
-	}
-	return nil
 }
 
 func nonNilStrings(values []string) []string {

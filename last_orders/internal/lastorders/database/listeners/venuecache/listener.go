@@ -8,11 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"last_orders/internal/lastorders/database/listeners/projectionwatch"
 )
 
 const retryDelay = 5 * time.Second
@@ -24,6 +23,7 @@ var errPersistence = errors.New("persist venue cache projection")
 type Listener struct {
 	service   *venuecache.Service
 	store     *venuecache.Store
+	hub       *sse.Hub
 	logger    *slog.Logger
 	ready     chan struct{}
 	failed    chan error
@@ -31,7 +31,7 @@ type Listener struct {
 	lifecycle.Controller
 }
 
-func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logger) (*Listener, error) {
+func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("venue cache service is required")
 	}
@@ -41,7 +41,11 @@ func New(service *venuecache.Service, store *venuecache.Store, logger *slog.Logg
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}, nil
+	listener := &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}
+	if len(hubs) > 0 {
+		listener.hub = hubs[0]
+	}
+	return listener, nil
 }
 
 // Ready closes once the first full venue snapshot has been applied.
@@ -58,58 +62,57 @@ func (l *Listener) Start(ctx context.Context) error {
 }
 
 func (l *Listener) watch(ctx context.Context) {
-	for ctx.Err() == nil {
-		if err := l.watchOnce(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if errors.Is(err, errPersistence) {
-				l.failed <- err
-				return
-			}
-			l.logger.Error("venue cache watch failed", "err", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(retryDelay):
-			}
-		}
+	err := projectionwatch.Run(ctx, projectionwatch.Config[venuecache.Change]{
+		Name: "venue cache",
+		Open: func(ctx context.Context) (projectionwatch.Stream[venuecache.Change], error) {
+			return l.service.SourceWatch(ctx)
+		},
+		Apply:      projectionwatch.ApplyBatch[venuecache.Change](l.applyBatch),
+		RetryDelay: retryDelay,
+		Logger:     l.logger,
+		BaselineApplied: func() {
+			l.readyOnce.Do(func() { close(l.ready) })
+		},
+	})
+	if err != nil {
+		l.failed <- err
 	}
 }
 
-func (l *Listener) watchOnce(ctx context.Context) error {
-	stream, err := l.service.SourceWatch(ctx)
-	if err != nil {
-		return err
-	}
-	defer stream.Stop()
-	for {
-		changes, err := stream.Next()
-		if err != nil {
-			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				return nil
-			}
-			return err
-		}
-		for _, change := range changes {
-			if err := l.apply(ctx, change); err != nil {
-				if errors.Is(err, ErrMalformedDocument) {
-					l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
-					continue
+func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, baseline bool) error {
+	mutations := make([]venuecache.Mutation, 0, len(changes))
+	for _, change := range changes {
+		mutation := venuecache.Mutation{ID: change.Doc.ID}
+		if change.Kind != venuecache.ChangeRemoved {
+			projection, err := venuecache.ProjectionFromDocument(change.Doc)
+			if err != nil {
+				if baseline {
+					return fmt.Errorf("malformed venue %q in baseline: %w", change.Doc.ID, ErrMalformedDocument)
 				}
-				return errors.Join(errPersistence, err)
+				l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
+				continue
 			}
+			if projection.DeletedOn != "" {
+				mutations = append(mutations, mutation)
+				continue
+			}
+			mutation.Projection = &projection
 		}
-		l.readyOnce.Do(func() { close(l.ready) })
+		mutations = append(mutations, mutation)
 	}
+	if err := l.store.ApplyBatch(ctx, mutations, baseline); err != nil {
+		return errors.Join(errPersistence, err)
+	}
+	if l.hub != nil && len(changes) > 0 {
+		snapshot, err := l.service.ListSnapshot(ctx)
+		if err != nil {
+			return errors.Join(errPersistence, err)
+		}
+		l.hub.PublishChanged("venues:all", snapshot.State.Sequence)
+	}
+	return nil
 }
 
 func (l *Listener) apply(ctx context.Context, change venuecache.Change) error {
-	if change.Kind == venuecache.ChangeRemoved {
-		return l.store.Delete(ctx, change.Doc.ID)
-	}
-	projection, err := venuecache.ProjectionFromDocument(change.Doc)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMalformedDocument, err)
-	}
-	return l.store.Put(ctx, projection)
+	return l.applyBatch(ctx, []venuecache.Change{change}, false)
 }

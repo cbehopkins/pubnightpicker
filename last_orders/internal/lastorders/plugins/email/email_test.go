@@ -116,6 +116,77 @@ func TestDummyPluginRegistersEveryDurableEmailHandler(t *testing.T) {
 	}
 }
 
+func TestDummyEmailEvidenceCorrelatesRequestAndSubmission(t *testing.T) {
+	db := openDB(t)
+	store, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	plugin, err := emailplugin.New(db, emailplugin.Options{
+		Client: emailplugin.ClientDummy, Tokens: emailTokens(t),
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := cellar.New(store, cellar.Config{})
+	if err := plugin.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	request := durableemail.SendRequest{
+		IdempotencyToken: "poll-opened:synthetic-poll", SenderEmail: "sender@test.local",
+		Subject: "Synthetic poll", Text: "Voting opened", Recipients: []durableemail.SendRecipient{{Email: "member@test.local"}},
+	}
+	if _, err := runtime.AddSequence(durableemail.NewSendSequence(request)...); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	done := make(chan struct{})
+	var runErr error
+	go func() { runErr = runtime.Start(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		active, err := store.ListActive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for dummy email submission")
+		case <-ticker.C:
+		}
+	}
+	cancel()
+	<-done
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	var prepared, sent map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		switch record["msg"] {
+		case "dummy email submission prepared":
+			prepared = record
+		case "dummy email sent":
+			sent = record
+		}
+	}
+	if prepared == nil || sent == nil || prepared["idempotency_token"] != request.IdempotencyToken ||
+		prepared["subject"] != request.Subject || prepared["message_id"] == "" ||
+		prepared["message_id"] != sent["message_id"] || sent["recipient"] != "member@test.local" || sent["dry_run"] != false {
+		t.Fatalf("uncorrelated dummy submission: %s", logs.String())
+	}
+}
+
 type guardedTokens struct {
 	wait   int
 	err    error

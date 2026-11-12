@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"last_orders/internal/lastorders/basestore"
@@ -278,47 +277,66 @@ func TestEmailPreferencesRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNewAddsEmailColumnsToExistingSchema(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "profile.db"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+func TestApplyBatchesReplaceBaselinesAtomically(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	seedUser(t, store, UserPreferences{UserID: "old", WebPushEnabled: true, PollOpens: true})
+	seedEndpoint(t, store, Endpoint{UserID: "old", EndpointID: "old-device", Active: true})
+
+	preferences := UserPreferences{UserID: "new", WebPushEnabled: true, PollOpens: true}
+	if err := store.ApplyPreferences(ctx, []UserPreferencesMutation{{UserID: "new", Preferences: &preferences}}, true); err != nil {
+		t.Fatalf("replace preferences baseline: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`
-		CREATE TABLE notification_user_prefs (
-			user_id TEXT PRIMARY KEY,
-			web_push_enabled INTEGER NOT NULL DEFAULT 0,
-			poll_opens INTEGER NOT NULL DEFAULT 1,
-			poll_completes INTEGER NOT NULL DEFAULT 1,
-			global_chat INTEGER NOT NULL DEFAULT 0,
-			event_chat INTEGER NOT NULL DEFAULT 0,
-			muted_poll_ids_json TEXT NOT NULL DEFAULT '[]',
-			updated_at DATETIME NOT NULL
-		);
-		INSERT INTO notification_user_prefs(user_id, updated_at) VALUES('existing', CURRENT_TIMESTAMP);
-	`); err != nil {
-		t.Fatalf("create previous schema: %v", err)
+	if _, err := store.Preferences(ctx, "old"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old preferences error = %v; want not found", err)
 	}
-	base, err := basestore.New(db)
-	if err != nil {
-		t.Fatalf("new base store: %v", err)
+	if _, err := store.Preferences(ctx, "new"); err != nil {
+		t.Fatalf("new preferences: %v", err)
 	}
 
-	for range 2 {
-		if _, err := New(base); err != nil {
-			t.Fatalf("new notification profile store: %v", err)
-		}
+	invalidPreferences := UserPreferences{UserID: "partial"}
+	if err := store.ApplyPreferences(ctx, []UserPreferencesMutation{
+		{UserID: "partial", Preferences: &invalidPreferences},
+		{UserID: "", Preferences: &invalidPreferences},
+	}, true); err == nil {
+		t.Fatal("invalid preferences baseline succeeded")
+	}
+	if _, err := store.Preferences(ctx, "new"); err != nil {
+		t.Fatalf("previous preferences missing after failed replacement: %v", err)
+	}
+	if _, err := store.Preferences(ctx, "partial"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("partial preferences error = %v; want rollback", err)
 	}
 
-	store, err := New(base)
-	if err != nil {
-		t.Fatalf("new notification profile store: %v", err)
+	newEndpoint := Endpoint{UserID: "new", EndpointID: "new-device", URL: "https://push.test/new", P256DH: "key", Auth: "secret", Active: true}
+	if err := store.ApplyEndpoints(ctx, []EndpointMutation{{UserID: "new", EndpointID: "new-device", Endpoint: &newEndpoint}}, true); err != nil {
+		t.Fatalf("replace endpoints baseline: %v", err)
 	}
-	existing, err := store.Preferences(context.Background(), "existing")
-	if err != nil {
-		t.Fatalf("existing preferences: %v", err)
+	var endpointCount int
+	if err := store.base.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_endpoints WHERE endpoint_id = 'old-device'`).Scan(&endpointCount); err != nil {
+		t.Fatalf("count old endpoints: %v", err)
 	}
-	if existing.NotificationEmail != "" || existing.OpenPollEmailEnabled || existing.NotificationEmailEnabled {
-		t.Fatalf("existing = %+v; want email defaults", existing)
+	if endpointCount != 0 {
+		t.Fatalf("old endpoint count = %d; want 0", endpointCount)
+	}
+
+	partialEndpoint := Endpoint{UserID: "new", EndpointID: "partial-device", URL: "https://push.test/partial", P256DH: "key", Auth: "secret", Active: true}
+	if err := store.ApplyEndpoints(ctx, []EndpointMutation{
+		{UserID: "new", EndpointID: "partial-device", Endpoint: &partialEndpoint},
+		{UserID: "", EndpointID: "", Endpoint: &partialEndpoint},
+	}, true); err == nil {
+		t.Fatal("invalid endpoint baseline succeeded")
+	}
+	if err := store.base.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_endpoints WHERE endpoint_id = 'new-device'`).Scan(&endpointCount); err != nil {
+		t.Fatalf("count committed endpoint: %v", err)
+	}
+	if endpointCount != 1 {
+		t.Fatalf("committed endpoint count after rollback = %d; want 1", endpointCount)
+	}
+	if err := store.base.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM notification_endpoints WHERE endpoint_id = 'partial-device'`).Scan(&endpointCount); err != nil {
+		t.Fatalf("count partial endpoint: %v", err)
+	}
+	if endpointCount != 0 {
+		t.Fatalf("partial endpoint count = %d; want 0 after rollback", endpointCount)
 	}
 }

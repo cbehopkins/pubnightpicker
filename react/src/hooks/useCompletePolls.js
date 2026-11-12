@@ -76,6 +76,7 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
       canCompletePoll,
       completingPoll,
       restaurantTime,
+      pollData.polls,
     ]
   );
 

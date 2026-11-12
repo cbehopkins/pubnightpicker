@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteApp, initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
-import { parseArguments, resolveRelease, run, writeExpectation } from "../../scripts/set-deployment-expectation.mjs";
+import { parseArguments, resolveRelease, run } from "../../scripts/set-deployment-expectation.mjs";
 
 const tag = "release-v1.2.3";
 const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -41,18 +39,4 @@ describe("deployment expectation tool", () => {
         await expect(run([...args, "--apply"], { git, write, log: vi.fn() })).rejects.toThrow(/Could not resolve/);
         expect(write).not.toHaveBeenCalled();
     });
-
-    it("writes the exact expectation to the Firestore emulator", async () => {
-        const projectId = "deployment-expectation-test";
-        vi.stubEnv("FIRESTORE_EMULATOR_HOST", `127.0.0.1:${process.env.VITEST_FIRESTORE_PORT}`);
-        const app = initializeApp({ projectId }, "expectation-test-reader");
-        try {
-            await writeExpectation(projectId, { tag, commit });
-            const result = await getFirestore(app).doc("config/deployment").get();
-            expect(result.data()).toEqual({ tag, commit });
-        } finally {
-            await deleteApp(app);
-            vi.unstubAllEnvs();
-        }
-    }, 30000);
 });

@@ -1,35 +1,36 @@
-# E2E Test Suite
+# E2E Browser Journeys
 
-End-to-end tests for PubNightPicker chat push notification flow.
-
-## Architecture
-
-The E2E test harness uses a mixed approach:
-
-1. **Node Frontend Client** (`frontend-client.js`) — Firebase Web SDK connects to Auth emulator, authenticates, and posts a chat message to Firestore
-2. **Python Orchestrator** (`test_e2e_chat_push.py`) — Coordinates the test flow:
-   - Seeds smoke users via firebase-admin
-   - Spawns Node frontend client
-   - Spawns Python notifier subprocess in dummy mode
-   - Waits for notifier to process the message
-   - Asserts on either Firestore side effects (`chat_push_actions`) or notifier logs
-3. **E2E Runner** (`run_e2e_tests.py`) — Manages emulator lifecycle and test execution
+End-to-end browser journeys for PubNightPicker use Cucumber.js and Playwright.
+The supported E2E path runs the React application against fresh Auth and
+Firestore emulators. Backend-tagged scenarios also run the combined Last Orders
+binary with dummy email and push delivery. The retired Python notifier worker
+is never started.
 
 ## Setup
 
 ### Prerequisites
 
-- Node.js 18+ with npm
-- Python 3.12+ with Poetry
+- Node.js 20+ with npm (required by the Cucumber/Playwright browser journey)
+- Python 3.12+ with Poetry (used by the emulator bootstrap utility)
 - Firebase CLI (`npm install -g firebase-tools`)
-- Emulators running on ports 8180 (Firestore) and 9199 (Auth)
+- Java 21+ for the Firebase emulators
+- Go as specified by `last_orders/go.mod`, with `GOTOOLCHAIN=auto` if needed
+  (not required for the focused frontend-only command)
+- The browser journey starts emulators on ports 8080 and 9099, plus Firebase hub
+  port 4400, logging port 4500 and Firestore websocket port 9150. Vite uses 3000
+  and Last Orders uses 8081. The selected group's ports must be free.
+- For the browser journey: the React dependencies installed. Installing the E2E
+  npm dependencies also installs the matching Playwright Chromium browser.
 
 ### Installation
 
 ```bash
 # Install Node dependencies
+cd react
+npm ci
+cd ..
 cd e2e
-npm install
+npm ci
 cd ..
 
 # Install Python dependencies (via poetry in firebase_sub)
@@ -39,13 +40,6 @@ cd ..
 ```
 
 ## Running E2E Tests
-
-### Direct E2E Tests Only
-
-```bash
-# From repository root
-poetry run python e2e/run_e2e_tests.py
-```
 
 ### Via Consolidated Test Runner
 
@@ -57,114 +51,233 @@ poetry run python e2e/run_e2e_tests.py
 ./run-tests.ps1 -Unit             # Unit tests only
 ```
 
-## Test Flow
+### Browser journeys
 
-1. **Initialize Firebase**: Connect to emulators (Firestore on 8180, Auth on 9199)
-2. **Seed Smoke Users**: Create deterministic test users (smoke-admin, smoke-user-a, smoke-user-b) with push endpoints
-3. **Frontend Client**: Authenticate as smoke-user-b and post a global chat message
-4. **Notifier Subprocess**: Start Python notifier in `--dummy-push` mode (logs instead of sending actual web pushes)
-5. **Wait for Processing**: Poll for either:
-   - `chat_push_actions/{messageId}` document written to Firestore (side effect)
-   - Or "Chat push delivery:" log message from notifier (evidence of processing)
-6. **Assert Success**: Exit with status 0 if evidence found, 1 otherwise
+The [Last Orders implementation plan](docs/last-orders-implementation-plan.md)
+tracks the implemented orchestration, recurrence and voluntary push opt-in
+milestones, and the later delivery-evidence, notification, email-history,
+diagnostics and deletion phases.
 
-## Test Data
+From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 
-### Smoke Users (Seeded by `seed_smoke_data()`)
-
-| UID | Email | Role | Push Enabled | Global Chat | Event Chat |
-|-----|-------|------|--------------|-------------|-----------|
-| `smoke-admin` | smoke-admin@test.local | admin (all roles) | N/A | N/A | N/A |
-| `smoke-user-a` | smoke-user-a@test.local | none | false | N/A | N/A |
-| `smoke-user-b` | smoke-user-b@test.local | none | **true** | **true** | **true** |
-
-Smoke-user-b has a deterministic push endpoint at `users/smoke-user-b/push_endpoints/smoke-endpoint-b`.
-
-## Notifier Log Patterns
-
-The E2E test assertions key off these log messages:
-
+```bash
+npm run test:journey
 ```
-Chat push delivery: delivered=1 retryable_failures=0
+
+The default command (also `npm test` and root `./run-tests.ps1 -E2E`) runs both
+mandatory groups sequentially:
+
+| Group | Cucumber selection | Infrastructure |
+| --- | --- | --- |
+| Frontend-only | `not @last_orders` | Fresh emulators and Vite; no backend |
+| Backend-dependent | `@last_orders` | Different fresh emulators, Vite and Last Orders |
+
+Both groups must discover scenarios. A build, startup, scenario or cleanup
+failure fails the command rather than skipping the backend group. Last Orders
+is built before services start and runs once for its group, using a temporary
+SQLite database. No emulator data is imported, exported or reset between
+scenarios. The initial poll-history floor is UTC today; expected recurrence
+dates use Europe/London. A London midnight crossing explicitly fails the
+recurrence scenario so it can be rerun with fresh data.
+
+Focused developer commands, from `e2e/`:
+
+```bash
+npm run test:journey:frontend
+npm run test:journey:last-orders
+npm run test:journey:last-orders -- --name "monthly Event"
+npm run test:harness
+npm run test:support
 ```
+
+The harness checks use standard-library Python `unittest`; support checks use
+Node's built-in test runner. Discovery runs before services start. CI runs both
+checks and the default browser command, not just one tag group.
+
+The `postinstall` hook installs the browser required by the local Playwright
+version. If npm lifecycle scripts were disabled or the browser cache was removed,
+run `npm run install:browsers` from `e2e/`. The root dependency updater runs this
+step explicitly after E2E npm updates, even though it disables other lifecycle
+scripts.
+
+The journey uses a fresh, empty emulator database (no import) with project ID
+`demo-pubnightpicker-journey`. It creates `journey-admin@test.local` with the
+bootstrap CLI and an E2E-only password, opens the homepage, signs in, and checks
+that the administrator can reach My Preferences. Firestore and Auth use the
+ports already configured by the React app (8080 and 9099). The runner refuses
+occupied ports rather than reusing or terminating another service. On Windows,
+each owned process tree is enclosed in a kill-on-close Job Object; POSIX uses
+process groups and requires `ps` to wait for live descendants after signalling
+the group, even if its launcher has already exited. Zombies are treated as
+terminated because their resources have been released. Cleanup stops and waits for backend/frontend children before
+their emulators, including on failure or interruption. It never kills a
+process merely because its name or port resembles an emulator.
+
+POSIX port probes use `SO_REUSEADDR` so completed TCP connections in `TIME_WAIT`
+do not make a stopped service appear to be running. Active listeners are still
+rejected. Windows probes do not enable address reuse because Windows permits
+reuse over active listeners.
+
+Children receive allowlisted OS/tool settings and explicit demo configuration,
+not inherited credentials or provider/deployment settings. An E2E Vite wrapper
+also disables developer env-file loading. The backend uses explicit loopback
+Firestore/Auth endpoints and Auth-emulator permission, a generated cursor key,
+dummy push, and dummy email verified from structured startup evidence. Admin
+deletion stays disabled and dry-run stays enabled. No backend VAPID private key
+or real-delivery configuration is supplied.
+
+The runner discovers all `features/**/*.feature` files. The chat-permissions
+journey registers Alice through the UI, checks that she has no Chat Page link,
+and signs the bootstrapped admin into a separate Playwright browser context.
+The admin finds Alice in Manage Users and grants Can Chat on her user-detail
+page. Alice's existing session must then show the Chat Page link and open chat,
+without a reload or another login. Each scenario gets a new browser, and named
+actors have isolated browser contexts. Alice uses a unique email address so
+the journey does not depend on other scenarios' accounts; emulator data is
+fresh per run, not reset between scenarios.
+
+The `@last_orders` poll-lifecycle journey keeps Bob, Claire and the admin in
+separate browser contexts. Bob and Claire register through the UI, and the admin grants both
+Can Add/Delete Poll Pubs, Can Create/Delete Poll and Can Chat; only Claire
+receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
+to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
+for both; Bob sees those totals and adds his vote. Claire chooses the winning
+pub, both users see the poll disappear from Active Polls, and both find the
+meet in Current Events. They then exchange messages in global and event chat,
+verify that messages remain in their intended scope, and reopen event chat to
+check persistence. Vote totals are checked without granting Can Show Voters or
+administrator access to either member.
+
+Only the venue catalogue is seeded directly: two pubs and a restaurant, using
+the Firebase Web SDK authenticated as the bootstrapped admin against the
+emulators. Unique venue names and account emails keep the fixture separate
+from other scenarios. The restaurant verifies that the Pub filter excludes
+other venue types. These fixture pubs serve food, so completion needs no
+separate restaurant plan. The journey uses a poll date that cannot collide
+with recurrence-generated polls, then verifies Last Orders mirrors the
+completion request before the browser completes the poll. It does not test
+email or push delivery.
+
+The `@last_orders` venue-management outline runs independently for Pub,
+Restaurant and Event. Two members register through the UI and receive Can
+Manage Venues from the admin. One creates a venue; the other edits its name,
+address, website, map, notes and attributes through Last Orders. The creator
+sees the renamed venue without reloading, and both members reopen the saved
+details. The second member also corrects the venue type (Pub to Restaurant,
+Restaurant to Event, or Event to Pub), preserving the venue's identity. Type
+filters and the poll picker must reflect the correction. Restaurant food
+availability is implicit rather than an editable checkbox. Banned venues
+remain manually selectable with a warning. The creator also receives poll
+creation and venue-selection permissions to check the picker using a temporary
+poll, which is deleted afterwards. The editor then soft-deletes the venue and
+the creator sees it disappear without reloading. Venue data is created
+entirely through the UI with unique names. The separate `@last_orders`
+recurrence feature registers its own actors and creates Events entirely through the UI.
+It verifies calculation and another member's edit of a monthly occurrence
+beyond the poll-creation window, then independently verifies a weekly Event
+due tomorrow materialises a poll, votes and attendance. Read assertions use the
+authenticated emulator SDK and correlate by venue ID and occurrence date;
+computed results are never seeded. These scenarios do not prove restart/replay
+idempotency or notification delivery.
+
+The `@last_orders` chat-push feature covers global and event messages sent
+through the UI. Before sending, it waits for structured backend evidence that
+each synthetic user's chat preferences and endpoint have been committed to the
+notification projection. After sending, it waits for a correlated message
+processing record before asserting dummy push submissions and exclusions. The
+checks include author exclusion, global opt-out, event opt-out, event
+participation and a per-event mute. Backend evidence contains synthetic user
+IDs and endpoint IDs only, not endpoint URLs or subscription keys. These tests
+verify backend submission to the dummy transport; they do not prove delivery to
+the browser or display by the operating system.
+
+The separate `@last_orders` poll-push feature creates and manually completes a
+poll through the UI. Five members cover both poll categories enabled, opens
+only, completions only, neither category, and push disabled with an inactive
+endpoint. Exact recipient and payload assertions include the opted-in poll
+actor and a non-voter. The poll-reschedule-push feature independently verifies
+a main-venue change, adding a restaurant without changing the main venue, and
+changing only the restaurant meetup time. Reschedules use completion preferences.
+Poll auto-completion and manual-completion reminder pushes are not covered.
+
+Before each poll action, these journeys wait for committed backend projection
+evidence for the members' poll preferences and endpoint states. Manual completion
+requires a matching notification request/acknowledgement; an unacknowledged
+browser warning is dismissed, never accepted. Push assertions wait for the
+backend-written `push` key in `open_actions` or `comp_actions`, which follows
+terminal delivery processing, then compare all dummy submissions for that poll
+against the cumulative expected endpoint/payload set. This checks exclusions
+and unexpected repeat submissions without fixed sleeps. Each scenario disables
+its members' push subscriptions through the UI and waits for projection evidence,
+so those accounts do not receive pushes from later scenarios sharing the emulator.
+These journeys verify dummy submission only, not provider or browser delivery.
+
+The `@last_orders` poll-email and poll-reschedule-email features cover the same
+UI-created polls, manual completions, venue changes and independent restaurant
+and meetup-time changes through the dummy email client. Four members cover both
+email opt-ins, opens only, completions only and neither. Each saves a synthetic
+notification address distinct from their login email; personal messages must go
+to that address, including the opted-in actor and a non-voter. Completion and
+reschedule assertions also require exactly one mailing-list copy without a
+personal unsubscribe link. Personal copies include the recipient's unsubscribe
+URL. Subject templates and variables, rendered content, independent preferences
+and cumulative submission counts are checked. Push remains disabled for these
+members, and email preferences are disabled through the UI before each scenario
+ends. Auto-completion email is not covered.
+
+Email assertions wait for the backend's `email` action marker and, on completion
+or rescheduling, its separate `pemail` marker. Dummy-only preparation records
+join the poll's idempotency token and subject variables to the durable message
+ID in each `dummy email sent` record; preparation alone is not delivery evidence.
+Suppressed/dry-run submissions fail these assertions. No real email provider,
+SMTP server or mailbox is contacted, even for the mailing-list recipient.
+
+The frontend-only push feature covers allowed permission and saved categories,
+denied permission, and disabling push, with fresh accounts in each scenario.
+It checks that no permission request or subscription occurs before clicking
+Enable Push, and verifies the app's persisted preference and endpoint documents
+after enabling, saving, revisiting and disabling.
+
+Every browser context installs a test-only permission/PushManager fixture before
+application scripts. Unconfigured actors default to denying permission. The
+fixture preserves real local service-worker registration and all application
+Firestore writes, but supplies observable synthetic subscriptions instead of
+contacting browser push services. Attempts to contact the synthetic delivery
+endpoint are blocked and fail the push assertions.
+
+The runner reuses one generated **public-only test VAPID key**; it does not
+generate a new VAPID pair per scenario or keep a VAPID private key. Per-actor
+`p256dh` and `auth` values are synthetic subscription encryption keys, not VAPID
+credentials. They distinguish browser endpoints and exercise serialisation.
+These tests do not establish native permission-dialog behaviour, VAPID signing,
+provider delivery or OS notification display. Production VAPID key rotation is
+not part of this fixture.
 
 ## Debugging
 
-### Enable Verbose Logging
+The runner reports progress and the per-run `e2e/artifacts/<run>/<group>/`
+directory. It contains discovery and Cucumber JSON reports, failure screenshots
+embedded in the latter, and backend stdout JSON Lines plus separate stderr for
+the backend group. Backend failure output includes bounded log tails. Artifacts
+are ignored by Git; CI retains synthetic failure artifacts for seven days.
 
-```bash
-cd e2e
-poetry run python test_e2e_chat_push.py
-```
-
-Output includes:
-- Notifier subprocess logs (prefixed with `[Notifier]`)
-- Orchestrator progress (prefixed with `[Orchestrator]`)
-- Firestore side effect checks
-
-### Manual Emulator Start
-
-```bash
-cd firebase_sub
-firebase emulators:exec --project demo-firebase-sub-integration --only firestore,auth
-```
-
-Then in another terminal:
-```bash
-cd e2e
-node frontend-client.js "Test message"
-```
-
-### Inspect Firestore Emulator Data
-
-Navigate to http://localhost:4000 (Firebase Emulator UI, if enabled).
-
-Or use firebase-admin to query directly:
-
-```python
-import os
-from firebase_admin import credentials, firestore, initialize_app
-import google.oauth2.credentials
-
-os.environ["FIRESTORE_EMULATOR_HOST"] = "127.0.0.1:8180"
-
-app = initialize_app(
-    credential=google.oauth2.credentials.Credentials(token="owner"),
-    options={"projectId": "demo-firebase-sub-integration"}
-)
-
-db = firestore.client()
-docs = db.collection("messages").stream()
-for doc in docs:
-    print(doc.id, doc.to_dict())
-```
-
-## Integration with CI/CD
-
-The consolidated runner (`run-tests.ps1`) makes it easy to integrate all test suites:
-
-```yaml
-# Example GitHub Actions workflow (Azure DevOps)
-- name: Run All Tests
-  run: ./run-tests.ps1 -All
-```
+The E2E emulator UI is disabled. Local logs and artifacts contain synthetic
+journey users and generated subscriptions only; do not introduce real identities
+or provider credentials into fixtures.
 
 ## Troubleshooting
 
 ### Emulator fails to start
-- Check if ports 8180 and 9199 are already in use
-- Try `firebase emulators:stop` then restart
-- On Windows, may need to force-kill lingering Java/Node processes
+- Check whether ports 8080, 9099, 4400, 4500, 9150, 3000 and (for backend) 8081
+  are occupied.
+- Stop only the emulator process that you started; the runner refuses occupied
+  ports and cleans up its own emulator process group on exit.
 
-### Frontend client: "User not found"
-- Verify smoke users were seeded: check `users/{uid}` in Firestore
-- Ensure Auth emulator is running on port 9199
+### Poetry bootstrap fails
+- Ensure Poetry is installed and the `firebase_sub` environment is installed.
 
-### Notifier subprocess doesn't process message
-- Check if `messages/{messageId}` document exists in Firestore (frontend should have written it)
-- Verify notifier logs appear (even dummy-mode errors would show in output)
-- Extend `CHAT_PUSH_TIMEOUT_SEC` in `test_e2e_chat_push.py` if system is slow
-
-### poetry commands fail
-- Ensure Poetry is installed: `pip install poetry`
-- From `firebase_sub` directory, run `poetry install`
+### Last Orders fails to start
+- Check the reported backend stderr artifact and Go prerequisites. Backend
+  startup failures are errors, never successful skips.
+- The runner supplies its own temporary database, poll-history floor and cursor
+  key. Do not work around failures with production env files or credentials.

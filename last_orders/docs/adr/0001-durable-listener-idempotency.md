@@ -1,6 +1,6 @@
 # ADR: Durable Listener Observation and External Idempotency
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-11
 
 ## Context
