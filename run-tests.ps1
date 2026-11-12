@@ -14,6 +14,7 @@
 #   ./run-tests.ps1 -Typecheck                        # Run React TypeScript typecheck
 #   ./run-tests.ps1 -Lint                             # Run React ESLint (rules-of-hooks etc.)
 #   ./run-tests.ps1 -Govulncheck                      # Scan last_orders for Go vulnerabilities
+#   ./run-tests.ps1 -NpmAudit                         # Scan React and E2E npm dependencies
 #   ./run-tests.ps1 -All                              # Run all test suites
 #   ./run-tests.ps1 -Integration -VerboseOutput      # Integration with verbose output
 #   ./run-tests.ps1 -Integration -k test_chat         # Forward pytest args (integration only)
@@ -30,6 +31,7 @@ param(
     [switch]$Typecheck,
     [switch]$Lint,
     [switch]$Govulncheck,
+    [switch]$NpmAudit,
     [switch]$All,
     [switch]$VerboseOutput,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -47,7 +49,7 @@ $GoModules = @("cellar", "durable_email", "email_clients", "last_orders")
 $LastOrdersDir = Join-Path $WorkspaceRoot "last_orders"
 
 # Default to Integration if no suite specified
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $All) {
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $NpmAudit -and -not $All) {
     $Integration = $true
     $Go = $true
 }
@@ -64,6 +66,7 @@ if ($All) {
     $Typecheck = $true
     $Lint = $true
     $Govulncheck = $true
+    $NpmAudit = $true
 }
 
 $FailedSuites = @()
@@ -137,6 +140,44 @@ if ($Govulncheck) {
             }
             else {
                 Write-Host "[OK] Go vulnerability scan PASSED" -ForegroundColor Green
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
+
+# ======================
+# npm Vulnerability Scan
+# ======================
+if ($NpmAudit) {
+    $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
+    $npmProjects = @(
+        @{ Name = "React"; Directory = $ReactDir },
+        @{ Name = "E2E"; Directory = $E2EDir }
+    )
+
+    foreach ($project in $npmProjects) {
+        Write-Host "`n=== Running $($project.Name) npm Vulnerability Scan ===" -ForegroundColor Cyan
+
+        if (-not $npmCommand) {
+            $FailedSuites += "$($project.Name) npm Vulnerability Scan"
+            Write-Host "[FAILED] npm not found; cannot run $($project.Name) vulnerability scan" -ForegroundColor Red
+            continue
+        }
+
+        Push-Location $project.Directory
+        try {
+            Write-Host "[Runner] Command: npm audit" -ForegroundColor Gray
+            & npm audit
+
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "$($project.Name) npm Vulnerability Scan"
+                Write-Host "[FAILED] $($project.Name) npm vulnerability scan FAILED" -ForegroundColor Red
+            }
+            else {
+                Write-Host "[OK] $($project.Name) npm vulnerability scan PASSED" -ForegroundColor Green
             }
         }
         finally {

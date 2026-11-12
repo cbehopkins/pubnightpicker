@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import EditPubPage from "./EditPub";
+import EditPubPage, { loader } from "./EditPub";
 
 const {
   navigateMock,
@@ -20,7 +20,6 @@ const {
 
 vi.mock("react-router-dom", () => {
   return {
-    defer: vi.fn((value) => value),
     useNavigate: () => navigateMock,
     useRouteLoaderData: useRouteLoaderDataMock,
   };
@@ -52,6 +51,12 @@ vi.mock("./PubForm", () => {
 });
 
 describe("EditPubPage", () => {
+  it("returns the venue id as loader data", async () => {
+    const data = await loader({ params: { pubId: "venue-1" } });
+
+    expect(data.pub_id).toBe("venue-1");
+  });
+
   beforeEach(() => {
     navigateMock.mockReset();
     usePubsStateMock.mockReset();

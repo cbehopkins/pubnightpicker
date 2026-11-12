@@ -1,4 +1,4 @@
-import { useNavigate, defer, useRouteLoaderData } from "react-router-dom";
+import { useNavigate, useRouteLoaderData } from "react-router-dom";
 import { useEffect, useCallback } from "react";
 import { useSelector } from "react-redux";
 import {
@@ -10,9 +10,9 @@ import { notifyError } from "../../utils/notify";
 
 export async function loader({ params }) {
   const userId = params.userId;
-  return defer({
+  return {
     user_id: userId,
-  });
+  };
 }
 
 function NotificationUnsub() {

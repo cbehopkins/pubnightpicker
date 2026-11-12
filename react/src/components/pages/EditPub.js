@@ -1,5 +1,5 @@
 import PubForm from "./PubForm";
-import { useRouteLoaderData, defer } from "react-router-dom";
+import { useRouteLoaderData } from "react-router-dom";
 import { usePubsState } from "../../hooks/usePubs";
 import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
@@ -7,9 +7,9 @@ import Button from "../UI/Button";
 // FIXME move this and NewPub and Edit Pub somewhere sensible
 export async function loader({ request, params }) {
   const pubId = params.pubId;
-  return defer({
+  return {
     pub_id: pubId,
-  });
+  };
 }
 
 function EditPubPage() {
