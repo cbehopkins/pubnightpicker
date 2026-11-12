@@ -18,6 +18,7 @@ import {
 } from "../../dbtools/notificationPings";
 import NotificationPingPanel from "../UI/NotificationPingPanel";
 import BackendPingPanel from "../UI/BackendPingPanel";
+import BackendVersionPanel from "../UI/BackendVersionPanel";
 import {
     POLL_ACTION_ADD_VENUE,
     POLL_ACTION_AUDIT_COLLECTION,
@@ -566,6 +567,7 @@ function DiagnosticsPage() {
         <div className="py-3">
             <h1 className="h3 mb-4">Diagnostics</h1>
 
+            <BackendVersionPanel />
             <BackendPingPanel />
 
             <NotificationPingPanel

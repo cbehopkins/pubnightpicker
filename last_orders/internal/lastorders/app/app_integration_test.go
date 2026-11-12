@@ -394,15 +394,6 @@ func mustNewAppWithLogger(
 	return a
 }
 
-func runFor(t *testing.T, application *app.App, dur time.Duration) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), dur)
-	defer cancel()
-	if err := application.Run(ctx); err != nil {
-		t.Fatalf("run app: %v", err)
-	}
-}
-
 func runUntil(t *testing.T, application *app.App, ready func() bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

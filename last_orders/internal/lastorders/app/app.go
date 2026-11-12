@@ -47,6 +47,7 @@ import (
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
 	venuesendpoint "last_orders/internal/lastorders/endpoints/venues"
+	versionendpoint "last_orders/internal/lastorders/endpoints/version"
 	admindeleteplugin "last_orders/internal/lastorders/plugins/admindelete"
 	autocompleteplugin "last_orders/internal/lastorders/plugins/autocomplete"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
@@ -972,6 +973,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	authenticated := func(handler http.Handler) http.Handler { return firebaseauth.Middleware(cfg.AuthVerifier, handler) }
 	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
+	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
 		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")

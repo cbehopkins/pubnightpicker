@@ -13,6 +13,7 @@
 #   ./run-tests.ps1 -Black                            # Run black linting only
 #   ./run-tests.ps1 -Typecheck                        # Run React TypeScript typecheck
 #   ./run-tests.ps1 -Lint                             # Run React ESLint (rules-of-hooks etc.)
+#   ./run-tests.ps1 -Govulncheck                      # Scan last_orders for Go vulnerabilities
 #   ./run-tests.ps1 -All                              # Run all test suites
 #   ./run-tests.ps1 -Integration -VerboseOutput      # Integration with verbose output
 #   ./run-tests.ps1 -Integration -k test_chat         # Forward pytest args (integration only)
@@ -28,6 +29,7 @@ param(
     [switch]$Black,
     [switch]$Typecheck,
     [switch]$Lint,
+    [switch]$Govulncheck,
     [switch]$All,
     [switch]$VerboseOutput,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -42,8 +44,10 @@ $FirebaseSubDir = Join-Path $WorkspaceRoot "firebase_sub"
 $E2EDir = Join-Path $WorkspaceRoot "e2e"
 $ReactDir = Join-Path $WorkspaceRoot "react"
 $GoModules = @("cellar", "durable_email", "email_clients", "last_orders")
+$LastOrdersDir = Join-Path $WorkspaceRoot "last_orders"
 
-if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $All) {
+# Default to Integration if no suite specified
+if (-not $Unit -and -not $Integration -and -not $E2E -and -not $Node -and -not $Go -and -not $Tox -and -not $Black -and -not $Typecheck -and -not $Lint -and -not $Govulncheck -and -not $All) {
     $Integration = $true
     $Go = $true
 }
@@ -59,6 +63,7 @@ if ($All) {
     $Black = $true
     $Typecheck = $true
     $Lint = $true
+    $Govulncheck = $true
 }
 
 $FailedSuites = @()
@@ -75,18 +80,49 @@ if ($Go) {
             }
 
             Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-            & $cmd[0] $cmd[1..($cmd.Length-1)]
+            & $cmd[0] $cmd[1..($cmd.Length - 1)]
 
             if ($LASTEXITCODE -ne 0) {
                 $FailedSuites += "Go Tests ($module)"
                 Write-Host "[FAILED] Go tests ($module) FAILED" -ForegroundColor Red
-            } else {
+            }
+            else {
                 Write-Host "[OK] Go tests ($module) PASSED" -ForegroundColor Green
             }
         }
         catch {
             $FailedSuites += "Go Tests ($module)"
             Write-Host "[FAILED] Go tests ($module): $_" -ForegroundColor Red
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
+
+# ======================
+# Go Vulnerability Scan
+# ======================
+if ($Govulncheck) {
+    Write-Host "`n=== Running last_orders Vulnerability Scan ===" -ForegroundColor Cyan
+
+    if (-not (Get-Command govulncheck -ErrorAction SilentlyContinue)) {
+        $FailedSuites += "Go Vulnerability Scan"
+        Write-Host "[FAILED] govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0" -ForegroundColor Red
+    }
+    else {
+        Push-Location $LastOrdersDir
+        try {
+            Write-Host "[Runner] Command: govulncheck ./..." -ForegroundColor Gray
+            & govulncheck ./...
+
+            if ($LASTEXITCODE -ne 0) {
+                $FailedSuites += "Go Vulnerability Scan"
+                Write-Host "[FAILED] Go vulnerability scan FAILED" -ForegroundColor Red
+            }
+            else {
+                Write-Host "[OK] Go vulnerability scan PASSED" -ForegroundColor Green
+            }
         }
         finally {
             Pop-Location
@@ -108,12 +144,13 @@ if ($Unit) {
         }
         
         Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
+        & $cmd[0] $cmd[1..($cmd.Length - 1)]
         
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Unit Tests"
             Write-Host "[FAILED] Unit tests FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Unit tests PASSED" -ForegroundColor Green
         }
     }
@@ -139,12 +176,13 @@ if ($Integration) {
         }
         
         Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
+        & $cmd[0] $cmd[1..($cmd.Length - 1)]
         
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Integration Tests"
             Write-Host "[FAILED] Integration tests FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Integration tests PASSED" -ForegroundColor Green
         }
     }
@@ -186,7 +224,8 @@ if ($E2E) {
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Cucumber/Playwright Browser Journeys"
             Write-Host "[FAILED] Browser journeys FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Browser journeys PASSED" -ForegroundColor Green
         }
     }
@@ -219,12 +258,13 @@ if ($Node) {
         }
         
         Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
+        & $cmd[0] $cmd[1..($cmd.Length - 1)]
         
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Node Unit Tests"
             Write-Host "[FAILED] Node unit tests FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Node unit tests PASSED" -ForegroundColor Green
         }
     }
@@ -246,7 +286,8 @@ if ($Typecheck) {
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "React Typecheck"
             Write-Host "[FAILED] React typecheck FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] React typecheck PASSED" -ForegroundColor Green
         }
     }
@@ -268,7 +309,8 @@ if ($Lint) {
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "React Lint"
             Write-Host "[FAILED] React lint FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] React lint PASSED" -ForegroundColor Green
         }
     }
@@ -291,12 +333,13 @@ if ($Tox) {
         }
         
         Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
+        & $cmd[0] $cmd[1..($cmd.Length - 1)]
         
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Tox (py312)"
             Write-Host "[FAILED] Tox tests FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Tox tests PASSED" -ForegroundColor Green
         }
     }
@@ -316,12 +359,13 @@ if ($Black) {
         $cmd = @("poetry", "run", "tox", "-e", "black")
         
         Write-Host "[Runner] Command: $($cmd -join ' ')" -ForegroundColor Gray
-        & $cmd[0] $cmd[1..($cmd.Length-1)]
+        & $cmd[0] $cmd[1..($cmd.Length - 1)]
         
         if ($LASTEXITCODE -ne 0) {
             $FailedSuites += "Black Linting"
             Write-Host "[FAILED] Black linting FAILED" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "[OK] Black linting PASSED" -ForegroundColor Green
         }
     }
@@ -338,7 +382,8 @@ Write-Host "`n=== Test Summary ===" -ForegroundColor Cyan
 if ($FailedSuites.Count -eq 0) {
     Write-Host "[OK] All test suites PASSED" -ForegroundColor Green
     exit 0
-} else {
+}
+else {
     Write-Host "[FAILED] Failed suites:" -ForegroundColor Red
     foreach ($suite in $FailedSuites) {
         Write-Host "  - $suite" -ForegroundColor Red

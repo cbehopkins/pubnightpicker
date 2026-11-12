@@ -148,6 +148,32 @@ describe("useWebPushSettings", () => {
         expect(setWebPushPreferenceMock).toHaveBeenCalledWith("user-1", true);
     });
 
+    it("reports checking until the first device subscription check settles", async () => {
+        let resolveFirst;
+        hasCurrentWebPushSubscriptionMock
+            .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+            .mockReturnValue(new Promise(() => {}));
+
+        const { result, rerender } = renderHook(
+            ({ initialEnabled }) => useWebPushSettings("user-1", initialEnabled),
+            { initialProps: { initialEnabled: false } },
+        );
+
+        expect(result.current.checking).toBe(true);
+
+        await act(async () => {
+            resolveFirst(true);
+        });
+
+        expect(result.current.checking).toBe(false);
+        expect(result.current.enabled).toBe(true);
+
+        rerender({ initialEnabled: true });
+
+        expect(result.current.checking).toBe(false);
+        expect(result.current.enabled).toBe(true);
+    });
+
     it("updates permission to granted after enabling push", async () => {
         let permission = "default";
         webPushStatusMock.mockImplementation(() => ({

@@ -141,6 +141,7 @@ export function AdminPushPreferences({ initialEnabled, pushPreferences }) {
 export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
   const {
     busy,
+    checking,
     disable,
     enable,
     enabled,
@@ -175,7 +176,7 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
               </p>
             </div>
             <div className="small text-body-secondary">
-              Status: {enabled ? "Enabled" : "Disabled"} | Permission: {permissionLabel}
+              Status: {checking ? "Checking..." : enabled ? "Enabled" : "Disabled"} | Permission: {permissionLabel}
             </div>
             {!supported && (
               <div className="text-danger small">
@@ -189,7 +190,7 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
                 onClick={() => {
                   void enable();
                 }}
-                disabled={busy || !supported || enabled}
+                disabled={busy || checking || !supported || enabled}
               >
                 {busy && !enabled ? "Enabling..." : "Enable Push"}
               </Button>
@@ -199,7 +200,7 @@ export function PushPreferences({ uid, initialEnabled, pushPreferences }) {
                 onClick={() => {
                   void disable();
                 }}
-                disabled={busy || !supported || !enabled}
+                disabled={busy || checking || !supported || !enabled}
               >
                 {busy && enabled ? "Disabling..." : "Disable Push"}
               </Button>

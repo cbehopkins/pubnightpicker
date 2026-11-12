@@ -79,7 +79,7 @@ for the `.internal` hostname format.
 
 Install dependencies and run tests:
 
-Go 1.27.3 or newer is required, including standard-library security fixes.
+Go 1.27.4 or newer is required, including standard-library security fixes.
 With `GOTOOLCHAIN=auto`, Go selects the required version from `go.mod`.
 
 ```powershell
@@ -94,7 +94,7 @@ Run this in a separate PowerShell session:
 $toolDir = Join-Path ([System.IO.Path]::GetTempPath()) ("staticcheck-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $toolDir | Out-Null
 try {
-    $env:GOTOOLCHAIN = "go1.27.3"
+    $env:GOTOOLCHAIN = "go1.27.4"
     $env:GOWORK = "off"
     go -C $toolDir mod init staticcheck-build
     if ($LASTEXITCODE -ne 0) { throw "Failed to initialize Staticcheck build module" }
@@ -109,7 +109,7 @@ staticcheck ./...
 ```
 
 The temporary build pins Staticcheck v0.8.1 with x/tools v0.51.0 to support the
-Go 1.27.3 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
+Go 1.27 export format; installing Staticcheck v0.8.1 directly with `@v0.8.1`
 uses an older, incompatible x/tools version. The executable is installed into
 `GOBIN` (or `GOPATH\bin` by default); no tooling module remains in the repository.
 
@@ -250,6 +250,15 @@ SQLite corruption or coordinate replicas.
 Remove the flag or environment variable immediately after recovery: while enabled,
 it deletes the database on every process start, including health-check restarts.
 No shell or filesystem access inside the container is required.
+
+### Build version
+
+`GET /api/version` is unauthenticated and returns JSON with `tag`, `commit` and
+`build` strings and `Cache-Control: no-store`. Published images use the `release`
+build kind; local builds default to `development` and use embedded Git metadata
+when available, including an optional boolean `modified`. Missing identifiers
+are empty. Browser requests follow the configured API origin policy. This reports
+the source build, not the container digest or service health.
 
 ### Container health checks
 

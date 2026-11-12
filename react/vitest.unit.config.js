@@ -1,7 +1,9 @@
 import { defineConfig, mergeConfig } from "vitest/config";
 import viteConfig from "./vite.config.js";
 
-export default mergeConfig(viteConfig, defineConfig({
+const baseConfig = viteConfig({ command: "serve", mode: "test" });
+
+export default mergeConfig(baseConfig, defineConfig({
     test: {
         maxWorkers: 4,
         include: ["src/**/*.test.js"],
@@ -10,6 +12,7 @@ export default mergeConfig(viteConfig, defineConfig({
             "**/dist/**",
             "**/coverage/**",
             "src/**/*.rules.test.js",
+            "src/**/*.emulator.test.js",
         ],
     },
 }));

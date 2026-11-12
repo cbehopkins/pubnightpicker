@@ -1,6 +1,6 @@
 module last_orders
 
-go 1.27.3
+go 1.27.4
 
 require (
 	cellar v0.0.0

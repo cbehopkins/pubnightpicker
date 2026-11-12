@@ -21,6 +21,10 @@ Why this exists:
 - Rules, app code, and backend code can drift.
 - This directory provides one source of truth for document shapes and collection intent.
 
+`config/deployment` records the intended Last Orders release tag and source
+commit for the Firebase project. It is read by React diagnostics and written
+through privileged deployment tooling, not by browser clients.
+
 ## Structure
 
 - contract-manifest.json: collection inventory, ownership, and status.

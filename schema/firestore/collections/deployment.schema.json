@@ -1,0 +1,24 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "pubnightpicker/firestore/config/deployment",
+    "title": "config/deployment",
+    "type": "object",
+    "x-schemaVersion": 1,
+    "x-documentId": "deployment",
+    "description": "The intended Last Orders source release for this Firebase project.",
+    "properties": {
+        "tag": {
+            "type": "string",
+            "pattern": "^(release-|last_orders-)?v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+        }
+    },
+    "required": [
+        "tag",
+        "commit"
+    ],
+    "additionalProperties": false
+}

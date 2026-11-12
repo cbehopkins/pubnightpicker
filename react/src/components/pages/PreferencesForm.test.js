@@ -363,6 +363,26 @@ describe("PushPreferences", () => {
         expect(screen.getByText("Disable Push")).toBeTruthy();
     });
 
+    it("does not report a settled push status while this device is being checked", () => {
+        useWebPushSettingsMock.mockReturnValue({
+            busy: false,
+            checking: true,
+            disable: vi.fn(),
+            enable: vi.fn(),
+            enabled: false,
+            error: "",
+            featureEnabled: true,
+            permission: "granted",
+            supported: true,
+        });
+
+        render(<PushPreferences uid="user-1" initialEnabled={false} pushPreferences={{}} />);
+
+        expect(screen.getByText("Status: Checking... | Permission: Granted")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Enable Push" }).disabled).toBe(true);
+        expect(screen.getByRole("button", { name: "Disable Push" }).disabled).toBe(true);
+    });
+
     it("hides notification preferences when not enabled", () => {
         useWebPushSettingsMock.mockReturnValue({
             busy: false,

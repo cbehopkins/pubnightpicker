@@ -238,6 +238,10 @@ service cloud.firestore {
           || request.resource.data.KeepChatNotificationsWhenSilenced is bool);
     }
 
+    match /config/deployment {
+      allow get: if isAdmin();
+    }
+
     match /config/admin_delete {
       allow get: if isAdmin();
       allow create: if isAdmin()
