@@ -117,9 +117,9 @@ jobs:
             type=ref,event=tag
             type=sha,format=long,prefix=sha-
 
-          - name: Resolve build commit
-            id: build-identity
-            run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Resolve build commit
+        id: build-identity
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v7
