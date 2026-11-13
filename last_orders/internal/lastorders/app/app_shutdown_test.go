@@ -696,8 +696,7 @@ func TestShutdownDrainReconcilesLateClaimResponseByPersistedOwner(t *testing.T) 
 		lookupExists:  true,
 		createErr:     errors.New("claim response lost"),
 	}
-	a, err, _ := runClaimThroughShutdown(t, remote, 5*time.Second, true)
-	defer a.Close()
+	a, _, err := runClaimThroughShutdown(t, remote, 5*time.Second, true)
 	if err != nil {
 		t.Fatalf("run app: %v", err)
 	}
@@ -740,8 +739,7 @@ func TestShutdownDrainReconciliationOutcomes(t *testing.T) {
 				lookupExists:  test.lookupExists,
 				lookupErr:     test.lookupErr,
 			}
-			a, runErr, logs := runClaimThroughShutdown(t, remote, 5*time.Second, true)
-			defer a.Close()
+			_, logs, runErr := runClaimThroughShutdown(t, remote, 5*time.Second, true)
 			if (runErr != nil) != test.wantError {
 				t.Fatalf("Run() error = %v, wantError %t", runErr, test.wantError)
 			}
@@ -774,8 +772,7 @@ func TestShutdownDrainAcceptsLateSuccessfulClaimResponse(t *testing.T) {
 		releaseCreate: make(chan struct{}),
 		lookupCalled:  make(chan struct{}),
 	}
-	a, err, _ := runClaimThroughShutdown(t, remote, 5*time.Second, true)
-	defer a.Close()
+	a, _, err := runClaimThroughShutdown(t, remote, 5*time.Second, true)
 	if err != nil {
 		t.Fatalf("run app: %v", err)
 	}
@@ -799,8 +796,7 @@ func TestShutdownDrainDeadlineBoundsClaimReconciliation(t *testing.T) {
 		lookupErr:     context.DeadlineExceeded,
 		waitForCancel: true,
 	}
-	a, err, logs := runClaimThroughShutdown(t, remote, 100*time.Millisecond, false)
-	defer a.Close()
+	_, logs, err := runClaimThroughShutdown(t, remote, 100*time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("run app after drain deadline: %v", err)
 	}
@@ -1199,13 +1195,14 @@ func seedEventVenueReleaseCandidate(t *testing.T, application *app.App, remote f
 	return fanout, eventKey, owner
 }
 
-func runClaimThroughShutdown(t *testing.T, remote *ambiguousClaimRemote, timeout time.Duration, releaseClaim bool) (*app.App, error, *syncBuffer) {
+func runClaimThroughShutdown(t *testing.T, remote *ambiguousClaimRemote, timeout time.Duration, releaseClaim bool) (*app.App, *syncBuffer, error) {
 	t.Helper()
 	logs := &syncBuffer{}
 	cfg := testConfig(t, filepath.Join(t.TempDir(), "shutdown-claim-reconcile.db"), remote)
 	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
 	cfg.ShutdownDrainTimeout = timeout
 	a := newApp(t, cfg)
+	t.Cleanup(func() { a.Close() })
 	if err := enqueueNewPoll(t, a, "shutdown-claim-reconcile-poll"); err != nil {
 		t.Fatalf("enqueue poll: %v", err)
 	}
@@ -1226,7 +1223,7 @@ func runClaimThroughShutdown(t *testing.T, remote *ambiguousClaimRemote, timeout
 	}
 	select {
 	case err := <-done:
-		return a, err, logs
+		return a, logs, err
 	case <-time.After(5 * time.Second):
 		cancel()
 		t.Fatal("app did not finish its shutdown drain")
