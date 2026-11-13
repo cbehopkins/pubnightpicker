@@ -139,44 +139,67 @@ func insertRequests(tx *sql.Tx, requests []cellar.CellRequest) error {
 
 // ClaimNext atomically claims one runnable cell.
 func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
+	return s.ClaimNextMatching(now, nil)
+}
+
+// ClaimNextMatching atomically claims the next runnable Cell accepted by eligible.
+func (s *Store) ClaimNextMatching(now time.Time, eligible func(cellar.Cell) bool) (cellar.Cell, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return cellar.Cell{}, false, err
 	}
 	defer rollback(tx)
 
-	row := tx.QueryRow(
-		`UPDATE cells
-		 SET state = ?
-		 WHERE id = (
-		   SELECT id FROM cells
-		   WHERE state = ?
-		     AND (not_before IS NULL OR not_before <= ?)
-		   ORDER BY created_at, id
-		   LIMIT 1
-		 )
-		 RETURNING id, steps, current_step, state, not_before`,
-		string(cellar.CellStateClaimed),
+	rows, err := tx.Query(
+		`SELECT id, steps, current_step, state, not_before
+		 FROM cells
+		 WHERE state = ?
+		   AND (not_before IS NULL OR not_before <= ?)
+		 ORDER BY created_at, id`,
 		string(cellar.CellStateReady),
 		now.UTC(),
 	)
-
-	cell, err := scanCell(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		if err := tx.Commit(); err != nil {
-			return cellar.Cell{}, false, err
-		}
-		return cellar.Cell{}, false, nil
-	}
 	if err != nil {
 		return cellar.Cell{}, false, err
 	}
-
-	if err := tx.Commit(); err != nil {
+	candidates, err := scanCells(rows)
+	closeErr := rows.Close()
+	if err != nil {
 		return cellar.Cell{}, false, err
 	}
+	if closeErr != nil {
+		return cellar.Cell{}, false, closeErr
+	}
 
-	return cell, true, nil
+	for _, candidate := range candidates {
+		if eligible != nil && !eligible(candidate) {
+			continue
+		}
+		row := tx.QueryRow(
+			`UPDATE cells SET state = ?
+			 WHERE id = ? AND state = ?
+			   AND (not_before IS NULL OR not_before <= ?)
+			 RETURNING id, steps, current_step, state, not_before`,
+			string(cellar.CellStateClaimed), string(candidate.ID),
+			string(cellar.CellStateReady), now.UTC(),
+		)
+		cell, err := scanCell(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return cellar.Cell{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return cellar.Cell{}, false, err
+		}
+		return cell, true, nil
+	}
+
+		if err := tx.Commit(); err != nil {
+			return cellar.Cell{}, false, err
+		}
+	return cellar.Cell{}, false, nil
 }
 
 // Complete atomically deletes a claimed cell and adds replacement cells.

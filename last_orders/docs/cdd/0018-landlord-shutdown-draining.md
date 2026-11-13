@@ -2,9 +2,11 @@
 
 ## 1. Status and Scope
 
-Behavioural contract agreed; not yet implemented. The recurrence claim-release
-protocol is approved and its required interface and schema changes are described
-in section 7.
+Behavioural contract agreed. Ticket 02 implements the bounded Landlord drain,
+claim fence, producer shutdown and quiescence behaviour described in sections 3-5.
+In-flight claim reconciliation, detailed retry/restart coverage and recurrence
+claim release remain separate ticket scopes. The recurrence claim-release protocol
+is approved and its required interface and schema changes are described in section 7.
 
 This design applies to Landlord's notifications and housekeeping, not HandPump's
 public API. It extends [ADR-0007](../adr/0007-lifecycle.md) for environments where

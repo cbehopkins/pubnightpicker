@@ -36,6 +36,7 @@ func main() {
 		resetDB              = flag.Bool("reset-db", false, "delete the local SQLite database and sidecars before startup (destructive; requires exclusive access)")
 		runFor               = flag.Duration("run-for", 0, "how long to run before graceful stop (0 means until signal)")
 		pollDelay            = flag.Duration("cellar-poll-delay", 60*time.Millisecond, "delay between claim attempts")
+		shutdownDrainTimeout = flag.Duration("shutdown-drain-timeout", 0, "Landlord shutdown drain allowance (0 disables draining; negative values are invalid)")
 		reevaluateEvery      = flag.Duration("event-reevaluate-every", 24*time.Hour, "initial schedule interval for the durable event-venue re-evaluation timer (has no effect once the timer already exists; see docs/adr/0014)")
 		httpAddr             = flag.String("http-addr", ":8080", "address to serve HTTP endpoints on (empty disables HTTP)")
 		internalHTTPAddr     = flag.String("internal-http-addr", "", "private Landlord API listen address (Landlord mode; combined mode uses loopback automatically)")
@@ -138,6 +139,7 @@ func main() {
 		Component:               component,
 		DBPath:                  *dbPath,
 		PollDelay:               *pollDelay,
+		ShutdownDrainTimeout:    *shutdownDrainTimeout,
 		Logger:                  logger,
 		EnableFirestore:         true,
 		PollsSince:              *pollsSince,

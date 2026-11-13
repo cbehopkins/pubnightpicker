@@ -21,6 +21,12 @@ type Store interface {
 	ListActive() ([]Cell, error)
 }
 
+// DrainSchedulerStore can atomically claim the next runnable Cell which also
+// satisfies the supplied application eligibility predicate.
+type DrainSchedulerStore interface {
+	ClaimNextMatching(now time.Time, eligible func(Cell) bool) (Cell, bool, error)
+}
+
 // ResultStore applies a claimed handler result and its lifecycle transition atomically.
 // Stores may implement this in addition to Store; the legacy Store methods remain
 // available for ordinary one-step integrations.

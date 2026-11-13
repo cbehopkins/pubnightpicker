@@ -129,6 +129,20 @@ go run ./cmd/last-orders landlord -db-path=./landlord.db
 go run ./cmd/last-orders handpump -db-path=./handpump.db -landlord-url=$env:LANDLORD_INTERNAL_URL
 ```
 
+Landlord shutdown draining is opt-in with `-shutdown-drain-timeout`. Zero keeps
+the existing immediate-stop behaviour; a positive duration bounds the whole
+graceful shutdown, including stopping listeners and endpoints. Negative values
+are rejected. The option applies to Landlord and the default combined mode; it
+does not change HandPump lifecycle behaviour. Choose a value below the hosting
+platform's termination allowance.
+
+Draining stops new Firestore claim attempts and periodic observation scans, then
+allows runnable work for confirmed claims to finish until quiescence or the
+deadline. Future retries and rate limits are not bypassed. A deadline, execution
+failure, abrupt termination, or disappearing ephemeral SQLite database can still
+lose unfinished work; draining is best-effort, not a delivery guarantee. Retained
+SQLite remains the recovery path for unfinished work.
+
 Landlord owns the durable email database and serves its authenticated internal
 email-history query on its private listener. HandPump serves the public API and
 calls that query; it must use its own SQLite path and must not share Landlord's

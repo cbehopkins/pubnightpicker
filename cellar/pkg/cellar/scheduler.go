@@ -24,6 +24,11 @@ type Scheduler struct {
 	dispatcher Dispatcher
 	pollDelay  time.Duration
 	workers    int
+	drainMu    sync.RWMutex
+	draining   bool
+	drainReady bool
+	eligible   func(Cell) bool
+	drainWake  chan struct{}
 }
 
 // NewScheduler creates a scheduler engine with the supplied dependencies.
@@ -39,6 +44,46 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 		dispatcher: dispatcher,
 		pollDelay:  pollDelay,
 		workers:    workers,
+		drainWake:  make(chan struct{}, 1),
+	}
+}
+
+// BeginDrain changes scheduling to claim only eligible work. Quiescence remains
+// disabled until AllowDrainCompletion is called after producers have stopped.
+func (s *Scheduler) BeginDrain(eligible func(Cell) bool) error {
+	if _, ok := s.store.(DrainSchedulerStore); !ok {
+		return ErrDrainUnsupported
+	}
+	s.drainMu.Lock()
+	defer s.drainMu.Unlock()
+	if s.draining {
+		return ErrSchedulerDraining
+	}
+	s.draining = true
+	s.eligible = eligible
+	s.signalDrain()
+	return nil
+}
+
+// AllowDrainCompletion permits Run to return once no eligible work is runnable
+// and all dispatches have settled.
+func (s *Scheduler) AllowDrainCompletion() {
+	s.drainMu.Lock()
+	s.drainReady = true
+	s.drainMu.Unlock()
+	s.signalDrain()
+}
+
+func (s *Scheduler) drainState() (bool, bool, func(Cell) bool) {
+	s.drainMu.RLock()
+	defer s.drainMu.RUnlock()
+	return s.draining, s.drainReady, s.eligible
+}
+
+func (s *Scheduler) signalDrain() {
+	select {
+	case s.drainWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -89,13 +134,24 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		default:
 		}
 
-		cell, ok, err := s.store.ClaimNext(time.Now())
+		draining, drainReady, eligible := s.drainState()
+		var cell Cell
+		var ok bool
+		var err error
+		if draining {
+			cell, ok, err = s.store.(DrainSchedulerStore).ClaimNextMatching(time.Now(), eligible)
+		} else {
+			cell, ok, err = s.store.ClaimNext(time.Now())
+		}
 		if err != nil {
 			capacity <- struct{}{}
 			return stop(fmt.Errorf("claim next cell: %w", err))
 		}
 		if !ok {
 			capacity <- struct{}{}
+			if draining && drainReady && len(capacity) == cap(capacity) {
+				return stop(nil)
+			}
 			timer := time.NewTimer(s.pollDelay)
 			select {
 			case <-runCtx.Done():
@@ -104,6 +160,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			case err := <-dispatchErrors:
 				timer.Stop()
 				return stop(err)
+			case <-s.drainWake:
+				timer.Stop()
 			case <-timer.C:
 			}
 			continue
@@ -122,3 +180,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		}()
 	}
 }
+
+var (
+	ErrDrainUnsupported  = errors.New("store does not support filtered draining")
+	ErrSchedulerDraining = errors.New("scheduler is already draining")
+)

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/truths"
@@ -90,10 +91,14 @@ func (h CheckHandler) Handle(ctx context.Context, payload StepPayload) cellar.Re
 // means Step 1 determined the identity was genuinely new, so this always runs.
 type PopulateRemoteHandler struct {
 	Remote Remote
+	Gate   *ClaimGate
 	Logger *slog.Logger
 }
 
 func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
+	if h.Gate != nil && !h.Gate.TryBegin() {
+		return cellar.Retry{}
+	}
 	alreadyExists, ownedByThisExecution, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
 	if err != nil {
 		return cellar.ErrorResult{Message: "populate remote idempotency key", Err: err}
@@ -108,6 +113,24 @@ func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) 
 		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner, "already_exists", alreadyExists)
 	}
 	return cellar.Complete{}
+}
+
+// ClaimGate atomically prevents new remote claim attempts after shutdown begins.
+type ClaimGate struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+func (g *ClaimGate) TryBegin() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return !g.closed
+}
+
+func (g *ClaimGate) Close() {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
 }
 
 // EmitTruthHandler is Step 3: it emits the Truth. Reaching this step means Step 1

@@ -61,6 +61,18 @@ func (h incrementHandler) Handle(ctx context.Context, payload incrementPayload) 
 	return cellar.Complete{}
 }
 
+type blockingContinuationHandler struct {
+	started chan<- struct{}
+	release <-chan struct{}
+	child   cellar.CellRequest
+}
+
+func (h blockingContinuationHandler) Handle(ctx context.Context, payload string) cellar.Result {
+	h.started <- struct{}{}
+	<-h.release
+	return cellar.Complete{NewCells: []cellar.CellRequest{h.child}}
+}
+
 func TestCellarRegistersAndExecutesTypedJSONHandler(t *testing.T) {
 	store := cellar.NewMemoryStore(nil)
 	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond})
@@ -209,6 +221,118 @@ func TestCellarExecutesSequenceStepsInOrder(t *testing.T) {
 		}
 	}
 	stopRuntime(t, runtime, startDone)
+}
+
+func TestCellarDrainWaitsForActiveContinuationAndSkipsBlockedWork(t *testing.T) {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond, Workers: 2})
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	childReceived := make(chan string, 2)
+	blockedReceived := make(chan string, 1)
+	child, err := cellar.NewCellDefinition("example.child", routedPayload{Source: "continuation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRequest, err := child.CellRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Register("example.blocking", blockingContinuationHandler{started: started, release: release, child: childRequest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Register("example.child", routedHandler{name: "child", received: childReceived}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Register("example.blocked", routedHandler{name: "blocked", received: blockedReceived}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := runtime.Add("example.blocking", "work"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runtime.Add("example.blocked", routedPayload{Source: "preserved"}); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	if _, err := store.Add([]cellar.CellRequest{{
+		Steps:     []cellar.CellStep{{HandlerName: "example.child", Payload: []byte(`{"source":"future"}`)}},
+		NotBefore: &future,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	startDone := startRuntime(runtime)
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("both concurrent workers did not start")
+		}
+	}
+	if err := runtime.BeginDrain(func(cell cellar.Cell) bool {
+		return cell.Steps[cell.CurrentStep].HandlerName != "example.blocked"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	drainDone := make(chan error, 1)
+	go func() { drainDone <- runtime.WaitForDrain(context.Background()) }()
+	select {
+	case err := <-drainDone:
+		t.Fatalf("drain completed with active work: %v", err)
+	default:
+	}
+	close(release)
+	select {
+	case err := <-drainDone:
+		if err != nil {
+			t.Fatalf("WaitForDrain() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("drain did not complete after active workers and their continuations")
+	}
+	if err := <-startDone; err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	for range 2 {
+		select {
+		case got := <-childReceived:
+			if got != "child:continuation" {
+				t.Fatalf("continuation = %q", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("continuation was not executed")
+		}
+	}
+	select {
+	case got := <-blockedReceived:
+		t.Fatalf("blocked work executed: %q", got)
+	default:
+	}
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("blocked and future work were not preserved: %+v", active)
+	}
+	blocked, futureCell := 0, 0
+	for _, cell := range active {
+		if cell.State != cellar.CellStateReady {
+			t.Fatalf("unfinished work state = %s, want READY", cell.State)
+		}
+		if cell.Steps[0].HandlerName == "example.blocked" {
+			blocked++
+		}
+		if cell.NotBefore != nil {
+			futureCell++
+		}
+	}
+	if blocked != 1 || futureCell != 1 {
+		t.Fatalf("blocked work count = %d, future work count = %d; want one each", blocked, futureCell)
+	}
 }
 
 func TestCellarUsesPersistedHandlerNameAsResolutionKey(t *testing.T) {

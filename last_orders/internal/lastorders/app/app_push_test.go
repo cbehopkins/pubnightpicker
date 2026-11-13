@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,9 +28,12 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 
 	dbPath := filepath.Join(t.TempDir(), "poll-opened-push.db")
 	logs := &syncBuffer{}
+	tokens := &blockingPushTokens{started: make(chan struct{}), release: make(chan struct{})}
 	actions := completionactionstest.New()
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
 	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.ShutdownDrainTimeout = 5 * time.Second
+	cfg.Push.Tokens = tokens
 	cfg.CompletionActions = actions
 	cfg.NotificationProfileSource = &notificationprofiletest.Source{
 		UserChanges: []notificationprofile.Change{
@@ -58,24 +62,24 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		record, err := actions.Get(context.Background(), completionactions.OpenCollection, "poll-push")
-		if err != nil {
-			t.Fatalf("read open actions: %v", err)
-		}
-		if !record.NeedsAction(completionactions.ActionPush, "poll-push") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("open actions = %+v, want push recorded", record)
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-tokens.started:
+	case <-time.After(10 * time.Second):
+		cancel()
+		t.Fatal("push delivery did not reach its rate-limit collaborator")
 	}
 	cancel()
+	waitForDrainStarted(t, logs)
+	close(tokens.release)
 	if err := <-done; err != nil {
 		t.Fatalf("run app: %v", err)
+	}
+	record, err := actions.Get(context.Background(), completionactions.OpenCollection, "poll-push")
+	if err != nil {
+		t.Fatalf("read open actions: %v", err)
+	}
+	if record.NeedsAction(completionactions.ActionPush, "poll-push") {
+		t.Fatalf("push action remained pending after shutdown drain: %+v", record)
 	}
 
 	logged := logs.String()
@@ -92,6 +96,22 @@ func TestPollOpenedTruthPushesToEligibleEndpointsThenRecordsAction(t *testing.T)
 			t.Errorf("push delivered without private-user contribution: %s", excluded)
 		}
 	}
+}
+
+type blockingPushTokens struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingPushTokens) Acquire() int {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return 0
+}
+
+func (s *blockingPushTokens) AcquireN(count int) (int, error) {
+	return s.Acquire(), nil
 }
 
 func TestPollPushBudgetDefersEndpointsAndKeepsActionPending(t *testing.T) {

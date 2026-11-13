@@ -53,6 +53,11 @@ func (s *MemoryStore) Add(requests []CellRequest) ([]CellID, error) {
 
 // ClaimNext atomically finds and claims one runnable cell.
 func (s *MemoryStore) ClaimNext(now time.Time) (Cell, bool, error) {
+	return s.ClaimNextMatching(now, nil)
+}
+
+// ClaimNextMatching atomically claims the next runnable Cell accepted by eligible.
+func (s *MemoryStore) ClaimNextMatching(now time.Time, eligible func(Cell) bool) (Cell, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -65,6 +70,9 @@ func (s *MemoryStore) ClaimNext(now time.Time) (Cell, bool, error) {
 			continue
 		}
 		if cell.NotBefore != nil && cell.NotBefore.After(now) {
+			continue
+		}
+		if eligible != nil && !eligible(cloneCell(cell)) {
 			continue
 		}
 
