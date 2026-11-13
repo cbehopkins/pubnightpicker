@@ -146,15 +146,16 @@ The approved release protocol is:
   the exact `READY` `EventVenueObserved` fanout Cell; a claimed or missing Cell
   is ineligible. Do not start release if ownership or execution state is
   inconclusive.
-2. Persist the Firebase idempotency Sequence owner in the local cache when the
-  Check step establishes the local identity. The value is
-  `StepPayload.Owner`, which is also the Firestore document's `owner`; it is not
-  the ID of the emitted fanout Cell. Add a nullable `owner` column to
-  `firebase_idempotency_records`. Existing `(listener, event_key)` identity is
-  unchanged. New rows for all listeners retain their Sequence owner because the
-  Check implementation is shared, but release remains restricted to the exact
-  `event_venue_observed` row for this candidate. Legacy rows with no owner are
-  ineligible; never infer or reconstruct an owner.
+2. Persist the Firebase idempotency Sequence owner in the local cache in the same
+  SQLite transaction in which the Check step establishes the local identity and
+  advances the Sequence. The value is `StepPayload.Owner`, which is also the
+  Firestore document's `owner`; it is not the ID of the emitted fanout Cell. Add
+  a nullable `owner` column to `firebase_idempotency_records`. Existing
+  `(listener, event_key)` identity is unchanged. New rows for all listeners
+  retain their Sequence owner because the Check implementation is shared, but
+  release remains restricted to the exact `event_venue_observed` row for this
+  candidate. Legacy rows with no owner are ineligible; never infer or
+  reconstruct an owner.
 3. In one SQLite transaction, delete only the identified `READY` fanout Cell and
   its matching `event_venue_observed` cache row, checking the exact listener,
   event key, and owner. The transaction fails without changing either record if
@@ -182,6 +183,14 @@ remote claim may remain and suppress future work; if the Firestore response is
 inconclusive, report release as incomplete even if the document may in fact be
 absent. This best-effort loss is accepted, and no durable cleanup retry is
 promised.
+
+| Interruption point | Required recovery outcome |
+| --- | --- |
+| Before local retirement commits | The remote claim and fanout Cell remain; ordinary retained-database recovery applies. |
+| During the SQLite transaction | Cell retirement and cache-row deletion roll back together; the remote claim is untouched. |
+| After SQLite commit, before or during remote deletion | The old Cell cannot resume. The remote claim may remain or may be absent; report incomplete release unless absence/deletion is confirmed. |
+| After confirmed remote deletion | The old Cell is retired and a fresh instance can retry unchanged evidence. |
+| A replacement claim owns the document | Conditional deletion preserves it; report no successful release. The retired local Cell does not resume. |
 
 A fresh-database instance observing after confirmed release can attempt the
 unchanged observation again. An already-running instance may have cached the
