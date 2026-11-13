@@ -21,7 +21,7 @@ Then("{word} is logged in", async function (name) {
     const page = this.actors.get(name);
     await page.waitForURL(`${BASE_URL}/`);
     await page.getByRole("link", { name: "My Preferences", exact: true }).waitFor();
-    assert.equal(await page.getByRole("link", { name: "Login", exact: true }).count(), 0);
+    await page.getByRole("link", { name: "Login", exact: true }).waitFor({ state: "detached" });
 });
 
 Then("Alice cannot see the Chat Page", async function () {

@@ -2,6 +2,7 @@ package recurrenceplugin
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -33,18 +34,29 @@ type EventPollCreator interface {
 	CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error
 }
 
+type ObservationClaimCache interface {
+	LookupOwner(context.Context, string, string) (string, bool, error)
+	RetireCacheEntryWork(string, string, string) cellar.ApplicationWork
+}
+
 type EvaluateEventVenueHandler struct {
-	Store    cellar.Store
-	Location *time.Location
-	Logger   *slog.Logger
+	Store         cellar.Store
+	Location      *time.Location
+	ClaimGate     *firebaseidempotency.ClaimGate
+	ClaimCache    ObservationClaimCache
+	ClaimListener string
+	Logger        *slog.Logger
 }
 
 func (h EvaluateEventVenueHandler) Handle(ctx context.Context, payload truths.EventVenueObserved) cellar.Result {
-	if h.Store == nil || h.Location == nil {
-		return cellar.ErrorResult{Message: "event venue evaluator dependencies are nil"}
-	}
 	if payload.Venue.ID == "" || payload.ObservedOn == "" {
 		return cellar.Complete{}
+	}
+	if h.claimGateClosed() {
+		return h.relinquishObservation(ctx, payload)
+	}
+	if h.Store == nil || h.Location == nil {
+		return cellar.ErrorResult{Message: "event venue evaluator dependencies are nil"}
 	}
 
 	observedOn, err := time.ParseInLocation(time.DateOnly, payload.ObservedOn, h.Location)
@@ -52,13 +64,44 @@ func (h EvaluateEventVenueHandler) Handle(ctx context.Context, payload truths.Ev
 		return cellar.ErrorResult{Message: "parse event venue observation date", Err: err}
 	}
 
-	if recurrence.NeedsRecalculation(payload.Venue.Recurrence, payload.Venue.NextOccurrenceDate, observedOn, h.Location) {
+	needsRecalculation := recurrence.NeedsRecalculation(payload.Venue.Recurrence, payload.Venue.NextOccurrenceDate, observedOn, h.Location)
+	isDue := recurrence.IsDue(payload.Venue.NextOccurrenceDate, observedOn, h.Location)
+	if h.claimGateClosed() {
+		return h.relinquishObservation(ctx, payload)
+	}
+	if needsRecalculation {
 		return h.createStaleEventTruth(payload.Venue)
 	}
-	if recurrence.IsDue(payload.Venue.NextOccurrenceDate, observedOn, h.Location) {
+	if isDue {
 		return h.createEventDueTruth(payload.Venue)
 	}
 	return cellar.Complete{}
+}
+
+func (h EvaluateEventVenueHandler) claimGateClosed() bool {
+	return h.ClaimGate != nil && h.ClaimGate.IsClosed()
+}
+
+func (h EvaluateEventVenueHandler) relinquishObservation(ctx context.Context, payload truths.EventVenueObserved) cellar.Result {
+	if h.ClaimCache == nil || h.ClaimListener == "" {
+		return cellar.ErrorResult{Message: "relinquish event venue observation claim", Err: fmt.Errorf("claim cache and listener are required")}
+	}
+	eventKey := payload.Identity()
+	owner, exists, err := h.ClaimCache.LookupOwner(ctx, h.ClaimListener, eventKey)
+	if err != nil {
+		return cellar.ErrorResult{Message: "lookup event venue observation owner", Err: err}
+	}
+	if !exists || owner == "" {
+		return cellar.ErrorResult{Message: "lookup event venue observation owner", Err: fmt.Errorf("owner is unresolved for %q/%q", h.ClaimListener, eventKey)}
+	}
+	releaseRequest, err := firebaseidempotency.NewReleaseRequest(h.ClaimListener, eventKey, owner)
+	if err != nil {
+		return cellar.ErrorResult{Message: "build event venue observation release", Err: err}
+	}
+	return cellar.Kill{
+		NewCells:        []cellar.CellRequest{releaseRequest},
+		ApplicationWork: []cellar.ApplicationWork{h.ClaimCache.RetireCacheEntryWork(h.ClaimListener, eventKey, owner)},
+	}
 }
 
 func (h EvaluateEventVenueHandler) createStaleEventTruth(venue recurrence.EventVenue) cellar.Result {

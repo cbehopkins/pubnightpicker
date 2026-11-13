@@ -9,6 +9,7 @@ var (
 	ErrCellNotFound      = errors.New("cell not found")
 	ErrCellAlreadyExists = errors.New("cell already exists")
 	ErrCellNotClaimed    = errors.New("cell is not claimed")
+	ErrCellNotReady      = errors.New("cell is not ready")
 )
 
 // Store exposes lifecycle-safe persistence operations.
@@ -16,6 +17,7 @@ type Store interface {
 	Add(requests []CellRequest) ([]CellID, error)
 	ClaimNext(now time.Time) (Cell, bool, error)
 	Complete(cellID CellID, additions []CellRequest, applicationWork ...ApplicationWork) error
+	RetireReadyCell(cellID CellID, applicationWork ...ApplicationWork) error
 	Retry(cellID CellID, notBefore *time.Time) error
 	Recover() error
 	ListActive() ([]Cell, error)

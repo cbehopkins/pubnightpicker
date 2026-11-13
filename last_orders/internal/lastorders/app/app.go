@@ -81,14 +81,15 @@ type RecurrenceService interface {
 
 type Config struct {
 	// Component selects all, landlord, or handpump. Empty is the combined mode.
-	Component           string
-	DBPath              string
-	PollDelay           time.Duration
-	Logger              *slog.Logger
-	FirestoreProjectID  string
-	FirestoreForceIPv4  bool
-	FirebaseCredentials *google.Credentials
-	EnableFirestore     bool
+	Component            string
+	DBPath               string
+	PollDelay            time.Duration
+	ShutdownDrainTimeout time.Duration
+	Logger               *slog.Logger
+	FirestoreProjectID   string
+	FirestoreForceIPv4   bool
+	FirebaseCredentials  *google.Credentials
+	EnableFirestore      bool
 	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward.
 	// If empty on first startup, the oldest poll date is used, or today's app date when no polls exist.
 	PollsSince        string
@@ -189,9 +190,14 @@ type App struct {
 	internalHTTPServer          *http.Server
 	internalHTTPListener        net.Listener
 	component                   string
+	shutdownDrainTimeout        time.Duration
+	claimGate                   *firebaseidempotency.ClaimGate
+	periodicTimers              []*cellar.Timer
 	runCancel                   context.CancelFunc
 	runDone                     chan struct{}
 	runMu                       sync.Mutex
+	workAdmissionMu             sync.RWMutex
+	acceptingWork               bool
 }
 
 func New(cfg Config) (application *App, err error) {
@@ -224,6 +230,9 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return nil, fmt.Errorf("landlord internal URL must be an http(s) base URL without credentials, query, or fragment")
 		}
+	}
+	if cfg.ShutdownDrainTimeout < 0 {
+		return nil, fmt.Errorf("shutdown drain timeout must not be negative")
 	}
 	if cfg.InternalAPIToken == "" && cfg.Component != "all" {
 		return nil, fmt.Errorf("LANDLORD_INTERNAL_TOKEN is required for separate component mode")
@@ -647,6 +656,7 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
+	claimGate := &firebaseidempotency.ClaimGate{}
 	localIdempotencyStore, err := idempotency.New(baseStore)
 	if err != nil {
 		return nil, err
@@ -766,7 +776,10 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerReleaseRemote, firebaseidempotency.ReleaseRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}); err != nil {
@@ -790,7 +803,11 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(autocompletesvc.HandlerAmbiguous, autocompletesvc.AmbiguousHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{
+		Store: cellarStore, Location: recurrenceService.Location(), ClaimGate: claimGate,
+		ClaimCache: idempotencyStore, ClaimListener: eventvenuelistener.EventVenueObservedListener,
+		Logger: cfg.Logger,
+	}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
@@ -804,7 +821,9 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, autoCompleteListener.RunOnce)
+	autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, func(ctx context.Context) error {
+		return autoCompleteListener.RunOnce(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +851,9 @@ func New(cfg Config) (application *App, err error) {
 	reevaluateTimer, err := cellar.NewTimer(eventvenuelistener.TimerName, cellar.TimerConfig{
 		Interval: eventVenueListener.Interval(),
 		Mode:     cellar.TimerFixedRate,
-	}, eventVenueListener.ReevaluateOnce)
+	}, func(ctx context.Context) error {
+		return eventVenueListener.ReevaluateOnce(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -924,6 +945,10 @@ func New(cfg Config) (application *App, err error) {
 		adminDeleteListener:         adminDeleteListener,
 		adminDeleteEvaluateOnce:     cfg.AdminDeleteEvaluateOnce,
 		component:                   cfg.Component,
+		shutdownDrainTimeout:        cfg.ShutdownDrainTimeout,
+		claimGate:                   claimGate,
+		periodicTimers:              []*cellar.Timer{autoCompleteTimer, reevaluateTimer},
+		acceptingWork:               true,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
 		venueStreamHub:              venueStreamHub,
@@ -1036,17 +1061,32 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("recover email submissions: %w", err)
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
+	producerCtx, producerCancel := context.WithCancel(ctx)
+	executionCtx, executionCancel := context.WithCancel(context.WithoutCancel(ctx))
+	runCancel := func() {
+		producerCancel()
+		executionCancel()
+	}
 	runDone := make(chan struct{})
 	a.runMu.Lock()
-	a.runCancel = cancel
+	a.runCancel = runCancel
 	a.runDone = runDone
 	a.runMu.Unlock()
 	var cellarDone chan struct{}
+	drainRequested := false
+	httpStopped := false
 	defer func() {
-		a.shutdownHTTP()
-		cancel()
+		a.stopAcceptingWork()
+		a.stopPeriodicTimerProduction()
+		if !httpStopped {
+			a.shutdownHTTP()
+		}
+		producerCancel()
+		if !drainRequested {
+			executionCancel()
+		}
 		a.closeListeners()
+		executionCancel()
 		if cellarDone != nil {
 			_ = a.cellarRuntime.Stop()
 			<-cellarDone
@@ -1059,7 +1099,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	if a.diagnosticsConfiguration != nil {
-		if err := a.diagnosticsConfiguration.Start(runCtx); err != nil {
+		if err := a.diagnosticsConfiguration.Start(producerCtx); err != nil {
 			return fmt.Errorf("start diagnostics configuration: %w", err)
 		}
 	}
@@ -1069,7 +1109,7 @@ func (a *App) Run(ctx context.Context) error {
 		Start(context.Context) error
 		Ready() <-chan struct{}
 	}{a.notificationProfileListener, a.venueCacheListener} {
-		if err := projection.Start(runCtx); err != nil {
+		if err := projection.Start(producerCtx); err != nil {
 			return fmt.Errorf("start projection listener: %w", err)
 		}
 	}
@@ -1080,7 +1120,7 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("notification profile projection failed: %w", err)
 		case err := <-a.venueCacheListener.Errors():
 			return fmt.Errorf("venue cache projection failed: %w", err)
-		case <-runCtx.Done():
+		case <-producerCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
 		}
@@ -1090,7 +1130,7 @@ func (a *App) Run(ctx context.Context) error {
 	// source bounds this scan by the persisted PollsSince floor and today's
 	// London date; the observation identity converges with the scheduled scan.
 	if a.autoCompleteListener != nil {
-		if err := a.autoCompleteListener.RunOnce(runCtx); err != nil {
+		if err := a.autoCompleteListener.RunOnce(producerCtx); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
@@ -1102,42 +1142,42 @@ func (a *App) Run(ctx context.Context) error {
 	cellarDone = make(chan struct{})
 	go func() {
 		defer close(cellarDone)
-		cellarErr <- a.cellarRuntime.Start(runCtx)
+		cellarErr <- a.cellarRuntime.Start(executionCtx)
 	}()
 
 	if a.eventVenueListener != nil {
-		if err := a.eventVenueListener.Start(runCtx); err != nil {
+		if err := a.eventVenueListener.Start(producerCtx); err != nil {
 			return fmt.Errorf("start event venue listener: %w", err)
 		}
 	}
 
 	if a.newPollListener != nil {
-		if err := a.newPollListener.Start(runCtx); err != nil {
+		if err := a.newPollListener.Start(producerCtx); err != nil {
 			return fmt.Errorf("start new poll listener: %w", err)
 		}
 	}
 
 	if a.completedPollListener != nil {
-		if err := a.completedPollListener.Start(runCtx); err != nil {
+		if err := a.completedPollListener.Start(producerCtx); err != nil {
 			return fmt.Errorf("start completed poll listener: %w", err)
 		}
 	}
 	if a.adminDeleteListener != nil {
-		if err := a.adminDeleteListener.Start(runCtx); err != nil {
+		if err := a.adminDeleteListener.Start(producerCtx); err != nil {
 			return fmt.Errorf("start admin-delete listener: %w", err)
 		}
 	}
 
-	if err := a.chatMessageListener.Start(runCtx); err != nil {
+	if err := a.chatMessageListener.Start(producerCtx); err != nil {
 		return fmt.Errorf("start chat message listener: %w", err)
 	}
-	if err := a.pushTestListener.Start(runCtx); err != nil {
+	if err := a.pushTestListener.Start(producerCtx); err != nil {
 		return fmt.Errorf("start push test listener: %w", err)
 	}
-	if err := a.testEmailListener.Start(runCtx); err != nil {
+	if err := a.testEmailListener.Start(producerCtx); err != nil {
 		return fmt.Errorf("start test email listener: %w", err)
 	}
-	if err := a.notificationMirrorListener.Start(runCtx); err != nil {
+	if err := a.notificationMirrorListener.Start(producerCtx); err != nil {
 		return fmt.Errorf("start notification mirror listener: %w", err)
 	}
 
@@ -1159,6 +1199,44 @@ func (a *App) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		a.logger.Info("run context cancelled, shutting down")
+		var drainCtx context.Context
+		if a.shutdownDrainTimeout > 0 {
+			drainRequested = true
+			var cancelDrain context.CancelFunc
+			drainCtx, cancelDrain = context.WithTimeout(context.Background(), a.shutdownDrainTimeout)
+			defer cancelDrain()
+		}
+		a.stopAcceptingWork()
+		a.stopPeriodicTimerProduction()
+		if a.shutdownDrainTimeout > 0 {
+			a.claimGate.Close()
+			if err := a.cellarRuntime.BeginDrain(); err != nil {
+				executionCancel()
+				a.logDrainOutcome("execution-failure", err)
+				return fmt.Errorf("begin Cellar drain: %w", err)
+			}
+			a.logger.Info("Landlord shutdown drain started", "timeout", a.shutdownDrainTimeout)
+			a.shutdownHTTPWithContext(drainCtx)
+			httpStopped = true
+			producerCancel()
+			if err := a.closeListeners(); err != nil {
+				executionCancel()
+				_ = a.cellarRuntime.Stop()
+				<-cellarDone
+				a.logDrainOutcome("execution-failure", err)
+				return fmt.Errorf("stop Landlord producers: %w", err)
+			}
+			err := a.cellarRuntime.WaitForDrain(drainCtx)
+			switch {
+			case errors.Is(drainCtx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+				a.logDrainOutcome("deadline", err)
+			case err == nil:
+				a.logDrainOutcome("quiescence", nil)
+			case err != nil:
+				a.logDrainOutcome("execution-failure", err)
+				return fmt.Errorf("run cellar: %w", err)
+			}
+		}
 		return nil
 	case err := <-a.notificationProfileListener.Errors():
 		return fmt.Errorf("notification profile projection failed: %w", err)
@@ -1174,6 +1252,55 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Warn("cellar scheduler stopped without error, shutting down")
 	}
 	return nil
+}
+
+func (a *App) stopPeriodicTimerProduction() {
+	for _, timer := range a.periodicTimers {
+		timer.StopProduction()
+	}
+}
+
+func (a *App) logDrainOutcome(outcome string, err error) {
+	active, listErr := a.cellarStore.ListActive()
+	if listErr != nil {
+		a.logger.Warn("Landlord shutdown drain finished", "outcome", outcome, "err", err, "list_error", listErr)
+		return
+	}
+	remaining := summarizeDrainWork(active, time.Now())
+	a.logger.Info(
+		"Landlord shutdown drain finished",
+		"outcome", outcome,
+		"remaining_cells", len(active),
+		"remaining_runnable", remaining.runnable,
+		"remaining_in_flight", remaining.inFlight,
+		"remaining_deferred", remaining.deferred,
+		"remaining_other_blocked", remaining.otherBlocked,
+		"err", err,
+	)
+}
+
+type drainWorkSummary struct {
+	runnable     int
+	inFlight     int
+	deferred     int
+	otherBlocked int
+}
+
+func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
+	var summary drainWorkSummary
+	for _, cell := range cells {
+		switch {
+		case cell.State == cellar.CellStateClaimed:
+			summary.inFlight++
+		case cell.NotBefore != nil && cell.NotBefore.After(now):
+			summary.deferred++
+		case cell.State == cellar.CellStateReady:
+			summary.runnable++
+		default:
+			summary.otherBlocked++
+		}
+	}
+	return summary
 }
 
 func (a *App) runHandPump(ctx context.Context) error {
@@ -1263,6 +1390,7 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 }
 
 func (a *App) Close() error {
+	a.stopAcceptingWork()
 	a.shutdownHTTP()
 	a.runMu.Lock()
 	runCancel := a.runCancel
@@ -1335,6 +1463,10 @@ func (a *App) closeListeners() error {
 func (a *App) shutdownHTTP() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	a.shutdownHTTPWithContext(ctx)
+}
+
+func (a *App) shutdownHTTPWithContext(ctx context.Context) {
 	if a.httpServer != nil {
 		_ = a.httpServer.Shutdown(ctx)
 	}
@@ -1366,9 +1498,22 @@ func (a *App) InternalHTTPAddr() string {
 }
 
 func (a *App) AddCell(request cellar.CellRequest) error {
+	a.workAdmissionMu.RLock()
+	defer a.workAdmissionMu.RUnlock()
+	if !a.acceptingWork {
+		return ErrAppShuttingDown
+	}
 	_, err := a.cellarStore.Add([]cellar.CellRequest{request})
 	return err
 }
+
+func (a *App) stopAcceptingWork() {
+	a.workAdmissionMu.Lock()
+	a.acceptingWork = false
+	a.workAdmissionMu.Unlock()
+}
+
+var ErrAppShuttingDown = errors.New("application is shutting down")
 
 // IdempotencyClaimed reports whether an identity has already been claimed.
 func (a *App) IdempotencyClaimed(ctx context.Context, listener, eventKey string) (bool, error) {

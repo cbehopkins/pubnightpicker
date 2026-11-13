@@ -67,7 +67,6 @@ func (s *MemoryStore) ClaimNext(now time.Time) (Cell, bool, error) {
 		if cell.NotBefore != nil && cell.NotBefore.After(now) {
 			continue
 		}
-
 		cell.State = CellStateClaimed
 		s.cells[id] = cell
 		return cloneCell(cell), true, nil
@@ -100,6 +99,30 @@ func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest, applicati
 		s.cells[cell.ID] = cell
 		s.order = append(s.order, cell.ID)
 	}
+	return nil
+}
+
+// RetireReadyCell removes one READY cell after its application work succeeds.
+func (s *MemoryStore) RetireReadyCell(cellID CellID, applicationWork ...ApplicationWork) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cell, ok := s.cells[cellID]
+	if !ok {
+		return ErrCellNotFound
+	}
+	if cell.State != CellStateReady {
+		return ErrCellNotReady
+	}
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(noopApplicationTx{}); err != nil {
+				return err
+			}
+		}
+	}
+	delete(s.cells, cellID)
+	s.removeFromOrderLocked(cellID)
 	return nil
 }
 

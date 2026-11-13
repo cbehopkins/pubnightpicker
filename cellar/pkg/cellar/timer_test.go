@@ -162,6 +162,140 @@ func TestTimerCallbackErrorDeletesTimer(t *testing.T) {
 	}
 }
 
+func TestStoppedTimerDoesNotAdmitQueuedOccurrence(t *testing.T) {
+	called := false
+	timer, err := NewTimer("reports.refresh", TimerConfig{Interval: time.Minute, Mode: TimerFixedDelay}, func(context.Context) error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := New(NewMemoryStore(nil), Config{})
+	if err := timer.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	timer.StopProduction()
+	if _, err := timer.Schedule(runtime); !errors.Is(err, ErrTimerProductionStopped) {
+		t.Fatalf("Schedule() after production stopped error = %v, want ErrTimerProductionStopped", err)
+	}
+
+	registration, ok := runtime.registry.Lookup("reports.refresh")
+	if !ok {
+		t.Fatal("timer registration not found")
+	}
+	result := registration.Execute(context.Background(), testTimerCell(t, TimerFixedDelay, time.Minute, time.Now()))
+	if _, ok := result.(Complete); !ok {
+		t.Fatalf("result = %T, want Complete", result)
+	}
+	if called {
+		t.Fatal("queued timer callback ran after production stopped")
+	}
+}
+
+func TestTimerCallbackFinishingDuringStopDoesNotReschedule(t *testing.T) {
+	store := NewMemoryStore(nil)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	timer, err := NewTimer("reports.refresh", TimerConfig{Interval: time.Minute, Mode: TimerFixedDelay}, func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := New(store, Config{PollDelay: time.Millisecond})
+	if err := timer.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalJSON(timerPayload{Interval: time.Minute, Mode: TimerFixedDelay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := time.Now().Add(-time.Second)
+	if _, err := store.Add([]CellRequest{{
+		ID:        timerCellID("reports.refresh"),
+		Steps:     []CellStep{{HandlerName: "reports.refresh", Payload: payload}},
+		NotBefore: &due,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	startDone := make(chan error, 1)
+	go func() { startDone <- runtime.Start(context.Background()) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timer callback did not start")
+	}
+	timer.StopProduction()
+	if err := runtime.BeginDrain(); err != nil {
+		t.Fatal(err)
+	}
+	drainDone := make(chan error, 1)
+	go func() { drainDone <- runtime.WaitForDrain(context.Background()) }()
+	select {
+	case err := <-drainDone:
+		t.Fatalf("drain completed with callback active: %v", err)
+	default:
+	}
+	close(release)
+	select {
+	case err := <-drainDone:
+		if err != nil {
+			t.Fatalf("WaitForDrain() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("drain did not complete after timer callback settled")
+	}
+	if err := <-startDone; err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("timer occurrence was rescheduled after production stopped: %+v", active)
+	}
+}
+
+func TestTimerRestartReusesRetainedOccurrenceWithoutDuplication(t *testing.T) {
+	store := NewMemoryStore(nil)
+	firstRuntime := New(store, Config{})
+	firstTimer, err := NewTimer("reports.refresh", TimerConfig{Interval: time.Hour, Mode: TimerFixedDelay}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstTimer.Register(firstRuntime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firstTimer.Schedule(firstRuntime); err != nil {
+		t.Fatal(err)
+	}
+	firstTimer.StopProduction()
+
+	restartedRuntime := New(store, Config{})
+	restartedTimer, err := NewTimer("reports.refresh", TimerConfig{Interval: time.Hour, Mode: TimerFixedDelay}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restartedTimer.Register(restartedRuntime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restartedTimer.Schedule(restartedRuntime); !errors.Is(err, ErrTimerAlreadyExists) {
+		t.Fatalf("Schedule() after retained restart error = %v, want ErrTimerAlreadyExists", err)
+	}
+	active, err := store.ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("retained timer occurrences = %d, want 1", len(active))
+	}
+}
+
 func TestTimerValidatesConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string

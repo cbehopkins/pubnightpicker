@@ -139,43 +139,29 @@ func insertRequests(tx *sql.Tx, requests []cellar.CellRequest) error {
 
 // ClaimNext atomically claims one runnable cell.
 func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-	defer rollback(tx)
-
-	row := tx.QueryRow(
-		`UPDATE cells
-		 SET state = ?
+	row := s.db.QueryRow(
+		`UPDATE cells SET state = ?
 		 WHERE id = (
-		   SELECT id FROM cells
-		   WHERE state = ?
-		     AND (not_before IS NULL OR not_before <= ?)
-		   ORDER BY created_at, id
-		   LIMIT 1
+			SELECT id FROM cells
+			 WHERE state = ?
+			   AND (not_before IS NULL OR not_before <= ?)
+			 ORDER BY created_at, id
+			 LIMIT 1
 		 )
+		   AND state = ?
+		   AND (not_before IS NULL OR not_before <= ?)
 		 RETURNING id, steps, current_step, state, not_before`,
 		string(cellar.CellStateClaimed),
-		string(cellar.CellStateReady),
-		now.UTC(),
+		string(cellar.CellStateReady), now.UTC(),
+		string(cellar.CellStateReady), now.UTC(),
 	)
-
 	cell, err := scanCell(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := tx.Commit(); err != nil {
-			return cellar.Cell{}, false, err
-		}
 		return cellar.Cell{}, false, nil
 	}
 	if err != nil {
 		return cellar.Cell{}, false, err
 	}
-
-	if err := tx.Commit(); err != nil {
-		return cellar.Cell{}, false, err
-	}
-
 	return cell, true, nil
 }
 
@@ -200,6 +186,43 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 		return err
 	}
 
+	return tx.Commit()
+}
+
+// RetireReadyCell atomically deletes one READY cell and applies application work.
+func (s *Store) RetireReadyCell(cellID cellar.CellID, applicationWork ...cellar.ApplicationWork) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	result, err := tx.Exec(`DELETE FROM cells WHERE id = ? AND state = ?`, string(cellID), string(cellar.CellStateReady))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		var state string
+		err := tx.QueryRow(`SELECT state FROM cells WHERE id = ?`, string(cellID)).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cellar.ErrCellNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return cellar.ErrCellNotReady
+	}
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(sqlTxAdapter{tx: tx}); err != nil {
+				return err
+			}
+		}
+	}
 	return tx.Commit()
 }
 

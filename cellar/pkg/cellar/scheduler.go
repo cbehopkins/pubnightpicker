@@ -24,6 +24,10 @@ type Scheduler struct {
 	dispatcher Dispatcher
 	pollDelay  time.Duration
 	workers    int
+	drainMu    sync.RWMutex
+	draining   bool
+	drainReady bool
+	drainWake  chan struct{}
 }
 
 // NewScheduler creates a scheduler engine with the supplied dependencies.
@@ -39,6 +43,42 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 		dispatcher: dispatcher,
 		pollDelay:  pollDelay,
 		workers:    workers,
+		drainWake:  make(chan struct{}, 1),
+	}
+}
+
+// BeginDrain switches to ordinary runnable-cell claiming. Quiescence remains
+// disabled until AllowDrainCompletion is called after producers have stopped.
+func (s *Scheduler) BeginDrain() error {
+	s.drainMu.Lock()
+	defer s.drainMu.Unlock()
+	if s.draining {
+		return ErrSchedulerDraining
+	}
+	s.draining = true
+	s.signalDrain()
+	return nil
+}
+
+// AllowDrainCompletion permits Run to return once no eligible work is runnable
+// and all dispatches have settled.
+func (s *Scheduler) AllowDrainCompletion() {
+	s.drainMu.Lock()
+	s.drainReady = true
+	s.drainMu.Unlock()
+	s.signalDrain()
+}
+
+func (s *Scheduler) drainState() (bool, bool) {
+	s.drainMu.RLock()
+	defer s.drainMu.RUnlock()
+	return s.draining, s.drainReady
+}
+
+func (s *Scheduler) signalDrain() {
+	select {
+	case s.drainWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -89,13 +129,20 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		default:
 		}
 
-		cell, ok, err := s.store.ClaimNext(time.Now())
+		draining, drainReady := s.drainState()
+		var cell Cell
+		var ok bool
+		var err error
+		cell, ok, err = s.store.ClaimNext(time.Now())
 		if err != nil {
 			capacity <- struct{}{}
 			return stop(fmt.Errorf("claim next cell: %w", err))
 		}
 		if !ok {
 			capacity <- struct{}{}
+			if draining && drainReady && len(capacity) == cap(capacity) {
+				return stop(nil)
+			}
 			timer := time.NewTimer(s.pollDelay)
 			select {
 			case <-runCtx.Done():
@@ -104,6 +151,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			case err := <-dispatchErrors:
 				timer.Stop()
 				return stop(err)
+			case <-s.drainWake:
+				timer.Stop()
 			case <-timer.C:
 			}
 			continue
@@ -122,3 +171,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		}()
 	}
 }
+
+var (
+	ErrSchedulerDraining = errors.New("scheduler is already draining")
+)

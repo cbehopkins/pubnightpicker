@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const listenerEventVenueObserved = "event_venue_observed"
+const EventVenueObservedListener = "event_venue_observed"
 
 // TimerName is the durable Cellar Timer which drives periodic re-evaluation. See
 // docs/cdd/0007-app-structure-migration.md §7.
@@ -190,7 +190,7 @@ func (l *Listener) createEventVenueObserved(ctx context.Context, venue recurrenc
 		l.logger.Error("marshal event venue observation", "event_id", venue.ID, "err", err)
 		return
 	}
-	l.createTruth(ctx, listenerEventVenueObserved, event.Identity(), envelope)
+	l.createTruth(ctx, EventVenueObservedListener, event.Identity(), envelope)
 }
 
 // createTruth hands the observation to the idempotency component, which is the sole

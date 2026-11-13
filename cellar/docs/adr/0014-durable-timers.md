@@ -67,6 +67,15 @@ the current time. It does not execute every missed tick.
 Successful callbacks return the same Cell to `READY` with its next deadline. The Cell
 therefore keeps the same durable identity across executions.
 
+### Stopping production
+
+`Timer.StopProduction` closes process-local callback admission. A callback admitted
+before closure may finish, but its next occurrence is persisted only if result
+application wins the same lifecycle lock before closure. A queued occurrence claimed
+after closure completes without invoking the callback. A future occurrence that is
+not claimed remains durable and inert in the stopping runtime; registering the timer
+on restart reconnects it without scheduling a duplicate.
+
 ### Callback errors
 
 The callback owns handling and reporting application errors. Returning a non-nil error
@@ -78,6 +87,7 @@ deleting the timer. The error is not surfaced as a Cellar runtime failure.
 * recurring work survives process and database reopening;
 * timer names are unique durable identities;
 * registration and initial scheduling remain separate operations;
+* applications can stop callback production without deleting deferred timer state;
 * fixed-delay and fixed-rate behaviour are explicit;
 * applications remain responsible for callback error handling and idempotency; and
 * scheduling can be repeated after a timer has been deleted or cancelled.

@@ -2,6 +2,7 @@ package cellar_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -321,6 +322,15 @@ func TestExampleTimerTiming(t *testing.T) {
 		if firstRun.Before(firstDue) {
 			t.Fatalf("first run at %v, before due time %v", firstRun, firstDue)
 		}
+		synctest.Wait()
+		retained, err := store.ListActive()
+		if err != nil {
+			t.Fatalf("ListActive() after timer run error = %v", err)
+		}
+		if len(retained) != 1 || retained[0].State != cellar.CellStateReady || retained[0].NotBefore == nil {
+			t.Fatalf("retained timer after callback = %#v, want one deferred READY timer", retained)
+		}
+		timer.StopProduction()
 
 		if err := runtime.Stop(); err != nil {
 			t.Fatalf("first Stop() error = %v", err)
@@ -350,6 +360,16 @@ func TestExampleTimerTiming(t *testing.T) {
 		}
 		if err := timer.Register(runtime); err != nil {
 			t.Fatalf("Register() after reopen error = %v", err)
+		}
+		if _, err := timer.Schedule(runtime); !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+			t.Fatalf("Schedule() after retained restart error = %v, want ErrTimerAlreadyExists", err)
+		}
+		retained, err = store.ListActive()
+		if err != nil {
+			t.Fatalf("ListActive() after retained restart error = %v", err)
+		}
+		if len(retained) != 1 {
+			t.Fatalf("retained timer occurrences after restart = %d, want 1", len(retained))
 		}
 		done = make(chan error, 1)
 		go func() {

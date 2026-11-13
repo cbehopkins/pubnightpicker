@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,7 +52,12 @@ func TestEmailSendSequenceDeliversThroughDummyClient(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "email-send.db")
 	logs := &syncBuffer{}
-	a := mustNewAppWithLogger(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil, logs)
+	tokens := &blockingEmailTokens{started: make(chan struct{}), release: make(chan struct{})}
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
+	cfg.Email.Tokens = tokens
+	cfg.ShutdownDrainTimeout = 5 * time.Second
+	a := newApp(t, cfg)
 	defer a.Close()
 
 	request := durableemail.SendRequest{
@@ -81,8 +87,15 @@ func TestEmailSendSequenceDeliversThroughDummyClient(t *testing.T) {
 	go func() { done <- a.Run(ctx) }()
 
 	db := openSQLite(t, dbPath)
-	waitForEmailStates(t, db, request.IdempotencyToken, durableemail.StateAccepted, len(request.Recipients))
+	select {
+	case <-tokens.started:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("email delivery did not reach its rate-limit collaborator")
+	}
 	cancel()
+	waitForDrainStarted(t, logs)
+	close(tokens.release)
 	if err := <-done; err != nil {
 		t.Fatalf("run app: %v", err)
 	}
@@ -100,6 +113,25 @@ func TestEmailSendSequenceDeliversThroughDummyClient(t *testing.T) {
 	if sends := strings.Count(logs.String(), `"msg":"dummy email sent"`); sends != len(request.Recipients) {
 		t.Errorf("dummy sends = %d, want %d", sends, len(request.Recipients))
 	}
+	if active := activeWorkCells(t, a.CellarStore()); len(active) != 0 {
+		t.Errorf("shutdown left email work unfinished: %+v", active)
+	}
+}
+
+type blockingEmailTokens struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingEmailTokens) Acquire() int {
+	panic("email delivery must use AcquireN")
+}
+
+func (s *blockingEmailTokens) AcquireN(int) (int, error) {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return 0, nil
 }
 
 func TestRuntimeSuppressionHandlesMissingSandboxAndTestEmails(t *testing.T) {
@@ -374,8 +406,11 @@ func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
 func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "email-budget.db")
+	logs := &syncBuffer{}
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
 	cfg.EmailDailyLimit = 1
+	cfg.ShutdownDrainTimeout = 5 * time.Second
 	source := testemailtest.New()
 	source.Documents = []testemail.Document{{ID: "diagnostics", Data: map[string]any{"testEmailReq": "req-budget", "email": "diagnostics@example.com"}}}
 	cfg.TestEmailSource = source
@@ -437,6 +472,32 @@ func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	}
 	if deferred != 1 {
 		t.Fatalf("deferred email cells = %d", deferred)
+	}
+	if !strings.Contains(logs.String(), `"outcome":"quiescence"`) {
+		t.Fatalf("shutdown did not report quiescence: %s", logs.String())
+	}
+	allActive, err := application.CellarStore().ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferredCount := 0
+	for _, cell := range allActive {
+		if cell.State != cellar.CellStateClaimed && cell.NotBefore != nil && cell.NotBefore.After(time.Now()) {
+			deferredCount++
+		}
+	}
+	deferredCountLog := `"remaining_deferred":` + strconv.Itoa(deferredCount)
+	if !strings.Contains(logs.String(), deferredCountLog) {
+		t.Fatalf("shutdown did not report %s: %s", deferredCountLog, logs.String())
+	}
+	if err := application.Close(); err != nil {
+		t.Fatalf("close application before restart: %v", err)
+	}
+	restarted := newApp(t, cfg)
+	defer restarted.Close()
+	active = activeWorkCells(t, restarted.CellarStore())
+	if len(active) != 1 || active[0].Steps[active[0].CurrentStep].HandlerName != durableemail.HandlerPost || active[0].NotBefore == nil || !active[0].NotBefore.After(time.Now()) {
+		t.Fatalf("future email retry was not recoverable after restart: %+v", active)
 	}
 }
 

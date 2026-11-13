@@ -54,6 +54,7 @@ type Retry struct {
 	NotBefore       *time.Time
 	NewCells        []CellRequest
 	ApplicationWork []ApplicationWork
+	timerLease      *timerLease
 }
 
 func (Retry) isResult() {}
@@ -118,6 +119,13 @@ func NewStoreResultApplier(store Store) *StoreResultApplier {
 
 // ApplyResult translates the handler outcome into the corresponding store transition.
 func (a *StoreResultApplier) ApplyResult(ctx context.Context, cell Cell, result Result) error {
+	if retry, ok := result.(Retry); ok && retry.timerLease != nil {
+		return retry.timerLease.applyRetry(a, ctx, cell, retry)
+	}
+	return a.applyResult(ctx, cell, result)
+}
+
+func (a *StoreResultApplier) applyResult(ctx context.Context, cell Cell, result Result) error {
 	_ = ctx
 	if a == nil || a.store == nil {
 		return nil

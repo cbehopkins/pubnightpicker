@@ -23,6 +23,7 @@ type Cellar struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	started   bool
+	runErr    error
 }
 
 // New creates a Cellar runtime backed by store.
@@ -133,11 +134,58 @@ func (c *Cellar) Start(ctx context.Context) error {
 	c.started = true
 	c.cancel = cancel
 	c.done = make(chan struct{})
+	c.runErr = nil
 	done := c.done
 	c.mu.Unlock()
 
-	defer close(done)
-	return c.scheduler.Run(runCtx)
+	err := c.scheduler.Run(runCtx)
+	c.mu.Lock()
+	c.runErr = err
+	c.mu.Unlock()
+	close(done)
+	return err
+}
+
+// BeginDrain switches scheduling to drain mode. All runnable Cells remain eligible.
+func (c *Cellar) BeginDrain() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.started {
+		return ErrCellarNotStarted
+	}
+	return c.scheduler.BeginDrain()
+}
+
+// WaitForDrain permits quiescence and waits for eligible work to finish. If ctx
+// expires, execution is cancelled and all workers are joined before returning.
+func (c *Cellar) WaitForDrain(ctx context.Context) error {
+	c.mu.Lock()
+	if !c.started {
+		c.mu.Unlock()
+		return ErrCellarNotStarted
+	}
+	done := c.done
+	cancel := c.cancel
+	c.mu.Unlock()
+
+	c.scheduler.AllowDrainCompletion()
+	select {
+	case <-done:
+		c.mu.Lock()
+		err := c.runErr
+		c.mu.Unlock()
+		return err
+	case <-ctx.Done():
+		cancel()
+		<-done
+		c.mu.Lock()
+		err := c.runErr
+		c.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		return ctx.Err()
+	}
 }
 
 func (c *Cellar) validateHandlers() error {
@@ -188,6 +236,7 @@ func (d workerDispatcher) Dispatch(ctx context.Context, cell Cell) error {
 
 var (
 	ErrCellarStarted        = errors.New("cellar has started")
+	ErrCellarNotStarted     = errors.New("cellar has not started")
 	ErrStoreNil             = errors.New("store is nil")
 	ErrHandlerNotRegistered = errors.New("handler not registered")
 )

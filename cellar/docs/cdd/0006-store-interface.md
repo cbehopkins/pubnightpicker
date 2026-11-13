@@ -210,6 +210,12 @@ snapshot and cause `SQLITE_BUSY_SNAPSHOT` when the transaction attempts to write
 The configured busy timeout can wait for writer contention, but cannot repair
 a stale read snapshot.
 
+Orderly shutdown uses the same `ClaimNext` operation as ordinary scheduling.
+Modules own whether their work should complete or relinquish responsibility
+during shutdown; the Scheduler does not filter runnable Cells by handler name,
+payload, or another application predicate. This preserves the single-statement
+atomic claim path during both normal operation and draining.
+
 Only the Scheduler performs this operation.
 
 ---
@@ -642,9 +648,15 @@ These include the concepts already defined for:
 * adding Cells;
 * claiming runnable Cells;
 * completing execution;
+* retiring a specifically identified READY Cell with application work;
 * retrying execution;
 * recovering claimed Cells;
 * listing active Cells.
+
+`RetireReadyCell` is a narrow lifecycle operation, not a general state mutation. It
+deletes only the identified READY Cell and applies its application work in the same
+transaction. If the Cell is missing, is not READY, or the application work fails,
+the Cell and application data remain unchanged.
 
 The Store must not expose a generic lifecycle-state mutation operation through the normal Store interface.
 
