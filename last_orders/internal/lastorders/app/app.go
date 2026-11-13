@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -194,7 +193,7 @@ type App struct {
 	component                   string
 	shutdownDrainTimeout        time.Duration
 	claimGate                   *firebaseidempotency.ClaimGate
-	timerScanGate               *periodicScanGate
+	periodicTimers              []*cellar.Timer
 	runCancel                   context.CancelFunc
 	runDone                     chan struct{}
 	runMu                       sync.Mutex
@@ -659,7 +658,6 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	claimGate := &firebaseidempotency.ClaimGate{}
-	timerScanGate := &periodicScanGate{}
 	localIdempotencyStore, err := idempotency.New(baseStore)
 	if err != nil {
 		return nil, err
@@ -828,7 +826,7 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, func(ctx context.Context) error {
-		return timerScanGate.Run(ctx, autoCompleteListener.RunOnce)
+		return autoCompleteListener.RunOnce(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -858,7 +856,7 @@ func New(cfg Config) (application *App, err error) {
 		Interval: eventVenueListener.Interval(),
 		Mode:     cellar.TimerFixedRate,
 	}, func(ctx context.Context) error {
-		return timerScanGate.Run(ctx, eventVenueListener.ReevaluateOnce)
+		return eventVenueListener.ReevaluateOnce(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -954,7 +952,7 @@ func New(cfg Config) (application *App, err error) {
 		component:                   cfg.Component,
 		shutdownDrainTimeout:        cfg.ShutdownDrainTimeout,
 		claimGate:                   claimGate,
-		timerScanGate:               timerScanGate,
+		periodicTimers:              []*cellar.Timer{autoCompleteTimer, reevaluateTimer},
 		acceptingWork:               true,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
@@ -1084,6 +1082,7 @@ func (a *App) Run(ctx context.Context) error {
 	httpStopped := false
 	defer func() {
 		a.stopAcceptingWork()
+		a.stopPeriodicTimerProduction()
 		if !httpStopped {
 			a.shutdownHTTP()
 		}
@@ -1215,12 +1214,12 @@ func (a *App) Run(ctx context.Context) error {
 		a.stopAcceptingWork()
 		if a.shutdownDrainTimeout > 0 {
 			a.claimGate.Close()
+			a.stopPeriodicTimerProduction()
 			if err := a.cellarRuntime.BeginDrain(eligibleDrainCell); err != nil {
 				executionCancel()
 				a.logDrainOutcome("execution-failure", err)
 				return fmt.Errorf("begin Cellar drain: %w", err)
 			}
-			a.timerScanGate.Stop()
 			a.logger.Info("Landlord shutdown drain started", "timeout", a.shutdownDrainTimeout)
 			a.shutdownHTTPWithContext(drainCtx)
 			httpStopped = true
@@ -1264,7 +1263,7 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func eligibleDrainCell(cell cellar.Cell) bool {
-	if strings.HasPrefix(string(cell.ID), "timer:") || cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
+	if cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
 		return false
 	}
 	switch cell.Steps[cell.CurrentStep].HandlerName {
@@ -1275,25 +1274,10 @@ func eligibleDrainCell(cell cellar.Cell) bool {
 	}
 }
 
-type periodicScanGate struct {
-	mu      sync.RWMutex
-	stopped bool
-}
-
-func (g *periodicScanGate) Run(ctx context.Context, scan func(context.Context) error) error {
-	g.mu.Lock()
-	if g.stopped {
-		g.mu.Unlock()
-		return nil
+func (a *App) stopPeriodicTimerProduction() {
+	for _, timer := range a.periodicTimers {
+		timer.StopProduction()
 	}
-	g.mu.Unlock()
-	return scan(ctx)
-}
-
-func (g *periodicScanGate) Stop() {
-	g.mu.Lock()
-	g.stopped = true
-	g.mu.Unlock()
 }
 
 func (a *App) logDrainOutcome(outcome string, err error) {
@@ -1310,7 +1294,6 @@ func (a *App) logDrainOutcome(outcome string, err error) {
 		"remaining_runnable", remaining.runnable,
 		"remaining_in_flight", remaining.inFlight,
 		"remaining_deferred", remaining.deferred,
-		"remaining_periodic", remaining.periodic,
 		"remaining_other_blocked", remaining.otherBlocked,
 		"err", err,
 	)
@@ -1320,7 +1303,6 @@ type drainWorkSummary struct {
 	runnable     int
 	inFlight     int
 	deferred     int
-	periodic     int
 	otherBlocked int
 }
 
@@ -1330,8 +1312,6 @@ func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
 		switch {
 		case cell.State == cellar.CellStateClaimed:
 			summary.inFlight++
-		case strings.HasPrefix(string(cell.ID), "timer:"):
-			summary.periodic++
 		case cell.NotBefore != nil && cell.NotBefore.After(now):
 			summary.deferred++
 		case eligibleDrainCell(cell):

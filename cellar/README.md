@@ -232,6 +232,11 @@ only when creating it initially; scheduling an active name returns
 `TimerFixedRate` maintains cadence and coalesces missed ticks. A callback that returns
 an error cancels and deletes the timer.
 
+`Timer.StopProduction` closes callback admission for the current runtime. Already
+admitted callbacks may finish, but cannot reschedule after closure; queued occurrences
+then complete without calling the callback. Future occurrences remain available for
+normal recovery when the timer is registered by a later runtime.
+
 ---
 
 ### Scheduler

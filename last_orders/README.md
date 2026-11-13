@@ -136,10 +136,11 @@ are rejected. The option applies to Landlord and the default combined mode; it
 does not change HandPump lifecycle behaviour. Choose a value below the hosting
 platform's termination allowance.
 
-Draining stops new Firestore claim attempts and periodic observation scans, then
-allows runnable work for confirmed claims to finish until quiescence or the
-deadline. Future retries and rate limits are not bypassed. A deadline, execution
-failure, abrupt termination, or disappearing ephemeral SQLite database can still
+Draining closes periodic timer production at its source and stops new Firestore
+claim attempts, then allows runnable work for confirmed claims to finish until
+quiescence or the deadline. Queued timer occurrences cannot start scans, and
+in-flight callbacks cannot reschedule after closure. Future retries and rate limits
+are not bypassed. A deadline, execution failure, abrupt termination, or disappearing ephemeral SQLite database can still
 lose unfinished work; draining is best-effort, not a delivery guarantee. Retained
 SQLite remains the recovery path for unfinished work.
 

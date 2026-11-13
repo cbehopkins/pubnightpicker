@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,7 @@ type Timer struct {
 	name     HandlerName
 	config   TimerConfig
 	callback TimerCallback
+	producer *timerProducer
 }
 
 // NewTimer constructs a durable timer definition.
@@ -59,7 +61,19 @@ func NewTimer(name HandlerName, config TimerConfig, callback TimerCallback) (*Ti
 	if callback == nil {
 		return nil, ErrTimerCallbackNil
 	}
-	return &Timer{name: name, config: config, callback: callback}, nil
+	return &Timer{name: name, config: config, callback: callback, producer: &timerProducer{}}, nil
+}
+
+// StopProduction closes callback admission and prevents subsequent occurrences
+// from being scheduled. An admitted callback may finish, but its retry is
+// committed only if it wins the producer lock before this method closes it.
+func (t *Timer) StopProduction() {
+	if t == nil || t.producer == nil {
+		return
+	}
+	t.producer.mu.Lock()
+	t.producer.stopped = true
+	t.producer.mu.Unlock()
 }
 
 // Register binds the timer's durable name to its process-local callback.
@@ -77,7 +91,7 @@ func (t *Timer) Register(c *Cellar) error {
 	if c.started {
 		return ErrCellarStarted
 	}
-	err := c.registry.Register(t.name, timerRegistration{callback: t.callback})
+	err := c.registry.Register(t.name, timerRegistration{callback: t.callback, producer: t.producer})
 	if errors.Is(err, ErrHandlerAlreadyRegistered) {
 		return fmt.Errorf("%w: %s", ErrTimerAlreadyExists, t.name)
 	}
@@ -95,6 +109,11 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 	}
 	if c.store == nil {
 		return "", ErrStoreNil
+	}
+	t.producer.mu.Lock()
+	defer t.producer.mu.Unlock()
+	if t.producer.stopped {
+		return "", ErrTimerProductionStopped
 	}
 
 	payload, err := marshalJSON(timerPayload(t.config))
@@ -127,6 +146,7 @@ type timerPayload TimerConfig
 
 type timerRegistration struct {
 	callback TimerCallback
+	producer *timerProducer
 }
 
 func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
@@ -136,6 +156,10 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 	}
 	if r.callback == nil {
 		return ErrorResult{Message: "execute timer callback", Err: ErrTimerCallbackNil}
+	}
+	lease, admitted := r.producer.admit()
+	if !admitted {
+		return Complete{}
 	}
 	if err := r.callback(ctx); err != nil {
 		return Complete{}
@@ -152,7 +176,39 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 	} else if payload.Mode == TimerFixedRate && cell.NotBefore != nil {
 		next = nextFixedRateDeadline(*cell.NotBefore, now, payload.Interval)
 	}
-	return Retry{NotBefore: &next}
+	return Retry{NotBefore: &next, timerLease: lease}
+}
+
+type timerProducer struct {
+	mu      sync.Mutex
+	stopped bool
+}
+
+type timerLease struct {
+	producer *timerProducer
+}
+
+func (p *timerProducer) admit() (*timerLease, bool) {
+	if p == nil {
+		return nil, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return nil, false
+	}
+	return &timerLease{producer: p}, true
+}
+
+func (l *timerLease) applyRetry(applier *StoreResultApplier, ctx context.Context, cell Cell, retry Retry) error {
+	p := l.producer
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return applier.applyResult(ctx, cell, Complete{})
+	}
+	retry.timerLease = nil
+	return applier.applyResult(ctx, cell, retry)
 }
 
 func (r timerRegistration) Inspect(cell Cell) Inspection {
@@ -205,12 +261,13 @@ func timerCellID(name HandlerName) CellID {
 }
 
 var (
-	ErrCellarNil            = errors.New("cellar is nil")
-	ErrTimerNil             = errors.New("timer is nil")
-	ErrTimerIntervalInvalid = errors.New("timer interval must be positive")
-	ErrTimerModeInvalid     = errors.New("timer mode is invalid")
-	ErrTimerDailyAtInvalid  = errors.New("timer daily time must use HH:MM")
-	ErrTimerLocationInvalid = errors.New("timer location is invalid")
-	ErrTimerCallbackNil     = errors.New("timer callback is nil")
-	ErrTimerAlreadyExists   = errors.New("timer already exists")
+	ErrCellarNil              = errors.New("cellar is nil")
+	ErrTimerNil               = errors.New("timer is nil")
+	ErrTimerIntervalInvalid   = errors.New("timer interval must be positive")
+	ErrTimerModeInvalid       = errors.New("timer mode is invalid")
+	ErrTimerDailyAtInvalid    = errors.New("timer daily time must use HH:MM")
+	ErrTimerLocationInvalid   = errors.New("timer location is invalid")
+	ErrTimerCallbackNil       = errors.New("timer callback is nil")
+	ErrTimerAlreadyExists     = errors.New("timer already exists")
+	ErrTimerProductionStopped = errors.New("timer production is stopped")
 )

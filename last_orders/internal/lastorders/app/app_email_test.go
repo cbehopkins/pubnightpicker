@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -475,8 +476,19 @@ func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	if !strings.Contains(logs.String(), `"outcome":"quiescence"`) {
 		t.Fatalf("shutdown did not report quiescence: %s", logs.String())
 	}
-	if !strings.Contains(logs.String(), `"remaining_deferred":1`) {
-		t.Fatalf("shutdown did not report the future email retry as deferred: %s", logs.String())
+	allActive, err := application.CellarStore().ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferredCount := 0
+	for _, cell := range allActive {
+		if cell.State != cellar.CellStateClaimed && cell.NotBefore != nil && cell.NotBefore.After(time.Now()) {
+			deferredCount++
+		}
+	}
+	deferredCountLog := `"remaining_deferred":` + strconv.Itoa(deferredCount)
+	if !strings.Contains(logs.String(), deferredCountLog) {
+		t.Fatalf("shutdown did not report %s: %s", deferredCountLog, logs.String())
 	}
 	if err := application.Close(); err != nil {
 		t.Fatalf("close application before restart: %v", err)

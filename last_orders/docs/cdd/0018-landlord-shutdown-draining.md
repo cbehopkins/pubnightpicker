@@ -62,7 +62,13 @@ kept claim-blocked for restart. This is not a scheduler handler-name exclusion.
 Eligibility uses the current time throughout draining, not a shutdown-time
 snapshot. A scheduled retry becomes eligible if its time arrives while other work
 is still running. Once quiescent, exit without waiting for a future retry or timer.
-Do not introduce fresh periodic observation scans during draining.
+Close periodic observation timer production at the timer source before entering the
+drain. A callback admitted before closure may settle and its accepted work follows
+ordinary drain and claim-gate rules. Queued occurrences dispatched after closure do
+not start scans; callbacks finishing concurrently with closure cannot persist another
+occurrence. Do not distinguish periodic work in scheduler eligibility by timer ID,
+handler name, or decoded Cell payload. Future timer state remains deferred and
+recoverable rather than being brought forward or deleted.
 
 Email and webpush work should be allowed to finish their happy-path persistent
 steps. External failures may still record Retry Cells. Respect existing delays,
