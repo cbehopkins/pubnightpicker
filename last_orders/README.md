@@ -207,21 +207,27 @@ restrict access and rotate the service-account key if exposed.
 ### Release deployment
 
 The `last_orders image` GitHub Actions workflow builds and pushes Last Orders
-images to GHCR. Pushing a tag such as `last_orders-v1.2.3` also deploys that
-version to the configured Scaleway Serverless Container after the image push
-succeeds. The deploy job updates the container's image reference and requests a
-redeploy; it does not run for branch builds or other tags.
+images to Scaleway Container Registry. Pushing a tag such as `last_orders-v1.2.3`
+also deploys that version to the configured Scaleway Serverless Container after
+the image push succeeds. The deploy job updates the container's image reference and requests a
+redeploy; it does not run for branch builds or other tags. It waits for the
+container to become ready before updating, after updating, and after requesting
+the redeploy. Each wait is limited to five minutes; failed states stop the job.
+Only container status is logged, not environment variables or secret hashes.
 
 Configure these GitHub repository settings for the deploy job:
 
-- Secret `SCW_SECRET_KEY`: a Scaleway API key with permission to update and
-  redeploy the target Serverless Container.
+- Variable `SCALEWAY_REGISTRY_ENDPOINT`: `rg.<region>.scw.cloud/<namespace>`.
+- Secret `SCALEWAY_API_KEY`: a Scaleway API key with permission to push images
+  to that registry namespace.
+- Secret `SCW_SECRET_KEY`: a Scaleway API key with permission to read, update
+  and redeploy the target Serverless Container.
 - Variable `SCW_CONTAINERS_REGION`: the container region, such as `fr-par`.
 - Variable `SCW_CONTAINER_ID`: the target container UUID.
 
 The image is addressed as
-`ghcr.io/<owner>/<repository>/last_orders:last_orders-v1.2.3`. Ensure the
-Scaleway container can pull that GHCR image. The container ID and region are
+`<SCALEWAY_REGISTRY_ENDPOINT>/last_orders:last_orders-v1.2.3`. Ensure the
+Scaleway container can pull that registry image. The container ID and region are
 configuration, not secrets; keep the API key in the GitHub secret only.
 
 Email uses the dummy client by default. Set `MAILTRAP_TOKEN` to enable Mailtrap,
