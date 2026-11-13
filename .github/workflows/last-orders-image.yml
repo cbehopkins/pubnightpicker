@@ -72,6 +72,8 @@ jobs:
     name: Build and push to Scaleway Container Registry
     needs: go-test
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.name }}:${{ github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -144,33 +146,60 @@ jobs:
     # Only an explicitly versioned Last Orders release tag deploys production.
     if: startsWith(github.ref, 'refs/tags/last_orders-v')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     concurrency:
       group: last-orders-scaleway-production
       cancel-in-progress: false
     steps:
       - name: Update image and redeploy Scaleway container
+        shell: bash
         env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
           SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
           SCW_REGION: ${{ vars.SCW_CONTAINERS_REGION }}
           SCW_CONTAINER_ID: ${{ vars.SCW_CONTAINER_ID }}
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/last_orders:${GITHUB_REF_NAME}"
 
+          : "${IMAGE:?Build job must supply the published image reference}"
           : "${SCW_SECRET_KEY:?Set the SCW_SECRET_KEY repository secret}"
           : "${SCW_REGION:?Set the SCW_CONTAINERS_REGION repository variable}"
           : "${SCW_CONTAINER_ID:?Set the SCW_CONTAINER_ID repository variable}"
 
           API="https://api.scaleway.com/containers/v1/regions/${SCW_REGION}/containers/${SCW_CONTAINER_ID}"
 
-          curl --fail-with-body --silent --show-error \
+          wait_for_ready() {
+            local deadline=$((SECONDS + 300)) status
+            while (( SECONDS < deadline )); do
+              status="$(curl --fail --silent --show-error --max-time 30 \
+                --header "X-Auth-Token: ${SCW_SECRET_KEY}" \
+                "${API}" | jq -er '.status')"
+              echo "Scaleway container status: ${status}"
+              case "$status" in
+                ready) return 0 ;;
+                updating|creating|pending) ;;
+                *) echo "Container cannot proceed from status: ${status}" >&2; return 1 ;;
+              esac
+              sleep 5
+            done
+            echo "Timed out waiting for Scaleway container readiness" >&2
+            return 1
+          }
+
+          wait_for_ready
+
+          curl --fail --silent --show-error --max-time 30 --output /dev/null \
             --request PATCH \
             --header "X-Auth-Token: ${SCW_SECRET_KEY}" \
             --header "Content-Type: application/json" \
             --data "$(jq -n --arg image "${IMAGE}" '{image: $image}')" \
             "${API}"
 
-          curl --fail-with-body --silent --show-error \
+          wait_for_ready
+
+          curl --fail --silent --show-error --max-time 30 --output /dev/null \
             --request POST \
             --header "X-Auth-Token: ${SCW_SECRET_KEY}" \
             "${API}/redeploy"
+
+          wait_for_ready
