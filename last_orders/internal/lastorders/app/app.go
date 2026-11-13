@@ -1193,12 +1193,15 @@ func (a *App) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		a.logger.Info("run context cancelled, shutting down")
-		a.stopAcceptingWork()
+		var drainCtx context.Context
 		if a.shutdownDrainTimeout > 0 {
 			drainRequested = true
-			deadline := time.Now().Add(a.shutdownDrainTimeout)
-			drainCtx, cancelDrain := context.WithDeadline(context.Background(), deadline)
+			var cancelDrain context.CancelFunc
+			drainCtx, cancelDrain = context.WithTimeout(context.Background(), a.shutdownDrainTimeout)
 			defer cancelDrain()
+		}
+		a.stopAcceptingWork()
+		if a.shutdownDrainTimeout > 0 {
 			a.claimGate.Close()
 			if err := a.cellarRuntime.BeginDrain(eligibleDrainCell); err != nil {
 				executionCancel()
@@ -1263,11 +1266,12 @@ type periodicScanGate struct {
 }
 
 func (g *periodicScanGate) Run(ctx context.Context, scan func(context.Context) error) error {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
 	if g.stopped {
+		g.mu.Unlock()
 		return nil
 	}
+	g.mu.Unlock()
 	return scan(ctx)
 }
 

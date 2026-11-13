@@ -144,13 +144,7 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 
 // ClaimNextMatching atomically claims the next runnable Cell accepted by eligible.
 func (s *Store) ClaimNextMatching(now time.Time, eligible func(cellar.Cell) bool) (cellar.Cell, bool, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-	defer rollback(tx)
-
-	rows, err := tx.Query(
+	rows, err := s.db.Query(
 		`SELECT id, steps, current_step, state, not_before
 		 FROM cells
 		 WHERE state = ?
@@ -175,7 +169,7 @@ func (s *Store) ClaimNextMatching(now time.Time, eligible func(cellar.Cell) bool
 		if eligible != nil && !eligible(candidate) {
 			continue
 		}
-		row := tx.QueryRow(
+		row := s.db.QueryRow(
 			`UPDATE cells SET state = ?
 			 WHERE id = ? AND state = ?
 			   AND (not_before IS NULL OR not_before <= ?)
@@ -190,15 +184,9 @@ func (s *Store) ClaimNextMatching(now time.Time, eligible func(cellar.Cell) bool
 		if err != nil {
 			return cellar.Cell{}, false, err
 		}
-		if err := tx.Commit(); err != nil {
-			return cellar.Cell{}, false, err
-		}
 		return cell, true, nil
 	}
 
-		if err := tx.Commit(); err != nil {
-			return cellar.Cell{}, false, err
-		}
 	return cellar.Cell{}, false, nil
 }
 
