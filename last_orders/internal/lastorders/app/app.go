@@ -786,7 +786,10 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}); err != nil {
+		return nil, err
+	}
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerReleaseRemote, firebaseidempotency.ReleaseRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}); err != nil {
@@ -1265,7 +1268,7 @@ func eligibleDrainCell(cell cellar.Cell) bool {
 		return false
 	}
 	switch cell.Steps[cell.CurrentStep].HandlerName {
-	case firebaseidempotency.HandlerCheck, firebaseidempotency.HandlerPopulateRemote, truths.EventVenueObservedFanout:
+	case truths.EventVenueObservedFanout:
 		return false
 	default:
 		return true
@@ -1307,7 +1310,6 @@ func (a *App) logDrainOutcome(outcome string, err error) {
 		"remaining_runnable", remaining.runnable,
 		"remaining_in_flight", remaining.inFlight,
 		"remaining_deferred", remaining.deferred,
-		"remaining_claim_blocked", remaining.claimBlocked,
 		"remaining_periodic", remaining.periodic,
 		"remaining_other_blocked", remaining.otherBlocked,
 		"err", err,
@@ -1318,7 +1320,6 @@ type drainWorkSummary struct {
 	runnable     int
 	inFlight     int
 	deferred     int
-	claimBlocked int
 	periodic     int
 	otherBlocked int
 }
@@ -1331,8 +1332,6 @@ func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
 			summary.inFlight++
 		case strings.HasPrefix(string(cell.ID), "timer:"):
 			summary.periodic++
-		case isClaimBlockedCell(cell):
-			summary.claimBlocked++
 		case cell.NotBefore != nil && cell.NotBefore.After(now):
 			summary.deferred++
 		case eligibleDrainCell(cell):
@@ -1342,18 +1341,6 @@ func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
 		}
 	}
 	return summary
-}
-
-func isClaimBlockedCell(cell cellar.Cell) bool {
-	if cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
-		return false
-	}
-	switch cell.Steps[cell.CurrentStep].HandlerName {
-	case firebaseidempotency.HandlerCheck, firebaseidempotency.HandlerPopulateRemote:
-		return true
-	default:
-		return false
-	}
 }
 
 func (a *App) runHandPump(ctx context.Context) error {

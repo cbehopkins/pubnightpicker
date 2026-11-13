@@ -20,6 +20,7 @@ import (
 const (
 	HandlerCheck          cellar.HandlerName = "firebase.idempotency.check"
 	HandlerPopulateRemote cellar.HandlerName = "firebase.idempotency.populate_remote"
+	HandlerReleaseRemote  cellar.HandlerName = "firebase.idempotency.release_remote"
 	HandlerEmitTruth      cellar.HandlerName = "firebase.idempotency.emit_truth"
 )
 
@@ -30,6 +31,12 @@ type StepPayload struct {
 	EventKey string          `json:"event_key"`
 	Owner    string          `json:"owner"`
 	Truth    truths.Envelope `json:"truth"`
+}
+
+type ReleasePayload struct {
+	Listener string `json:"listener"`
+	EventKey string `json:"event_key"`
+	Owner    string `json:"owner"`
 }
 
 // NewCellRequest builds the 3-step Sequence which establishes idempotency for the
@@ -93,12 +100,13 @@ func (h CheckHandler) Handle(ctx context.Context, payload StepPayload) cellar.Re
 type PopulateRemoteHandler struct {
 	Remote Remote
 	Gate   *ClaimGate
+	Store  *Store
 	Logger *slog.Logger
 }
 
 func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
 	if h.Gate != nil && !h.Gate.TryStartClaimAttempt() {
-		return cellar.Retry{}
+		return h.relinquishClaim(ctx, payload)
 	}
 	alreadyExists, ownedByThisExecution, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
 	if err != nil {
@@ -115,6 +123,80 @@ func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) 
 	}
 	if h.Logger != nil {
 		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner, "already_exists", alreadyExists)
+	}
+	return cellar.Complete{}
+}
+
+func (h PopulateRemoteHandler) relinquishClaim(ctx context.Context, payload StepPayload) cellar.Result {
+	if h.Store == nil {
+		return cellar.ErrorResult{Message: "retire refused idempotency claim", Err: errors.New("idempotency store is required")}
+	}
+	owner, exists, err := h.Remote.LookupOwner(ctx, payload.Listener, payload.EventKey)
+	if err != nil {
+		return cellar.ErrorResult{Message: "inspect refused idempotency claim", Err: err}
+	}
+	if exists && owner == "" {
+		return cellar.ErrorResult{
+			Message: "inspect refused idempotency claim",
+			Err:     fmt.Errorf("remote claim owner is unresolved for %q/%q", payload.Listener, payload.EventKey),
+		}
+	}
+
+	var releaseCells []cellar.CellRequest
+	if exists && owner == payload.Owner {
+		request, err := newReleaseRequest(payload.Listener, payload.EventKey, payload.Owner)
+		if err != nil {
+			return cellar.ErrorResult{Message: "build remote idempotency release", Err: err}
+		}
+		releaseCells = append(releaseCells, request)
+	} else if exists && h.Logger != nil {
+		h.Logger.Info("idempotency claim relinquished without releasing competing owner", "listener", payload.Listener, "event_key", payload.EventKey, "owner", owner)
+	} else if h.Logger != nil {
+		h.Logger.Info("idempotency claim relinquished without remote claim", "listener", payload.Listener, "event_key", payload.EventKey)
+	}
+
+	return cellar.Kill{
+		NewCells:        releaseCells,
+		ApplicationWork: []cellar.ApplicationWork{h.Store.RetireCacheEntryWork(payload.Listener, payload.EventKey, payload.Owner)},
+	}
+}
+
+func newReleaseRequest(listener, eventKey, owner string) (cellar.CellRequest, error) {
+	payload, err := cellar.JSONCodec[ReleasePayload]().Marshal(ReleasePayload{
+		Listener: listener,
+		EventKey: eventKey,
+		Owner:    owner,
+	})
+	if err != nil {
+		return cellar.CellRequest{}, err
+	}
+	return cellar.CellRequest{
+		ID:    cellar.CellID(fmt.Sprintf("firebase-idempotency-release:%s", owner)),
+		Steps: []cellar.CellStep{{HandlerName: HandlerReleaseRemote, Payload: payload}},
+	}, nil
+}
+
+type ReleaseRemoteHandler struct {
+	Remote Remote
+	Logger *slog.Logger
+}
+
+func (h ReleaseRemoteHandler) Handle(ctx context.Context, payload ReleasePayload) cellar.Result {
+	released, err := h.Remote.ReleaseKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
+	if err != nil {
+		return cellar.ErrorResult{Message: "release remote idempotency claim", Err: err}
+	}
+	if !released {
+		if h.Logger != nil {
+			h.Logger.Info("idempotency remote claim release skipped because ownership changed", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner)
+		}
+		return cellar.ErrorResult{
+			Message: "release remote idempotency claim",
+			Err:     fmt.Errorf("remote claim owner changed before release for %q/%q", payload.Listener, payload.EventKey),
+		}
+	}
+	if h.Logger != nil {
+		h.Logger.Info("idempotency remote claim released", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner)
 	}
 	return cellar.Complete{}
 }

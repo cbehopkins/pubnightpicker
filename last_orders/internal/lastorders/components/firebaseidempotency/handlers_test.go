@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
 	"last_orders/internal/lastorders/truths"
 
 	_ "modernc.org/sqlite"
@@ -117,6 +119,194 @@ func TestStorePersistsSequenceOwnerAndLeavesLegacyRowsOwnerless(t *testing.T) {
 	owner, exists, err = store.LookupOwner(context.Background(), "event_venue_observed", "legacy-event")
 	if err != nil || !exists || owner != "" {
 		t.Fatalf("legacy LookupOwner() = %q, %t, %v; want ownerless/present", owner, exists, err)
+	}
+}
+
+func TestPopulateRemoteGateRefusalRelinquishesByConfirmedOwner(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		remoteOwner   string
+		remoteExists  bool
+		lookupOwner   string
+		lookupExists  bool
+		lookupErr     error
+		wantError     bool
+		wantCleanup   bool
+		wantRemoteKey bool
+	}{
+		{name: "absent claim"},
+		{name: "owned claim", remoteOwner: "sequence-owner", remoteExists: true, lookupOwner: "sequence-owner", lookupExists: true, wantCleanup: true},
+		{name: "competing owner", remoteOwner: "competitor", remoteExists: true, lookupOwner: "competitor", lookupExists: true, wantRemoteKey: true},
+		{name: "ownerless claim", remoteOwner: "seeded", remoteExists: true, lookupExists: true, wantError: true, wantRemoteKey: true},
+		{name: "failed lookup", lookupErr: errors.New("lookup unavailable"), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, store := newHandlerTestStore(t)
+			const listener = "test-listener"
+			const eventKey = "test-event"
+			const owner = "sequence-owner"
+			insertCacheOwner(t, db, store, listener, eventKey, owner)
+
+			memoryRemote := firebaseidempotencytest.NewInMemoryRemoteStandIn(true)
+			if test.remoteExists {
+				remoteOwner := test.remoteOwner
+				if remoteOwner != "" {
+					if _, _, err := memoryRemote.CreateKey(context.Background(), listener, eventKey, remoteOwner); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			remote := ownerLookupRemote{
+				Remote: memoryRemote,
+				owner:  test.lookupOwner,
+				exists: test.lookupExists,
+				err:    test.lookupErr,
+			}
+			gate := &ClaimGate{}
+			gate.Close()
+			result := (PopulateRemoteHandler{Remote: remote, Gate: gate, Store: store}).Handle(context.Background(), StepPayload{
+				Listener: listener,
+				EventKey: eventKey,
+				Owner:    owner,
+			})
+
+			if test.wantError {
+				if _, ok := result.(cellar.ErrorResult); !ok {
+					t.Fatalf("gate refusal result = %T, want ErrorResult", result)
+				}
+				if _, exists, err := store.LookupOwner(context.Background(), listener, eventKey); err != nil || !exists {
+					t.Fatalf("unresolved claim was retired: exists=%t, err=%v", exists, err)
+				}
+				return
+			}
+
+			kill, ok := result.(cellar.Kill)
+			if !ok {
+				t.Fatalf("gate refusal result = %T, want Kill", result)
+			}
+			if len(kill.NewCells) != 0 && !test.wantCleanup {
+				t.Fatalf("gate refusal created %d release cells for a non-owned claim", len(kill.NewCells))
+			}
+			if test.wantCleanup {
+				if len(kill.NewCells) != 1 || kill.NewCells[0].Steps[0].HandlerName != HandlerReleaseRemote {
+					t.Fatalf("owned claim cleanup cells = %+v, want one remote release step", kill.NewCells)
+				}
+				var releasePayload ReleasePayload
+				if err := json.Unmarshal(kill.NewCells[0].Steps[0].Payload, &releasePayload); err != nil {
+					t.Fatal(err)
+				}
+				if releasePayload.Owner != owner || releasePayload.Listener != listener || releasePayload.EventKey != eventKey {
+					t.Fatalf("release payload = %+v, want exact original identity and owner", releasePayload)
+				}
+			}
+			if len(kill.ApplicationWork) != 1 {
+				t.Fatalf("local retirement work = %d, want 1", len(kill.ApplicationWork))
+			}
+			retirement := mustBegin(t, db)
+			if err := kill.ApplicationWork[0](firebaseStoreTx{retirement}); err != nil {
+				t.Fatal(err)
+			}
+			if err := retirement.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists, err := store.LookupOwner(context.Background(), listener, eventKey); err != nil || exists {
+				t.Fatalf("retired cache row exists=%t, err=%v", exists, err)
+			}
+			if test.wantCleanup {
+				var releasePayload ReleasePayload
+				if err := json.Unmarshal(kill.NewCells[0].Steps[0].Payload, &releasePayload); err != nil {
+					t.Fatal(err)
+				}
+				result := (ReleaseRemoteHandler{Remote: memoryRemote}).Handle(context.Background(), releasePayload)
+				if _, ok := result.(cellar.Complete); !ok {
+					t.Fatalf("remote cleanup result = %#v, want Complete", result)
+				}
+			}
+
+			remoteOwner, exists, err := memoryRemote.LookupOwner(context.Background(), listener, eventKey)
+			if err != nil || exists != test.wantRemoteKey {
+				t.Fatalf("remote claim exists=%t, err=%v; want exists=%t", exists, err, test.wantRemoteKey)
+			}
+			if exists && remoteOwner != test.remoteOwner {
+				t.Fatalf("remote owner = %q, want %q", remoteOwner, test.remoteOwner)
+			}
+		})
+	}
+}
+
+func TestReleaseRemoteHandlerPreservesReplacementAndSurfacesFailure(t *testing.T) {
+	const listener = "test-listener"
+	const eventKey = "test-event"
+	const owner = "sequence-owner"
+	payload := ReleasePayload{Listener: listener, EventKey: eventKey, Owner: owner}
+	remote := firebaseidempotencytest.NewInMemoryRemoteStandIn(true)
+	if _, _, err := remote.CreateKey(context.Background(), listener, eventKey, owner); err != nil {
+		t.Fatal(err)
+	}
+	remote.SeedExisting(listener, eventKey, true)
+	releaseResult := (ReleaseRemoteHandler{Remote: remote}).Handle(context.Background(), payload)
+	if _, ok := releaseResult.(cellar.ErrorResult); !ok {
+		t.Fatalf("replacement-owner release result = %#v, want ErrorResult", releaseResult)
+	}
+	if got, exists, err := remote.LookupOwner(context.Background(), listener, eventKey); err != nil || !exists || got != "seeded" {
+		t.Fatalf("replacement claim = %q, %t, %v; want seeded owner preserved", got, exists, err)
+	}
+
+	releaseErr := errors.New("release response unavailable")
+	result := (ReleaseRemoteHandler{Remote: releaseErrorRemote{Remote: remote, err: releaseErr}}).Handle(context.Background(), payload)
+	failed, ok := result.(cellar.ErrorResult)
+	if !ok || !errors.Is(failed.Err, releaseErr) {
+		t.Fatalf("inconclusive release result = %#v, want ErrorResult wrapping release error", result)
+	}
+}
+
+type ownerLookupRemote struct {
+	Remote
+	owner  string
+	exists bool
+	err    error
+}
+
+func (r ownerLookupRemote) LookupOwner(context.Context, string, string) (string, bool, error) {
+	return r.owner, r.exists, r.err
+}
+
+type releaseErrorRemote struct {
+	Remote
+	err error
+}
+
+func (r releaseErrorRemote) ReleaseKey(context.Context, string, string, string) (bool, error) {
+	return false, r.err
+}
+
+func newHandlerTestStore(t *testing.T) (*sql.DB, *Store) {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db, store
+}
+
+func insertCacheOwner(t *testing.T, db *sql.DB, store *Store, listener, eventKey, owner string) {
+	t.Helper()
+	tx := mustBegin(t, db)
+	if err := store.InsertUnlessExistsWork(listener, eventKey, owner)(firebaseStoreTx{tx}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 }
 

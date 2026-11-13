@@ -55,8 +55,9 @@ On a graceful shutdown request:
 
 Quiescence means both no eligible runnable work and no in-flight execution which
 can create more eligible work. An empty queue while a worker is active is not
-sufficient. Work blocked solely by the prohibition on fresh claims does not keep
-the drain alive; it must not be discarded merely because this drain cannot run it.
+sufficient. Idempotency owns the decision for work that encounters the closed
+claim gate: a refused Populate Remote Sequence is safely relinquished rather than
+kept claim-blocked for restart. This is not a scheduler handler-name exclusion.
 
 Eligibility uses the current time throughout draining, not a shutdown-time
 snapshot. A scheduled retry becomes eligible if its time arrives while other work
@@ -75,7 +76,7 @@ error isolation or promising that unrelated work continues after such an error.
 
 Report the shutdown outcome and remaining runnable, in-flight and deferred work
 where available. A successful drain must not be reported as completion of future
-or claim-blocked work.
+work.
 
 ## 5. Claims and Uncertain Responses
 
@@ -112,6 +113,20 @@ Landlord does not retry or wait beyond the existing shutdown deadline to resolve
 that uncertainty; loss remains within the accepted best-effort policy. Because the
 claim handler remains an active Cellar dispatch until reconciliation finishes, it
 is included in drain quiescence accounting.
+
+A Populate Remote Sequence refused by the closed gate performs a read-only owner
+lookup; it never calls CreateKey. A failed lookup or an existing ownerless record
+is unresolved and follows the existing scheduler-stopping failure path without
+retiring the Sequence or cache row. If the record is absent, or belongs to another
+owner, the local Sequence and its matching cache row are retired atomically; a
+competing owner's remote record is never deleted. If the record belongs to this
+Sequence, the same local transaction retires the Sequence and cache row and adds
+a cleanup Cell. That Cell conditionally deletes only the recorded owner. A
+replacement owner or inconclusive deletion is reported as incomplete through the
+existing scheduler-stopping failure path; no implicit retry loop is added. A
+failed local retirement rolls back the Sequence termination and cleanup Cell
+together. This explicit relinquishment is separate from the recurrence release
+protocol in section 7.
 
 ## 6. Recurrence Boundary
 
@@ -211,13 +226,18 @@ claim rollback or a change to recurrence's separate downstream claim boundaries.
 
 Implementation should demonstrate bounded shutdown, no fresh claims, preservation
 of in-flight happy-path execution, runnable child work, quiescence with concurrent
-workers, current-time retry eligibility and retained-database recovery. For claim
-release, verify the `READY` pre-evaluation eligibility rule; owner mismatch and
-delayed cleanup against a replacement claim in the emulator; rollback when the
-SQLite retirement transaction fails; interruption before and after the
-SQLite/Firestore boundary with retained storage; and fresh-instance retry versus
-an already-running instance with a cached claim. Do not release a claimed or
-missing fanout Cell or delete downstream Sequence work.
+workers, current-time retry eligibility and retained-database recovery. For
+gate-refused idempotency work, verify termination and local cache retirement,
+read-only owner reconciliation, conditional cleanup only for the persisted owner,
+replacement-owner preservation and a subsequent observation against retained and
+fresh databases. Verify that unresolved lookup, failed local retirement and
+inconclusive remote deletion retain the required scheduler-stopping semantics.
+For recurrence claim release, verify the `READY` pre-evaluation eligibility rule;
+owner mismatch and delayed cleanup against a replacement claim in the emulator;
+rollback when the SQLite retirement transaction fails; interruption before and
+after the SQLite/Firestore boundary with retained storage; and fresh-instance
+retry versus an already-running instance with a cached claim. Do not release a
+claimed or missing fanout Cell or delete downstream Sequence work.
 
 Conduct a separate multi-instance safety review, including local-only idempotency
 such as daily auto-completion. The existing remote claim gate plus this drain

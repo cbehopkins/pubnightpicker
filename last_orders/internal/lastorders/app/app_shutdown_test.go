@@ -176,26 +176,26 @@ type shutdownEventVenueStream struct {
 }
 
 type liveNewPollSource struct {
-	mu           sync.Mutex
-	documents    map[string]newpolls.Document
-	watchStarted chan struct{}
+	mu            sync.Mutex
+	documents     map[string]newpolls.Document
+	watchStarted  chan struct{}
 	streamStopped chan struct{}
-	watchOnce    sync.Once
-	stopOnce     sync.Once
+	watchOnce     sync.Once
+	stopOnce      sync.Once
 }
 
 type liveNewPollStream struct {
-	ctx      context.Context
-	changes  []newpolls.Change
+	ctx       context.Context
+	changes   []newpolls.Change
 	delivered bool
-	source   *liveNewPollSource
+	source    *liveNewPollSource
 }
 
 type materializingDrainEventPollCreator struct {
-	delegate *recurrencetest.Service
-	source   *liveNewPollSource
-	started  chan struct{}
-	release  chan struct{}
+	delegate  *recurrencetest.Service
+	source    *liveNewPollSource
+	started   chan struct{}
+	release   chan struct{}
 	startOnce sync.Once
 }
 
@@ -609,7 +609,7 @@ func TestShutdownDrainLeavesFutureRetryForSameDatabaseRestart(t *testing.T) {
 	}
 }
 
-func TestShutdownDrainBlocksFreshClaimAndPreservesSequence(t *testing.T) {
+func TestShutdownDrainRelinquishesFreshClaim(t *testing.T) {
 	t.Parallel()
 
 	remote := &blockingHasKeyRemote{
@@ -618,12 +618,21 @@ func TestShutdownDrainBlocksFreshClaimAndPreservesSequence(t *testing.T) {
 		release:  make(chan struct{}),
 	}
 	logs := &syncBuffer{}
-	cfg := testConfig(t, filepath.Join(t.TempDir(), "shutdown-claim-fence.db"), remote)
+	dbPath := filepath.Join(t.TempDir(), "shutdown-claim-fence.db")
+	cfg := testConfig(t, dbPath, remote)
 	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
 	cfg.ShutdownDrainTimeout = 5 * time.Second
 	a := newApp(t, cfg)
 	defer a.Close()
-	if err := enqueueNewPoll(t, a, "shutdown-claim-fence-poll"); err != nil {
+	envelope, err := truths.NewEnvelope(truths.PollOpenedFanout, truths.PollObservedPayload{PollID: "shutdown-claim-fence-poll"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := firebaseidempotency.NewCellRequest("PollOpened", "shutdown-claim-fence-poll", envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddCell(request); err != nil {
 		t.Fatalf("enqueue poll: %v", err)
 	}
 
@@ -650,12 +659,42 @@ func TestShutdownDrainBlocksFreshClaimAndPreservesSequence(t *testing.T) {
 	if calls := remote.createKeys.Load(); calls != 0 {
 		t.Fatalf("fresh Firestore claims during shutdown = %d, want 0", calls)
 	}
-	active := activeWorkCells(t, a.CellarStore())
-	if len(active) != 1 || active[0].CurrentStep != 1 || active[0].State != cellar.CellStateReady || active[0].Steps[1].HandlerName != firebaseidempotency.HandlerPopulateRemote {
-		t.Fatalf("blocked idempotency Sequence was not preserved at its claim step: %+v", active)
+	if active := activeWorkCells(t, a.CellarStore()); len(active) != 0 {
+		t.Fatalf("gate-refused idempotency Sequence was not terminated: %+v", active)
 	}
-	if !strings.Contains(logs.String(), `"remaining_claim_blocked":1`) {
-		t.Fatalf("shutdown did not report blocked claim work: %s", logs.String())
+	store, ok := a.CellarStore().(interface{ DB() *sql.DB })
+	if !ok {
+		t.Fatal("Cellar store does not expose its shared database")
+	}
+	var cacheRows int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM firebase_idempotency_records`).Scan(&cacheRows); err != nil {
+		t.Fatal(err)
+	}
+	if cacheRows != 0 {
+		t.Fatalf("locally owned idempotency cache rows = %d, want 0", cacheRows)
+	}
+	if strings.Contains(logs.String(), `"remaining_claim_blocked":1`) {
+		t.Fatalf("shutdown reported relinquished work as claim-blocked: %s", logs.String())
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close first app: %v", err)
+	}
+
+	restarted := newApp(t, testConfig(t, dbPath, remote))
+	defer restarted.Close()
+	retryRequest, err := firebaseidempotency.NewCellRequest("PollOpened", "shutdown-claim-fence-poll", envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.AddCell(retryRequest); err != nil {
+		t.Fatalf("enqueue poll after retained-database restart: %v", err)
+	}
+	runUntil(t, restarted, func() bool {
+		owner, exists, err := remote.delegate.LookupOwner(context.Background(), "PollOpened", "shutdown-claim-fence-poll")
+		return err == nil && exists && owner == string(retryRequest.ID) && owner != string(request.ID)
+	})
+	if calls := remote.createKeys.Load(); calls != 1 {
+		t.Fatalf("remote claim attempts after retained-database retry = %d, want 1", calls)
 	}
 }
 
@@ -912,7 +951,7 @@ func TestShutdownDrainDoesNotResumeLocallyRetiredObservationAfterRemoteFailure(t
 	a := newApp(t, cfg)
 	defer a.Close()
 	observation := truths.EventVenueObserved{
-		Venue: recurrence.EventVenue{ID: "release-failure-event", NextOccurrenceDate: "2026-11-14"},
+		Venue:      recurrence.EventVenue{ID: "release-failure-event", NextOccurrenceDate: "2026-11-14"},
 		ObservedOn: "2026-11-13",
 	}
 	fanout, eventKey, owner := seedEventVenueReleaseCandidate(t, a, delegate, observation, true)
@@ -998,7 +1037,7 @@ func TestShutdownDrainPreservesLegacyOwnerlessObservationClaim(t *testing.T) {
 	a := newApp(t, cfg)
 	defer a.Close()
 	observation := truths.EventVenueObserved{
-		Venue: recurrence.EventVenue{ID: "ownerless-release-event", NextOccurrenceDate: "2026-11-14"},
+		Venue:      recurrence.EventVenue{ID: "ownerless-release-event", NextOccurrenceDate: "2026-11-14"},
 		ObservedOn: "2026-11-13",
 	}
 	fanout, eventKey, owner := seedEventVenueReleaseCandidate(t, a, remote, observation, false)
@@ -1258,8 +1297,19 @@ func TestShutdownDrainStopsAndAwaitsListenerCallback(t *testing.T) {
 	if calls := remote.createKeys.Load(); calls != 0 {
 		t.Fatalf("remote claims from shutdown callback = %d, want 0", calls)
 	}
-	if active := activeWorkCells(t, a.CellarStore()); len(active) != 1 || active[0].CurrentStep != 0 {
-		t.Fatalf("late listener observation was not preserved as unclaimed work: %+v", active)
+	if active := activeWorkCells(t, a.CellarStore()); len(active) != 0 {
+		t.Fatalf("gate-refused listener observation was not terminated: %+v", active)
+	}
+	store, ok := a.CellarStore().(interface{ DB() *sql.DB })
+	if !ok {
+		t.Fatal("Cellar store does not expose its shared database")
+	}
+	var cacheRows int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM firebase_idempotency_records`).Scan(&cacheRows); err != nil {
+		t.Fatal(err)
+	}
+	if cacheRows != 0 {
+		t.Fatalf("locally owned idempotency cache rows = %d, want 0", cacheRows)
 	}
 }
 
