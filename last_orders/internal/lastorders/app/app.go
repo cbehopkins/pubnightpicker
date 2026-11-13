@@ -1212,9 +1212,9 @@ func (a *App) Run(ctx context.Context) error {
 			defer cancelDrain()
 		}
 		a.stopAcceptingWork()
+		a.stopPeriodicTimerProduction()
 		if a.shutdownDrainTimeout > 0 {
 			a.claimGate.Close()
-			a.stopPeriodicTimerProduction()
 			if err := a.cellarRuntime.BeginDrain(eligibleDrainCell); err != nil {
 				executionCancel()
 				a.logDrainOutcome("execution-failure", err)
