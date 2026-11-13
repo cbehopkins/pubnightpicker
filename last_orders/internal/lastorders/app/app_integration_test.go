@@ -31,6 +31,7 @@ import (
 	"last_orders/internal/lastorders/database/listeners/testemail/testemailtest"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
+	"last_orders/internal/lastorders/services/autocomplete"
 	"last_orders/internal/lastorders/services/autocomplete/autocompletetest"
 	"last_orders/internal/lastorders/truths"
 
@@ -342,7 +343,7 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 }
 
 // activeWorkCells lists application work, excluding durable timer records and
-// work emitted by the scheduled daily auto-completion timer.
+// daily auto-completion discovery emitted at startup or by the scheduled timer.
 func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
 	t.Helper()
 	active, err := store.ListActive()
@@ -356,7 +357,7 @@ func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
 		}
 		dailyAutoCompletion := false
 		for _, step := range cell.Steps {
-			if step.HandlerName == truths.DailyPollAutoCompleteDueFanout || bytes.Contains(step.Payload, []byte(truths.DailyPollAutoCompleteDueFanout)) {
+			if step.HandlerName == autocomplete.HandlerDiscovery || step.HandlerName == truths.DailyPollAutoCompleteDueFanout || bytes.Contains(step.Payload, []byte(truths.DailyPollAutoCompleteDueFanout)) {
 				dailyAutoCompletion = true
 				break
 			}
@@ -367,6 +368,34 @@ func activeWorkCells(t *testing.T, store cellar.Store) []cellar.Cell {
 		work = append(work, cell)
 	}
 	return work
+}
+
+func TestActiveWorkCellsExcludesDailyAutoCompletionDiscovery(t *testing.T) {
+	application := mustNewApp(t, filepath.Join(t.TempDir(), "active-work.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true), nil)
+	defer application.Close()
+
+	definition, err := cellar.NewCellDefinition(autocomplete.HandlerDiscovery, truths.DailyPollAutoCompleteDue{ObservedOn: "2026-11-13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := definition.CellRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.AddCell(request); err != nil {
+		t.Fatal(err)
+	}
+	if work := activeWorkCells(t, application.CellarStore()); len(work) != 0 {
+		t.Fatalf("daily auto-completion discovery counted as application work: %v", work)
+	}
+
+	if err := enqueueNewPoll(t, application, "poll-1"); err != nil {
+		t.Fatal(err)
+	}
+	work := activeWorkCells(t, application.CellarStore())
+	if len(work) != 1 || work[0].Steps[0].HandlerName == autocomplete.HandlerDiscovery {
+		t.Fatalf("expected only poll application work: %v", work)
+	}
 }
 
 func mustNewAppWithLogger(
