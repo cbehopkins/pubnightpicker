@@ -96,7 +96,7 @@ type PopulateRemoteHandler struct {
 }
 
 func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) cellar.Result {
-	if h.Gate != nil && !h.Gate.TryBegin() {
+	if h.Gate != nil && !h.Gate.TryStartClaimAttempt() {
 		return cellar.Retry{}
 	}
 	alreadyExists, ownedByThisExecution, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
@@ -121,7 +121,8 @@ type ClaimGate struct {
 	closed bool
 }
 
-func (g *ClaimGate) TryBegin() bool {
+// TryStartClaimAttempt atomically admits a claim unless shutdown closed the gate.
+func (g *ClaimGate) TryStartClaimAttempt() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return !g.closed
