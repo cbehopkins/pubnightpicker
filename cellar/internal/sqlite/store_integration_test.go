@@ -278,6 +278,61 @@ func TestStoreCompleteAppliesApplicationWorkAtomically(t *testing.T) {
 	}
 }
 
+func TestStoreRetireReadyCellAppliesWorkAtomically(t *testing.T) {
+	store := mustOpenStore(t, filepath.Join(t.TempDir(), "cells.db"))
+	defer func() { _ = store.Close() }()
+	ids, err := store.Add([]cellar.CellRequest{
+		{ID: "retire", Steps: []cellar.CellStep{{HandlerName: "retire"}}},
+		{ID: "rollback", Steps: []cellar.CellStep{{HandlerName: "rollback"}}},
+		{ID: "claimed", Steps: []cellar.CellStep{{HandlerName: "claimed"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE app_state (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetireReadyCell(ids[0], func(tx cellar.ApplicationTx) error {
+		return tx.Exec(`INSERT INTO app_state(id) VALUES (?)`, "retired")
+	}); err != nil {
+		t.Fatalf("RetireReadyCell() error = %v", err)
+	}
+	if _, err := store.Get(ids[0]); !errors.Is(err, cellar.ErrCellNotFound) {
+		t.Fatalf("Get(retired) error = %v, want ErrCellNotFound", err)
+	}
+
+	workErr := errors.New("cache row did not match")
+	if err := store.RetireReadyCell(ids[1], func(tx cellar.ApplicationTx) error {
+		if err := tx.Exec(`INSERT INTO app_state(id) VALUES (?)`, "rolled-back"); err != nil {
+			return err
+		}
+		return workErr
+	}); !errors.Is(err, workErr) {
+		t.Fatalf("RetireReadyCell() error = %v, want %v", err, workErr)
+	}
+	if got, err := store.Get(ids[1]); err != nil || got.State != cellar.CellStateReady {
+		t.Fatalf("Get(rollback) = (%+v, %v), want READY cell", got, err)
+	}
+	var rows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM app_state`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("app_state rows = %d, want only the committed retirement", rows)
+	}
+
+	claimed, ok, err := store.ClaimNext(time.Now())
+	if err != nil || !ok || claimed.ID != ids[2] {
+		t.Fatalf("ClaimNext() = (%+v, %t, %v), want claimed cell %q", claimed, ok, err, ids[2])
+	}
+	if err := store.RetireReadyCell(ids[2], nil); !errors.Is(err, cellar.ErrCellNotReady) {
+		t.Fatalf("RetireReadyCell(claimed) error = %v, want ErrCellNotReady", err)
+	}
+	if err := store.RetireReadyCell("missing", nil); !errors.Is(err, cellar.ErrCellNotFound) {
+		t.Fatalf("RetireReadyCell(missing) error = %v, want ErrCellNotFound", err)
+	}
+}
+
 func TestStoreRecoverMovesClaimedCellsToReady(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)

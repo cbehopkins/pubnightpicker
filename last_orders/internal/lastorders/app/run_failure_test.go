@@ -22,6 +22,14 @@ func (r failingRemote) HasKey(context.Context, string, string) (bool, error) {
 	return false, r.err
 }
 
+func (r failingRemote) LookupOwner(context.Context, string, string) (string, bool, error) {
+	return "", false, r.err
+}
+
+func (r failingRemote) ReleaseKey(context.Context, string, string, string) (bool, error) {
+	return false, r.err
+}
+
 // A single failed dispatch stops Cellar's scheduler, so Run tears the whole
 // application down while its caller's context is still live.
 func TestSingleHandlerFailureStopsEntireRuntime(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -163,6 +164,7 @@ type App struct {
 	baseStore                   *basestore.Store
 	cellarStore                 cellar.Store
 	idempotencyStore            *firebaseidempotency.Store
+	idempotencyRemote           firebaseidempotency.Remote
 	recurrenceService           RecurrenceService
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
@@ -921,6 +923,7 @@ func New(cfg Config) (application *App, err error) {
 		baseStore:                   baseStore,
 		cellarStore:                 cellarStore,
 		idempotencyStore:            idempotencyStore,
+		idempotencyRemote:           cfg.IdempotencyRemote,
 		recurrenceService:           recurrenceService,
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
@@ -1221,6 +1224,9 @@ func (a *App) Run(ctx context.Context) error {
 				return fmt.Errorf("stop Landlord producers: %w", err)
 			}
 			err := a.cellarRuntime.WaitForDrain(drainCtx)
+			if drainCtx.Err() == nil {
+				a.releaseReadyEventVenueClaims(drainCtx)
+			}
 			switch {
 			case errors.Is(drainCtx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 				a.logDrainOutcome("deadline", err)
@@ -1253,11 +1259,69 @@ func eligibleDrainCell(cell cellar.Cell) bool {
 		return false
 	}
 	switch cell.Steps[cell.CurrentStep].HandlerName {
-	case firebaseidempotency.HandlerCheck, firebaseidempotency.HandlerPopulateRemote:
+	case firebaseidempotency.HandlerCheck, firebaseidempotency.HandlerPopulateRemote, truths.EventVenueObservedFanout:
 		return false
 	default:
 		return true
 	}
+}
+
+func (a *App) releaseReadyEventVenueClaims(ctx context.Context) {
+	cells, err := a.cellarStore.ListActive()
+	if err != nil {
+		a.logger.Warn("event venue claim release incomplete", "stage", "list_candidates", "err", err)
+		return
+	}
+	var candidates, released, incomplete int
+	for _, cell := range cells {
+		observation, ok := readyEventVenueObservation(cell)
+		if !ok {
+			continue
+		}
+		candidates++
+		if err := ctx.Err(); err != nil {
+			incomplete++
+			a.logger.Warn("event venue claim release skipped", "cell_id", cell.ID, "stage", "deadline", "err", err)
+			continue
+		}
+		eventKey := observation.Identity()
+		owner, exists, err := a.idempotencyStore.LookupOwner(ctx, eventvenuelistener.EventVenueObservedListener, eventKey)
+		if err != nil || !exists || owner == "" {
+			incomplete++
+			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "stage", "lookup_local_owner", "owner_exists", exists, "err", err)
+			continue
+		}
+		if err := a.cellarStore.RetireReadyCell(
+			cell.ID,
+			a.idempotencyStore.RetireEventVenueObservationWork(eventKey, owner),
+		); err != nil {
+			incomplete++
+			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "stage", "retire_local_work", "err", err)
+			continue
+		}
+		confirmed, err := a.idempotencyRemote.ReleaseKey(ctx, eventvenuelistener.EventVenueObservedListener, eventKey, owner)
+		if err != nil || !confirmed {
+			incomplete++
+			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "owner", owner, "stage", "release_remote_claim", "local_retired", true, "confirmed", confirmed, "err", err)
+			continue
+		}
+		released++
+		a.logger.Info("event venue observation claim released", "cell_id", cell.ID, "event_key", eventKey, "owner", owner)
+	}
+	if candidates > 0 {
+		a.logger.Info("event venue claim release finished", "candidates", candidates, "released", released, "incomplete", incomplete)
+	}
+}
+
+func readyEventVenueObservation(cell cellar.Cell) (truths.EventVenueObserved, bool) {
+	if cell.State != cellar.CellStateReady || cell.CurrentStep != 0 || len(cell.Steps) != 1 || cell.Steps[0].HandlerName != truths.EventVenueObservedFanout {
+		return truths.EventVenueObserved{}, false
+	}
+	var observation truths.EventVenueObserved
+	if err := json.Unmarshal(cell.Steps[0].Payload, &observation); err != nil || observation.Venue.ID == "" || observation.ObservedOn == "" {
+		return truths.EventVenueObserved{}, false
+	}
+	return observation, true
 }
 
 type periodicScanGate struct {
@@ -1287,7 +1351,61 @@ func (a *App) logDrainOutcome(outcome string, err error) {
 		a.logger.Warn("Landlord shutdown drain finished", "outcome", outcome, "err", err, "list_error", listErr)
 		return
 	}
-	a.logger.Info("Landlord shutdown drain finished", "outcome", outcome, "remaining_cells", len(active), "err", err)
+	remaining := summarizeDrainWork(active, time.Now())
+	a.logger.Info(
+		"Landlord shutdown drain finished",
+		"outcome", outcome,
+		"remaining_cells", len(active),
+		"remaining_runnable", remaining.runnable,
+		"remaining_in_flight", remaining.inFlight,
+		"remaining_deferred", remaining.deferred,
+		"remaining_claim_blocked", remaining.claimBlocked,
+		"remaining_periodic", remaining.periodic,
+		"remaining_other_blocked", remaining.otherBlocked,
+		"err", err,
+	)
+}
+
+type drainWorkSummary struct {
+	runnable     int
+	inFlight     int
+	deferred     int
+	claimBlocked int
+	periodic     int
+	otherBlocked int
+}
+
+func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
+	var summary drainWorkSummary
+	for _, cell := range cells {
+		switch {
+		case cell.State == cellar.CellStateClaimed:
+			summary.inFlight++
+		case strings.HasPrefix(string(cell.ID), "timer:"):
+			summary.periodic++
+		case isClaimBlockedCell(cell):
+			summary.claimBlocked++
+		case cell.NotBefore != nil && cell.NotBefore.After(now):
+			summary.deferred++
+		case eligibleDrainCell(cell):
+			summary.runnable++
+		default:
+			summary.otherBlocked++
+		}
+	}
+	return summary
+}
+
+func isClaimBlockedCell(cell cellar.Cell) bool {
+	if cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
+		return false
+	}
+	switch cell.Steps[cell.CurrentStep].HandlerName {
+	case firebaseidempotency.HandlerCheck, firebaseidempotency.HandlerPopulateRemote:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) runHandPump(ctx context.Context) error {

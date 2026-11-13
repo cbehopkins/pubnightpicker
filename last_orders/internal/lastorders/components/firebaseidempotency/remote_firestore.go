@@ -71,6 +71,47 @@ func (r *FirestoreRemote) HasKey(ctx context.Context, listener, eventKey string)
 	return false, err
 }
 
+func (r *FirestoreRemote) LookupOwner(ctx context.Context, listener, eventKey string) (string, bool, error) {
+	snapshot, err := r.docRef(listener, eventKey).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	owner, _ := snapshot.Data()["owner"].(string)
+	return owner, true, nil
+}
+
+func (r *FirestoreRemote) ReleaseKey(ctx context.Context, listener, eventKey, owner string) (bool, error) {
+	doc := r.docRef(listener, eventKey)
+	released := false
+	err := r.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		released = false
+		snapshot, err := tx.Get(doc)
+		if status.Code(err) == codes.NotFound {
+			released = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		existingOwner, _ := snapshot.Data()["owner"].(string)
+		if owner == "" || existingOwner != owner {
+			return nil
+		}
+		if err := tx.Delete(doc); err != nil {
+			return err
+		}
+		released = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return released, nil
+}
+
 func (r *FirestoreRemote) docRef(listener, eventKey string) *firestore.DocumentRef {
 	compositeKey := listener + "::" + eventKey
 	docID := base64.RawURLEncoding.EncodeToString([]byte(compositeKey))

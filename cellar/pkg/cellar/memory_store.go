@@ -111,6 +111,30 @@ func (s *MemoryStore) Complete(cellID CellID, additions []CellRequest, applicati
 	return nil
 }
 
+// RetireReadyCell removes one READY cell after its application work succeeds.
+func (s *MemoryStore) RetireReadyCell(cellID CellID, applicationWork ...ApplicationWork) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cell, ok := s.cells[cellID]
+	if !ok {
+		return ErrCellNotFound
+	}
+	if cell.State != CellStateReady {
+		return ErrCellNotReady
+	}
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(noopApplicationTx{}); err != nil {
+				return err
+			}
+		}
+	}
+	delete(s.cells, cellID)
+	s.removeFromOrderLocked(cellID)
+	return nil
+}
+
 // ApplyResult atomically applies a result to a claimed cell.
 func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
 	s.mu.Lock()

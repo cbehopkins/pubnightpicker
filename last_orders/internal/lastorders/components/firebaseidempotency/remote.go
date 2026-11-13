@@ -12,4 +12,6 @@ import (
 type Remote interface {
 	CreateKey(ctx context.Context, listener, eventKey, owner string) (alreadyExists bool, ownedByThisExecution bool, err error)
 	HasKey(ctx context.Context, listener, eventKey string) (bool, error)
+	LookupOwner(ctx context.Context, listener, eventKey string) (owner string, exists bool, err error)
+	ReleaseKey(ctx context.Context, listener, eventKey, owner string) (releasedOrAbsent bool, err error)
 }

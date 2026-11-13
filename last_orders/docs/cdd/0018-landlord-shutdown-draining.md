@@ -2,11 +2,10 @@
 
 ## 1. Status and Scope
 
-Behavioural contract agreed. Ticket 02 implements the bounded Landlord drain,
-claim fence, producer shutdown and quiescence behaviour described in sections 3-5.
-In-flight claim reconciliation, detailed retry/restart coverage and recurrence
-claim release remain separate ticket scopes. The recurrence claim-release protocol
-is approved and its required interface and schema changes are described in section 7.
+Behavioural contract agreed. Landlord shutdown draining, in-flight claim
+reconciliation, deferred-work recovery and recurrence claim release follow the
+contract in sections 3-7. The owner-checked release protocol is approved, with its
+required interface and schema changes described in section 7.
 
 This design applies to Landlord's notifications and housekeeping, not HandPump's
 public API. It extends [ADR-0007](../adr/0007-lifecycle.md) for environments where
@@ -98,13 +97,21 @@ draining.
 
 A claim request issued before shutdown may commit after shutdown begins. If it
 succeeds, its work is our responsibility and should be drained. A lost response
-does not prove that the write failed. Use the persisted owner to reconcile the
-outcome where possible without creating a missing claim. If ownership cannot be
-resolved before shutdown ends, loss remains within the accepted best-effort policy.
+does not prove that the write failed. A claim request admitted before shutdown is
+allowed to finish as an in-flight execution. If its CreateKey call returns an
+error after the claim fence closes, Landlord performs a read-only owner lookup
+using the persisted idempotency Sequence owner. A matching owner advances the
+Sequence so its Truth can be emitted; a different non-empty owner terminates the
+Sequence without emitting the Truth. A missing or ownerless record, or a failed
+lookup, remains unresolved and returns the existing scheduler-stopping ErrorResult.
+Reconciliation never calls CreateKey and therefore cannot establish a missing
+claim during shutdown.
 
-Currently, CreateKey can either create a missing record or recognise its owner,
-and claim-call errors return ErrorResult. Read-only reconciliation is additional
-design work, not an existing automatic retry guarantee.
+A missing record is not proof that the original request can no longer commit.
+Landlord does not retry or wait beyond the existing shutdown deadline to resolve
+that uncertainty; loss remains within the accepted best-effort policy. Because the
+claim handler remains an active Cellar dispatch until reconciliation finishes, it
+is included in drain quiescence accounting.
 
 ## 6. Recurrence Boundary
 

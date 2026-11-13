@@ -405,8 +405,11 @@ func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
 func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "email-budget.db")
+	logs := &syncBuffer{}
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Logger = slog.New(slog.NewJSONHandler(logs, nil))
 	cfg.EmailDailyLimit = 1
+	cfg.ShutdownDrainTimeout = 5 * time.Second
 	source := testemailtest.New()
 	source.Documents = []testemail.Document{{ID: "diagnostics", Data: map[string]any{"testEmailReq": "req-budget", "email": "diagnostics@example.com"}}}
 	cfg.TestEmailSource = source
@@ -468,6 +471,21 @@ func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	}
 	if deferred != 1 {
 		t.Fatalf("deferred email cells = %d", deferred)
+	}
+	if !strings.Contains(logs.String(), `"outcome":"quiescence"`) {
+		t.Fatalf("shutdown did not report quiescence: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"remaining_deferred":1`) {
+		t.Fatalf("shutdown did not report the future email retry as deferred: %s", logs.String())
+	}
+	if err := application.Close(); err != nil {
+		t.Fatalf("close application before restart: %v", err)
+	}
+	restarted := newApp(t, cfg)
+	defer restarted.Close()
+	active = activeWorkCells(t, restarted.CellarStore())
+	if len(active) != 1 || active[0].Steps[active[0].CurrentStep].HandlerName != durableemail.HandlerPost || active[0].NotBefore == nil || !active[0].NotBefore.After(time.Now()) {
+		t.Fatalf("future email retry was not recoverable after restart: %+v", active)
 	}
 }
 

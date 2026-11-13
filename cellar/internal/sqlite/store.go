@@ -214,6 +214,43 @@ func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, a
 	return tx.Commit()
 }
 
+// RetireReadyCell atomically deletes one READY cell and applies application work.
+func (s *Store) RetireReadyCell(cellID cellar.CellID, applicationWork ...cellar.ApplicationWork) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	result, err := tx.Exec(`DELETE FROM cells WHERE id = ? AND state = ?`, string(cellID), string(cellar.CellStateReady))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		var state string
+		err := tx.QueryRow(`SELECT state FROM cells WHERE id = ?`, string(cellID)).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return cellar.ErrCellNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return cellar.ErrCellNotReady
+	}
+	for _, work := range applicationWork {
+		if work != nil {
+			if err := work(sqlTxAdapter{tx: tx}); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 // ApplyResult atomically applies a result to a claimed cell and its children.
 func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 	tx, err := s.db.Begin()

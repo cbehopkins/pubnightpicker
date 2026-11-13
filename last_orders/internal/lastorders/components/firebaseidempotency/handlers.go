@@ -6,6 +6,7 @@ package firebaseidempotency
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -72,7 +73,7 @@ func (h CheckHandler) Handle(ctx context.Context, payload StepPayload) cellar.Re
 		return cellar.ErrorResult{Message: "check remote key", Err: err}
 	}
 
-	claimWork := h.Store.InsertUnlessExistsWork(payload.Listener, payload.EventKey)
+	claimWork := h.Store.InsertUnlessExistsWork(payload.Listener, payload.EventKey, payload.Owner)
 	if remoteExists {
 		// Already established elsewhere: cache the identity and stop, without emitting the Truth again.
 		if h.Logger != nil {
@@ -101,6 +102,9 @@ func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) 
 	}
 	alreadyExists, ownedByThisExecution, err := h.Remote.CreateKey(ctx, payload.Listener, payload.EventKey, payload.Owner)
 	if err != nil {
+		if h.Gate != nil && h.Gate.IsClosed() {
+			return h.reconcileClaim(ctx, payload, err)
+		}
 		return cellar.ErrorResult{Message: "populate remote idempotency key", Err: err}
 	}
 	if alreadyExists && !ownedByThisExecution {
@@ -111,6 +115,35 @@ func (h PopulateRemoteHandler) Handle(ctx context.Context, payload StepPayload) 
 	}
 	if h.Logger != nil {
 		h.Logger.Info("idempotency remote key populated", "listener", payload.Listener, "event_key", payload.EventKey, "owner", payload.Owner, "already_exists", alreadyExists)
+	}
+	return cellar.Complete{}
+}
+
+func (h PopulateRemoteHandler) reconcileClaim(ctx context.Context, payload StepPayload, createErr error) cellar.Result {
+	owner, exists, err := h.Remote.LookupOwner(ctx, payload.Listener, payload.EventKey)
+	if err != nil {
+		return cellar.ErrorResult{
+			Message: "reconcile remote idempotency claim",
+			Err:     errors.Join(createErr, fmt.Errorf("read persisted claim owner: %w", err)),
+		}
+	}
+	if !exists || owner == "" {
+		return cellar.ErrorResult{
+			Message: "reconcile remote idempotency claim",
+			Err: fmt.Errorf(
+				"remote claim owner is unresolved for %q/%q (exists=%t): %w",
+				payload.Listener, payload.EventKey, exists, createErr,
+			),
+		}
+	}
+	if owner != payload.Owner {
+		if h.Logger != nil {
+			h.Logger.Info("idempotency remote key belongs to another execution after ambiguous claim", "listener", payload.Listener, "event_key", payload.EventKey, "owner", owner)
+		}
+		return cellar.Kill{}
+	}
+	if h.Logger != nil {
+		h.Logger.Info("idempotency remote key ownership confirmed after ambiguous claim", "listener", payload.Listener, "event_key", payload.EventKey, "owner", owner)
 	}
 	return cellar.Complete{}
 }
@@ -132,6 +165,12 @@ func (g *ClaimGate) Close() {
 	g.mu.Lock()
 	g.closed = true
 	g.mu.Unlock()
+}
+
+func (g *ClaimGate) IsClosed() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.closed
 }
 
 // EmitTruthHandler is Step 3: it emits the Truth. Reaching this step means Step 1

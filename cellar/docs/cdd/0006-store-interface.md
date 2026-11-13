@@ -642,9 +642,15 @@ These include the concepts already defined for:
 * adding Cells;
 * claiming runnable Cells;
 * completing execution;
+* retiring a specifically identified READY Cell with application work;
 * retrying execution;
 * recovering claimed Cells;
 * listing active Cells.
+
+`RetireReadyCell` is a narrow lifecycle operation, not a general state mutation. It
+deletes only the identified READY Cell and applies its application work in the same
+transaction. If the Cell is missing, is not READY, or the application work fails,
+the Cell and application data remain unchanged.
 
 The Store must not expose a generic lifecycle-state mutation operation through the normal Store interface.
 

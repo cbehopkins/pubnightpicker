@@ -63,6 +63,34 @@ func (r *MemoryRemote) HasKey(ctx context.Context, listener, eventKey string) (b
 	return r.visible[key], nil
 }
 
+func (r *MemoryRemote) LookupOwner(ctx context.Context, listener, eventKey string) (string, bool, error) {
+	_ = ctx
+	key := listener + "::" + eventKey
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.exists[key] {
+		return "", false, nil
+	}
+	return r.owners[key], true, nil
+}
+
+func (r *MemoryRemote) ReleaseKey(ctx context.Context, listener, eventKey, owner string) (bool, error) {
+	_ = ctx
+	key := listener + "::" + eventKey
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.exists[key] {
+		return true, nil
+	}
+	if owner == "" || r.owners[key] != owner {
+		return false, nil
+	}
+	delete(r.exists, key)
+	delete(r.owners, key)
+	delete(r.visible, key)
+	return true, nil
+}
+
 func (r *MemoryRemote) SeedExisting(listener, eventKey string, visible bool) {
 	key := listener + "::" + eventKey
 	r.mu.Lock()

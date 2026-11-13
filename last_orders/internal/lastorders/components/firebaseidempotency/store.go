@@ -3,6 +3,7 @@ package firebaseidempotency
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,11 +29,23 @@ func New(base *basestore.Store) (*Store, error) {
 		CREATE TABLE IF NOT EXISTS firebase_idempotency_records (
 			listener TEXT NOT NULL,
 			event_key TEXT NOT NULL,
+			owner TEXT,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(listener, event_key)
 		);
 	`); err != nil {
 		return nil, fmt.Errorf("create firebase_idempotency_records schema: %w", err)
+	}
+	var ownerColumn int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('firebase_idempotency_records') WHERE name = 'owner'
+	`).Scan(&ownerColumn); err != nil {
+		return nil, fmt.Errorf("inspect firebase_idempotency_records owner column: %w", err)
+	}
+	if ownerColumn == 0 {
+		if _, err := db.Exec(`ALTER TABLE firebase_idempotency_records ADD COLUMN owner TEXT`); err != nil {
+			return nil, fmt.Errorf("add firebase_idempotency_records owner column: %w", err)
+		}
 	}
 
 	return &Store{base: base}, nil
@@ -55,16 +68,32 @@ func (s *Store) Exists(ctx context.Context, listener, eventKey string) (bool, er
 	return true, nil
 }
 
+func (s *Store) LookupOwner(ctx context.Context, listener, eventKey string) (string, bool, error) {
+	var owner sql.NullString
+	err := s.base.DB().QueryRowContext(ctx, `
+		SELECT owner
+		FROM firebase_idempotency_records
+		WHERE listener = ? AND event_key = ?
+	`, listener, eventKey).Scan(&owner)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return owner.String, true, nil
+}
+
 // InsertUnlessExistsWork claims the identity as part of the Check step's transaction.
 // It rejects the transition if a concurrent claim already won, so the loser retries
 // and observes the identity as already-claimed.
-func (s *Store) InsertUnlessExistsWork(listener, eventKey string) cellar.ApplicationWork {
+func (s *Store) InsertUnlessExistsWork(listener, eventKey, owner string) cellar.ApplicationWork {
 	return func(tx cellar.ApplicationTx) error {
 		if err := tx.Exec(`
-			INSERT INTO firebase_idempotency_records(listener, event_key, updated_at)
-			VALUES(?, ?, ?)
+			INSERT INTO firebase_idempotency_records(listener, event_key, owner, updated_at)
+			VALUES(?, ?, ?, ?)
 			ON CONFLICT(listener, event_key) DO NOTHING
-		`, listener, eventKey, time.Now().UTC()); err != nil {
+		`, listener, eventKey, owner, time.Now().UTC()); err != nil {
 			return err
 		}
 
@@ -79,4 +108,27 @@ func (s *Store) InsertUnlessExistsWork(listener, eventKey string) cellar.Applica
 	}
 }
 
+func (s *Store) RetireEventVenueObservationWork(eventKey, owner string) cellar.ApplicationWork {
+	return func(tx cellar.ApplicationTx) error {
+		if eventKey == "" || owner == "" {
+			return ErrObservationCacheOwnerMismatch
+		}
+		if err := tx.Exec(`
+			DELETE FROM firebase_idempotency_records
+			WHERE listener = 'event_venue_observed' AND event_key = ? AND owner = ?
+		`, eventKey, owner); err != nil {
+			return err
+		}
+		var changed int64
+		if err := tx.QueryRow(`SELECT changes()`).Scan(&changed); err != nil {
+			return err
+		}
+		if changed != 1 {
+			return ErrObservationCacheOwnerMismatch
+		}
+		return nil
+	}
+}
+
 var ErrClaimRejected = fmt.Errorf("idempotency claim rejected")
+var ErrObservationCacheOwnerMismatch = fmt.Errorf("event venue observation cache owner mismatch")
