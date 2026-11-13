@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -164,8 +163,8 @@ type App struct {
 	baseStore                   *basestore.Store
 	cellarStore                 cellar.Store
 	idempotencyStore            *firebaseidempotency.Store
-	idempotencyRemote           firebaseidempotency.Remote
 	recurrenceService           RecurrenceService
+	eventVenueClaimReleaser     *recurrenceplugin.EventVenueClaimReleaser
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
 	notificationProfileStore    *notificationprofile.Store
@@ -665,6 +664,13 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
+	eventVenueClaimReleaser, err := recurrenceplugin.NewEventVenueClaimReleaser(recurrenceplugin.EventVenueClaimReleaseConfig{
+		Store: cellarStore, Cache: idempotencyStore, Remote: cfg.IdempotencyRemote,
+		Listener: eventvenuelistener.EventVenueObservedListener, Logger: cfg.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create event venue claim releaser: %w", err)
+	}
 
 	for _, check := range cfg.StartupComponentChecks {
 		if check == nil {
@@ -923,8 +929,8 @@ func New(cfg Config) (application *App, err error) {
 		baseStore:                   baseStore,
 		cellarStore:                 cellarStore,
 		idempotencyStore:            idempotencyStore,
-		idempotencyRemote:           cfg.IdempotencyRemote,
 		recurrenceService:           recurrenceService,
+		eventVenueClaimReleaser:     eventVenueClaimReleaser,
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
 		notificationProfileStore:    notificationProfileStore,
@@ -1225,7 +1231,7 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			err := a.cellarRuntime.WaitForDrain(drainCtx)
 			if drainCtx.Err() == nil {
-				a.releaseReadyEventVenueClaims(drainCtx)
+				a.eventVenueClaimReleaser.ReleaseUnfulfilled(drainCtx)
 			}
 			switch {
 			case errors.Is(drainCtx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
@@ -1264,64 +1270,6 @@ func eligibleDrainCell(cell cellar.Cell) bool {
 	default:
 		return true
 	}
-}
-
-func (a *App) releaseReadyEventVenueClaims(ctx context.Context) {
-	cells, err := a.cellarStore.ListActive()
-	if err != nil {
-		a.logger.Warn("event venue claim release incomplete", "stage", "list_candidates", "err", err)
-		return
-	}
-	var candidates, released, incomplete int
-	for _, cell := range cells {
-		observation, ok := readyEventVenueObservation(cell)
-		if !ok {
-			continue
-		}
-		candidates++
-		if err := ctx.Err(); err != nil {
-			incomplete++
-			a.logger.Warn("event venue claim release skipped", "cell_id", cell.ID, "stage", "deadline", "err", err)
-			continue
-		}
-		eventKey := observation.Identity()
-		owner, exists, err := a.idempotencyStore.LookupOwner(ctx, eventvenuelistener.EventVenueObservedListener, eventKey)
-		if err != nil || !exists || owner == "" {
-			incomplete++
-			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "stage", "lookup_local_owner", "owner_exists", exists, "err", err)
-			continue
-		}
-		if err := a.cellarStore.RetireReadyCell(
-			cell.ID,
-			a.idempotencyStore.RetireEventVenueObservationWork(eventKey, owner),
-		); err != nil {
-			incomplete++
-			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "stage", "retire_local_work", "err", err)
-			continue
-		}
-		confirmed, err := a.idempotencyRemote.ReleaseKey(ctx, eventvenuelistener.EventVenueObservedListener, eventKey, owner)
-		if err != nil || !confirmed {
-			incomplete++
-			a.logger.Warn("event venue claim release incomplete", "cell_id", cell.ID, "event_key", eventKey, "owner", owner, "stage", "release_remote_claim", "local_retired", true, "confirmed", confirmed, "err", err)
-			continue
-		}
-		released++
-		a.logger.Info("event venue observation claim released", "cell_id", cell.ID, "event_key", eventKey, "owner", owner)
-	}
-	if candidates > 0 {
-		a.logger.Info("event venue claim release finished", "candidates", candidates, "released", released, "incomplete", incomplete)
-	}
-}
-
-func readyEventVenueObservation(cell cellar.Cell) (truths.EventVenueObserved, bool) {
-	if cell.State != cellar.CellStateReady || cell.CurrentStep != 0 || len(cell.Steps) != 1 || cell.Steps[0].HandlerName != truths.EventVenueObservedFanout {
-		return truths.EventVenueObserved{}, false
-	}
-	var observation truths.EventVenueObserved
-	if err := json.Unmarshal(cell.Steps[0].Payload, &observation); err != nil || observation.Venue.ID == "" || observation.ObservedOn == "" {
-		return truths.EventVenueObserved{}, false
-	}
-	return observation, true
 }
 
 type periodicScanGate struct {

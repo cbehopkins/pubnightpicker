@@ -108,15 +108,15 @@ func (s *Store) InsertUnlessExistsWork(listener, eventKey, owner string) cellar.
 	}
 }
 
-func (s *Store) RetireEventVenueObservationWork(eventKey, owner string) cellar.ApplicationWork {
+func (s *Store) RetireCacheEntryWork(listener, eventKey, owner string) cellar.ApplicationWork {
 	return func(tx cellar.ApplicationTx) error {
-		if eventKey == "" || owner == "" {
-			return ErrObservationCacheOwnerMismatch
+		if listener == "" || eventKey == "" || owner == "" {
+			return ErrCacheOwnerMismatch
 		}
 		if err := tx.Exec(`
 			DELETE FROM firebase_idempotency_records
-			WHERE listener = 'event_venue_observed' AND event_key = ? AND owner = ?
-		`, eventKey, owner); err != nil {
+			WHERE listener = ? AND event_key = ? AND owner = ?
+		`, listener, eventKey, owner); err != nil {
 			return err
 		}
 		var changed int64
@@ -124,11 +124,11 @@ func (s *Store) RetireEventVenueObservationWork(eventKey, owner string) cellar.A
 			return err
 		}
 		if changed != 1 {
-			return ErrObservationCacheOwnerMismatch
+			return ErrCacheOwnerMismatch
 		}
 		return nil
 	}
 }
 
 var ErrClaimRejected = fmt.Errorf("idempotency claim rejected")
-var ErrObservationCacheOwnerMismatch = fmt.Errorf("event venue observation cache owner mismatch")
+var ErrCacheOwnerMismatch = fmt.Errorf("idempotency cache owner mismatch")

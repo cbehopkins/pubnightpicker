@@ -139,7 +139,30 @@ func insertRequests(tx *sql.Tx, requests []cellar.CellRequest) error {
 
 // ClaimNext atomically claims one runnable cell.
 func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
-	return s.ClaimNextMatching(now, nil)
+	row := s.db.QueryRow(
+		`UPDATE cells SET state = ?
+		 WHERE id = (
+			SELECT id FROM cells
+			 WHERE state = ?
+			   AND (not_before IS NULL OR not_before <= ?)
+			 ORDER BY created_at, id
+			 LIMIT 1
+		 )
+		   AND state = ?
+		   AND (not_before IS NULL OR not_before <= ?)
+		 RETURNING id, steps, current_step, state, not_before`,
+		string(cellar.CellStateClaimed),
+		string(cellar.CellStateReady), now.UTC(),
+		string(cellar.CellStateReady), now.UTC(),
+	)
+	cell, err := scanCell(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cellar.Cell{}, false, nil
+	}
+	if err != nil {
+		return cellar.Cell{}, false, err
+	}
+	return cell, true, nil
 }
 
 // ClaimNextMatching atomically claims the next runnable Cell accepted by eligible.

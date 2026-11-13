@@ -69,40 +69,48 @@ func TestStorePersistsSequenceOwnerAndLeavesLegacyRowsOwnerless(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	listener := "test-listener"
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.InsertUnlessExistsWork("event_venue_observed", "event-1", "sequence-1")(firebaseStoreTx{tx}); err != nil {
+	if err := store.InsertUnlessExistsWork(listener, "event-1", "sequence-1")(firebaseStoreTx{tx}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	owner, exists, err := store.LookupOwner(context.Background(), "event_venue_observed", "event-1")
+	owner, exists, err := store.LookupOwner(context.Background(), listener, "event-1")
 	if err != nil || !exists || owner != "sequence-1" {
 		t.Fatalf("LookupOwner() = %q, %t, %v; want sequence-1/present", owner, exists, err)
 	}
 
 	failedRetirement := mustBegin(t, db)
-	if err := store.RetireEventVenueObservationWork("event-1", "wrong-sequence")(firebaseStoreTx{failedRetirement}); err == nil {
+	if err := store.RetireCacheEntryWork(listener, "event-1", "wrong-sequence")(firebaseStoreTx{failedRetirement}); err == nil {
 		t.Fatal("retirement accepted a non-matching owner")
 	}
 	if err := failedRetirement.Rollback(); err != nil {
 		t.Fatal(err)
 	}
-	owner, exists, err = store.LookupOwner(context.Background(), "event_venue_observed", "event-1")
+	owner, exists, err = store.LookupOwner(context.Background(), listener, "event-1")
 	if err != nil || !exists || owner != "sequence-1" {
 		t.Fatalf("failed retirement changed the cache row: %q, %t, %v", owner, exists, err)
 	}
+	wrongListenerRetirement := mustBegin(t, db)
+	if err := store.RetireCacheEntryWork("other-listener", "event-1", "sequence-1")(firebaseStoreTx{wrongListenerRetirement}); err == nil {
+		t.Fatal("retirement accepted a non-matching listener")
+	}
+	if err := wrongListenerRetirement.Rollback(); err != nil {
+		t.Fatal(err)
+	}
 	retirement := mustBegin(t, db)
-	if err := store.RetireEventVenueObservationWork("event-1", "sequence-1")(firebaseStoreTx{retirement}); err != nil {
+	if err := store.RetireCacheEntryWork(listener, "event-1", "sequence-1")(firebaseStoreTx{retirement}); err != nil {
 		t.Fatal(err)
 	}
 	if err := retirement.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists, err := store.LookupOwner(context.Background(), "event_venue_observed", "event-1"); err != nil || exists {
+	if _, exists, err := store.LookupOwner(context.Background(), listener, "event-1"); err != nil || exists {
 		t.Fatalf("retired owner row exists=%t, err=%v; want absent", exists, err)
 	}
 

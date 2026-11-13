@@ -210,6 +210,14 @@ snapshot and cause `SQLITE_BUSY_SNAPSHOT` when the transaction attempts to write
 The configured busy timeout can wait for writer contention, but cannot repair
 a stale read snapshot.
 
+`ClaimNextMatching` is a drain-only extension used during orderly shutdown when
+the Scheduler must skip runnable Cells whose application work is not eligible
+to drain. Because eligibility is a Go predicate over decoded Cells, SQLite
+reads candidates in order and attempts a guarded `UPDATE ... RETURNING` for
+each eligible candidate. The update rechecks readiness and `not_before`, so
+concurrent claimers cannot claim the same Cell. Ordinary scheduling must use
+the single-statement `ClaimNext` path above.
+
 Only the Scheduler performs this operation.
 
 ---
