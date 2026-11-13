@@ -144,7 +144,7 @@ func (h PopulateRemoteHandler) relinquishClaim(ctx context.Context, payload Step
 
 	var releaseCells []cellar.CellRequest
 	if exists && owner == payload.Owner {
-		request, err := newReleaseRequest(payload.Listener, payload.EventKey, payload.Owner)
+		request, err := NewReleaseRequest(payload.Listener, payload.EventKey, payload.Owner)
 		if err != nil {
 			return cellar.ErrorResult{Message: "build remote idempotency release", Err: err}
 		}
@@ -161,7 +161,10 @@ func (h PopulateRemoteHandler) relinquishClaim(ctx context.Context, payload Step
 	}
 }
 
-func newReleaseRequest(listener, eventKey, owner string) (cellar.CellRequest, error) {
+func NewReleaseRequest(listener, eventKey, owner string) (cellar.CellRequest, error) {
+	if listener == "" || eventKey == "" || owner == "" {
+		return cellar.CellRequest{}, errors.New("listener, event key and owner are required")
+	}
 	payload, err := cellar.JSONCodec[ReleasePayload]().Marshal(ReleasePayload{
 		Listener: listener,
 		EventKey: eventKey,

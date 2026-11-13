@@ -223,7 +223,7 @@ func TestCellarExecutesSequenceStepsInOrder(t *testing.T) {
 	stopRuntime(t, runtime, startDone)
 }
 
-func TestCellarDrainWaitsForActiveContinuationAndSkipsBlockedWork(t *testing.T) {
+func TestCellarDrainWaitsForActiveContinuationAndRunsAllReadyWork(t *testing.T) {
 	store := cellar.NewMemoryStore(nil)
 	runtime := cellar.New(store, cellar.Config{PollDelay: time.Millisecond, Workers: 2})
 	started := make(chan struct{}, 2)
@@ -271,9 +271,7 @@ func TestCellarDrainWaitsForActiveContinuationAndSkipsBlockedWork(t *testing.T) 
 			t.Fatal("both concurrent workers did not start")
 		}
 	}
-	if err := runtime.BeginDrain(func(cell cellar.Cell) bool {
-		return cell.Steps[cell.CurrentStep].HandlerName != "example.blocked"
-	}); err != nil {
+	if err := runtime.BeginDrain(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -308,30 +306,30 @@ func TestCellarDrainWaitsForActiveContinuationAndSkipsBlockedWork(t *testing.T) 
 	}
 	select {
 	case got := <-blockedReceived:
-		t.Fatalf("blocked work executed: %q", got)
-	default:
+		if got != "blocked:preserved" {
+			t.Fatalf("ready work = %q; want blocked:preserved", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ready work did not execute during drain")
 	}
 	active, err := store.ListActive()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(active) != 2 {
-		t.Fatalf("blocked and future work were not preserved: %+v", active)
+	if len(active) != 1 {
+		t.Fatalf("future work was not preserved: %+v", active)
 	}
-	blocked, futureCell := 0, 0
+	futureCell := 0
 	for _, cell := range active {
 		if cell.State != cellar.CellStateReady {
 			t.Fatalf("unfinished work state = %s, want READY", cell.State)
-		}
-		if cell.Steps[0].HandlerName == "example.blocked" {
-			blocked++
 		}
 		if cell.NotBefore != nil {
 			futureCell++
 		}
 	}
-	if blocked != 1 || futureCell != 1 {
-		t.Fatalf("blocked work count = %d, future work count = %d; want one each", blocked, futureCell)
+	if futureCell != 1 {
+		t.Fatalf("future work count = %d; want one", futureCell)
 	}
 }
 

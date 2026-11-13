@@ -74,6 +74,56 @@ func TestEvaluateEventVenueHandlerUsesObservedDate(t *testing.T) {
 	}
 }
 
+func TestEvaluateEventVenueHandlerReleasesObservationDuringShutdown(t *testing.T) {
+	cache := &observationClaimCache{owner: "observation-owner", exists: true}
+	gate := &firebaseidempotency.ClaimGate{}
+	gate.Close()
+	handler := evaluator(t)
+	handler.ClaimGate = gate
+	handler.ClaimCache = cache
+	handler.ClaimListener = "event_venue_observed"
+
+	observation := truths.EventVenueObserved{
+		Venue: recurrence.EventVenue{
+			ID:                 "event-shutdown",
+			NextOccurrenceDate: "2030-01-05",
+		},
+		ObservedOn: "2030-01-01",
+	}
+	result := handler.Handle(context.Background(), observation)
+
+	kill, ok := result.(cellar.Kill)
+	if !ok {
+		t.Fatalf("result = %T; want cellar.Kill", result)
+	}
+	if len(kill.NewCells) != 1 || len(kill.NewCells[0].Steps) != 1 || kill.NewCells[0].Steps[0].HandlerName != firebaseidempotency.HandlerReleaseRemote {
+		t.Fatalf("new cells = %#v; want one Firebase claim release cell", kill.NewCells)
+	}
+	if len(kill.ApplicationWork) != 1 {
+		t.Fatalf("application work = %d; want one local cache retirement", len(kill.ApplicationWork))
+	}
+	payload, err := cellar.JSONCodec[firebaseidempotency.ReleasePayload]().Unmarshal(kill.NewCells[0].Steps[0].Payload)
+	if err != nil {
+		t.Fatalf("decode release payload: %v", err)
+	}
+	if payload.Listener != "event_venue_observed" || payload.EventKey != observation.Identity() || payload.Owner != cache.owner {
+		t.Fatalf("release payload = %#v", payload)
+	}
+}
+
+type observationClaimCache struct {
+	owner  string
+	exists bool
+}
+
+func (c *observationClaimCache) LookupOwner(context.Context, string, string) (string, bool, error) {
+	return c.owner, c.exists, nil
+}
+
+func (*observationClaimCache) RetireCacheEntryWork(string, string, string) cellar.ApplicationWork {
+	return func(cellar.ApplicationTx) error { return nil }
+}
+
 func evaluator(t *testing.T) EvaluateEventVenueHandler {
 	t.Helper()
 	loc, err := time.LoadLocation("Europe/London")

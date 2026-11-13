@@ -230,7 +230,7 @@ func TestTimerCallbackFinishingDuringStopDoesNotReschedule(t *testing.T) {
 		t.Fatal("timer callback did not start")
 	}
 	timer.StopProduction()
-	if err := runtime.BeginDrain(nil); err != nil {
+	if err := runtime.BeginDrain(); err != nil {
 		t.Fatal(err)
 	}
 	drainDone := make(chan error, 1)

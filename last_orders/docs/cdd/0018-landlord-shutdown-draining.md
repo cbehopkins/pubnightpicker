@@ -150,83 +150,67 @@ directly execute poll notifications: the separate new-poll listener observes the
 created document and establishes PollOpened independently.
 
 A same-day restart can observe unchanged venue evidence but be suppressed by the
-existing EventVenueObserved claim, even when its downstream claim never happened.
+existing `EventVenueObserved` claim A, even when claim B was never established.
 Therefore merely leaving an event pending does not guarantee immediate takeover.
 A changed venue date produces different observation evidence and can be processed
 independently. See [CDD-0005](0005-event-recurrence.md).
 
 ## 7. Releasing an Unfulfilled Recurrence Claim
 
-Release is permitted only for an `EventVenueObserved` claim whose corresponding
-fanout Cell is still `READY`. Its recurrence evaluator has not run, so no
-`StaleEvent` or `CreateEventPoll` request has been generated and no recurrence
-application data has been changed. The current `EventVenueObserved` registry has
-only this evaluator. If the fanout Cell is claimed, missing, or has advanced past
-this pre-evaluation state, do not release under this protocol.
+During draining, the scheduler uses ordinary atomic `ClaimNext` for every
+runnable Cell; it does not filter by handler name or inspect Cell payloads. The
+closed Firebase claim gate is the recurrence cancellation signal. When an
+`EventVenueObserved` evaluator runs after that gate closes, it stops before
+creating either a `StaleEvent` or `CreateEventPoll` request and relinquishes
+claim A instead.
 
-This restriction is intentional. After evaluation, downstream idempotency work
-has no durable parent link to the observation, and its idempotency key may be
-shared by multiple observations. Do not delete downstream Sequences as part of
-releasing an upstream claim; doing so could discard work that is not exclusively
-owned by the observation being released.
+Ticket 8 refines ticket 5's earlier READY-only rule. The cancelled work is the
+`EventVenueObserved` evaluator Cell, whether it was waiting for fanout expansion
+or was created by that expansion. This is not permission to cancel recurrence
+work that the evaluator already emitted before shutdown.
 
-The approved release protocol is:
+The release protocol is:
 
-1. Stop fresh claim attempts as part of shutdown. The release candidate must be
-  the exact `READY` `EventVenueObserved` fanout Cell; a claimed or missing Cell
-  is ineligible. Do not start release if ownership or execution state is
-  inconclusive.
-2. Persist the Firebase idempotency Sequence owner in the local cache in the same
-  SQLite transaction in which the Check step establishes the local identity and
-  advances the Sequence. The value is `StepPayload.Owner`, which is also the
-  Firestore document's `owner`; it is not the ID of the emitted fanout Cell. Add
-  a nullable `owner` column to `firebase_idempotency_records`. Existing
-  `(listener, event_key)` identity is unchanged. New rows for all listeners
-  retain their Sequence owner because the Check implementation is shared, but
-  release remains restricted to the exact `event_venue_observed` row for this
-  candidate. Legacy rows with no owner are ineligible; never infer or
-  reconstruct an owner.
-3. In one SQLite transaction, delete only the identified `READY` fanout Cell and
-  its matching `event_venue_observed` cache row, checking the exact listener,
-  event key, and owner. The transaction fails without changing either record if
-  the Cell is missing or no longer `READY`, or the cache row does not match.
-  Provide a narrowly scoped Cellar Store operation to perform this lifecycle
-  transition together with `ApplicationWork`. `Kill` is not used: it terminates
-  a currently executing Cell, while this candidate is `READY`. Do not use the
-  offline `ForceDelete` operation as a substitute.
-4. Only after the SQLite transaction commits, delete the Firestore claim in a
-  Firestore transaction that reads the document and deletes it only if its owner
-  matches the recorded `StepPayload.Owner`. A missing document is already
-  absent; a different owner is preserved. Never use an unconditional delete or
-  a separate unprotected read followed by delete.
-5. Report release success only when the owner-checked deletion is confirmed or
-  the document is confirmed absent. A different owner, failed request, or
-  inconclusive response is not a successful handover. Do not restore retired
-  local work or promise a retry.
+1. Close the Firebase claim gate before entering drain. The recurrence evaluator
+  checks the gate before evaluation and again before it emits recurrence work.
+2. Derive the exact `event_venue_observed` key from the observation and look up
+  its owner in the local Firebase idempotency cache. The cache stores
+  `StepPayload.Owner`; the observation payload needs no additional claim fields.
+  Missing, ownerless, or unreadable cache state is unresolved: do not release the
+  remote claim, and preserve the existing scheduler-stopping error behaviour.
+3. Return `Kill` for the currently claimed evaluator Cell, with `ApplicationWork`
+  that deletes only the matching cache row and a release Cell for the remote
+  claim. Cellar commits the evaluator termination, cache deletion, and release
+  Cell together in one SQLite transaction. If that transaction fails, none of
+  those changes take effect.
+4. The release Cell uses the existing Firestore transaction to delete claim A
+  only if the stored owner still matches. A missing document is already absent;
+  a replacement owner is preserved. A failed, mismatched, or inconclusive
+  release is not success and retains scheduler-stopping failure semantics.
 
-SQLite retirement is deliberately first. If Firestore is deleted first and the
-process stops before local retirement, retained SQLite could resume the old
-evaluation after another instance has acquired the identity. With local-first
-ordering, interruption before the SQLite commit leaves both stores untouched.
-Interruption after that commit prevents the old work from resuming, but the
-remote claim may remain and suppress future work; if the Firestore response is
-inconclusive, report release as incomplete even if the document may in fact be
-absent. This best-effort loss is accepted, and no durable cleanup retry is
-promised.
+If the process stops before the SQLite transaction commits, the evaluator and
+cache row remain and the remote claim is untouched. After commit, the evaluator
+cannot resume and the release Cell remains durable in retained SQLite. If remote
+deletion was inconclusive, retrying that Cell after restart is owner-safe: an
+absent document is success and a replacement owner is preserved. A fresh
+database cannot recover the local cleanup Cell, so loss of ephemeral storage can
+still leave claim A in Firestore. A fresh instance can retry unchanged evidence
+after confirmed deletion; an already-running instance may retain its local
+cache and continue suppressing it.
 
 | Interruption point | Required recovery outcome |
 | --- | --- |
-| Before local retirement commits | The remote claim and fanout Cell remain; ordinary retained-database recovery applies. |
-| During the SQLite transaction | Cell retirement and cache-row deletion roll back together; the remote claim is untouched. |
-| After SQLite commit, before or during remote deletion | The old Cell cannot resume. The remote claim may remain or may be absent; report incomplete release unless absence/deletion is confirmed. |
-| After confirmed remote deletion | The old Cell is retired and a fresh instance can retry unchanged evidence. |
-| A replacement claim owns the document | Conditional deletion preserves it; report no successful release. The retired local Cell does not resume. |
+| Before local retirement commits | The evaluator Cell and cache row remain; the remote claim is untouched. |
+| After SQLite commit, before or during remote deletion | The evaluator cannot resume; the owner-checked release Cell remains for retained-database recovery. |
+| After confirmed remote deletion | The evaluator is retired and a fresh instance can retry unchanged evidence. |
+| A replacement claim owns the document | Conditional deletion preserves the replacement owner; report a scheduler-stopping failure. |
 
 A fresh-database instance observing after confirmed release can attempt the
 unchanged observation again. An already-running instance may have cached the
 claim and continue suppressing it after deletion, so release is not a guaranteed
-handover. This is a narrow release of an unfulfilled observation, not a generic
-claim rollback or a change to recurrence's separate downstream claim boundaries.
+handover. This is a narrow cancellation of an `EventVenueObserved` evaluator
+that sees shutdown before it emits recurrence work; it does not roll back
+`StaleEvent` or `CreateEventPoll` work already emitted.
 
 ## 8. Implementation Verification and Follow-Up
 
@@ -238,12 +222,13 @@ read-only owner reconciliation, conditional cleanup only for the persisted owner
 replacement-owner preservation and a subsequent observation against retained and
 fresh databases. Verify that unresolved lookup, failed local retirement and
 inconclusive remote deletion retain the required scheduler-stopping semantics.
-For recurrence claim release, verify the `READY` pre-evaluation eligibility rule;
-owner mismatch and delayed cleanup against a replacement claim in the emulator;
-rollback when the SQLite retirement transaction fails; interruption before and
-after the SQLite/Firestore boundary with retained storage; and fresh-instance
-retry versus an already-running instance with a cached claim. Do not release a
-claimed or missing fanout Cell or delete downstream Sequence work.
+For recurrence cancellation, verify that an evaluator seeing the closed claim
+gate emits no `StaleEvent` or `CreateEventPoll` request, retires only its own
+local cache row, and schedules owner-checked release of claim A. Cover missing
+or ownerless cache data, replacement ownership, a remote release failure,
+retained-SQLite recovery of the release Cell, and fresh-instance retry after
+confirmed release. Verify that recurrence work emitted before gate closure is
+not rolled back.
 
 Conduct a separate multi-instance safety review, including local-only idempotency
 such as daily auto-completion. The existing remote claim gate plus this drain

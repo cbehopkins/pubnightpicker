@@ -27,7 +27,6 @@ type Scheduler struct {
 	drainMu    sync.RWMutex
 	draining   bool
 	drainReady bool
-	eligible   func(Cell) bool
 	drainWake  chan struct{}
 }
 
@@ -48,19 +47,15 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 	}
 }
 
-// BeginDrain changes scheduling to claim only eligible work. Quiescence remains
+// BeginDrain switches to ordinary runnable-cell claiming. Quiescence remains
 // disabled until AllowDrainCompletion is called after producers have stopped.
-func (s *Scheduler) BeginDrain(eligible func(Cell) bool) error {
-	if _, ok := s.store.(DrainSchedulerStore); !ok {
-		return ErrDrainUnsupported
-	}
+func (s *Scheduler) BeginDrain() error {
 	s.drainMu.Lock()
 	defer s.drainMu.Unlock()
 	if s.draining {
 		return ErrSchedulerDraining
 	}
 	s.draining = true
-	s.eligible = eligible
 	s.signalDrain()
 	return nil
 }
@@ -74,10 +69,10 @@ func (s *Scheduler) AllowDrainCompletion() {
 	s.signalDrain()
 }
 
-func (s *Scheduler) drainState() (bool, bool, func(Cell) bool) {
+func (s *Scheduler) drainState() (bool, bool) {
 	s.drainMu.RLock()
 	defer s.drainMu.RUnlock()
-	return s.draining, s.drainReady, s.eligible
+	return s.draining, s.drainReady
 }
 
 func (s *Scheduler) signalDrain() {
@@ -134,15 +129,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		default:
 		}
 
-		draining, drainReady, eligible := s.drainState()
+		draining, drainReady := s.drainState()
 		var cell Cell
 		var ok bool
 		var err error
-		if draining {
-			cell, ok, err = s.store.(DrainSchedulerStore).ClaimNextMatching(time.Now(), eligible)
-		} else {
-			cell, ok, err = s.store.ClaimNext(time.Now())
-		}
+		cell, ok, err = s.store.ClaimNext(time.Now())
 		if err != nil {
 			capacity <- struct{}{}
 			return stop(fmt.Errorf("claim next cell: %w", err))
@@ -182,6 +173,5 @@ func (s *Scheduler) Run(ctx context.Context) error {
 }
 
 var (
-	ErrDrainUnsupported  = errors.New("store does not support filtered draining")
 	ErrSchedulerDraining = errors.New("scheduler is already draining")
 )

@@ -165,54 +165,6 @@ func (s *Store) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
 	return cell, true, nil
 }
 
-// ClaimNextMatching atomically claims the next runnable Cell accepted by eligible.
-func (s *Store) ClaimNextMatching(now time.Time, eligible func(cellar.Cell) bool) (cellar.Cell, bool, error) {
-	rows, err := s.db.Query(
-		`SELECT id, steps, current_step, state, not_before
-		 FROM cells
-		 WHERE state = ?
-		   AND (not_before IS NULL OR not_before <= ?)
-		 ORDER BY created_at, id`,
-		string(cellar.CellStateReady),
-		now.UTC(),
-	)
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-	candidates, err := scanCells(rows)
-	closeErr := rows.Close()
-	if err != nil {
-		return cellar.Cell{}, false, err
-	}
-	if closeErr != nil {
-		return cellar.Cell{}, false, closeErr
-	}
-
-	for _, candidate := range candidates {
-		if eligible != nil && !eligible(candidate) {
-			continue
-		}
-		row := s.db.QueryRow(
-			`UPDATE cells SET state = ?
-			 WHERE id = ? AND state = ?
-			   AND (not_before IS NULL OR not_before <= ?)
-			 RETURNING id, steps, current_step, state, not_before`,
-			string(cellar.CellStateClaimed), string(candidate.ID),
-			string(cellar.CellStateReady), now.UTC(),
-		)
-		cell, err := scanCell(row)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return cellar.Cell{}, false, err
-		}
-		return cell, true, nil
-	}
-
-	return cellar.Cell{}, false, nil
-}
-
 // Complete atomically deletes a claimed cell and adds replacement cells.
 func (s *Store) Complete(cellID cellar.CellID, additions []cellar.CellRequest, applicationWork ...cellar.ApplicationWork) error {
 	tx, err := s.db.Begin()

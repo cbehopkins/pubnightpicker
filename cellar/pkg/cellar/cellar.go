@@ -146,14 +146,14 @@ func (c *Cellar) Start(ctx context.Context) error {
 	return err
 }
 
-// BeginDrain restricts future Cell claims to cells accepted by eligible.
-func (c *Cellar) BeginDrain(eligible func(Cell) bool) error {
+// BeginDrain switches scheduling to drain mode. All runnable Cells remain eligible.
+func (c *Cellar) BeginDrain() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.started {
 		return ErrCellarNotStarted
 	}
-	return c.scheduler.BeginDrain(eligible)
+	return c.scheduler.BeginDrain()
 }
 
 // WaitForDrain permits quiescence and waits for eligible work to finish. If ctx

@@ -163,7 +163,6 @@ type App struct {
 	cellarStore                 cellar.Store
 	idempotencyStore            *firebaseidempotency.Store
 	recurrenceService           RecurrenceService
-	eventVenueClaimReleaser     *recurrenceplugin.EventVenueClaimReleaser
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
 	notificationProfileStore    *notificationprofile.Store
@@ -662,13 +661,6 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	eventVenueClaimReleaser, err := recurrenceplugin.NewEventVenueClaimReleaser(recurrenceplugin.EventVenueClaimReleaseConfig{
-		Store: cellarStore, Cache: idempotencyStore, Remote: cfg.IdempotencyRemote,
-		Listener: eventvenuelistener.EventVenueObservedListener, Logger: cfg.Logger,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create event venue claim releaser: %w", err)
-	}
 
 	for _, check := range cfg.StartupComponentChecks {
 		if check == nil {
@@ -811,7 +803,11 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(autocompletesvc.HandlerAmbiguous, autocompletesvc.AmbiguousHandler{Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{Store: cellarStore, Location: recurrenceService.Location(), Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerEvaluateEventVenue, recurrenceplugin.EvaluateEventVenueHandler{
+		Store: cellarStore, Location: recurrenceService.Location(), ClaimGate: claimGate,
+		ClaimCache: idempotencyStore, ClaimListener: eventvenuelistener.EventVenueObservedListener,
+		Logger: cfg.Logger,
+	}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
@@ -931,7 +927,6 @@ func New(cfg Config) (application *App, err error) {
 		cellarStore:                 cellarStore,
 		idempotencyStore:            idempotencyStore,
 		recurrenceService:           recurrenceService,
-		eventVenueClaimReleaser:     eventVenueClaimReleaser,
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
 		notificationProfileStore:    notificationProfileStore,
@@ -1215,7 +1210,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.stopPeriodicTimerProduction()
 		if a.shutdownDrainTimeout > 0 {
 			a.claimGate.Close()
-			if err := a.cellarRuntime.BeginDrain(eligibleDrainCell); err != nil {
+			if err := a.cellarRuntime.BeginDrain(); err != nil {
 				executionCancel()
 				a.logDrainOutcome("execution-failure", err)
 				return fmt.Errorf("begin Cellar drain: %w", err)
@@ -1232,9 +1227,6 @@ func (a *App) Run(ctx context.Context) error {
 				return fmt.Errorf("stop Landlord producers: %w", err)
 			}
 			err := a.cellarRuntime.WaitForDrain(drainCtx)
-			if drainCtx.Err() == nil {
-				a.eventVenueClaimReleaser.ReleaseUnfulfilled(drainCtx)
-			}
 			switch {
 			case errors.Is(drainCtx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 				a.logDrainOutcome("deadline", err)
@@ -1260,18 +1252,6 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Warn("cellar scheduler stopped without error, shutting down")
 	}
 	return nil
-}
-
-func eligibleDrainCell(cell cellar.Cell) bool {
-	if cell.CurrentStep < 0 || cell.CurrentStep >= len(cell.Steps) {
-		return false
-	}
-	switch cell.Steps[cell.CurrentStep].HandlerName {
-	case truths.EventVenueObservedFanout:
-		return false
-	default:
-		return true
-	}
 }
 
 func (a *App) stopPeriodicTimerProduction() {
@@ -1314,7 +1294,7 @@ func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
 			summary.inFlight++
 		case cell.NotBefore != nil && cell.NotBefore.After(now):
 			summary.deferred++
-		case eligibleDrainCell(cell):
+		case cell.State == cellar.CellStateReady:
 			summary.runnable++
 		default:
 			summary.otherBlocked++

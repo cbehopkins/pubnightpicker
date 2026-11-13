@@ -446,14 +446,8 @@ func TestShutdownDrainRunsRetryThatBecomesDueWhileWorkerIsActive(t *testing.T) {
 	if err := a.AddCell(retryCell); err != nil {
 		t.Fatal(err)
 	}
-	drainStore, ok := a.CellarStore().(cellar.DrainSchedulerStore)
-	if !ok {
-		t.Fatal("Cellar store does not support filtered claiming")
-	}
-	retried, claimed, err := drainStore.ClaimNextMatching(time.Now(), func(cell cellar.Cell) bool {
-		return cell.ID == retryCell.ID
-	})
-	if err != nil || !claimed {
+	retried, claimed, err := a.CellarStore().ClaimNext(time.Now())
+	if err != nil || !claimed || retried.ID != retryCell.ID {
 		t.Fatalf("claim cell to persist retry result: claimed=%t err=%v", claimed, err)
 	}
 	resultStore, ok := a.CellarStore().(cellar.ResultStore)
@@ -532,14 +526,8 @@ func TestShutdownDrainLeavesFutureRetryForSameDatabaseRestart(t *testing.T) {
 	if err := first.AddCell(retryCell); err != nil {
 		t.Fatal(err)
 	}
-	drainStore, ok := first.CellarStore().(cellar.DrainSchedulerStore)
-	if !ok {
-		t.Fatal("Cellar store does not support filtered claiming")
-	}
-	claimedCell, claimed, err := drainStore.ClaimNextMatching(time.Now(), func(cell cellar.Cell) bool {
-		return cell.ID == retryCell.ID
-	})
-	if err != nil || !claimed {
+	claimedCell, claimed, err := first.CellarStore().ClaimNext(time.Now())
+	if err != nil || !claimed || claimedCell.ID != retryCell.ID {
 		t.Fatalf("claim cell to persist retry result: claimed=%t err=%v", claimed, err)
 	}
 	resultStore, ok := first.CellarStore().(cellar.ResultStore)
@@ -977,14 +965,11 @@ func TestShutdownDrainDoesNotResumeLocallyRetiredObservationAfterRemoteFailure(t
 	close(blocker.release)
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatalf("run app: %v", err)
+		if err == nil || !strings.Contains(err.Error(), releaseErr.Error()) {
+			t.Fatalf("run app error = %v; want incomplete Firebase release", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("app did not finish its shutdown drain")
-	}
-	if !strings.Contains(logs.String(), `"local_retired":true`) || !strings.Contains(logs.String(), `"incomplete":1`) {
-		t.Fatalf("incomplete release was not reported honestly: %s", logs.String())
 	}
 	if remoteOwner, exists, err := delegate.LookupOwner(context.Background(), "event_venue_observed", eventKey); err != nil || !exists || remoteOwner != owner {
 		t.Fatalf("remote claim after failed release = %q, %t, %v; want old claim retained", remoteOwner, exists, err)
@@ -1063,14 +1048,11 @@ func TestShutdownDrainPreservesLegacyOwnerlessObservationClaim(t *testing.T) {
 	close(blocker.release)
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatalf("run app: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "owner is unresolved") {
+			t.Fatalf("run app error = %v; want unresolved owner failure", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("app did not finish its shutdown drain")
-	}
-	if !strings.Contains(logs.String(), `"stage":"lookup_local_owner"`) {
-		t.Fatalf("ownerless cache row was not reported as ineligible: %s", logs.String())
 	}
 	if remoteOwner, exists, err := remote.LookupOwner(context.Background(), "event_venue_observed", eventKey); err != nil || !exists || remoteOwner != owner {
 		t.Fatalf("remote claim = %q, %t, %v; want unchanged claim", remoteOwner, exists, err)
@@ -1079,15 +1061,15 @@ func TestShutdownDrainPreservesLegacyOwnerlessObservationClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ownerlessObservationRetained := false
 	for _, cell := range active {
-		if cell.ID == fanout.ID {
-			if cell.State != cellar.CellStateReady {
-				t.Fatalf("ownerless fanout state = %s, want READY", cell.State)
-			}
-			return
+		if cell.State == cellar.CellStateClaimed && cell.CurrentStep >= 0 && cell.CurrentStep < len(cell.Steps) && cell.Steps[cell.CurrentStep].HandlerName == recurrenceplugin.HandlerEvaluateEventVenue {
+			ownerlessObservationRetained = true
 		}
 	}
-	t.Fatal("legacy ownerless fanout was retired")
+	if !ownerlessObservationRetained {
+		t.Fatalf("ownerless observation execution was not retained after fail-stop: %+v", active)
+	}
 }
 
 func TestShutdownDrainDefersNewPollNotificationToIndependentListener(t *testing.T) {
