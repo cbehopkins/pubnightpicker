@@ -50,14 +50,24 @@ When("{word} creates the journey Event with {string} recurrence", async function
     assertSameLondonDay(this);
 });
 
-Then("Last Orders persists the expected occurrence for the journey Event", { timeout: 30_000 }, async function () {
+Then("Last Orders persists the expected occurrence for the journey Event", { timeout: 60_000 }, async function () {
     const id = venueId(this);
-    await withEmulatorAdmin(async (db) => {
+    await withEmulatorAdmin(async (db, auth) => {
         await waitForValue(async () => {
             assertSameLondonDay(this);
             return getDocFromServer(doc(db, "pubs", id));
         }, (snapshot) => snapshot.exists() && snapshot.data().next_occurrence_date === this.expectedOccurrence,
             `venue ${id} next_occurrence_date=${this.expectedOccurrence}`);
+        const token = await auth.currentUser.getIdToken();
+        await waitForValue(async () => {
+            const response = await fetch(new URL(`api/venues/${encodeURIComponent(id)}`, process.env.VITE_LAST_ORDERS_API_BASE_URL), {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const body = await response.text();
+            assert.equal(response.status, 200, body);
+            return JSON.parse(body);
+        }, (venue) => venue.id === id && venue.next_occurrence_date === this.expectedOccurrence,
+            `Last Orders projection for venue ${id} next_occurrence_date=${this.expectedOccurrence}`);
     });
     assertSameLondonDay(this);
 });
