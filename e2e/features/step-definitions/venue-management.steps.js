@@ -2,11 +2,35 @@ import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
 import { Given, When, Then } from "@cucumber/cucumber";
 import { doc, setDoc } from "firebase/firestore";
-import { nextAvailablePollDate, withEmulatorAdmin } from "../support/emulator.js";
+import { nextAvailablePollDate, withEmulatorAdmin, withEmulatorUser } from "../support/emulator.js";
 import { londonDate, shiftDate } from "../support/calendar.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const TEXT_FIELDS = ["Name", "Address", "Venue Web Site", "Map", "Notes"];
+
+When("{word} attempts to create a venue directly through Last Orders", async function (name) {
+    const email = this.actorEmails?.get(name);
+    assert.ok(email, `No registered email is available for ${name}`);
+    this.venueWriteResponse = await withEmulatorUser(email, "journey-only-user-password-2026", async (auth) => {
+        const response = await fetch(new URL("api/venues", process.env.VITE_LAST_ORDERS_API_BASE_URL), {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${await auth.currentUser.getIdToken()}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                name: `Unauthorized Venue ${randomUUID()}`,
+                venue_type: "pub",
+                address: "Permission Boundary Road",
+            }),
+        });
+        return { status: response.status, body: await response.text() };
+    });
+});
+
+Then("Last Orders rejects {word}'s venue creation with forbidden", function (name) {
+    assert.equal(this.venueWriteResponse.status, 403, `${name}'s Venue API write response: ${this.venueWriteResponse.body}`);
+});
 
 Given("a venue is available to current and past events", async function () {
     const fixtureId = randomUUID();

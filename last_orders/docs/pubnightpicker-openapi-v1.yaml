@@ -713,6 +713,9 @@ paths:
         sorted by name. Any committed venue addition, edit or deletion causes
         a replacement snapshot. `id` and `cursor` carry the same opaque
         resumption cursor. The stream uses the same public data for every caller.
+        A malformed, stale, wrong-scope, wrong-generation or otherwise unusable
+        `Last-Event-ID` is ignored; the connection still receives a fresh full
+        snapshot and cursor.
       security:
         - {}
       responses:
@@ -722,8 +725,6 @@ paths:
             text/event-stream:
               schema:
                 type: string
-        '400':
-          description: The supplied resumption cursor is invalid or expired.
         '503':
           description: The venue projection is not ready.
   /meets/{group_id}/current:
