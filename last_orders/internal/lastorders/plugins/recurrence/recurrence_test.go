@@ -111,6 +111,44 @@ func TestEvaluateEventVenueHandlerReleasesObservationDuringShutdown(t *testing.T
 	}
 }
 
+func TestEvaluateEventVenueHandlerReleasesObservationWhenShutdownStartsDuringEvaluation(t *testing.T) {
+	cache := &observationClaimCache{owner: "observation-owner", exists: true}
+	gate := &closesAfterFirstGateCheck{}
+	handler := evaluator(t)
+	handler.ClaimGate = gate
+	handler.ClaimCache = cache
+	handler.ClaimListener = "event_venue_observed"
+
+	result := handler.Handle(context.Background(), truths.EventVenueObserved{
+		Venue: recurrence.EventVenue{
+			ID:                 "event-computing",
+			Recurrence:         map[string]any{"frequency": "once", "date": "2030-01-02"},
+			NextOccurrenceDate: "",
+		},
+		ObservedOn: "2030-01-01",
+	})
+
+	kill, ok := result.(cellar.Kill)
+	if !ok {
+		t.Fatalf("result = %T; want cellar.Kill", result)
+	}
+	if gate.checks != 2 {
+		t.Fatalf("claim gate checks = %d; want entry and pre-emission checks", gate.checks)
+	}
+	if len(kill.NewCells) != 1 || kill.NewCells[0].Steps[0].HandlerName != firebaseidempotency.HandlerReleaseRemote {
+		t.Fatalf("new cells = %#v; want only the owner-checked release", kill.NewCells)
+	}
+}
+
+type closesAfterFirstGateCheck struct {
+	checks int
+}
+
+func (g *closesAfterFirstGateCheck) IsClosed() bool {
+	g.checks++
+	return g.checks > 1
+}
+
 type observationClaimCache struct {
 	owner  string
 	exists bool

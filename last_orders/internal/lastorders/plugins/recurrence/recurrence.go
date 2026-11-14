@@ -39,10 +39,14 @@ type ObservationClaimCache interface {
 	RetireCacheEntryWork(string, string, string) cellar.ApplicationWork
 }
 
+type ClaimAdmissionGate interface {
+	IsClosed() bool
+}
+
 type EvaluateEventVenueHandler struct {
 	Store         cellar.Store
 	Location      *time.Location
-	ClaimGate     *firebaseidempotency.ClaimGate
+	ClaimGate     ClaimAdmissionGate
 	ClaimCache    ObservationClaimCache
 	ClaimListener string
 	Logger        *slog.Logger
