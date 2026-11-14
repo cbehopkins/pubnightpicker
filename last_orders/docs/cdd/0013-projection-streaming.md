@@ -109,9 +109,12 @@ startup gating, single-instance V1 deployment and bounded-client behaviour are
 decided. Future instances are expected to own independent listeners,
 projections and stream hubs, but cross-instance convergence is not guaranteed
 in V1. The opaque cursor codec and sequence-aware handover are implemented in
-the CDD-0017 component prototype; production snapshot adapters and endpoint
-recovery reads remain to be implemented. Permission invalidation is a per-UID
-in-memory signal; visibility invalidation is scoped to the affected
+the CDD-0017 component prototype. The Venue collection's production snapshot
+adapter, runtime cursor-secret loading, full snapshot stream and recovery from
+unusable cursors are implemented and covered by focused HTTP and
+emulator-backed tests. Current-Meet and attendance snapshot adapters and
+endpoint integrations remain to be implemented. Permission invalidation is a
+per-UID in-memory signal; visibility invalidation is scoped to the affected
 view boundary, including anonymous streams. No durable marker is required
 because every reconnect receives a complete snapshot.
 

@@ -27,6 +27,20 @@ export async function withEmulatorAdmin(operation) {
     }
 }
 
+export async function withEmulatorUser(email, password, operation) {
+    assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
+    assert.equal(process.env.FIREBASE_AUTH_EMULATOR_HOST, "127.0.0.1:9099");
+    const app = initializeApp({ apiKey: "journey-emulator-key", projectId: process.env.GOOGLE_CLOUD_PROJECT }, `journey-user-${randomUUID()}`);
+    const auth = getAuth(app);
+    connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
+        return await operation(auth);
+    } finally {
+        await deleteApp(app);
+    }
+}
+
 export async function nextAvailablePollDate(db) {
     const snapshot = await getDocsFromServer(collection(db, "polls"));
     const usedDates = new Set(snapshot.docs.map((poll) => poll.data().date).filter((date) => typeof date === "string"));

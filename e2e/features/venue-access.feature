@@ -17,6 +17,8 @@ Feature: Public venue access
     And a venue is available to current and past events
     When Erin creates an account
     Then Erin is logged in
+    When Erin attempts to create a venue directly through Last Orders
+    Then Last Orders rejects Erin's venue creation with forbidden
     When Erin views the public venue in Current Events
     Then Erin sees the public venue details in Current Events
     When Erin views the public venue in Past Events
