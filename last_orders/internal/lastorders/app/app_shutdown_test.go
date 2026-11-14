@@ -836,10 +836,9 @@ func TestShutdownDrainReleasesReadyEventVenueClaimForFreshInstance(t *testing.T)
 
 	observation := truths.EventVenueObserved{
 		Venue: recurrence.EventVenue{
-			ID:                 "release-event",
-			NextOccurrenceDate: "2026-11-14",
+			ID: "release-event",
 		},
-		ObservedOn: "2026-11-13",
+		ObservedOn: recurrenceService.Today().Format(time.DateOnly),
 	}
 	fanout, eventKey, owner := seedEventVenueReleaseCandidate(t, a, remote, observation, true)
 	if err := addShutdownDrainCell(t, a); err != nil {
@@ -899,6 +898,7 @@ func TestShutdownDrainReleasesReadyEventVenueClaimForFreshInstance(t *testing.T)
 	freshSource := eventvenuestest.New()
 	freshSource.Changes = []eventvenues.Change{{Kind: eventvenues.ChangeAdded, Venue: observation.Venue}}
 	freshConfig := testConfig(t, filepath.Join(t.TempDir(), "shutdown-release-fresh.db"), remote)
+	freshConfig.RecurrenceService = recurrenceService
 	freshConfig.EventVenueSource = freshSource
 	fresh := newApp(t, freshConfig)
 	defer fresh.Close()
