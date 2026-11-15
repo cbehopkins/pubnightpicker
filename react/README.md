@@ -33,6 +33,12 @@ VITE_FIREBASE_APP_ID="your-new-app-id"
 
 Do all of this under the react directory.
 
+For the development-only navigation prototype, start Vite as below and open
+`/prototype/navigation?variant=A`. It uses sample data and stock Bootstrap without
+Firebase or the existing theme overrides. See the
+[prototype brief](src/components/pages/navigation-prototype/README.md) for the
+three layouts, suggested journeys and deferred community/location work.
+
 In one terminal, start the Vite dev server:
 ```
 npm run dev
