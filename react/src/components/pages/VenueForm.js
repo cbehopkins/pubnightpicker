@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
 import { Form as RouterForm, useActionData, useNavigate, useNavigation } from "react-router-dom";
-import { normalizeVenue } from "../../hooks/usePubs";
-import { venueApiFieldNames } from "../../utils/venueApiFields";
+import { domainVenueApiFieldNames } from "../../utils/venueApiFields";
 
 const VenueTypes = ["pub", "restaurant", "event"];
 const RecurrenceFrequencies = ["none", "once", "weekly", "monthly", "yearly"];
@@ -86,6 +85,14 @@ const PubParams = {
 
 // Bad things about a pub, things you want to search for the absence of
 const AntiPubParams = { out_of_town: PubParams.out_of_town };
+const VenueParams = {
+  parking: "Parking",
+  food: "Food",
+  dogFriendly: "Dog Friendly",
+  beerGarden: "Beer Garden",
+  outOfTown: "Out Of Town (Cambridge)",
+  banned: "Banned",
+};
 
 // Generic checkbox component for pub parameters
 /**
@@ -93,13 +100,13 @@ const AntiPubParams = { out_of_town: PubParams.out_of_town };
  * @property {string} name
  * @property {string} label
  * @property {string=} label_mod
- * @property {Record<string, unknown>=} pub_object
+ * @property {Record<string, unknown>=} venueObject
  * @property {(event: import("react").ChangeEvent<HTMLInputElement>, name: string) => void=} onChange
  */
 
 /** @param {PubCheckboxProps} props */
-function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
-  const value = Boolean(pub_object && Object.hasOwn(pub_object, name) && pub_object[name]);
+function PubCheckbox({ name, label, label_mod, venueObject, onChange }) {
+  const value = Boolean(venueObject && Object.hasOwn(venueObject, name) && venueObject[name]);
 
   // We can have the same name in multiple filter contexts
   // So multiple labels attached to checkboxes representing different state
@@ -129,8 +136,8 @@ function PubCheckbox({ name, label, label_mod, pub_object, onChange }) {
   );
 }
 
-function getRecurrenceDefaults(pub_object) {
-  const recurrence = pub_object?.recurrence || {};
+function getRecurrenceDefaults(venueObject) {
+  const recurrence = venueObject?.recurrence || {};
   const hasWeekday = recurrence.weekday !== undefined && recurrence.weekday !== null;
   const hasMonthDay = recurrence.month_day !== undefined && recurrence.month_day !== null;
   const isMonthlyByWeekday = recurrence.frequency === "monthly" && hasWeekday;
@@ -149,8 +156,8 @@ function getRecurrenceDefaults(pub_object) {
   };
 }
 
-function createRecurrenceBaseline(pub_object) {
-  const defaults = getRecurrenceDefaults(pub_object);
+function createRecurrenceBaseline(venueObject) {
+  const defaults = getRecurrenceDefaults(venueObject);
   if (defaults.frequency === "none") {
     return null;
   }
@@ -187,16 +194,16 @@ function createVenueFormBaseline(venue) {
   return {
     name: venue?.name || "",
     venueType: venue?.venueType || "pub",
-    web_site: venue?.web_site || "",
+    website: venue?.website || "",
     map: venue?.map || "",
     address: venue?.address || "",
     notes: venue?.notes || "",
-    pubImage: venue?.pubImage || "",
+    image: venue?.image || "",
     parking: Boolean(venue?.parking),
     food: Boolean(venue?.food),
-    dog_friend: Boolean(venue?.dog_friend),
-    beer_gerden: Boolean(venue?.beer_gerden),
-    out_of_town: Boolean(venue?.out_of_town),
+    dogFriendly: Boolean(venue?.dogFriendly),
+    beerGarden: Boolean(venue?.beerGarden),
+    outOfTown: Boolean(venue?.outOfTown),
     banned: Boolean(venue?.banned),
     recurrence: createRecurrenceBaseline(venue),
   };
@@ -241,14 +248,14 @@ function getVenueFormValues(form) {
   const values = {
     name: data.get("name") || "",
     venueType,
-    web_site: data.get("web_site") || "",
+    website: data.get("website") || "",
     map: data.get("map") || "",
     address: data.get("address") || "",
     notes: data.get("notes") || "",
-    pubImage: data.get("pubImage") || "",
+    image: data.get("image") || "",
   };
 
-  for (const key of Object.keys(PubParams)) {
+  for (const key of Object.keys(VenueParams)) {
     values[key] = key === "food" && venueType === "restaurant" ? true : Boolean(data.get(key));
   }
   values.recurrence = venueType === "event" ? buildRecurrenceFromFormData(data) : null;
@@ -264,7 +271,7 @@ function reconcileVenueSnapshot(snapshot, draftValues, baselineVenue) {
   const previousBaseline = createVenueFormBaseline(baselineVenue);
   const nextDraft = { ...snapshot };
   const nextBaseline = { ...snapshot };
-  const nextTokens = { ...(snapshot.edit_tokens || {}) };
+  const nextTokens = { ...(snapshot.editTokens || {}) };
 
   for (const field of Object.keys(snapshotValues)) {
     const draftValue = draftValues[field];
@@ -275,27 +282,27 @@ function reconcileVenueSnapshot(snapshot, draftValues, baselineVenue) {
 
     nextDraft[field] = draftValue;
     nextBaseline[field] = previousBaseline[field];
-    const apiField = venueApiFieldNames[field] || field;
-    if (baselineVenue.edit_tokens?.[apiField] === undefined) {
+    const apiField = domainVenueApiFieldNames[field] || field;
+    if (baselineVenue.editTokens?.[apiField] === undefined) {
       delete nextTokens[apiField];
     } else {
-      nextTokens[apiField] = baselineVenue.edit_tokens[apiField];
+      nextTokens[apiField] = baselineVenue.editTokens[apiField];
     }
   }
 
-  nextBaseline.edit_tokens = nextTokens;
-  nextDraft.edit_tokens = nextTokens;
+  nextBaseline.editTokens = nextTokens;
+  nextDraft.editTokens = nextTokens;
   return { draft: nextDraft, baseline: nextBaseline };
 }
 
-function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecurrenceFrequency }) {
+function RecurrenceFields({ venueObject, venueType, recurrenceFrequency, setRecurrenceFrequency }) {
   const [monthlyMode, setMonthlyMode] = useState(
-    getRecurrenceDefaults(pub_object).monthlyMode
+    getRecurrenceDefaults(venueObject).monthlyMode
   );
   const [yearlyMode, setYearlyMode] = useState(
-    getRecurrenceDefaults(pub_object).yearlyMode
+    getRecurrenceDefaults(venueObject).yearlyMode
   );
-  const recurrenceDefaults = getRecurrenceDefaults(pub_object);
+  const recurrenceDefaults = getRecurrenceDefaults(venueObject);
 
   if (venueType !== "event") {
     return null;
@@ -571,13 +578,13 @@ function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecur
               </>
             )}
           </Row>
-          {recurrenceFrequency !== "none" && pub_object?.next_occurrence_date && (
+          {recurrenceFrequency !== "none" && venueObject?.nextOccurrenceDate && (
             <Row className="g-3 mt-3 border-top pt-3">
               <Col xs={12}>
                 <BsForm.Group>
                   <BsForm.Label className="fw-semibold">Next Event</BsForm.Label>
                   <p className="alert alert-info mb-0 py-2 px-3">
-                    {formatDateForDisplay(pub_object.next_occurrence_date)}
+                    {formatDateForDisplay(venueObject.nextOccurrenceDate)}
                   </p>
                   <small className="text-body-secondary d-block mt-1">
                     This date is computed by the backend. It will be updated when recurrence settings are saved.
@@ -591,14 +598,15 @@ function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecur
   );
 }
 
-function PubForm({ method, pub_object }) {
+function VenueForm({ method, venueObject }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const actionData = useActionData();
   const formRef = useRef(null);
-  const lastSnapshot = useRef(pub_object);
-  const [venue, setVenue] = useState(pub_object);
-  const [venueBaseline, setVenueBaseline] = useState(pub_object);
+  const lastSnapshot = useRef(venueObject);
+  const latestSnapshot = useRef(venueObject);
+  const [venue, setVenue] = useState(venueObject);
+  const [venueBaseline, setVenueBaseline] = useState(venueObject);
   const [formKey, setFormKey] = useState(0);
   const [dismissedConflict, setDismissedConflict] = useState(null);
   const [venueType, setVenueType] = useState(venue ? venue.venueType || "pub" : "pub");
@@ -609,18 +617,19 @@ function PubForm({ method, pub_object }) {
   const isSubmitting = navigation.state === "submitting";
 
   useEffect(() => {
-    if (!pub_object || pub_object === lastSnapshot.current) {
+    if (!venueObject || venueObject === lastSnapshot.current) {
       return;
     }
-    lastSnapshot.current = pub_object;
+    lastSnapshot.current = venueObject;
+    latestSnapshot.current = venueObject;
     const draftValues = formRef.current
       ? getVenueFormValues(formRef.current)
       : createVenueFormBaseline(venue);
-    const reconciled = reconcileVenueSnapshot(pub_object, draftValues, venueBaseline);
+    const reconciled = reconcileVenueSnapshot(venueObject, draftValues, venueBaseline);
     setVenue(reconciled.draft);
     setVenueBaseline(reconciled.baseline);
     setFormKey((key) => key + 1);
-  }, [pub_object, venue, venueBaseline]);
+  }, [venueObject, venue, venueBaseline]);
 
   useEffect(() => {
     setVenueType(venue?.venueType || "pub");
@@ -628,10 +637,11 @@ function PubForm({ method, pub_object }) {
   }, [venue]);
 
   function loadCurrentVenue() {
-    const currentVenue = normalizeVenue(actionData?.conflict?.currentVenue);
+    const currentVenue = actionData?.conflict?.currentVenue;
     if (!currentVenue) {
       return;
     }
+    latestSnapshot.current = currentVenue;
     setVenue(currentVenue);
     setVenueBaseline(currentVenue);
     setFormKey((key) => key + 1);
@@ -641,12 +651,12 @@ function PubForm({ method, pub_object }) {
   function handleFormChange(event) {
     const targetName = event.target.name;
     const field = targetName.startsWith("recurrence_") ? "recurrence" : targetName;
-    const latestSnapshot = lastSnapshot.current;
-    if (!latestSnapshot || !formRef.current) {
+    const snapshot = latestSnapshot.current;
+    if (!snapshot || !formRef.current) {
       return;
     }
 
-    const latestValues = createVenueFormBaseline(latestSnapshot);
+    const latestValues = createVenueFormBaseline(snapshot);
     if (!Object.hasOwn(latestValues, field)) {
       return;
     }
@@ -660,14 +670,15 @@ function PubForm({ method, pub_object }) {
       if (areFieldValuesEqual(currentValues[field], latestValues[field])) {
         return currentBaseline;
       }
-      const editTokens = { ...(currentBaseline.edit_tokens || {}) };
-      const latestToken = latestSnapshot.edit_tokens?.[field];
+      const editTokens = { ...(currentBaseline.editTokens || {}) };
+      const apiField = domainVenueApiFieldNames[field] || field;
+      const latestToken = snapshot.editTokens?.[apiField];
       if (latestToken === undefined) {
-        delete editTokens[field];
+        delete editTokens[apiField];
       } else {
-        editTokens[field] = latestToken;
+        editTokens[apiField] = latestToken;
       }
-      return { ...currentBaseline, [field]: latestValues[field], edit_tokens: editTokens };
+      return { ...currentBaseline, [field]: latestValues[field], editTokens };
     });
   }
 
@@ -693,7 +704,7 @@ function PubForm({ method, pub_object }) {
         {method === "patch" && venue && (
           <>
             <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venueBaseline))} />
-            <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.edit_tokens || {})} />
+            <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.editTokens || {})} />
           </>
         )}
         <Card>
@@ -742,13 +753,13 @@ function PubForm({ method, pub_object }) {
               </Col>
 
               <Col xs={12}>
-                <BsForm.Group controlId="web_site">
+                <BsForm.Group controlId="website">
                   <BsForm.Label>Venue Web Site</BsForm.Label>
                   <BsForm.Control
                     type="text"
-                    name="web_site"
+                    name="website"
                     title="Nice to have the website to show in notification messages"
-                    defaultValue={venue ? venue.web_site : ""}
+                    defaultValue={venue ? venue.website : ""}
                   />
                 </BsForm.Group>
               </Col>
@@ -792,19 +803,19 @@ function PubForm({ method, pub_object }) {
               </Col>
 
               <Col xs={12}>
-                <BsForm.Group controlId="pubImage">
+                <BsForm.Group controlId="image">
                   <BsForm.Label>Link to Venue Image</BsForm.Label>
                   <BsForm.Control
                     type="text"
-                    name="pubImage"
-                    title="Pub Image"
-                    defaultValue={venue ? venue.pubImage : ""}
+                    name="image"
+                    title="Venue Image"
+                    defaultValue={venue ? venue.image : ""}
                   />
                 </BsForm.Group>
               </Col>
 
               <RecurrenceFields
-                pub_object={venue}
+                venueObject={venue}
                 venueType={venueType}
                 recurrenceFrequency={recurrenceFrequency}
                 setRecurrenceFrequency={setRecurrenceFrequency}
@@ -814,12 +825,12 @@ function PubForm({ method, pub_object }) {
                 <h5 className="mb-2">Venue Attributes</h5>
                 <Table bordered hover size="sm" responsive className="mb-0 align-middle">
                   <tbody>
-                    {Object.entries(PubParams).map(([key, value]) => {
+                    {Object.entries(VenueParams).map(([key, value]) => {
                       if (venueType === "restaurant" && key === "food") {
                         return null;
                       }
 
-                      return <PubCheckbox key={key} name={key} label={value} pub_object={venue} />;
+                      return <PubCheckbox key={key} name={key} label={value} venueObject={venue} />;
                     })}
                   </tbody>
                 </Table>
@@ -832,5 +843,5 @@ function PubForm({ method, pub_object }) {
   );
 }
 
-export default PubForm;
-export { AntiPubParams, PubParams, PubCheckbox };
+export default VenueForm;
+export { AntiPubParams, PubParams, PubCheckbox, VenueParams };

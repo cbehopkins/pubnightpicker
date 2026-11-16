@@ -1,7 +1,7 @@
 
 // @ts-check
 
-import { PubParams, PubCheckbox } from "../pages/PubForm";
+import { PubParams, PubCheckbox } from "../pages/VenueForm";
 import styles from "./ActivePoll.module.css";
 
 /** @typedef {Record<string, string>} PubFilterParamsMap */
