@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { lastOrdersApiURL } from "../utils/lastOrdersApiURL";
+import { normalizeVenue as normalizeDomainVenue } from "../utils/venueModel";
 
 const initialState = {
   venues: {},
+  domainVenues: {},
   isLoading: true,
   isStale: false,
   errorMessage: null,
@@ -76,6 +78,7 @@ function startStream() {
       }
 
       const entries = [];
+      const domainEntries = [];
       const venueIds = new Set();
       for (const venue of payload.venues) {
         const normalized = normalizeVenue(venue);
@@ -85,12 +88,14 @@ function startStream() {
         }
         venueIds.add(venue.id);
         entries.push([venue.id, normalized]);
+        domainEntries.push([venue.id, normalizeDomainVenue(venue)]);
       }
 
       hasSnapshot = true;
       hasLoggedStreamError = false;
       publish({
         venues: Object.fromEntries(entries),
+        domainVenues: Object.fromEntries(domainEntries),
         isLoading: false,
         isStale: false,
         errorMessage: null,
@@ -156,9 +161,14 @@ function getSnapshot() {
   return state;
 }
 
-export function usePubsState() {
+export function useVenueStreamState() {
   const currentState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { ...currentState, retry: retryStream };
+}
+
+export function usePubsState() {
+  const { venues, isLoading, isStale, errorMessage, retry } = useVenueStreamState();
+  return { venues, isLoading, isStale, errorMessage, retry };
 }
 
 function usePubs() {

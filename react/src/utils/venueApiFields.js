@@ -14,3 +14,20 @@ export const venueApiFieldNames = {
     out_of_town: "out_of_town",
     banned: "banned",
 };
+
+export const domainVenueApiFieldNames = {
+    name: "name",
+    venueType: "venue_type",
+    website: "website_url",
+    map: "map_url",
+    address: "address",
+    notes: "notes",
+    image: "image_url",
+    recurrence: "recurrence",
+    parking: "parking",
+    food: "food",
+    dogFriendly: "dog_friendly",
+    beerGarden: "beer_garden",
+    outOfTown: "out_of_town",
+    banned: "banned",
+};
