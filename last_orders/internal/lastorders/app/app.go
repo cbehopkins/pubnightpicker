@@ -76,7 +76,7 @@ type RecurrenceService interface {
 	Location() *time.Location
 	Today() time.Time
 	AdvanceStaleEvent(ctx context.Context, eventID string) error
-	CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error
+	CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error
 }
 
 type Config struct {
@@ -683,7 +683,7 @@ func New(cfg Config) (application *App, err error) {
 	truths.TestEmailRequestedRegistry.Register(testemailplugin.HandlerTestEmail)
 	truths.EventVenueObservedRegistry.Register(recurrenceplugin.HandlerEvaluateEventVenue)
 	truths.StaleEventRegistry.Register(recurrenceplugin.HandlerStaleEvent)
-	truths.CreateEventPollRegistry.Register(recurrenceplugin.HandlerCreateEventPoll)
+	truths.CreateMeetForEventOccurrenceRegistry.Register(recurrenceplugin.HandlerCreateMeetForEventOccurrence)
 	truths.LogMessageRegistry.Register(logsvc.HandlerLogMessage)
 	autocompleteplugin.Register()
 	admindeleteplugin.Register()
@@ -813,7 +813,7 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(recurrenceplugin.HandlerStaleEvent, recurrenceplugin.StaleEventHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(recurrenceplugin.HandlerCreateEventPoll, recurrenceplugin.CreateEventPollHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(recurrenceplugin.HandlerCreateMeetForEventOccurrence, recurrenceplugin.CreateMeetForEventOccurrenceHandler{Service: recurrenceService, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
 
@@ -1553,7 +1553,7 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.PollObservedPayload](truths.PollCompletedRegistry),
 		registerFanout[truths.EventVenueObserved](truths.EventVenueObservedRegistry),
 		registerFanout[truths.StaleEvent](truths.StaleEventRegistry),
-		registerFanout[truths.CreateEventPoll](truths.CreateEventPollRegistry),
+		registerFanout[truths.CreateMeetForEventOccurrence](truths.CreateMeetForEventOccurrenceRegistry),
 		registerFanout[truths.LogMessage](truths.LogMessageRegistry),
 		registerFanout[truths.DailyPollAutoCompleteDue](truths.DailyPollAutoCompleteDueRegistry),
 		registerFanout[truths.PollAutoCompletionDue](truths.PollAutoCompletionDueRegistry),

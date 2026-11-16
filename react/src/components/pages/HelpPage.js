@@ -18,7 +18,7 @@ function HelpPage() {
                 <ul className="mb-0">
                     <li>Create an account or sign in to vote and manage preferences.</li>
                     <li>Open Active Polls to vote for a venue.</li>
-                    <li>Check Current Events for this week&apos;s selected venue and details.</li>
+                    <li>Check Current Meets for this week&apos;s selected venue and details.</li>
                 </ul>
             </section>
 
@@ -50,7 +50,7 @@ function HelpPage() {
                     <li>After a venue is selected, you can confirm whether you will attend.</li>
                     <li>Your attendance status helps organizers plan for group size and table bookings.</li>
                     <li>If the venue is a restaurant, accurate attendance counts are especially important for reserving adequate tables.</li>
-                    <li>Update your attendance status in the Current Events section if your plans change.</li>
+                    <li>Update your attendance status in the Current Meets section if your plans change.</li>
                 </ul>
             </section>
 

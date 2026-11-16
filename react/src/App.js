@@ -211,11 +211,11 @@ function App() {
           element: <ActivePolls />,
         },
         {
-          path: "current_events",
+          path: "current_meets",
           element: <LazyRoute><CurrentEvents /></LazyRoute>,
         },
         {
-          path: "past_events",
+          path: "past_meets",
           element: <LazyRoute><PastEvents /></LazyRoute>,
         },
         {

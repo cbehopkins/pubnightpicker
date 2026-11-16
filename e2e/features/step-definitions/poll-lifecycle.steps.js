@@ -186,10 +186,11 @@ Then("{word} no longer sees the poll on Active Polls", async function (name) {
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor({ state: "hidden" });
 });
 
-When("{word} opens Current Events", async function (name) {
+When("{word} opens Current Meets", async function (name) {
     const page = this.actors.get(name);
-    await page.getByRole("link", { name: "Current Events", exact: true }).click();
-    await page.getByRole("heading", { name: "Current Events", exact: true }).waitFor();
+    await page.getByRole("link", { name: "Current Meets", exact: true }).click();
+    await page.waitForURL(`${BASE_URL}/current_meets`);
+    await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
 });
 
 Then("{word} sees the meet at {string}", async function (name, venue) {

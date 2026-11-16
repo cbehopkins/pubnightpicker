@@ -128,15 +128,17 @@ func TestPollCompletedPushMatchesPythonPayload(t *testing.T) {
 	}
 	completedPushHandler(completionactionstest.New(), populator).Handle(context.Background(), payload)
 
-	got := populator.payload(t)
-	if got.EventType != "poll_completed" || got.Title != "Pub Night @ Red Lion" {
-		t.Errorf("event/title = %q / %q", got.EventType, got.Title)
+	want := pushPayload{
+		EventType: "poll_completed",
+		PollID:    "poll-1",
+		Title:     "Pub Night @ Red Lion",
+		Body:      "2026-10-02: Red Lion. Pre-pub meal at Bistro. Meet at 18:30.",
+		URL:       "https://app.test/current_meets",
+		Tag:       "poll-complete:poll-1",
+		SentAt:    "2026-10-01T12:00:00Z",
 	}
-	if want := "2026-10-02: Red Lion. Pre-pub meal at Bistro. Meet at 18:30."; got.Body != want {
-		t.Errorf("body = %q, want %q", got.Body, want)
-	}
-	if got.URL != "https://app.test/current_events" || got.Tag != "poll-complete:poll-1" {
-		t.Errorf("url/tag = %q / %q", got.URL, got.Tag)
+	if got := populator.payload(t); got != want {
+		t.Fatalf("payload = %+v, want %+v", got, want)
 	}
 	var mark completionMark
 	if err := json.Unmarshal(populator.then[0].Payload, &mark); err != nil {
@@ -155,7 +157,7 @@ func TestPollCompletedPushUsesPythonRescheduleAndDedupeRules(t *testing.T) {
 	handler := completedPushHandler(actions, populator)
 
 	handler.Handle(ctx, completedPoll)
-	if got := populator.payload(t); got.EventType != "poll_rescheduled" || got.Title != "Pub Night rescheduled: Red Lion" {
+	if got := populator.payload(t); got.EventType != "poll_rescheduled" || got.Title != "Pub Night rescheduled: Red Lion" || got.URL != "https://app.test/current_meets" {
 		t.Fatalf("payload = %+v, want a reschedule", got)
 	}
 

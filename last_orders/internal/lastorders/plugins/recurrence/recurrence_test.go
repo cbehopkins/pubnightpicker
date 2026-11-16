@@ -46,11 +46,18 @@ func TestEvaluateEventVenueHandlerCreatesDueEventTruth(t *testing.T) {
 	})
 
 	step := emittedTruthStep(t, result)
-	if step.Listener != listenerEventDue {
-		t.Fatalf("listener = %q; want %q", step.Listener, listenerEventDue)
+	if step.Listener != "event_due" || step.EventKey != "event-2_2030-01-05" {
+		t.Fatalf("idempotency identity = %q/%q", step.Listener, step.EventKey)
 	}
-	if step.Truth.FanoutName != truths.CreateEventPollFanout {
-		t.Fatalf("fanout = %q; want %q", step.Truth.FanoutName, truths.CreateEventPollFanout)
+	if step.Truth.FanoutName != "truths.create_event_poll" {
+		t.Fatalf("fanout = %q; want legacy durable name", step.Truth.FanoutName)
+	}
+	if string(step.Truth.Payload) != `{"event_id":"event-2","occurrence_date":"2030-01-05"}` {
+		t.Fatalf("truth payload = %s", step.Truth.Payload)
+	}
+	truth, err := cellar.JSONCodec[truths.CreateMeetForEventOccurrence]().Unmarshal(step.Truth.Payload)
+	if err != nil || truth.EventID != "event-2" || truth.OccurrenceDate != "2030-01-05" {
+		t.Fatalf("decoded truth = %#v, error = %v", truth, err)
 	}
 }
 
