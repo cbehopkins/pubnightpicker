@@ -1,17 +1,15 @@
-import { addNewPub, deletePub, modifyPub } from "./pubs";
+import { assertCurrentUserPermission, PERMISSIONS } from "../permissions";
+import { requestLastOrders } from "../utils/lastOrdersApi";
 import { normalizeVenue } from "../utils/venueModel";
+import { domainVenueApiFieldNames } from "../utils/venueApiFields";
 
-const legacyFieldNames = {
-    website: "web_site",
-    image: "pubImage",
-    dogFriendly: "dog_friend",
-    beerGarden: "beer_gerden",
-    outOfTown: "out_of_town",
-};
+const nullableApiFields = new Set(["website", "map", "image"]);
 
-function toLegacyFields(venue) {
+function toApiFields(venue) {
     return Object.fromEntries(
-        Object.entries(venue).map(([field, value]) => [legacyFieldNames[field] || field, value])
+        Object.entries(domainVenueApiFieldNames)
+            .filter(([field]) => Object.hasOwn(venue, field))
+            .map(([field, apiField]) => [apiField, nullableApiFields.has(field) && venue[field] === "" ? null : venue[field]])
     );
 }
 
@@ -31,14 +29,27 @@ async function withDomainResponse(operation) {
     }
 }
 
-export function addNewVenue(venue) {
-    return withDomainResponse(() => addNewPub(toLegacyFields(venue)));
+export async function addNewVenue(venue) {
+    assertCurrentUserPermission(PERMISSIONS.canManagePubs, "creating a venue");
+    return withDomainResponse(() => requestLastOrders("api/venues", { body: toApiFields(venue) }));
 }
 
-export function modifyVenue(id, venue, baseline, editTokens) {
-    return withDomainResponse(() => modifyPub(id, toLegacyFields(venue), baseline == null ? baseline : toLegacyFields(baseline), editTokens));
+export async function modifyVenue(id, venue, baseline, editTokens) {
+    assertCurrentUserPermission(PERMISSIONS.canManagePubs, "editing a venue");
+    const changed = Object.fromEntries(
+        Object.entries(venue).filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(baseline?.[field]))
+    );
+    const fields = toApiFields(changed);
+    if (Object.keys(fields).length === 0) return null;
+    const fieldTokens = Object.fromEntries(Object.keys(fields).map((field) => [field, editTokens?.[field]]));
+    return withDomainResponse(() => requestLastOrders(`api/venues/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        contentType: "application/merge-patch+json",
+        body: { ...fields, edit_tokens: fieldTokens },
+    }));
 }
 
-export function deleteVenue(id, deleteToken) {
-    return withDomainResponse(() => deletePub(id, deleteToken));
+export async function deleteVenue(id, deleteToken) {
+    assertCurrentUserPermission(PERMISSIONS.canManagePubs, "deleting a venue");
+    return withDomainResponse(() => requestLastOrders(`api/venues/${encodeURIComponent(id)}`, { method: "DELETE", ifMatch: deleteToken }));
 }

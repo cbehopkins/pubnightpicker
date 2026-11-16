@@ -48,21 +48,21 @@ export function getDefaultRestaurantTime(restaurantId, currentTime) {
   return currentTime || "18:30";
 }
 
-export function createCompletingPollState(key, pubName, pollId, poll, venues) {
+export function createCompletingPollState(key, venueName, pollId, poll, venues) {
   const selectedVenue = venues?.[key];
-  const pubHasFood = Boolean(selectedVenue?.food);
+  const venueHasFood = Boolean(selectedVenue?.food);
 
   const restaurantOptions = getRestaurantOptionsForPoll(poll, venues);
   const allRestaurantVenues = getAllRestaurantVenues(venues);
 
   const autoSelectedRestaurant =
-    !pubHasFood && restaurantOptions.length === 1 ? restaurantOptions[0].id : "";
+    !venueHasFood && restaurantOptions.length === 1 ? restaurantOptions[0].id : "";
 
   return {
     key,
-    pubName,
+    venueName,
     poll_id: pollId,
-    pubHasFood,
+    venueHasFood,
     restaurantOptions,
     allRestaurantVenues,
     restaurantId: autoSelectedRestaurant,
@@ -75,7 +75,7 @@ export function isRestaurantChoiceRequired(completingPoll) {
 }
 
 export function getRestaurantIdForCompletion(completingPoll) {
-  if (completingPoll?.pubHasFood) {
+  if (completingPoll?.venueHasFood) {
     return undefined;
   }
   return completingPoll?.restaurantId || undefined;

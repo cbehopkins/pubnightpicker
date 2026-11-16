@@ -20,12 +20,12 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 /**
  * @typedef {[ 
  *  AttendanceMap,
- *  (pubId: string, userId: string, status: AttendanceStatus) => Promise<void>,
- *  (pubId: string, userId: string) => Promise<void>,
- *  (pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
- *  (pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
- *  (pubId: string, userId: string, eta: string) => Promise<void>,
- *  (pubId: string, userId: string) => Promise<void>
+ *  (venueId: string, userId: string, status: AttendanceStatus) => Promise<void>,
+ *  (venueId: string, userId: string) => Promise<void>,
+ *  (venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
+ *  (venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>,
+ *  (venueId: string, userId: string, eta: string) => Promise<void>,
+ *  (venueId: string, userId: string) => Promise<void>
  * ]} UseAttendanceResult
  */
 
@@ -56,49 +56,49 @@ function useAttendance(pollId, enabled = true) {
         }, snapshotErrorHandler);
     }, [docRef, enabled]);
 
-    /** @type {(pubId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
-    const setAttendanceStatus = useCallback(async (pubId, userId, status) => {
+    /** @type {(venueId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
+    const setAttendanceStatus = useCallback(async (venueId, userId, status) => {
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
         /** @type {Record<string, unknown>} */
         const payload = {
-            [`${pubId}.${status}`]: arrayUnion(userId),
-            [`${pubId}.${oppositeStatus}`]: arrayRemove(userId),
+            [`${venueId}.${status}`]: arrayUnion(userId),
+            [`${venueId}.${oppositeStatus}`]: arrayRemove(userId),
         };
         // ETA only makes sense alongside canCome; clear it when switching to cannotCome
         if (status === "cannotCome") {
-            payload[`${pubId}.eta.${userId}`] = deleteField();
+            payload[`${venueId}.eta.${userId}`] = deleteField();
         }
         await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
-    /** @type {(pubId: string, userId: string) => Promise<void>} */
-    const clearAttendance = useCallback(async (pubId, userId) => {
+    /** @type {(venueId: string, userId: string) => Promise<void>} */
+    const clearAttendance = useCallback(async (venueId, userId) => {
         await updateAttendanceDoc({
-            [`${pubId}.canCome`]: arrayRemove(userId),
-            [`${pubId}.cannotCome`]: arrayRemove(userId),
-            [`${pubId}.eta.${userId}`]: deleteField(),
+            [`${venueId}.canCome`]: arrayRemove(userId),
+            [`${venueId}.cannotCome`]: arrayRemove(userId),
+            [`${venueId}.eta.${userId}`]: deleteField(),
         });
     }, [updateAttendanceDoc]);
 
-    /** @type {(pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
-    const setAttendanceForMultiplePubs = useCallback(async (pubIds, userId, status) => {
-        if (!pubIds || pubIds.length === 0) {
+    /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
+    const setAttendanceForMultipleVenues = useCallback(async (venueIds, userId, status) => {
+        if (!venueIds || venueIds.length === 0) {
             return;
         }
 
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
         /** @type {Record<string, unknown>} */
         const payload = {};
-        for (const pubId of pubIds) {
-            payload[`${pubId}.${status}`] = arrayUnion(userId);
-            payload[`${pubId}.${oppositeStatus}`] = arrayRemove(userId);
+        for (const venueId of venueIds) {
+            payload[`${venueId}.${status}`] = arrayUnion(userId);
+            payload[`${venueId}.${oppositeStatus}`] = arrayRemove(userId);
         }
 
         await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
-    /** @type {(pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
-    const setGlobalAttendanceStatus = useCallback(async (pubIds, userId, status) => {
+    /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
+    const setGlobalAttendanceStatus = useCallback(async (venueIds, userId, status) => {
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
         /** @type {Record<string, unknown>} */
         const payload = {
@@ -106,25 +106,25 @@ function useAttendance(pollId, enabled = true) {
             [`${ATTENDANCE_GLOBAL_KEY}.${oppositeStatus}`]: arrayRemove(userId),
         };
 
-        for (const pubId of pubIds || []) {
-            payload[`${pubId}.${status}`] = arrayUnion(userId);
-            payload[`${pubId}.${oppositeStatus}`] = arrayRemove(userId);
+        for (const venueId of venueIds || []) {
+            payload[`${venueId}.${status}`] = arrayUnion(userId);
+            payload[`${venueId}.${oppositeStatus}`] = arrayRemove(userId);
         }
 
         await updateAttendanceDoc(payload);
     }, [updateAttendanceDoc]);
 
-    /** @type {(pubId: string, userId: string, eta: string) => Promise<void>} */
-    const setEta = useCallback(async (pubId, userId, eta) => {
+    /** @type {(venueId: string, userId: string, eta: string) => Promise<void>} */
+    const setEta = useCallback(async (venueId, userId, eta) => {
         await updateAttendanceDoc({
-            [`${pubId}.eta.${userId}`]: eta,
+            [`${venueId}.eta.${userId}`]: eta,
         });
     }, [updateAttendanceDoc]);
 
-    /** @type {(pubId: string, userId: string) => Promise<void>} */
-    const clearEta = useCallback(async (pubId, userId) => {
+    /** @type {(venueId: string, userId: string) => Promise<void>} */
+    const clearEta = useCallback(async (venueId, userId) => {
         await updateAttendanceDoc({
-            [`${pubId}.eta.${userId}`]: deleteField(),
+            [`${venueId}.eta.${userId}`]: deleteField(),
         });
     }, [updateAttendanceDoc]);
 
@@ -132,7 +132,7 @@ function useAttendance(pollId, enabled = true) {
         attendance,
         setAttendanceStatus,
         clearAttendance,
-        setAttendanceForMultiplePubs,
+        setAttendanceForMultipleVenues,
         setGlobalAttendanceStatus,
         setEta,
         clearEta,

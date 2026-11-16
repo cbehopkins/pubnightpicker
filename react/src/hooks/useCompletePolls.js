@@ -16,23 +16,23 @@ import {
 export function useCompletePolls(meetData, venues, canCompletePoll) {
   const [completingPoll, setCompletingPoll] = useState(null);
 
-  // Handler to initiate poll completion (triggered when user clicks a pub)
+  // Handler to initiate poll completion (triggered when user clicks a venue)
   const completeHandler = useCallback(
-    (key, pubName, poll_id) => {
+    (key, venueName, poll_id) => {
       if (!canCompletePoll) {
         return;
       }
       const meet = meetData.meets?.[poll_id];
-      setCompletingPoll(createCompletingPollState(key, pubName, poll_id, meet, venues));
+      setCompletingPoll(createCompletingPollState(key, venueName, poll_id, meet, venues));
     },
     [canCompletePoll, meetData.meets, venues]
   );
 
   // Extract state from completingPoll for easier access
   const key = completingPoll?.key;
-  const pubName = completingPoll?.pubName;
+  const venueName = completingPoll?.venueName;
   const poll_id = completingPoll?.poll_id;
-  const pubHasFood = completingPoll?.pubHasFood ?? false;
+  const venueHasFood = completingPoll?.venueHasFood ?? false;
   const restaurantOptions = completingPoll?.restaurantOptions || [];
   const allRestaurantVenues = completingPoll?.allRestaurantVenues || [];
   const chosenRestaurantId = completingPoll?.restaurantId || "";
@@ -117,8 +117,8 @@ export function useCompletePolls(meetData, venues, canCompletePoll) {
     // State for modal display
     completingPoll,
     completingPollId: poll_id,
-    pubName,
-    pubHasFood,
+    venueName,
+    venueHasFood,
     availableRestaurants,
     restaurantSource,
     chosenRestaurantId,

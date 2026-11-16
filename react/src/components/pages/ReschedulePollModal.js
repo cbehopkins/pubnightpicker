@@ -10,13 +10,13 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
 
 /**
  * @typedef {Object} ReschedulePollModalProps
- * @property {string=} selectedPubId
- * @property {boolean=} pubHasFood
- * @property {VenueOption[]} pubOptions
+ * @property {string=} selectedVenueId
+ * @property {boolean=} venueHasFood
+ * @property {VenueOption[]} venueOptions
  * @property {VenueOption[]} restaurantOptions
  * @property {string=} chosenRestaurantId
  * @property {string=} restaurantTime
- * @property {(value: string) => void} onPubChange
+ * @property {(value: string) => void} onVenueChange
  * @property {(value: string) => void} onRestaurantChange
  * @property {(value: string) => void} onRestaurantTimeChange
  * @property {() => void | Promise<void>} onConfirm
@@ -27,19 +27,19 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
  * @param {ReschedulePollModalProps} props
  */
 function ReschedulePollModal({
-  selectedPubId,
-  pubHasFood,
-  pubOptions,
+  selectedVenueId,
+  venueHasFood,
+  venueOptions,
   restaurantOptions,
   chosenRestaurantId,
   restaurantTime,
-  onPubChange,
+  onVenueChange,
   onRestaurantChange,
   onRestaurantTimeChange,
   onConfirm,
   onCancel,
 }) {
-  const infoNote = pubHasFood
+  const infoNote = venueHasFood
     ? "This venue serves food, so a separate restaurant is optional."
     : "Pick the fallback venue and optionally add or change the restaurant.";
 
@@ -48,10 +48,10 @@ function ReschedulePollModal({
       title="Reschedule Meet"
       subtitle="Update the fallback plan by choosing a new main venue and, if needed, a restaurant."
       mainVenueLabel="Main venue"
-      mainVenueOptions={pubOptions}
+      mainVenueOptions={venueOptions}
       mainVenuePlaceholder="Select a main venue"
-      selectedMainVenueId={selectedPubId}
-      onMainVenueChange={onPubChange}
+      selectedMainVenueId={selectedVenueId}
+      onMainVenueChange={onVenueChange}
       mainVenueHelpText="You can move the meet to any non-restaurant venue in the system."
       infoNote={infoNote}
       showRestaurantSection={true}

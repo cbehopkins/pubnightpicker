@@ -2,7 +2,6 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import usePubs, { usePubsState } from "./usePubs";
 import useVenues, { normalizeVenue as normalizeDomainVenue, useVenuesState } from "./useVenues";
 
 vi.mock("../firebase", () => {
@@ -43,7 +42,7 @@ function sendSnapshot(source, venues) {
   act(() => source.dispatch("venues", { venues, cursor: "opaque-cursor" }));
 }
 
-describe("usePubs", () => {
+describe("useVenues", () => {
   beforeEach(() => {
     eventSources.length = 0;
     vi.stubEnv("VITE_LAST_ORDERS_API_BASE_URL", "");
@@ -55,9 +54,9 @@ describe("usePubs", () => {
     vi.unstubAllEnvs();
   });
 
-  it("exposes domain-named venue fields alongside the existing form on one stream", () => {
+  it("shares domain-named venue fields across consumers on one stream", () => {
     const domain = renderHook(() => useVenues());
-    const legacy = renderHook(() => usePubs());
+    const second = renderHook(() => useVenues());
     expect(eventSources).toHaveLength(1);
 
     sendSnapshot(eventSources[0], [{
@@ -73,11 +72,7 @@ describe("usePubs", () => {
       dogFriendly: false, beerGarden: true, outOfTown: false,
       editTokens: { name: "edit-token" }, deleteToken: "delete-token",
     });
-    expect(legacy.result.current["venue-1"]).toMatchObject({
-      web_site: "https://example.test", pubImage: "https://images.example.test",
-      dog_friend: false, beer_gerden: true, out_of_town: false,
-      edit_tokens: { name: "edit-token" }, delete_token: "delete-token",
-    });
+    expect(second.result.current).toEqual(domain.result.current);
   });
 
   it("preserves optional API values and domain metadata in stream and conflict snapshots", () => {
@@ -102,10 +97,10 @@ describe("usePubs", () => {
     expect(normalizeDomainVenue({ name: "Missing ID" })).toBeNull();
   });
 
-  it("keeps domain and legacy consumers in sync through stream errors and retry", () => {
+  it("keeps consumers in sync through stream errors and retry", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const domain = renderHook(() => useVenuesState());
-    const legacy = renderHook(() => usePubsState());
+    const second = renderHook(() => useVenuesState());
     expect(domain.result.current).toMatchObject({ venues: {}, isLoading: true, isStale: false, errorMessage: null });
     sendSnapshot(eventSources[0], [{ id: "venue-1", name: "The Maypole", dog_friendly: false }]);
 
@@ -114,8 +109,8 @@ describe("usePubs", () => {
       venues: { "venue-1": { name: "The Maypole", venueType: "pub", dogFriendly: false } },
       isLoading: false, isStale: true, errorMessage: "Last Orders returned an invalid venue snapshot.",
     });
-    expect(legacy.result.current).toMatchObject({
-      venues: { "venue-1": { name: "The Maypole", venueType: "pub", dog_friend: false } },
+    expect(second.result.current).toMatchObject({
+      venues: { "venue-1": { name: "The Maypole", venueType: "pub", dogFriendly: false } },
       isStale: true,
     });
 
@@ -127,12 +122,12 @@ describe("usePubs", () => {
       venues: { "venue-2": { name: "Cafe", venueType: "restaurant" } },
       isLoading: false, isStale: false, errorMessage: null,
     });
-    expect(legacy.result.current.venues).toEqual({ "venue-2": { name: "Cafe", venueType: "restaurant" } });
+    expect(second.result.current.venues).toEqual({ "venue-2": { name: "Cafe", venueType: "restaurant" } });
     consoleError.mockRestore();
   });
 
-  it("maps API snapshots to the existing venue shape and defaults missing types to pub", () => {
-    const { result } = renderHook(() => usePubs());
+  it("maps API snapshots to the Venue model and defaults missing types to pub", () => {
+    const { result } = renderHook(() => useVenues());
     const source = eventSources[0];
 
     expect(source.url).toBe("http://localhost:8081/api/venues/stream");
@@ -156,20 +151,20 @@ describe("usePubs", () => {
       "venue-1": {
         name: "Cambridge Beer Festival",
         venueType: "pub",
-        web_site: "https://festival.example.test",
+        website: "https://festival.example.test",
         map: "https://maps.example.test/festival",
-        pubImage: "https://images.example.test/festival.jpg",
-        dog_friend: true,
-        beer_gerden: false,
+        image: "https://images.example.test/festival.jpg",
+        dogFriendly: true,
+        beerGarden: false,
         recurrence: { frequency: "yearly", month: 6, month_day: 12 },
-        edit_tokens: { name: "signed-name-baseline" },
+        editTokens: { name: "signed-name-baseline" },
       },
       "venue-2": { name: "The Maypole", venueType: "pub" },
     });
   });
 
   it("replaces the full venue collection on each snapshot", () => {
-    const { result } = renderHook(() => usePubs());
+    const { result } = renderHook(() => useVenues());
     const source = eventSources[0];
     sendSnapshot(source, [
       { id: "venue-1", name: "The Maypole", venue_type: "restaurant", edit_tokens: { name: "maypole-v1" } },
@@ -183,12 +178,12 @@ describe("usePubs", () => {
     }]);
 
     expect(result.current).toEqual({
-      "venue-2": { name: "The Crown", venueType: "event", edit_tokens: { name: "crown-v2" } },
+      "venue-2": { name: "The Crown", venueType: "event", editTokens: { name: "crown-v2" } },
     });
   });
 
   it("retains the last snapshot as stale until a reconnect snapshot arrives", () => {
-    const { result } = renderHook(() => usePubsState());
+    const { result } = renderHook(() => useVenuesState());
     const source = eventSources[0];
     expect(result.current.isLoading).toBe(true);
 
@@ -213,14 +208,14 @@ describe("usePubs", () => {
       edit_tokens: { name: "crown-v2" },
     }]);
     expect(result.current).toMatchObject({
-      venues: { "venue-2": { name: "The Crown", venueType: "event", edit_tokens: { name: "crown-v2" } } },
+      venues: { "venue-2": { name: "The Crown", venueType: "event", editTokens: { name: "crown-v2" } } },
       isStale: false,
     });
   });
 
   it("reports stream failures without staying in loading and allows an explicit retry", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => { });
-    const { result } = renderHook(() => usePubsState());
+    const { result } = renderHook(() => useVenuesState());
     const failedSource = eventSources[0];
     failedSource.readyState = FakeEventSource.CLOSED;
 
@@ -248,7 +243,7 @@ describe("usePubs", () => {
   });
 
   it("ignores malformed snapshots without clearing loaded venues", () => {
-    const { result } = renderHook(() => usePubs());
+    const { result } = renderHook(() => useVenues());
     const source = eventSources[0];
     sendSnapshot(source, [{ id: "venue-1", name: "The Maypole", venue_type: "pub" }]);
 
@@ -260,7 +255,7 @@ describe("usePubs", () => {
   });
 
   it("shares one public stream and closes it after the last consumer unmounts", () => {
-    const first = renderHook(() => usePubs());
+    const first = renderHook(() => useVenues());
     const second = renderHook(() => useVenuesState());
 
     expect(eventSources).toHaveLength(1);

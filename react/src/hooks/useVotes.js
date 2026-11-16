@@ -10,8 +10,8 @@ import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 /**
  * @typedef {[
  *   VotesMap,
- *   (pubId: string, userId: string) => Promise<void>,
- *   (pubId: string, userId: string) => Promise<void>
+ *   (venueId: string, userId: string) => Promise<void>,
+ *   (venueId: string, userId: string) => Promise<void>
  * ]} UseVotesResult
  */
 
@@ -21,7 +21,7 @@ import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
  * @returns {UseVotesResult}
  */
 function useVotes(pollId, enabled = true) {
-  // Votes is a dict from pub ID -> List of users who voted for it
+  // Votes is a dict from venue ID -> List of users who voted for it
   /** @type {[VotesMap, import("react").Dispatch<import("react").SetStateAction<VotesMap>>]} */
   const [votes, setVotes] = useState({});
   const docRef = useMemo(() => doc(db, "votes", pollId), [pollId]);
@@ -38,16 +38,16 @@ function useVotes(pollId, enabled = true) {
     }, snapshotErrorHandler);
   }, [docRef, enabled]);
 
-  /** @type {(pubId: string, userId: string) => Promise<void>} */
-  const makeVote = useCallback(async (pubId, userId) => {
+  /** @type {(venueId: string, userId: string) => Promise<void>} */
+  const makeVote = useCallback(async (venueId, userId) => {
     await updateDoc(docRef, {
-      [pubId]: arrayUnion(userId)
+      [venueId]: arrayUnion(userId)
     })
   }, [docRef]);
-  /** @type {(pubId: string, userId: string) => Promise<void>} */
-  const clearVote = useCallback(async (pubId, userId) => {
+  /** @type {(venueId: string, userId: string) => Promise<void>} */
+  const clearVote = useCallback(async (venueId, userId) => {
     await updateDoc(docRef, {
-      [pubId]: arrayRemove(userId)
+      [venueId]: arrayRemove(userId)
     })
   }, [docRef]);
 

@@ -71,11 +71,11 @@ vi.mock("./Button", () => ({
     default: ({ children, ...props }) => <button {...props}>{children}</button>,
 }));
 
-vi.mock("./PubOptions", () => ({
+vi.mock("./VenueOptions", () => ({
     default: () => <div data-testid="pub-options" />,
 }));
 
-vi.mock("./PubFilter", () => ({
+vi.mock("./VenueFilter", () => ({
     default: () => <div data-testid="pub-filter" />,
 }));
 
@@ -118,7 +118,7 @@ describe("PollVote attendance display mode", () => {
         useSelectorMock.mockReturnValue("user-1");
         onSnapshotMock.mockImplementation((_ref, onNext) => {
             onNext({ data: () => ({ any: [], "venue-1": [] }) });
-            return () => {};
+            return () => { };
         });
         useAttendanceMock.mockReturnValue([
             {},
@@ -155,7 +155,7 @@ describe("PollVote attendance display mode", () => {
     it("keeps the modal trigger on compact screens", () => {
         onSnapshotMock.mockImplementation((_ref, onNext) => {
             onNext({ data: () => ({ any: ["user-1"], "venue-1": ["user-1"] }) });
-            return () => {};
+            return () => { };
         });
         renderPollVote(true);
 

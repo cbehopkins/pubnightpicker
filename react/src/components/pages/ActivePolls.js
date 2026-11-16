@@ -42,8 +42,8 @@ function ActivePolls() {
       {completePollsState.isCompletingPollBusy && (
         <CompletePollModal
           pollId={completePollsState.completingPollId}
-          pubName={completePollsState.pubName}
-          pubHasFood={completePollsState.pubHasFood}
+          venueName={completePollsState.venueName}
+          venueHasFood={completePollsState.venueHasFood}
           availableRestaurants={completePollsState.availableRestaurants}
           restaurantSource={completePollsState.restaurantSource}
           chosenRestaurantId={completePollsState.chosenRestaurantId}
@@ -59,7 +59,7 @@ function ActivePolls() {
         <div className={styleToUse} key={id}>
           <ActivePoll
             poll_id={id}
-            pub_parameters={venues}
+            venues={venues}
             poll_data={meet}
             on_complete={completePollsState.completeHandler}
             mobile={mobile}

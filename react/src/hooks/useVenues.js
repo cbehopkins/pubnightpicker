@@ -1,10 +1,9 @@
-import { useVenueStreamState } from "./usePubs";
+import { useVenueStreamState } from "./venueStream";
 
 export { normalizeVenue } from "../utils/venueModel";
 
 export function useVenuesState() {
-  const { domainVenues, isLoading, isStale, errorMessage, retry } = useVenueStreamState();
-  return { venues: domainVenues, isLoading, isStale, errorMessage, retry };
+  return useVenueStreamState();
 }
 
 export default function useVenues() {

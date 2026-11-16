@@ -58,16 +58,14 @@ vi.mock("firebase/firestore", () => {
 });
 
 import {
-    add_new_pub_to_poll,
+    addVenueToMeet,
     complete_a_poll,
     deletePoll,
-    deletePubFromPoll,
+    removeVenueFromMeet,
     reschedule_a_poll,
     completeMeetVoting,
     rescheduleMeet,
     deleteMeet,
-    addVenueToMeet,
-    removeVenueFromMeet,
 } from "./polls";
 
 describe("poll dbtools permission guards", () => {
@@ -218,16 +216,16 @@ describe("poll dbtools permission guards", () => {
             "pub-2": { name: "The Anchor" },
         };
 
-        await add_new_pub_to_poll("pub-2", "poll-1", pubParams, "2026-05-17");
-        await deletePubFromPoll("poll-1", "pub-2", "2026-05-17", "The Anchor");
+        await addVenueToMeet("pub-2", "poll-1", pubParams, "2026-05-17");
+        await removeVenueFromMeet("poll-1", "pub-2", "2026-05-17", "The Anchor");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canAddPubToPoll",
-            "adding a pub to a poll",
+            "adding a venue to a poll",
         );
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canAddPubToPoll",
-            "deleting a pub from a poll",
+            "deleting a venue from a poll",
         );
         expect(logPollActionAuditMock).toHaveBeenCalledWith("addVenue", {
             pollId: "poll-1",
@@ -243,8 +241,8 @@ describe("poll dbtools permission guards", () => {
         });
     });
 
-    it("does not assert permission when add_new_pub_to_poll is a no-op", async () => {
-        await add_new_pub_to_poll("", "poll-1", {});
+    it("does not assert permission when adding no venue is a no-op", async () => {
+        await addVenueToMeet("", "poll-1", {});
         expect(assertCurrentUserPermissionMock).not.toHaveBeenCalled();
         expect(updateDocMock).not.toHaveBeenCalled();
     });

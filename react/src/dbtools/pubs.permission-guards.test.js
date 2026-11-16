@@ -25,11 +25,10 @@ vi.mock("../utils/lastOrdersApi", () => {
     };
 });
 
-import { addNewPub, deletePub, modifyPub } from "./pubs";
 import { addNewVenue, deleteVenue, modifyVenue } from "./venues";
 import { domainVenueApiFieldNames } from "../utils/venueApiFields";
 
-describe("pub dbtools permission guards", () => {
+describe("venue API permission guards", () => {
     beforeEach(() => {
         assertCurrentUserPermissionMock.mockReset();
         requestLastOrdersMock.mockReset();
@@ -51,7 +50,13 @@ describe("pub dbtools permission guards", () => {
                 recurrence: { frequency: "yearly", month: 6, month_day: 12 },
             },
         });
-        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "creating a pub");
+        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "creating a venue");
+    });
+
+    it("rejects permission failures without sending a request", async () => {
+        assertCurrentUserPermissionMock.mockImplementationOnce(() => { throw new Error("denied"); });
+        await expect(addNewVenue({ name: "Festival" })).rejects.toThrow("denied");
+        expect(requestLastOrdersMock).not.toHaveBeenCalled();
     });
 
     it("edits domain fields with API-keyed tokens and deletes with the document token", async () => {
@@ -77,8 +82,8 @@ describe("pub dbtools permission guards", () => {
         expect(requestLastOrdersMock).toHaveBeenLastCalledWith("api/venues/venue%2F1", {
             method: "DELETE", ifMatch: "document-token",
         });
-        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "editing a pub");
-        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "deleting a pub");
+        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "editing a venue");
+        expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith("canManagePubs", "deleting a venue");
     });
 
     it("does not patch unchanged domain fields", async () => {
@@ -133,20 +138,20 @@ describe("pub dbtools permission guards", () => {
         });
     });
 
-    it("guards addNewPub with canManagePubs", async () => {
-        await addNewPub({ name: "The Test Arms" });
+    it("guards addNewVenue with canManagePubs", async () => {
+        await addNewVenue({ name: "The Test Arms" });
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
-            "creating a pub",
+            "creating a venue",
         );
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues", {
             body: { name: "The Test Arms" },
         });
     });
 
-    it("guards modifyPub with canManagePubs", async () => {
-        await modifyPub(
+    it("guards modifyVenue with canManagePubs", async () => {
+        await modifyVenue(
             "pub-1",
             { name: "Updated Name", address: "Same Road" },
             { name: "Old Name", address: "Same Road" },
@@ -155,7 +160,7 @@ describe("pub dbtools permission guards", () => {
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
-            "editing a pub",
+            "editing a venue",
         );
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-1", {
             method: "PATCH",
@@ -165,16 +170,16 @@ describe("pub dbtools permission guards", () => {
     });
 
     it("does not send a PATCH when all venue fields match their baseline", async () => {
-        await expect(modifyPub("pub-1", { name: "The Maypole" }, { name: "The Maypole" }, {})).resolves.toBeNull();
+        await expect(modifyVenue("pub-1", { name: "The Maypole" }, { name: "The Maypole" }, {})).resolves.toBeNull();
         expect(requestLastOrdersMock).not.toHaveBeenCalled();
     });
 
-    it("guards deletePub with canManagePubs", async () => {
-        await deletePub("pub-2", "signed-document-version");
+    it("guards deleteVenue with canManagePubs", async () => {
+        await deleteVenue("pub-2", "signed-document-version");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
-            "deleting a pub",
+            "deleting a venue",
         );
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-2", {
             method: "DELETE",

@@ -1,10 +1,9 @@
 import { useSyncExternalStore } from "react";
 import { lastOrdersApiURL } from "../utils/lastOrdersApiURL";
-import { normalizeVenue as normalizeDomainVenue } from "../utils/venueModel";
+import { normalizeVenue } from "../utils/venueModel";
 
 const initialState = {
   venues: {},
-  domainVenues: {},
   isLoading: true,
   isStale: false,
   errorMessage: null,
@@ -19,34 +18,6 @@ const subscribers = new Set();
 function publish(nextState) {
   state = nextState;
   subscribers.forEach((subscriber) => subscriber());
-}
-
-export function normalizeVenue(venue) {
-  if (!venue || typeof venue !== "object" || typeof venue.id !== "string" || !venue.id || typeof venue.name !== "string") {
-    return null;
-  }
-
-  const {
-    venue_type: venueType,
-    website_url: website,
-    map_url: map,
-    image_url: image,
-    dog_friendly: dogFriendly,
-    beer_garden: beerGarden,
-    ...remainingFields
-  } = venue;
-  const normalized = {
-    ...remainingFields,
-    venueType: venueType || "pub",
-  };
-  delete normalized.id;
-
-  if (website != null) normalized.web_site = website;
-  if (map != null) normalized.map = map;
-  if (image != null) normalized.pubImage = image;
-  if (dogFriendly != null) normalized.dog_friend = dogFriendly;
-  if (beerGarden != null) normalized.beer_gerden = beerGarden;
-  return normalized;
 }
 
 function markStreamError(message) {
@@ -78,7 +49,6 @@ function startStream() {
       }
 
       const entries = [];
-      const domainEntries = [];
       const venueIds = new Set();
       for (const venue of payload.venues) {
         const normalized = normalizeVenue(venue);
@@ -88,14 +58,12 @@ function startStream() {
         }
         venueIds.add(venue.id);
         entries.push([venue.id, normalized]);
-        domainEntries.push([venue.id, normalizeDomainVenue(venue)]);
       }
 
       hasSnapshot = true;
       hasLoggedStreamError = false;
       publish({
         venues: Object.fromEntries(entries),
-        domainVenues: Object.fromEntries(domainEntries),
         isLoading: false,
         isStale: false,
         errorMessage: null,
@@ -165,14 +133,3 @@ export function useVenueStreamState() {
   const currentState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { ...currentState, retry: retryStream };
 }
-
-export function usePubsState() {
-  const { venues, isLoading, isStale, errorMessage, retry } = useVenueStreamState();
-  return { venues, isLoading, isStale, errorMessage, retry };
-}
-
-function usePubs() {
-  return usePubsState().venues;
-}
-
-export default usePubs;

@@ -43,13 +43,13 @@ vi.mock("./PollVote", () => ({
     },
 }));
 
-vi.mock("./PubOptions", () => ({
-    default: ({ pub_parameters, selectPubHandler }) => (
-        <select data-testid="pub-options-select" defaultValue="" onChange={selectPubHandler}>
+vi.mock("./VenueOptions", () => ({
+    default: ({ venues, selectVenueHandler }) => (
+        <select data-testid="pub-options-select" defaultValue="" onChange={selectVenueHandler}>
             <option value="">Select a venue to add here</option>
-            {Object.keys(pub_parameters).map((id) => (
+            {Object.keys(venues).map((id) => (
                 <option key={id} value={id}>
-                    {pub_parameters[id]?.name || id}
+                    {venues[id]?.name || id}
                 </option>
             ))}
         </select>
@@ -68,7 +68,7 @@ function renderComponent(overrides = {}) {
     return render(
         <ActivePoll
             poll_id="poll-1"
-            pub_parameters={{
+            venues={{
                 v1: { name: "Venue 1", venueType: "pub", banned: true },
                 v2: { name: "Venue 2", venueType: "pub" },
                 v3: { name: "Venue 3", venueType: "pub" },
@@ -177,12 +177,14 @@ describe("ActivePoll autopopulate", () => {
     });
 
     it("filters domain Venue attributes without excluding other Venue types", () => {
-        renderComponent({ pubParameters: {
-            v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
-            v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
-            v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
-            v4: { name: "No dogs pub", venueType: "pub", dogFriendly: false, beerGarden: true },
-        } });
+        renderComponent({
+            pubParameters: {
+                v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
+                v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
+                v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
+                v4: { name: "No dogs pub", venueType: "pub", dogFriendly: false, beerGarden: true },
+            }
+        });
 
         fireEvent.click(screen.getByRole("checkbox", { name: "Dog Friendly" }));
         fireEvent.click(screen.getByRole("checkbox", { name: "Beer Garden" }));
@@ -195,10 +197,12 @@ describe("ActivePoll autopopulate", () => {
     });
 
     it("uses the exclusion label to filter out of town venues", () => {
-        renderComponent({ pubParameters: {
-            v1: { name: "In town", outOfTown: false },
-            v2: { name: "Out of town", outOfTown: true },
-        } });
+        renderComponent({
+            pubParameters: {
+                v1: { name: "In town", outOfTown: false },
+                v2: { name: "Out of town", outOfTown: true },
+            }
+        });
 
         fireEvent.click(screen.getAllByText("Out Of Town (Cambridge)")[1]);
 

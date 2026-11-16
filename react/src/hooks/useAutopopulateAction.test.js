@@ -29,8 +29,8 @@ describe("useAutopopulateAction", () => {
         const { result } = renderHook(() => useAutopopulateAction({
             pollId: "poll-1",
             pollDate: "2026-05-11",
-            pollPubs: {},
-            pubParameters: { v1: {}, v2: {}, v3: {} },
+            pollVenues: {},
+            venueParameters: { v1: {}, v2: {}, v3: {} },
             mostVisited: [{ id: "v1" }],
             leastVisited: [{ id: "v2" }],
             randomVenues: [{ id: "v3" }],
@@ -49,8 +49,8 @@ describe("useAutopopulateAction", () => {
         const { result } = renderHook(() => useAutopopulateAction({
             pollId: "poll-1",
             pollDate: "2026-05-11",
-            pollPubs: {},
-            pubParameters: { v1: {} },
+            pollVenues: {},
+            venueParameters: { v1: {} },
             mostVisited: [{ id: "v1" }],
             leastVisited: [{ id: "v1" }],
             randomVenues: [{ id: "v1" }],
@@ -67,8 +67,8 @@ describe("useAutopopulateAction", () => {
         const { result } = renderHook(() => useAutopopulateAction({
             pollId: "poll-1",
             pollDate: "2026-05-11",
-            pollPubs: {},
-            pubParameters: { v1: {}, v2: {}, v3: {} },
+            pollVenues: {},
+            venueParameters: { v1: {}, v2: {}, v3: {} },
             mostVisited: [{ id: "v1" }],
             leastVisited: [{ id: "v1" }],
             randomVenues: [{ id: "v1" }, { id: "v2" }, { id: "v3" }],
@@ -87,8 +87,8 @@ describe("useAutopopulateAction", () => {
         const { result } = renderHook(() => useAutopopulateAction({
             pollId: "poll-1",
             pollDate: "2026-05-11",
-            pollPubs: {},
-            pubParameters: {},
+            pollVenues: {},
+            venueParameters: {},
             mostVisited: [],
             leastVisited: [],
             randomVenues: [],

@@ -10,8 +10,8 @@ import { useNotificationPing } from "../../hooks/useNotificationPing";
 /**
  * @param {{
  *  pollId: string,
- *  pubName: string,
- *  pubHasFood: boolean,
+ *  venueName: string,
+ *  venueHasFood: boolean,
  *  availableRestaurants: VenueOption[],
  *  restaurantSource: "poll" | "system",
  *  chosenRestaurantId: string,
@@ -24,8 +24,8 @@ import { useNotificationPing } from "../../hooks/useNotificationPing";
  */
 function CompletePollModal({
   pollId,
-  pubName,
-  pubHasFood,
+  venueName,
+  venueHasFood,
   availableRestaurants,
   restaurantSource,
   chosenRestaurantId,
@@ -75,7 +75,7 @@ function CompletePollModal({
       }
     }
 
-    if (!pubHasFood && !chosenRestaurantId) {
+    if (!venueHasFood && !chosenRestaurantId) {
       const proceedWithoutFoodPlan = window.confirm(
         "This venue does not serve food and no restaurant is selected. Do you want to complete this poll without a food plan?"
       );
@@ -85,7 +85,7 @@ function CompletePollModal({
     }
 
     await onConfirm();
-  }, [chosenRestaurantId, onConfirm, pubHasFood, status]);
+  }, [chosenRestaurantId, onConfirm, venueHasFood, status]);
 
   const restaurantSectionLabel =
     restaurantSource === "poll"
@@ -102,11 +102,11 @@ function CompletePollModal({
           : null
       }
       mainVenueLabel="Selected venue"
-      mainVenueName={pubName}
+      mainVenueName={venueName}
       onMainVenueChange={() => { }}
       mainVenueHelpText="This is the venue that will be stored as the event destination."
-      infoNote={pubHasFood ? "This venue serves food - no separate restaurant needed." : undefined}
-      showRestaurantSection={!pubHasFood}
+      infoNote={venueHasFood ? "This venue serves food - no separate restaurant needed." : undefined}
+      showRestaurantSection={!venueHasFood}
       restaurantLabel={restaurantSectionLabel}
       restaurantOptions={availableRestaurants}
       restaurantHelpText="Choose a restaurant if the group is eating separately. Leave this as No restaurant to skip it."

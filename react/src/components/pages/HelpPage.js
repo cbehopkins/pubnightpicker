@@ -61,7 +61,7 @@ function HelpPage() {
                         <li><strong>Creating a poll:</strong> Users with poll creation permissions can open a new poll to start voting on venues.</li>
                         <li><strong>Poll window:</strong> Polls remain open until someone with appropriate permissions closes/completes them.</li>
                         <li><strong>Completing a poll:</strong> To complete a poll, click on the venue name you wish to choose. A dialog box will appear to confirm your selection.</li>
-                        <li><strong>When a restaurant is needed:</strong> If the selected pub is marked as not serving food, you will be prompted to choose a restaurant. If one is already added to the poll, it will be automatically selected.</li>
+                        <li><strong>When a restaurant is needed:</strong> If the selected venue is marked as not serving food, you will be prompted to choose a restaurant. If one is already added to the poll, it will be automatically selected.</li>
                         <li><strong>Restaurant reservations:</strong> If the venue is a restaurant, please suggest a time to meet there so organizers can make the reservation.</li>
                     </ul>
                 ) : (
