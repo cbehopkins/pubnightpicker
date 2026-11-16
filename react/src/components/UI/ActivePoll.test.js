@@ -45,7 +45,7 @@ vi.mock("./PollVote", () => ({
 
 vi.mock("./VenueOptions", () => ({
     default: ({ venues, selectVenueHandler }) => (
-        <select data-testid="pub-options-select" defaultValue="" onChange={selectVenueHandler}>
+        <select data-testid="venue-options-select" defaultValue="" onChange={selectVenueHandler}>
             <option value="">Select a venue to add here</option>
             {Object.keys(venues).map((id) => (
                 <option key={id} value={id}>
@@ -73,9 +73,9 @@ function renderComponent(overrides = {}) {
                 v2: { name: "Venue 2", venueType: "pub" },
                 v3: { name: "Venue 3", venueType: "pub" },
                 v4: { name: "Venue 4", venueType: "pub" },
-                ...(overrides.pubParameters || {}),
+                ...(overrides.venueParameters || {}),
             }}
-            poll_data={{ date: "2026-05-11", venues: { ...overrides.currentPubs } }}
+            poll_data={{ date: "2026-05-11", venues: { ...overrides.currentVenues } }}
             on_complete={vi.fn()}
         />
     );
@@ -112,7 +112,7 @@ describe("ActivePoll autopopulate", () => {
 
     it("passes Meet venues to voting and autopopulate", () => {
         const venues = { v1: { name: "Venue 1" } };
-        renderComponent({ currentPubs: venues });
+        renderComponent({ currentVenues: venues });
 
         expect(pollVotePropsMock).toHaveBeenLastCalledWith(expect.objectContaining({
             poll_id: "poll-1",
@@ -166,7 +166,7 @@ describe("ActivePoll autopopulate", () => {
     it("adds banned venue manually and shows warning", async () => {
         renderComponent();
 
-        fireEvent.change(screen.getByTestId("pub-options-select"), { target: { value: "v1" } });
+        fireEvent.change(screen.getByTestId("venue-options-select"), { target: { value: "v1" } });
         fireEvent.click(screen.getByRole("button", { name: /add venue to poll/i }));
 
         await waitFor(() => {
@@ -178,7 +178,7 @@ describe("ActivePoll autopopulate", () => {
 
     it("filters domain Venue attributes without excluding other Venue types", () => {
         renderComponent({
-            pubParameters: {
+            venueParameters: {
                 v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
                 v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
                 v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
@@ -198,7 +198,7 @@ describe("ActivePoll autopopulate", () => {
 
     it("uses the exclusion label to filter out of town venues", () => {
         renderComponent({
-            pubParameters: {
+            venueParameters: {
                 v1: { name: "In town", outOfTown: false },
                 v2: { name: "Out of town", outOfTown: true },
             }
@@ -212,8 +212,8 @@ describe("ActivePoll autopopulate", () => {
 
     it("filters domain venues and excludes choices already on the meet", () => {
         renderComponent({
-            currentPubs: { v1: { name: "Venue 1" } },
-            pubParameters: {
+            currentVenues: { v1: { name: "Venue 1" } },
+            venueParameters: {
                 v1: { name: "Venue 1", dogFriendly: true },
                 v2: { name: "Venue 2", dogFriendly: true },
             },

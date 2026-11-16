@@ -72,11 +72,11 @@ vi.mock("./Button", () => ({
 }));
 
 vi.mock("./VenueOptions", () => ({
-    default: () => <div data-testid="pub-options" />,
+    default: () => <div data-testid="venue-options" />,
 }));
 
 vi.mock("./VenueFilter", () => ({
-    default: () => <div data-testid="pub-filter" />,
+    default: () => <div data-testid="venue-filter" />,
 }));
 
 vi.mock("./AutopopulateButton", () => ({

@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AttendanceVenueStats, { AttendanceVenueStatsPage } from "./AttendanceVenueStats";
 
 const {
-  usePubsMock,
+  useVenuesMock,
   useAttendanceVenueStatsMock,
   useRoleMock,
 } = vi.hoisted(() => {
   return {
-    usePubsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useAttendanceVenueStatsMock: vi.fn(),
     useRoleMock: vi.fn(),
   };
@@ -19,7 +19,7 @@ const {
 
 vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -58,12 +58,12 @@ describe("AttendanceVenueStatsPage", () => {
   });
 
   beforeEach(() => {
-    usePubsMock.mockReset();
+    useVenuesMock.mockReset();
     useAttendanceVenueStatsMock.mockReset();
     useRoleMock.mockReset();
     useRoleMock.mockReturnValue(true);
 
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-1": { name: "The Maypole", venueType: "pub" },
       "venue-2": { name: "The Anchor", venueType: "pub" },
       "venue-3": { name: "Bistro 12", venueType: "restaurant" },

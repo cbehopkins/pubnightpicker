@@ -34,12 +34,12 @@ describe("useCompletePolls", () => {
       },
     };
 
-    const pubs = {
+    const venues = {
       "pub-1": { name: "The Maypole", venueType: "pub" },
       "restaurant-1": { name: "Pizza Town", venueType: "restaurant" },
     };
 
-    const { result } = renderHook(() => useCompletePolls(pollData, pubs, true));
+    const { result } = renderHook(() => useCompletePolls(pollData, venues, true));
 
     act(() => {
       result.current.completeHandler("pub-1", "The Maypole", "poll-1");
@@ -67,12 +67,12 @@ describe("useCompletePolls", () => {
       },
     };
 
-    const pubs = {
+    const venues = {
       "pub-1": { name: "The Maypole", venueType: "pub" },
       "restaurant-1": { name: "Pizza Town", venueType: "restaurant" },
     };
 
-    const { result } = renderHook(() => useCompletePolls(pollData, pubs, true));
+    const { result } = renderHook(() => useCompletePolls(pollData, venues, true));
 
     act(() => {
       result.current.completeHandler("pub-1", "The Maypole", "poll-1");

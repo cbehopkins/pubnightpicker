@@ -10,7 +10,7 @@ const {
   deletePollMock,
   useCurrentMeetsMock,
   usePastMeetsMock,
-  usePubsMock,
+  useVenuesMock,
   useVotesMock,
   useAttendanceMock,
   useRoleMock,
@@ -25,7 +25,7 @@ const {
     deletePollMock: vi.fn(async () => undefined),
     useCurrentMeetsMock: vi.fn(),
     usePastMeetsMock: vi.fn(),
-    usePubsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useVotesMock: vi.fn(),
     useAttendanceMock: vi.fn(),
     useRoleMock: vi.fn(),
@@ -53,7 +53,7 @@ vi.mock("../../hooks/usePolls", () => {
 
 vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -153,7 +153,7 @@ describe("CurrentMeets", () => {
   beforeEach(() => {
     useCurrentMeetsMock.mockReset();
     usePastMeetsMock.mockReset();
-    usePubsMock.mockReset();
+    useVenuesMock.mockReset();
     useVotesMock.mockReset();
     useAttendanceMock.mockReset();
     useRoleMock.mockReset();
@@ -194,7 +194,7 @@ describe("CurrentMeets", () => {
       selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
     useRoleMock.mockImplementation((role) => role === "canChat");
@@ -209,7 +209,7 @@ describe("CurrentMeets", () => {
       selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
@@ -226,7 +226,7 @@ describe("CurrentMeets", () => {
       selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", website: "example.com", image: "https://img.example.com/maypole.png" },
     });
 
@@ -241,7 +241,7 @@ describe("CurrentMeets", () => {
       selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": {
         name: "The Maypole",
         website: "https://example.com/maypole",
@@ -262,7 +262,7 @@ describe("CurrentMeets", () => {
       restaurantTime: "18:30",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
@@ -280,7 +280,7 @@ describe("CurrentMeets", () => {
       restaurantId: "venue-restaurant",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
@@ -305,7 +305,7 @@ describe("CurrentMeets", () => {
       pageIndex: 0,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
@@ -328,7 +328,7 @@ describe("CurrentMeets", () => {
       restaurantId: "venue-restaurant",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
@@ -345,13 +345,13 @@ describe("CurrentMeets", () => {
     });
   });
 
-  it("does not render restaurant section when restaurant id is missing from pubs", () => {
+  it("does not render restaurant section when restaurant id is missing from venues", () => {
     useCurrentMeetsMock.mockReturnValue(createFuturePollData({
       selectedVenueId: "venue-main",
       restaurantId: "venue-missing",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
@@ -366,7 +366,7 @@ describe("CurrentMeets", () => {
       selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-alt": { name: "The Anchor", venueType: "pub" },
       "venue-food": { name: "The Oak", venueType: "pub", food: true },
@@ -402,7 +402,7 @@ describe("CurrentMeets", () => {
       restaurantTime: "18:30",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-alt": { name: "The Anchor", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
@@ -433,7 +433,7 @@ describe("CurrentMeets", () => {
 describe("PastMeets", () => {
   beforeEach(() => {
     usePastMeetsMock.mockReset();
-    usePubsMock.mockReset();
+    useVenuesMock.mockReset();
   });
 
   afterEach(() => {
@@ -457,7 +457,7 @@ describe("PastMeets", () => {
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole" },
     });
 
@@ -475,7 +475,7 @@ describe("PastMeets", () => {
       lastVisibleId: "poll-last-visible",
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole" },
     });
 
@@ -490,14 +490,14 @@ describe("PastMeets", () => {
     expect(screen.getByText("Page 1")).toBeTruthy();
   });
 
-  it("shows placeholder when pub image URL is invalid", () => {
+  it("shows placeholder when venue image URL is invalid", () => {
     usePastMeetsMock.mockReturnValue({
       meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", image: "not-a-valid-image-url" },
     });
 
@@ -514,7 +514,7 @@ describe("PastMeets", () => {
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", image: "https://img.example.com/maypole.png" },
     });
 

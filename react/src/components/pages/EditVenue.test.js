@@ -41,7 +41,7 @@ vi.mock("../../hooks/useRole", () => {
 vi.mock("./VenueForm", () => {
   return {
     default: ({ method, venueObject }) => (
-      <div data-testid="pub-form">
+      <div data-testid="venue-form">
         <span>{method}</span>
         <span>{venueObject.name}</span>
         <span>{venueObject.venueType}</span>
@@ -83,32 +83,32 @@ describe("EditVenuePage", () => {
     render(<EditVenuePage />);
 
     expect(screen.getByText("Loading venue...")).toBeTruthy();
-    expect(screen.queryByTestId("pub-form")).toBeNull();
+    expect(screen.queryByTestId("venue-form")).toBeNull();
   });
 
   it("renders the form only after the loaded venue is available, preserving venueType", () => {
-    let currentPubs = {};
-    let state = { venues: currentPubs, isLoading: true, isStale: false, errorMessage: null };
+    let currentVenues = {};
+    let state = { venues: currentVenues, isLoading: true, isStale: false, errorMessage: null };
     useVenuesStateMock.mockImplementation(() => state);
 
     const { rerender } = render(<EditVenuePage />);
 
     expect(screen.getByText("Loading venue...")).toBeTruthy();
-    expect(screen.queryByTestId("pub-form")).toBeNull();
+    expect(screen.queryByTestId("venue-form")).toBeNull();
 
-    currentPubs = {
+    currentVenues = {
       "venue-1": {
         name: "Cambridge Beer Festival",
         venueType: "event",
         website: "https://festival.example",
       },
     };
-    state = { venues: currentPubs, isLoading: false, isStale: false, errorMessage: null };
+    state = { venues: currentVenues, isLoading: false, isStale: false, errorMessage: null };
 
     rerender(<EditVenuePage />);
 
     expect(screen.queryByText("Loading venue...")).toBeNull();
-    expect(screen.getByTestId("pub-form")).toBeTruthy();
+    expect(screen.getByTestId("venue-form")).toBeTruthy();
     expect(screen.getByText("patch")).toBeTruthy();
     expect(screen.getByText("Cambridge Beer Festival")).toBeTruthy();
     expect(screen.getByText("event")).toBeTruthy();
