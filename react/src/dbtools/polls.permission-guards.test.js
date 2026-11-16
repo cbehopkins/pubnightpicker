@@ -63,6 +63,11 @@ import {
     deletePoll,
     deletePubFromPoll,
     reschedule_a_poll,
+    completeMeetVoting,
+    rescheduleMeet,
+    deleteMeet,
+    addVenueToMeet,
+    removeVenueFromMeet,
 } from "./polls";
 
 describe("poll dbtools permission guards", () => {
@@ -113,6 +118,44 @@ describe("poll dbtools permission guards", () => {
                 restaurant_time: "18:30",
             },
         );
+    });
+
+    it("keeps persisted completion and rescheduling fields for Meet-named actions", async () => {
+        await completeMeetVoting("venue-2", "meet-1", "2026-05-17", "restaurant-1", "18:30");
+        await rescheduleMeet("meet-1", "venue-2", "venue-3", undefined, undefined);
+
+        expect(updateDocMock).toHaveBeenNthCalledWith(1, { id: "doc-ref" }, {
+            completed: true,
+            selected: "venue-2",
+            completedByUid: "actor-user",
+            restaurant: "restaurant-1",
+            restaurant_time: "18:30",
+        });
+        expect(updateDocMock).toHaveBeenNthCalledWith(2, { id: "doc-ref" }, {
+            selected: "venue-3",
+            previous_pubs: "arrayUnion:venue-2",
+            completedByUid: "deleteField",
+            restaurant: "deleteField",
+            restaurant_time: "deleteField",
+        });
+        expect(docMock).toHaveBeenCalledWith({}, "polls", "meet-1");
+    });
+
+    it("keeps venue choice and deletion writes for Meet-named actions", async () => {
+        await addVenueToMeet("venue-1", "meet-1", { "venue-1": { name: "The Anchor" } }, "2026-05-17");
+        await removeVenueFromMeet("meet-1", "venue-1", "2026-05-17", "The Anchor");
+        await deleteMeet("meet-1");
+
+        expect(updateDocMock).toHaveBeenNthCalledWith(1, { id: "doc-ref" }, {
+            "pubs.venue-1": { name: "The Anchor" },
+        });
+        expect(updateDocMock).toHaveBeenNthCalledWith(2, { id: "doc-ref" }, {
+            "pubs.venue-1": "deleteField",
+        });
+        expect(docMock.mock.calls.slice(-4).map((call) => call.slice(1))).toEqual([
+            ["polls", "meet-1"], ["open_actions", "meet-1"],
+            ["votes", "meet-1"], ["attendance", "meet-1"],
+        ]);
     });
 
     it("removes restaurant fields when rescheduling without a restaurant", async () => {

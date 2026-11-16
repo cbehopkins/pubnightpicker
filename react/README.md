@@ -153,9 +153,16 @@ CI also runs this check in `.github/workflows/firestore-index-drift.yml`.
 Set the GitHub Actions repository secret `FIREBASE_TOKEN` so the job can read
 indexes from Firebase.
 
+## Meet Route Rollout
+
+Current Meets and Past Meets use `/current_meets` and `/past_meets`. Previously
+sent links to the replaced routes may stop working. The frontend and Last Orders
+are deployed independently, so notification links can temporarily be broken
+while their versions differ; coordinate their rollout.
+
 ## Admin Stats Pages
 
-Admin users can access statistics from the Past Events page.
+Admin users can access statistics from the Past Meets page.
 
 Two routes are currently available:
 

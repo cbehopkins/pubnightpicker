@@ -32,7 +32,7 @@ Then("Last Orders rejects {word}'s venue creation with forbidden", function (nam
     assert.equal(this.venueWriteResponse.status, 403, `${name}'s Venue API write response: ${this.venueWriteResponse.body}`);
 });
 
-Given("a venue is available to current and past events", async function () {
+Given("a venue is available to current and past meets", async function () {
     const fixtureId = randomUUID();
     this.publicVenueId = `public-access-${fixtureId}`;
     this.publicVenueName = `Public Access Venue ${fixtureId}`;
@@ -70,25 +70,30 @@ Given("a venue is available to current and past events", async function () {
     });
 });
 
-When("{word} views the public venue in Current Events", async function (name) {
+When("{word} views the public venue in Current Meets", async function (name) {
     const page = this.actors.get(name) ?? await this.openActor(name);
-    await page.goto(`${BASE_URL}/current_events`);
-    await page.getByRole("heading", { name: "Current Events", exact: true }).waitFor();
+    await page.goto(`${BASE_URL}/current_meets`);
+    await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
 });
 
-Then("{word} sees the public venue details in Current Events", async function (name) {
+Then("{word} sees the public venue details in Current Meets", async function (name) {
     const page = this.actors.get(name);
     await page.getByText(this.publicVenueName, { exact: true }).waitFor();
     await page.getByText("Public Access Road", { exact: true }).first().waitFor();
 });
 
-When("{word} views the public venue in Past Events", async function (name) {
+When("{word} views the public venue in Past Meets", async function (name) {
     const page = this.actors.get(name);
-    await page.goto(`${BASE_URL}/past_events`);
-    await page.getByRole("heading", { name: "Past Events", exact: true }).waitFor();
+    if (name === "anonymous") {
+        await page.goto(`${BASE_URL}/past_meets`);
+    } else {
+        await page.getByRole("link", { name: "Past Meets", exact: true }).click();
+        await page.waitForURL(`${BASE_URL}/past_meets`);
+    }
+    await page.getByRole("heading", { name: "Past Meets", exact: true }).waitFor();
 });
 
-Then("{word} sees the public venue in Past Events", async function (name) {
+Then("{word} sees the public venue in Past Meets", async function (name) {
     const page = this.actors.get(name);
     await page.getByText(this.publicVenueName, { exact: true }).waitFor();
 });

@@ -142,15 +142,15 @@ When("{word} manually completes the notification journey poll at {string}", asyn
 
 async function openReschedule(world, actor) {
     const page = world.actors.get(actor);
-    await page.getByRole("link", { name: "Current Events", exact: true }).click();
-    await eventPanel(world, actor).getByRole("button", { name: "Reschedule Event", exact: true }).click();
-    await page.getByRole("heading", { name: "Reschedule Event", exact: true }).waitFor();
+    await page.getByRole("link", { name: "Current Meets", exact: true }).click();
+    await eventPanel(world, actor).getByRole("button", { name: "Reschedule Meet", exact: true }).click();
+    await page.getByRole("heading", { name: "Reschedule Meet", exact: true }).waitFor();
     return page;
 }
 
 async function saveReschedule(world, page) {
     await page.getByRole("button", { name: "Save Changes", exact: true }).click();
-    await page.getByRole("heading", { name: "Reschedule Event", exact: true }).waitFor({ state: "hidden" });
+    await page.getByRole("heading", { name: "Reschedule Meet", exact: true }).waitFor({ state: "hidden" });
     const poll = world.notificationPoll;
     await withEmulatorAdmin((db) => waitForValue(() => pollSnapshot(world, db), (snapshot) => {
         const data = snapshot.data();
@@ -195,7 +195,7 @@ Then("Last Orders submits the journey poll's {string} push only to:", async func
     if (!opened && poll.restaurantTime) body += ` Meet at ${poll.restaurantTime}.`;
     const title = opened ? "Pub Night voting opened" : eventType === "poll_rescheduled"
         ? `Pub Night rescheduled: ${this.journeyVenues.get(poll.venue)}` : `Pub Night @ ${this.journeyVenues.get(poll.venue)}`;
-    const url = `${BASE_URL}/${opened ? "active_polls" : "current_events"}`;
+    const url = `${BASE_URL}/${opened ? "active_polls" : "current_meets"}`;
     const tag = `${opened ? "poll-open" : "poll-complete"}:${poll.id}`;
     this.expectedPollPushes ??= [];
     for (const { recipient } of table.hashes()) {
@@ -225,7 +225,7 @@ Then("Last Orders submits the journey poll's {string} push only to:", async func
 
 Then("{word} sees the notification journey event at {string} without voting", async function (actor, venue) {
     assert.equal(this.notificationPoll.venue, venue);
-    await this.actors.get(actor).getByRole("link", { name: "Current Events", exact: true }).click();
+    await this.actors.get(actor).getByRole("link", { name: "Current Meets", exact: true }).click();
     await eventPanel(this, actor).waitFor();
     await withEmulatorAdmin(async (db) => {
         const votes = await getDocFromServer(doc(db, "votes", this.notificationPoll.id));

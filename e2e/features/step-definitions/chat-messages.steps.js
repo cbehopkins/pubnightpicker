@@ -13,9 +13,9 @@ When("{word} opens Chat Page", async function (actorName) {
 
 When("{word} opens Meet Chat for {string}", async function (actorName, venueName) {
     const page = this.actors.get(actorName);
-    if (!page.url().endsWith("/current_events")) {
-        await page.getByRole("link", { name: "Current Events", exact: true }).click();
-        await page.waitForURL(`${BASE_URL}/current_events`);
+    if (!page.url().endsWith("/current_meets")) {
+        await page.getByRole("link", { name: "Current Meets", exact: true }).click();
+        await page.waitForURL(`${BASE_URL}/current_meets`);
     }
     const displayName = this.journeyVenues.get(venueName);
     const event = page.getByRole("article").filter({

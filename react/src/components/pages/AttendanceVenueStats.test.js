@@ -88,6 +88,7 @@ describe("AttendanceVenueStatsPage", () => {
   it("uses default query values when params are missing", () => {
     renderAttendancePage();
 
+    expect(screen.getByRole("link", { name: "Back to Past Meets" }).getAttribute("href")).toBe("/past_meets");
     expect(screen.getByText(/last year/i)).toBeTruthy();
     expect(screen.getByText(/Showing 5 venues per list/i)).toBeTruthy();
   });

@@ -42,6 +42,29 @@ export class PollData {
   }
 }
 
+export class MeetData {
+  constructor(polls) {
+    this.meets = Object.fromEntries(Object.entries(polls).map(([id, poll]) => {
+      const { completed, pubs, selected, previous_pubs, restaurant, restaurant_time, ...meet } = poll;
+      if (Object.hasOwn(poll, "completed")) meet.votingCompleted = completed;
+      if (Object.hasOwn(poll, "pubs")) meet.venues = pubs;
+      if (Object.hasOwn(poll, "selected")) meet.selectedVenueId = selected;
+      if (Object.hasOwn(poll, "previous_pubs")) meet.previousVenueIds = previous_pubs;
+      if (Object.hasOwn(poll, "restaurant")) meet.restaurantId = restaurant;
+      if (Object.hasOwn(poll, "restaurant_time")) meet.restaurantTime = restaurant_time;
+      return [id, meet];
+    }));
+  }
+
+  get dates() {
+    return new PollData(this.meets).dates;
+  }
+
+  sortedByDate(reverse = false) {
+    return new PollData(this.meets).sortedByDate(reverse);
+  }
+}
+
 /**
  * Gets today's date in ISO format (YYYY-MM-DD)
  * @returns {string} Today's date

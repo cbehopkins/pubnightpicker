@@ -12,10 +12,10 @@ import (
 // app.New and the recurrence plugin handlers. Behaviour-bearing calls fail unless a
 // test opts in by supplying the corresponding func.
 type Service struct {
-	Loc            *time.Location
-	Now            time.Time
-	OnAdvanceStale func(ctx context.Context, eventID string) error
-	OnCreatePoll   func(ctx context.Context, eventID, occurrenceDate string) error
+	Loc                            *time.Location
+	Now                            time.Time
+	OnAdvanceStale                 func(ctx context.Context, eventID string) error
+	OnCreateMeetForEventOccurrence func(ctx context.Context, eventID, occurrenceDate string) error
 }
 
 // New returns a stand-in fixed to Europe/London and the supplied date.
@@ -42,9 +42,9 @@ func (s *Service) AdvanceStaleEvent(ctx context.Context, eventID string) error {
 	return s.OnAdvanceStale(ctx, eventID)
 }
 
-func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
-	if s.OnCreatePoll == nil {
-		return fmt.Errorf("recurrencetest: unexpected CreateEventPoll(%q, %q)", eventID, occurrenceDate)
+func (s *Service) CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error {
+	if s.OnCreateMeetForEventOccurrence == nil {
+		return fmt.Errorf("recurrencetest: unexpected CreateMeetForEventOccurrence(%q, %q)", eventID, occurrenceDate)
 	}
-	return s.OnCreatePoll(ctx, eventID, occurrenceDate)
+	return s.OnCreateMeetForEventOccurrence(ctx, eventID, occurrenceDate)
 }

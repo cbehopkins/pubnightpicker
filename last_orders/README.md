@@ -25,6 +25,10 @@ for the architecture this codebase follows.
 - `internal/lastorders/plugins`: connectivity between Truths and units of work.
 - `internal/lastorders/basestore`: shared SQLite base store.
 
+Event Venue recurrence creates Meets through `CreateMeetForEventOccurrence`.
+Its durable fanout and handler retain the historical `truths.create_event_poll`
+and `recurrence.create_event_poll` names, and their payload fields remain unchanged.
+
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 

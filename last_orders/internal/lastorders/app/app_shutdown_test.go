@@ -266,7 +266,7 @@ func (s *materializingDrainEventPollCreator) AdvanceStaleEvent(ctx context.Conte
 	return s.delegate.AdvanceStaleEvent(ctx, eventID)
 }
 
-func (s *materializingDrainEventPollCreator) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
+func (s *materializingDrainEventPollCreator) CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error {
 	s.startOnce.Do(func() { close(s.started) })
 	select {
 	case <-s.release:
@@ -312,7 +312,7 @@ func (s blockingEventPollCreator) AdvanceStaleEvent(ctx context.Context, eventID
 	return s.delegate.AdvanceStaleEvent(ctx, eventID)
 }
 
-func (s blockingEventPollCreator) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
+func (s blockingEventPollCreator) CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error {
 	close(s.started)
 	select {
 	case <-s.release:
@@ -334,7 +334,7 @@ func (s *stagedDrainEventPollCreator) AdvanceStaleEvent(ctx context.Context, eve
 	return s.delegate.AdvanceStaleEvent(ctx, eventID)
 }
 
-func (s *stagedDrainEventPollCreator) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
+func (s *stagedDrainEventPollCreator) CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error {
 	if s.calls.Add(1) == 1 {
 		close(s.started)
 		select {
@@ -431,7 +431,7 @@ func TestShutdownDrainRunsRetryThatBecomesDueWhileWorkerIsActive(t *testing.T) {
 	a := newApp(t, cfg)
 	defer a.Close()
 
-	retryDefinition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateEventPoll, truths.CreateEventPoll{
+	retryDefinition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateMeetForEventOccurrence, truths.CreateMeetForEventOccurrence{
 		EventID:        "shutdown-due-retry-event",
 		OccurrenceDate: "2026-11-13",
 	})
@@ -491,6 +491,46 @@ func TestShutdownDrainRunsRetryThatBecomesDueWhileWorkerIsActive(t *testing.T) {
 	}
 }
 
+func TestLegacyEventOccurrenceFanoutAndHandlerExecute(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan truths.CreateMeetForEventOccurrence, 2)
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "legacy-event-occurrence.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	recurrenceService, err := recurrencetest.New(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recurrenceService.OnCreateMeetForEventOccurrence = func(ctx context.Context, eventID, occurrenceDate string) error {
+		received <- truths.CreateMeetForEventOccurrence{EventID: eventID, OccurrenceDate: occurrenceDate}
+		return nil
+	}
+	cfg.RecurrenceService = recurrenceService
+	application := newApp(t, cfg)
+	defer application.Close()
+
+	for _, step := range []cellar.CellStep{
+		{HandlerName: "truths.create_event_poll", Payload: []byte(`{"event_id":"legacy-fanout","occurrence_date":"2030-01-05"}`)},
+		{HandlerName: "recurrence.create_event_poll", Payload: []byte(`{"event_id":"legacy-handler","occurrence_date":"2030-01-06"}`)},
+	} {
+		if err := application.AddCell(cellar.CellRequest{Steps: []cellar.CellStep{step}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := make(map[string]string)
+	runUntil(t, application, func() bool {
+		select {
+		case occurrence := <-received:
+			got[occurrence.EventID] = occurrence.OccurrenceDate
+		default:
+		}
+		return len(got) == 2
+	})
+	if got["legacy-fanout"] != "2030-01-05" || got["legacy-handler"] != "2030-01-06" {
+		t.Fatalf("legacy occurrence payloads = %#v", got)
+	}
+}
+
 func TestShutdownDrainLeavesFutureRetryForSameDatabaseRestart(t *testing.T) {
 	t.Parallel()
 
@@ -511,18 +551,13 @@ func TestShutdownDrainLeavesFutureRetryForSameDatabaseRestart(t *testing.T) {
 	defer first.Close()
 	close(firstCreator.release)
 
-	definition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateEventPoll, truths.CreateEventPoll{
-		EventID:        "shutdown-restart-retry-event",
-		OccurrenceDate: "2026-11-13",
-	})
-	if err != nil {
-		t.Fatal(err)
+	retryCell := cellar.CellRequest{
+		ID: "shutdown-restart-retry",
+		Steps: []cellar.CellStep{{
+			HandlerName: "recurrence.create_event_poll",
+			Payload:     []byte(`{"event_id":"shutdown-restart-retry-event","occurrence_date":"2026-11-13"}`),
+		}},
 	}
-	retryCell, err := definition.CellRequest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	retryCell.ID = "shutdown-restart-retry"
 	if err := first.AddCell(retryCell); err != nil {
 		t.Fatal(err)
 	}
@@ -1092,7 +1127,7 @@ func TestShutdownDrainDefersNewPollNotificationToIndependentListener(t *testing.
 	cfg.ShutdownDrainTimeout = 5 * time.Second
 	a := newApp(t, cfg)
 	defer a.Close()
-	definition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateEventPoll, truths.CreateEventPoll{
+	definition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateMeetForEventOccurrence, truths.CreateMeetForEventOccurrence{
 		EventID:        "materialized-poll",
 		OccurrenceDate: "2026-11-13",
 	})
@@ -1394,7 +1429,7 @@ func TestShutdownDrainTimeoutRejectsNegativeValue(t *testing.T) {
 
 func addShutdownDrainCell(t *testing.T, application *app.App) error {
 	t.Helper()
-	definition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateEventPoll, truths.CreateEventPoll{
+	definition, err := cellar.NewCellDefinition(recurrenceplugin.HandlerCreateMeetForEventOccurrence, truths.CreateMeetForEventOccurrence{
 		EventID:        "shutdown-drain-event",
 		OccurrenceDate: "2026-11-13",
 	})

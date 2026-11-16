@@ -215,6 +215,7 @@ describe("CurrentEvents", () => {
 
     render(<CurrentEvents />);
 
+    expect(screen.getByRole("heading", { name: "Current Meets" })).toBeTruthy();
     expect(screen.getByText("The Maypole")).toBeTruthy();
     expect(screen.queryByText(/Restaurant:/)).toBeNull();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
@@ -256,7 +257,7 @@ describe("CurrentEvents", () => {
     expect(screen.queryByText(/18:30/)).toBeNull();
   });
 
-  it("shows stats links for admins on the past events page", () => {
+  it("shows stats links for admins on the past meets page", () => {
     useAdminMock.mockReturnValue(true);
     usePastCompletePollsMock.mockReturnValue({
       pollData: createPastPollData({
@@ -275,13 +276,14 @@ describe("CurrentEvents", () => {
     });
 
     render(
-      <MemoryRouter initialEntries={["/past_events"]}>
+      <MemoryRouter initialEntries={["/past_meets"]}>
         <Routes>
-          <Route path="/past_events" element={<PastEvents />} />
+          <Route path="/past_meets" element={<PastEvents />} />
         </Routes>
       </MemoryRouter>
     );
 
+    expect(screen.getByRole("heading", { name: "Past Meets" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /view winning venue stats/i })).toBeTruthy();
     expect(screen.getByRole("link", { name: /view attendance stats/i })).toBeTruthy();
   });
@@ -341,7 +343,7 @@ describe("CurrentEvents", () => {
 
     render(<CurrentEvents />);
 
-    fireEvent.click(screen.getByText("Reschedule Event"));
+    fireEvent.click(screen.getByText("Reschedule Meet"));
 
     const selects = screen.getAllByRole("combobox");
     fireEvent.change(selects[0], { target: { value: "venue-alt" } });
@@ -376,7 +378,7 @@ describe("CurrentEvents", () => {
 
     render(<CurrentEvents />);
 
-    fireEvent.click(screen.getByText("Reschedule Event"));
+    fireEvent.click(screen.getByText("Reschedule Meet"));
 
     const selects = screen.getAllByRole("combobox");
     fireEvent.change(selects[1], { target: { value: "venue-restaurant-2" } });
@@ -404,11 +406,11 @@ describe("PastEvents", () => {
     cleanup();
   });
 
-  function renderPastEvents(initialEntry = "/events/past") {
+  function renderPastEvents(initialEntry = "/past_meets") {
     return render(
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/events/past" element={<PastEvents />} />
+          <Route path="/past_meets" element={<PastEvents />} />
         </Routes>
       </MemoryRouter>
     );
@@ -425,7 +427,7 @@ describe("PastEvents", () => {
       "venue-main": { name: "The Maypole" },
     });
 
-    renderPastEvents("/events/past?pastPageSize=5&pastCursorTrail=poll-older");
+    renderPastEvents("/past_meets?pastPageSize=5&pastCursorTrail=poll-older");
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "10" } });
 
@@ -445,11 +447,11 @@ describe("PastEvents", () => {
 
     renderPastEvents();
 
-    fireEvent.click(screen.getByText("Older Events"));
+    fireEvent.click(screen.getByText("Older Meets"));
     expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, "poll-last-visible");
     expect(screen.getByText("Page 2")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Newer Events"));
+    fireEvent.click(screen.getByText("Newer Meets"));
     expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, null);
     expect(screen.getByText("Page 1")).toBeTruthy();
   });
