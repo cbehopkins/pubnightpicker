@@ -11,7 +11,7 @@ When("{word} opens Chat Page", async function (actorName) {
     await page.getByRole("heading", { name: "Chat Page", exact: true }).waitFor();
 });
 
-When("{word} opens Event Chat for {string}", async function (actorName, venueName) {
+When("{word} opens Meet Chat for {string}", async function (actorName, venueName) {
     const page = this.actors.get(actorName);
     if (!page.url().endsWith("/current_events")) {
         await page.getByRole("link", { name: "Current Events", exact: true }).click();
@@ -21,10 +21,10 @@ When("{word} opens Event Chat for {string}", async function (actorName, venueNam
     const event = page.getByRole("article").filter({
         has: page.getByRole("heading", { name: displayName, exact: true }),
     });
-    await event.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("link", { name: "Event Chat", exact: true }).click();
-    await page.waitForURL(/\/chat\/event\/[^/]+$/);
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await event.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("link", { name: "Meet Chat", exact: true }).click();
+    await page.waitForURL(/\/chat\/meet\/[^/]+$/);
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
 });
 
 async function sendChatMessage(world, actorName, scope) {

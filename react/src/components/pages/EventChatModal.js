@@ -67,21 +67,21 @@ export default function EventChatModal({ pollId, onClose }) {
             <div className="d-flex flex-column gap-2">
                 <div className="d-flex align-items-center justify-content-between gap-2">
                     <h2 className="h5 mb-0">
-                        <Link to={`/chat/event/${pollId}`} onClick={onClose}>Event Chat</Link>
+                        <Link to={`/chat/meet/${pollId}`} onClick={onClose}>Meet Chat</Link>
                     </h2>
                     {uid && webPushEnabled && (
                         <ChatMuteButton
                             muted={eventChatMuted}
                             busy={eventChatMuteBusy}
                             onToggle={() => { void toggleEventMute(); }}
-                            label={eventChatMuted ? "Unmute event chat notifications" : "Mute event chat notifications"}
+                            label={eventChatMuted ? "Unmute Meet chat notifications" : "Mute Meet chat notifications"}
                         />
                     )}
                     <Button
                         type="button"
                         variant="secondary"
                         onClick={onClose}
-                        aria-label="Close event chat"
+                        aria-label="Close Meet chat"
                     >
                         Close
                     </Button>
@@ -89,8 +89,8 @@ export default function EventChatModal({ pollId, onClose }) {
                 {uid && webPushEnabled && (
                     <small className="text-body-secondary">
                         {eventChatMuted
-                            ? "Event chat notifications are muted for this event."
-                            : "Event chat notifications are enabled for this event."}
+                            ? "Meet chat notifications are muted for this Meet."
+                            : "Meet chat notifications are enabled for this Meet."}
                     </small>
                 )}
                 <ChatBox scope={scope} />

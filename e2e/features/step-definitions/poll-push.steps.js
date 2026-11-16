@@ -43,7 +43,7 @@ When("the poll push members save these preferences:", { timeout: 120_000 }, asyn
         for (const [label, value] of [
             ["A poll opens", opens], ["A poll completes", completes],
             ["A message is sent in global chat", "false"],
-            ["A message is sent in an event chat I am attending", "false"],
+            ["A message is sent in a Meet chat I am attending", "false"],
         ]) {
             await page.getByRole("checkbox", { name: label, exact: true }).setChecked(value === "true");
         }

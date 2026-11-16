@@ -203,7 +203,7 @@ function App() {
           element: <LazyRoute><ChatPage /></LazyRoute>
         },
         {
-          path: "chat/event/:pollId",
+          path: "chat/meet/:meetId",
           element: <LazyRoute><ChatPage /></LazyRoute>
         },
         {

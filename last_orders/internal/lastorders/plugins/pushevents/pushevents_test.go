@@ -96,8 +96,15 @@ func TestEventChatFiltersMembersMutedAuthorAndDeliveredEndpoints(t *testing.T) {
 	if err := json.Unmarshal(pusher.notification.Message, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.EventType != "chat_message_sent_event" || payload.Title != "Ann in Event Chat" || payload.URL != "https://app.test/chat/event/poll-1" || payload.Tag != "chat:poll-1" || payload.PollID == nil || *payload.PollID != "poll-1" {
+	if payload.EventType != "chat_message_sent_event" || payload.MessageID != "msg-1" || payload.Title != "Ann in Event Chat" || payload.Body != "hello" || payload.URL != "https://app.test/chat/meet/poll-1" || payload.Tag != "chat:poll-1" || payload.SentAt != "2026-10-01T12:00:00Z" || payload.PollID == nil || *payload.PollID != "poll-1" {
 		t.Errorf("payload = %+v", payload)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(pusher.notification.Message, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 8 {
+		t.Errorf("payload fields = %v, want exactly 8", fields)
 	}
 	if len(pusher.notification.Topic) > 32 || !pusher.notification.ExpiresAt.Equal(now.Add(time.Hour)) {
 		t.Errorf("notification = %+v", pusher.notification)

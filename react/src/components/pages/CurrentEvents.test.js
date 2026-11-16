@@ -189,6 +189,21 @@ describe("CurrentEvents", () => {
     cleanup();
   });
 
+  it("offers Meet Chat for a current Meet when chat is permitted", () => {
+    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
+      selected: "venue-main",
+      date: "2026-03-30",
+    }));
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+    });
+    useRoleMock.mockImplementation((role) => role === "canChat");
+
+    render(<CurrentEvents />);
+
+    expect(screen.getByRole("button", { name: "Meet Chat" })).toBeTruthy();
+  });
+
   it("shows only the main venue section when restaurant field is absent", () => {
     useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
       selected: "venue-main",

@@ -209,7 +209,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             className="btn-sm"
                             onClick={() => setIsChatOpen(true)}
                         >
-                            Event Chat
+                            Meet Chat
                         </Button>
                     )}
                 </div>

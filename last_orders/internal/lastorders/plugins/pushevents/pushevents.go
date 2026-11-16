@@ -111,7 +111,7 @@ func (h ChatPushHandler) Handle(ctx context.Context, message truths.ChatMessageP
 		payload.EventType = "chat_message_sent_event"
 		payload.PollID = &scopeID
 		payload.Title = senderName(message.SenderName) + " in Event Chat"
-		payload.URL = h.Push.BaseURL() + "/chat/event/" + scopeID
+		payload.URL = h.Push.BaseURL() + "/chat/meet/" + scopeID
 		payload.Tag = "chat:" + scopeID
 	}
 	encoded, err := json.Marshal(payload)

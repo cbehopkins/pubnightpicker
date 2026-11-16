@@ -109,7 +109,7 @@ function PushPreferenceChecks({ pushPreferences, heading }) {
         name="push_event_chat"
         checked={formPreferences.eventChat}
         onChange={(event) => setFormPreferences((prev) => ({ ...prev, eventChat: event.target.checked }))}
-        label="A message is sent in an event chat I am attending"
+        label="A message is sent in a Meet chat I am attending"
       />
     </div>
   );
