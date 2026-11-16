@@ -3,6 +3,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import usePubs, { usePubsState } from "./usePubs";
+import useVenues, { normalizeVenue as normalizeDomainVenue, useVenuesState } from "./useVenues";
 
 vi.mock("../firebase", () => {
   throw new Error("Public venue streams must not initialise Firebase.");
@@ -52,6 +53,82 @@ describe("usePubs", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it("exposes domain-named venue fields alongside the existing form on one stream", () => {
+    const domain = renderHook(() => useVenues());
+    const legacy = renderHook(() => usePubs());
+    expect(eventSources).toHaveLength(1);
+
+    sendSnapshot(eventSources[0], [{
+      id: "venue-1", name: "Festival", website_url: "https://example.test",
+      map_url: "https://maps.example.test", image_url: "https://images.example.test",
+      dog_friendly: false, beer_garden: true, out_of_town: false,
+      edit_tokens: { name: "edit-token" }, delete_token: "delete-token",
+    }]);
+
+    expect(domain.result.current["venue-1"]).toEqual({
+      name: "Festival", venueType: "pub", website: "https://example.test",
+      map: "https://maps.example.test", image: "https://images.example.test",
+      dogFriendly: false, beerGarden: true, outOfTown: false,
+      editTokens: { name: "edit-token" }, deleteToken: "delete-token",
+    });
+    expect(legacy.result.current["venue-1"]).toMatchObject({
+      web_site: "https://example.test", pubImage: "https://images.example.test",
+      dog_friend: false, beer_gerden: true, out_of_town: false,
+      edit_tokens: { name: "edit-token" }, delete_token: "delete-token",
+    });
+  });
+
+  it("preserves optional API values and domain metadata in stream and conflict snapshots", () => {
+    const apiVenue = {
+      id: "venue-1", name: "Festival", venue_type: "event", website_url: null,
+      map_url: "", image_url: null, location_id: "cambridge", next_occurrence_date: "2027-06-12",
+      visible_group_ids: ["group-1"], previous_venue_ids: ["old-venue"],
+      recurrence: { frequency: "yearly", month: 6, month_day: 12 },
+      edit_tokens: { venue_type: "type-token" }, delete_token: "document-token",
+    };
+    const { result } = renderHook(() => useVenuesState());
+    sendSnapshot(eventSources[0], [apiVenue]);
+    const expected = {
+      name: "Festival", venueType: "event", website: null, map: "", image: null,
+      locationId: "cambridge", nextOccurrenceDate: "2027-06-12",
+      visibleGroupIds: ["group-1"], previousVenueIds: ["old-venue"],
+      recurrence: { frequency: "yearly", month: 6, month_day: 12 },
+      editTokens: { venue_type: "type-token" }, deleteToken: "document-token",
+    };
+    expect(result.current.venues["venue-1"]).toEqual(expected);
+    expect(normalizeDomainVenue(apiVenue)).toEqual(expected);
+    expect(normalizeDomainVenue({ name: "Missing ID" })).toBeNull();
+  });
+
+  it("keeps domain and legacy consumers in sync through stream errors and retry", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const domain = renderHook(() => useVenuesState());
+    const legacy = renderHook(() => usePubsState());
+    expect(domain.result.current).toMatchObject({ venues: {}, isLoading: true, isStale: false, errorMessage: null });
+    sendSnapshot(eventSources[0], [{ id: "venue-1", name: "The Maypole", dog_friendly: false }]);
+
+    act(() => eventSources[0].dispatch("venues", { venues: [{ id: "venue-2", name: "Invalid" }], cursor: "" }));
+    expect(domain.result.current).toMatchObject({
+      venues: { "venue-1": { name: "The Maypole", venueType: "pub", dogFriendly: false } },
+      isLoading: false, isStale: true, errorMessage: "Last Orders returned an invalid venue snapshot.",
+    });
+    expect(legacy.result.current).toMatchObject({
+      venues: { "venue-1": { name: "The Maypole", venueType: "pub", dog_friend: false } },
+      isStale: true,
+    });
+
+    act(() => domain.result.current.retry());
+    expect(domain.result.current).toMatchObject({ isLoading: false, isStale: true, errorMessage: null });
+    expect(eventSources).toHaveLength(2);
+    sendSnapshot(eventSources[1], [{ id: "venue-2", name: "Cafe", venue_type: "restaurant" }]);
+    expect(domain.result.current).toMatchObject({
+      venues: { "venue-2": { name: "Cafe", venueType: "restaurant" } },
+      isLoading: false, isStale: false, errorMessage: null,
+    });
+    expect(legacy.result.current.venues).toEqual({ "venue-2": { name: "Cafe", venueType: "restaurant" } });
+    consoleError.mockRestore();
   });
 
   it("maps API snapshots to the existing venue shape and defaults missing types to pub", () => {
@@ -184,7 +261,7 @@ describe("usePubs", () => {
 
   it("shares one public stream and closes it after the last consumer unmounts", () => {
     const first = renderHook(() => usePubs());
-    const second = renderHook(() => usePubsState());
+    const second = renderHook(() => useVenuesState());
 
     expect(eventSources).toHaveLength(1);
     first.unmount();
