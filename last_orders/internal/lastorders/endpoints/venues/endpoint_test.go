@@ -18,10 +18,12 @@ import (
 )
 
 type testReader struct {
-	mu         sync.Mutex
-	snapshot   venuecache.Snapshot
-	canManage  bool
-	writeCalls int
+	mu                sync.Mutex
+	snapshot          venuecache.Snapshot
+	canManage         bool
+	writeCalls        int
+	conditionalErr    error
+	conditionalFields []string
 }
 
 func (r *testReader) Get(_ context.Context, id string) (venuecache.VenueProjection, error) {
@@ -71,6 +73,30 @@ func (r *testReader) Patch(_ context.Context, id string, fields map[string]any) 
 		}
 	}
 	return venuecache.VenueProjection{}, venuecache.ErrNotFound
+}
+
+func (r *testReader) PatchWithBaseline(_ context.Context, id string, updates []venuecache.FieldUpdate) (venuecache.VenueProjection, []string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writeCalls++
+	for index, item := range r.snapshot.Venues {
+		if item.ID != id {
+			continue
+		}
+		if r.conditionalErr != nil {
+			return item, append([]string(nil), r.conditionalFields...), r.conditionalErr
+		}
+		for _, update := range updates {
+			switch update.APIField {
+			case "name":
+				item.Name = update.Value.(string)
+			}
+		}
+		r.snapshot.Venues[index] = item
+		r.snapshot.State.Sequence++
+		return item, nil, nil
+	}
+	return venuecache.VenueProjection{}, nil, venuecache.ErrNotFound
 }
 func (r *testReader) Delete(_ context.Context, id string) error {
 	r.mu.Lock()
@@ -245,11 +271,15 @@ func TestVenueRoutesKeepReadsPublicAndProtectWrites(t *testing.T) {
 }
 
 func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	reader := &testReader{
 		canManage: true,
 		snapshot:  venuecache.Snapshot{State: basestore.SyncState{Generation: "generation-1", Sequence: 1}},
 	}
-	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 
@@ -265,7 +295,13 @@ func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
 		t.Fatalf("create response venue=%+v err=%v", createdVenue, err)
 	}
 
-	patch := httptest.NewRequest(http.MethodPatch, "/api/venues/created-1", strings.NewReader(`{"name":"The New Crown"}`))
+	patchBody, err := json.Marshal(map[string]any{"name": "The New Crown", "edit_tokens": map[string]string{
+		"name": createdVenue.EditTokens["name"],
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := httptest.NewRequest(http.MethodPatch, "/api/venues/created-1", strings.NewReader(string(patchBody)))
 	patch.Header.Set("Authorization", "Bearer valid")
 	patched := httptest.NewRecorder()
 	mux.ServeHTTP(patched, patch)
@@ -297,17 +333,29 @@ func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
 }
 
 func TestVenueManagerCanEditVenueCreatedByAnotherManager(t *testing.T) {
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameToken, err := editTokens.Issue("venue-created-by-another-manager", "name", "Original venue")
+	if err != nil {
+		t.Fatal(err)
+	}
 	reader := &testReader{
 		canManage: true,
 		snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{
 			ID: "venue-created-by-another-manager", Name: "Original venue",
 		}}},
 	}
-	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 
-	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-created-by-another-manager", strings.NewReader(`{"name":"Corrected venue"}`))
+	body, err := json.Marshal(map[string]any{"name": "Corrected venue", "edit_tokens": map[string]string{"name": nameToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-created-by-another-manager", strings.NewReader(string(body)))
 	request.Header.Set("Authorization", "Bearer valid")
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
@@ -323,9 +371,146 @@ func TestVenueManagerCanEditVenueCreatedByAnotherManager(t *testing.T) {
 	}
 }
 
-func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
-	reader := &testReader{canManage: true}
+func TestVenuePatchRequiresBaselineTokenBeforeWriting(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot:  venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
 	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(`{"name":"Updated venue"}`))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusPreconditionRequired || !strings.Contains(response.Body.String(), `"code":"precondition_required"`) {
+		t.Fatalf("patch without baseline token status=%d body=%s, want 428 precondition_required", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("tokenless patch reached writer %d times", reader.writeCalls)
+	}
+}
+
+func TestVenueReadIncludesPerFieldBaselineTokens(t *testing.T) {
+	reader := &testReader{
+		snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, EditTokens: editTokens}
+	request := httptest.NewRequest(http.MethodGet, "/api/venues/venue-1", nil)
+	request.SetPathValue("venue_id", "venue-1")
+	response := httptest.NewRecorder()
+	endpoint.get(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", response.Code, response.Body)
+	}
+	var result struct {
+		EditTokens map[string]string `json:"edit_tokens"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"name", "venue_type", "address", "visible_group_ids"} {
+		if result.EditTokens[field] == "" {
+			t.Errorf("GET response has no baseline token for %q: %s", field, response.Body)
+		}
+	}
+}
+
+func TestVenuePatchRejectsInvalidBaselineTokenBeforeWriting(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot:  venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, EditTokens: editTokens, Auth: testVerifier{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(`{"name":"Updated venue","edit_tokens":{"name":"tampered"}}`))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_edit_token"`) {
+		t.Fatalf("patch with invalid token status=%d body=%s, want 400 invalid_edit_token", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("invalid-token patch reached writer %d times", reader.writeCalls)
+	}
+}
+
+func TestVenuePatchReturnsCurrentVenueForFieldConflict(t *testing.T) {
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameToken, err := editTokens.Issue("venue-1", "name", "Original venue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &testReader{
+		canManage:         true,
+		conditionalErr:    venuecache.ErrFieldConflict,
+		conditionalFields: []string{"name"},
+		snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{
+			ID: "venue-1", Name: "Current venue", Address: "Current Road",
+		}}},
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	body, err := json.Marshal(map[string]any{"name": "My draft", "edit_tokens": map[string]string{"name": nameToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("patch status=%d body=%s, want 409", response.Code, response.Body)
+	}
+	var result struct {
+		Error struct {
+			Code   string   `json:"code"`
+			Fields []string `json:"fields"`
+		} `json:"error"`
+		CurrentVenue venue `json:"current_venue"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error.Code != "field_conflict" || len(result.Error.Fields) != 1 || result.Error.Fields[0] != "name" {
+		t.Fatalf("conflict error=%+v", result.Error)
+	}
+	if result.CurrentVenue.Name != "Current venue" || result.CurrentVenue.Address != "Current Road" || result.CurrentVenue.EditTokens["name"] == "" {
+		t.Fatalf("conflict current venue=%+v", result.CurrentVenue)
+	}
+}
+
+func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameToken, err := editTokens.Issue("missing", "name", "Original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &testReader{canManage: true}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 	for _, test := range []struct {
@@ -334,7 +519,7 @@ func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
 		body   string
 	}{
 		{http.MethodGet, "/api/venues/missing", ""},
-		{http.MethodPatch, "/api/venues/missing", `{"name":"Renamed"}`},
+		{http.MethodPatch, "/api/venues/missing", `{"name":"Renamed","edit_tokens":{"name":"` + nameToken + `"}}`},
 		{http.MethodDelete, "/api/venues/missing", ""},
 	} {
 		t.Run(test.method, func(t *testing.T) {
@@ -356,6 +541,10 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	ready := make(chan struct{})
 	close(ready)
 	reader := &testReader{canManage: true, snapshot: venuecache.Snapshot{
@@ -363,7 +552,7 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 		Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Initial Pub"}},
 	}}
 	hub := sse.NewHub()
-	endpoint := &Endpoint{Reader: reader, Ready: ready, Hub: hub, Cursors: codec, Auth: testVerifier{}}
+	endpoint := &Endpoint{Reader: reader, Ready: ready, Hub: hub, Cursors: codec, EditTokens: editTokens, Auth: testVerifier{}}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 	server := httptest.NewServer(mux)
@@ -404,6 +593,10 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
+	var createdVenue venue
+	if err := json.Unmarshal(created.Body.Bytes(), &createdVenue); err != nil {
+		t.Fatal(err)
+	}
 	changeEvent := readSSEEvent(t, streamReader)
 	if changeEvent.name != "venues" {
 		t.Fatalf("change event name=%q, want venues", changeEvent.name)
@@ -417,7 +610,13 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 		t.Fatalf("changed collection=%+v err=%v", changed, err)
 	}
 
-	patch := httptest.NewRequest(http.MethodPatch, "/api/venues/created-1", strings.NewReader(`{"name":"Renamed Pub"}`))
+	patchBody, err := json.Marshal(map[string]any{"name": "Renamed Pub", "edit_tokens": map[string]string{
+		"name": createdVenue.EditTokens["name"],
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := httptest.NewRequest(http.MethodPatch, "/api/venues/created-1", strings.NewReader(string(patchBody)))
 	patch.Header.Set("Authorization", "Bearer valid")
 	patched := httptest.NewRecorder()
 	mux.ServeHTTP(patched, patch)
@@ -626,7 +825,7 @@ func TestDecodeWritePreservesVenueAttributes(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(
 		`{"dog_friendly":true,"beer_garden":false,"out_of_town":true}`,
 	))
-	fields, err := decodeWrite(request, true)
+	decoded, err := decodeWrite(request, true)
 	if err != nil {
 		t.Fatalf("decodeWrite returned error: %v", err)
 	}
@@ -635,8 +834,8 @@ func TestDecodeWritePreservesVenueAttributes(t *testing.T) {
 		"beer_gerden": false,
 		"out_of_town": true,
 	} {
-		if got, ok := fields[field].(bool); !ok || got != want {
-			t.Errorf("field %q = %v, want %v", field, fields[field], want)
+		if got, ok := decoded.Fields[field].(bool); !ok || got != want {
+			t.Errorf("field %q = %v, want %v", field, decoded.Fields[field], want)
 		}
 	}
 }

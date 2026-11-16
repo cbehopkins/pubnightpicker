@@ -120,8 +120,19 @@ export async function fillVenue(page, details) {
 }
 
 export async function saveVenue(page) {
+    const url = page.url();
+    const isEditing = new URL(url).pathname !== "/venues/new";
+    const patchResponse = isEditing
+        ? page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().includes("/api/venues/"))
+        : null;
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await page.waitForURL(`${BASE_URL}/venues`);
+    if (!isEditing) {
+        await page.waitForURL(`${BASE_URL}/venues`);
+        return;
+    }
+    const response = await patchResponse;
+    assert.ok([200, 409].includes(response.status()), `Venue patch response status: ${response.status()}`);
+    assert.equal(page.url(), url, "A venue update should keep the editor open");
 }
 
 When("{word} opens Manage Venues", async function (name) {
@@ -188,6 +199,34 @@ When("{word} updates the journey venue with these details:", async function (nam
     await fillVenue(page, this.venueDetails);
     await saveVenue(page);
     await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).waitFor();
+});
+
+When("{word} changes the journey venue field {string} to {string}", async function (_name, field, value) {
+    const page = this.actors.get(_name);
+    await page.getByLabel(field, { exact: true }).fill(value);
+    await saveVenue(page);
+    await page.getByLabel(field, { exact: true }).waitFor();
+    await page.waitForFunction(({ fieldName, fieldValue }) => {
+        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
+        const input = label && document.getElementById(label.htmlFor);
+        return input?.value === fieldValue;
+    }, { fieldName: field, fieldValue: value });
+});
+
+Then("{word} sees the journey venue field {string} as {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    assert.equal(await page.getByLabel(field, { exact: true }).inputValue(), value, field);
+});
+
+Then("{word} sees a field conflict for {string}", async function (name, field) {
+    const page = this.actors.get(name);
+    await page.getByRole("alert").getByText(`Conflicting fields: ${field}`, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Load current venue", exact: true }).waitFor();
+});
+
+When("{word} loads the current venue after a field conflict", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByRole("button", { name: "Load current venue", exact: true }).click();
 });
 
 Then("{word} sees the renamed journey venue without reloading", async function (name) {

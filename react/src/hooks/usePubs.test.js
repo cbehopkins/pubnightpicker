@@ -70,6 +70,7 @@ describe("usePubs", () => {
         dog_friendly: true,
         beer_garden: false,
         recurrence: { frequency: "yearly", month: 6, month_day: 12 },
+        edit_tokens: { name: "signed-name-baseline" },
       },
       { id: "venue-2", name: "The Maypole", venue_type: "pub" },
     ]);
@@ -84,6 +85,7 @@ describe("usePubs", () => {
         dog_friend: true,
         beer_gerden: false,
         recurrence: { frequency: "yearly", month: 6, month_day: 12 },
+        edit_tokens: { name: "signed-name-baseline" },
       },
       "venue-2": { name: "The Maypole", venueType: "pub" },
     });

@@ -31,34 +31,46 @@ type reader interface {
 	Delete(context.Context, string) error
 }
 
+type conditionalReader interface {
+	PatchWithBaseline(context.Context, string, []venuecache.FieldUpdate) (venuecache.VenueProjection, []string, error)
+}
+
+type decodedVenueWrite struct {
+	Fields     map[string]any
+	Values     map[string]any
+	EditTokens map[string]string
+}
+
 type Endpoint struct {
-	Reader  reader
-	Ready   <-chan struct{}
-	Hub     *sse.Hub
-	Cursors *sse.CursorCodec
-	Auth    firebaseauth.Verifier
+	Reader     reader
+	Ready      <-chan struct{}
+	Hub        *sse.Hub
+	Cursors    *sse.CursorCodec
+	EditTokens *EditTokenCodec
+	Auth       firebaseauth.Verifier
 }
 
 type venue struct {
-	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
-	VenueType          string          `json:"venue_type"`
-	WebsiteURL         *string         `json:"website_url"`
-	MapURL             *string         `json:"map_url"`
-	Address            string          `json:"address"`
-	LocationID         string          `json:"location_id"`
-	ImageURL           *string         `json:"image_url"`
-	Recurrence         json.RawMessage `json:"recurrence,omitempty"`
-	NextOccurrenceDate string          `json:"next_occurrence_date,omitempty"`
-	Notes              *string         `json:"notes,omitempty"`
-	Parking            *bool           `json:"parking,omitempty"`
-	Food               *bool           `json:"food,omitempty"`
-	DogFriendly        *bool           `json:"dog_friendly,omitempty"`
-	BeerGarden         *bool           `json:"beer_garden,omitempty"`
-	OutOfTown          *bool           `json:"out_of_town,omitempty"`
-	Banned             *bool           `json:"banned,omitempty"`
-	VisibleGroupIDs    []string        `json:"visible_group_ids"`
-	PreviousVenueIDs   []string        `json:"previous_venue_ids"`
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	VenueType          string            `json:"venue_type"`
+	WebsiteURL         *string           `json:"website_url"`
+	MapURL             *string           `json:"map_url"`
+	Address            string            `json:"address"`
+	LocationID         *string           `json:"location_id"`
+	ImageURL           *string           `json:"image_url"`
+	Recurrence         json.RawMessage   `json:"recurrence"`
+	NextOccurrenceDate *string           `json:"next_occurrence_date"`
+	Notes              string            `json:"notes"`
+	Parking            bool              `json:"parking"`
+	Food               bool              `json:"food"`
+	DogFriendly        bool              `json:"dog_friendly"`
+	BeerGarden         bool              `json:"beer_garden"`
+	OutOfTown          bool              `json:"out_of_town"`
+	Banned             bool              `json:"banned"`
+	VisibleGroupIDs    []string          `json:"visible_group_ids"`
+	PreviousVenueIDs   []string          `json:"previous_venue_ids"`
+	EditTokens         map[string]string `json:"edit_tokens"`
 }
 
 type listResponse struct {
@@ -134,135 +146,198 @@ var nullableFields = map[string]bool{
 	"next_occurrence_date": true, "location_id": true,
 }
 
-func decodeWrite(r *http.Request, patch bool) (map[string]any, error) {
+func decodeWrite(r *http.Request, patch bool) (decodedVenueWrite, error) {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.UseNumber()
 	var input map[string]json.RawMessage
 	if err := decoder.Decode(&input); err != nil || input == nil {
-		return nil, errors.New("request body must be a JSON object")
+		return decodedVenueWrite{}, errors.New("request body must be a JSON object")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, errors.New("request body must contain one JSON value")
+		return decodedVenueWrite{}, errors.New("request body must contain one JSON value")
 	}
 	if len(input) == 0 {
-		return nil, errors.New("request body must not be empty")
+		return decodedVenueWrite{}, errors.New("request body must not be empty")
 	}
-	fields := make(map[string]any, len(input))
+	decoded := decodedVenueWrite{Fields: make(map[string]any, len(input)), Values: make(map[string]any, len(input))}
 	for apiName, raw := range input {
+		if apiName == "edit_tokens" {
+			if !patch {
+				return decodedVenueWrite{}, errors.New("edit_tokens is only allowed in venue patches")
+			}
+			if err := json.Unmarshal(raw, &decoded.EditTokens); err != nil || decoded.EditTokens == nil {
+				return decodedVenueWrite{}, errors.New("edit_tokens must be an object of field tokens")
+			}
+			continue
+		}
 		field, ok := venueFields[apiName]
 		if !ok {
-			return nil, errors.New("request contains an unsupported venue field")
+			return decodedVenueWrite{}, errors.New("request contains an unsupported venue field")
 		}
 		if string(raw) == "null" {
 			if !nullableFields[apiName] {
-				return nil, errors.New("null is not allowed for this venue field")
+				return decodedVenueWrite{}, errors.New("null is not allowed for this venue field")
 			}
 			if patch {
-				fields[field] = firestore.Delete
+				decoded.Fields[field] = firestore.Delete
 			}
+			decoded.Values[apiName] = nil
 			continue
 		}
 		var value any
 		if err := json.Unmarshal(raw, &value); err != nil {
-			return nil, errors.New("request contains invalid JSON")
+			return decodedVenueWrite{}, errors.New("request contains invalid JSON")
 		}
 		switch field {
 		case "name", "venueType", "web_site", "map", "address", "notes", "pubImage", "next_occurrence_date", "location_id":
 			text, ok := value.(string)
 			if !ok {
-				return nil, errors.New("venue text fields must be strings")
+				return decodedVenueWrite{}, errors.New("venue text fields must be strings")
 			}
 			if (field == "web_site" || field == "map" || field == "pubImage") && text != "" {
 				parsed, err := url.ParseRequestURI(text)
 				if err != nil || parsed.Scheme == "" {
-					return nil, errors.New("venue URL fields must be absolute URLs")
+					return decodedVenueWrite{}, errors.New("venue URL fields must be absolute URLs")
 				}
 			}
 			if field == "next_occurrence_date" {
 				if _, err := time.Parse(time.DateOnly, text); err != nil {
-					return nil, errors.New("next_occurrence_date must be an ISO date")
+					return decodedVenueWrite{}, errors.New("next_occurrence_date must be an ISO date")
 				}
 			}
 		case "parking", "food", "dog_friend", "beer_gerden", "out_of_town", "banned":
 			if _, ok := value.(bool); !ok {
-				return nil, errors.New("venue feature fields must be booleans")
+				return decodedVenueWrite{}, errors.New("venue feature fields must be booleans")
 			}
 		case "visible_group_ids":
 			groups, ok := value.([]any)
 			if !ok {
-				return nil, errors.New("visible_group_ids must be an array")
+				return decodedVenueWrite{}, errors.New("visible_group_ids must be an array")
 			}
 			for _, group := range groups {
 				if _, ok := group.(string); !ok {
-					return nil, errors.New("visible_group_ids must contain strings")
+					return decodedVenueWrite{}, errors.New("visible_group_ids must contain strings")
 				}
 			}
 		case "recurrence":
 			canonical, err := venuecache.NormalizeRecurrence(value)
 			if err != nil {
-				return nil, errors.New("recurrence is invalid")
+				return decodedVenueWrite{}, errors.New("recurrence is invalid")
 			}
 			var normalized any
 			if err := json.Unmarshal([]byte(canonical), &normalized); err != nil {
-				return nil, errors.New("recurrence is invalid")
+				return decodedVenueWrite{}, errors.New("recurrence is invalid")
 			}
 			value = normalized
 		}
-		fields[field] = value
+		decoded.Fields[field] = value
+		decoded.Values[apiName] = value
 	}
 	if !patch {
 		for _, name := range []string{"name", "venue_type", "address"} {
 			if _, ok := input[name]; !ok {
-				return nil, errors.New("name, venue_type and address are required")
+				return decodedVenueWrite{}, errors.New("name, venue_type and address are required")
 			}
 		}
 		for _, name := range []string{"name", "venue_type", "address"} {
-			value, ok := fields[venueFields[name]].(string)
+			value, ok := decoded.Fields[venueFields[name]].(string)
 			if !ok || strings.TrimSpace(value) == "" {
-				return nil, errors.New(name + " must be a non-empty string")
+				return decodedVenueWrite{}, errors.New(name + " must be a non-empty string")
 			}
 		}
 	}
-	if value, ok := fields["name"].(string); ok && strings.TrimSpace(value) == "" {
-		return nil, errors.New("name must not be empty")
+	if value, ok := decoded.Fields["name"].(string); ok && strings.TrimSpace(value) == "" {
+		return decodedVenueWrite{}, errors.New("name must not be empty")
 	}
-	if value, ok := fields["venueType"].(string); ok && value != "pub" && value != "restaurant" && value != "event" {
-		return nil, errors.New("venue_type is invalid")
+	if value, ok := decoded.Fields["venueType"].(string); ok && value != "pub" && value != "restaurant" && value != "event" {
+		return decodedVenueWrite{}, errors.New("venue_type is invalid")
 	}
 	if _, ok := input["name"]; ok {
-		if _, valid := fields["name"].(string); !valid {
-			return nil, errors.New("name must be a string")
+		if _, valid := decoded.Fields["name"].(string); !valid {
+			return decodedVenueWrite{}, errors.New("name must be a string")
 		}
 	}
-	return fields, nil
+	return decoded, nil
 }
 
 func (e *Endpoint) create(w http.ResponseWriter, r *http.Request) {
-	fields, err := decodeWrite(r, false)
+	decoded, err := decodeWrite(r, false)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	item, err := e.Reader.Create(r.Context(), fields)
+	item, err := e.Reader.Create(r.Context(), decoded.Fields)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue.")
 		return
 	}
 	e.publishVenueChange(r.Context())
 	w.Header().Set("Location", "/api/venues/"+item.ID)
-	writeJSON(w, http.StatusCreated, fromProjection(item))
+	result, err := e.represent(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue response.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
 }
 
 func (e *Endpoint) patch(w http.ResponseWriter, r *http.Request) {
-	fields, err := decodeWrite(r, true)
+	decoded, err := decodeWrite(r, true)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	item, err := e.Reader.Patch(r.Context(), r.PathValue("venue_id"), fields)
+	if len(decoded.Fields) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "Venue patch must contain at least one editable field.")
+		return
+	}
+	venueID := r.PathValue("venue_id")
+	for apiName := range decoded.EditTokens {
+		if _, changed := decoded.Values[apiName]; !changed {
+			writeError(w, http.StatusBadRequest, "invalid_edit_token", "Edit tokens may only be supplied for changed venue fields.")
+			return
+		}
+	}
+	updates := make([]venuecache.FieldUpdate, 0, len(decoded.Values))
+	for apiName, value := range decoded.Values {
+		token, supplied := decoded.EditTokens[apiName]
+		if !supplied {
+			writeError(w, http.StatusPreconditionRequired, "precondition_required", "A baseline token is required for every changed venue field.")
+			return
+		}
+		if e.EditTokens == nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Venue edit tokens are unavailable.")
+			return
+		}
+		baseline, err := e.EditTokens.Validate(token, venueID, apiName)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_edit_token", "A venue field baseline token is invalid.")
+			return
+		}
+		updates = append(updates, venuecache.FieldUpdate{APIField: apiName, FirestoreField: venueFields[apiName],
+			Value: decoded.Fields[venueFields[apiName]], CanonicalValue: value, BaselineDigest: baseline})
+	}
+	conditional, ok := e.Reader.(conditionalReader)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Conditional venue writes are unavailable.")
+		return
+	}
+	item, conflicts, err := conditional.PatchWithBaseline(r.Context(), venueID, updates)
 	if errors.Is(err, venuecache.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "Venue not found.")
+		return
+	}
+	if errors.Is(err, venuecache.ErrFieldConflict) {
+		current, representErr := e.represent(item)
+		if representErr != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create current venue response.")
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":         map[string]any{"code": "field_conflict", "message": "One or more venue fields changed since they were loaded.", "fields": conflicts},
+			"current_venue": current,
+		})
 		return
 	}
 	if err != nil {
@@ -270,7 +345,12 @@ func (e *Endpoint) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.publishVenueChange(r.Context())
-	writeJSON(w, http.StatusOK, fromProjection(item))
+	result, err := e.represent(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue response.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +442,12 @@ func (e *Endpoint) list(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]venue, 0, len(filtered))
 	for _, item := range filtered {
-		items = append(items, fromProjection(item))
+		result, err := e.represent(item)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue response.")
+			return
+		}
+		items = append(items, result)
 	}
 	var nextCursor *string
 	if hasNext && len(filtered) > 0 {
@@ -485,7 +570,12 @@ func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to read venue.")
 		return
 	}
-	writeJSON(w, http.StatusOK, fromProjection(item))
+	result, err := e.represent(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue response.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (e *Endpoint) snapshot(ctx context.Context, _ sse.CursorInput) (sse.ViewSnapshot, error) {
@@ -500,7 +590,11 @@ func (e *Endpoint) snapshot(ctx context.Context, _ sse.CursorInput) (sse.ViewSna
 	}
 	items := make([]venue, 0, len(state.Venues))
 	for _, item := range state.Venues {
-		items = append(items, fromProjection(item))
+		result, err := e.represent(item)
+		if err != nil {
+			return sse.ViewSnapshot{}, err
+		}
+		items = append(items, result)
 	}
 	data, err := json.Marshal(streamResponse{Venues: items, Cursor: cursor})
 	if err != nil {
@@ -510,18 +604,10 @@ func (e *Endpoint) snapshot(ctx context.Context, _ sse.CursorInput) (sse.ViewSna
 }
 
 func fromProjection(item venuecache.VenueProjection) venue {
-	food := false
-	if item.Food != nil {
-		food = *item.Food
-	}
-	banned := false
-	if item.Banned != nil {
-		banned = *item.Banned
-	}
 	result := venue{ID: item.ID, Name: item.Name, VenueType: item.VenueType, WebsiteURL: optionalString(item.Website),
-		MapURL: optionalString(item.Map), Address: item.Address, LocationID: item.LocationID, ImageURL: optionalString(item.PhotoURL), NextOccurrenceDate: item.NextOccurrenceDate,
-		Notes: item.Notes, Parking: item.Parking, Food: &food, DogFriendly: item.DogFriendly,
-		BeerGarden: item.BeerGarden, OutOfTown: item.OutOfTown, Banned: item.Banned}
+		MapURL: optionalString(item.Map), Address: item.Address, LocationID: optionalString(item.LocationID), ImageURL: optionalString(item.PhotoURL), NextOccurrenceDate: optionalString(item.NextOccurrenceDate),
+		Notes: pointerText(item.Notes), Parking: pointerBool(item.Parking), Food: pointerBool(item.Food), DogFriendly: pointerBool(item.DogFriendly),
+		BeerGarden: pointerBool(item.BeerGarden), OutOfTown: pointerBool(item.OutOfTown), Banned: pointerBool(item.Banned)}
 	result.VisibleGroupIDs = item.VisibleGroupIDs
 	if result.VisibleGroupIDs == nil {
 		result.VisibleGroupIDs = []string{}
@@ -530,7 +616,6 @@ func fromProjection(item venuecache.VenueProjection) venue {
 	if result.PreviousVenueIDs == nil {
 		result.PreviousVenueIDs = []string{}
 	}
-	result.Banned = &banned
 	result.VenueType = effectiveVenueType(result.VenueType)
 	if item.RecurrenceJSON != "" {
 		result.Recurrence = json.RawMessage(item.RecurrenceJSON)
@@ -538,11 +623,39 @@ func fromProjection(item venuecache.VenueProjection) venue {
 	return result
 }
 
+func (e *Endpoint) represent(item venuecache.VenueProjection) (venue, error) {
+	result := fromProjection(item)
+	if e.EditTokens == nil {
+		return result, nil
+	}
+	values := venuecache.CanonicalAPIValues(item)
+	result.EditTokens = make(map[string]string, len(venueFields))
+	for field := range venueFields {
+		token, err := e.EditTokens.Issue(item.ID, field, values[field])
+		if err != nil {
+			return venue{}, err
+		}
+		result.EditTokens[field] = token
+	}
+	return result, nil
+}
+
 func optionalString(value string) *string {
 	if value == "" {
 		return nil
 	}
 	return &value
+}
+
+func pointerText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func pointerBool(value *bool) bool {
+	return value != nil && *value
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

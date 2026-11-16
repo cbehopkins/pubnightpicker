@@ -36,12 +36,22 @@ export async function addNewPub(pubParams) {
     return requestLastOrders("api/venues", { body: toApiFields(pubParams) });
 }
 
-export async function modifyPub(id, pubParams) {
+export async function modifyPub(id, pubParams, baseline, editTokens) {
     assertCurrentUserPermission(PERMISSIONS.canManagePubs, "editing a pub");
+    const changedParams = Object.fromEntries(
+        Object.entries(pubParams).filter(([fieldName, value]) => JSON.stringify(value) !== JSON.stringify(baseline?.[fieldName]))
+    );
+    const fields = toApiFields(changedParams);
+    if (Object.keys(fields).length === 0) {
+        return null;
+    }
+    const fieldTokens = Object.fromEntries(
+        Object.keys(fields).map((fieldName) => [fieldName, editTokens?.[fieldName]])
+    );
     return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, {
         method: "PATCH",
         contentType: "application/merge-patch+json",
-        body: toApiFields(pubParams),
+        body: { ...fields, edit_tokens: fieldTokens },
     });
 }
 

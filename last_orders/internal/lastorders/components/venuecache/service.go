@@ -132,6 +132,31 @@ func (s *Service) Patch(ctx context.Context, venueID string, fields map[string]a
 	return projection, nil
 }
 
+func (s *Service) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate) (VenueProjection, []string, error) {
+	writer, ok := s.source.(ConditionalWriter)
+	if !ok {
+		return VenueProjection{}, nil, fmt.Errorf("conditional venue writes are unavailable")
+	}
+	doc, conflicts, err := writer.PatchWithBaseline(ctx, venueID, fields)
+	if err != nil && !errors.Is(err, ErrFieldConflict) {
+		return VenueProjection{}, nil, err
+	}
+	projection, projectionErr := ProjectionFromDocument(doc)
+	if projectionErr != nil {
+		return VenueProjection{}, nil, projectionErr
+	}
+	if errors.Is(err, ErrFieldConflict) {
+		if cacheErr := s.store.Put(ctx, projection); cacheErr != nil {
+			s.logger.Warn("persist conflicting venue projection failed", "venue_id", venueID, "err", cacheErr)
+		}
+		return projection, conflicts, err
+	}
+	if cacheErr := s.store.Put(ctx, projection); cacheErr != nil {
+		return VenueProjection{}, nil, fmt.Errorf("persist updated venue projection: %w", cacheErr)
+	}
+	return projection, nil, nil
+}
+
 func (s *Service) Delete(ctx context.Context, venueID string) error {
 	writer, ok := s.source.(Writer)
 	if !ok {

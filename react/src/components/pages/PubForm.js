@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
-import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
+import { Form as RouterForm, useActionData, useNavigate, useNavigation } from "react-router-dom";
+import { normalizeVenue } from "../../hooks/usePubs";
 
 const VenueTypes = ["pub", "restaurant", "event"];
 const RecurrenceFrequencies = ["none", "once", "weekly", "monthly", "yearly"];
@@ -144,6 +145,59 @@ function getRecurrenceDefaults(pub_object) {
     month_day: hasMonthDay ? String(recurrence.month_day) : "1",
     monthlyMode: isMonthlyByWeekday ? "weekday" : "fixed",
     yearlyMode: isYearlyByWeekday ? "weekday" : "fixed",
+  };
+}
+
+function createRecurrenceBaseline(pub_object) {
+  const defaults = getRecurrenceDefaults(pub_object);
+  if (defaults.frequency === "none") {
+    return null;
+  }
+  const recurrence = { frequency: defaults.frequency };
+  if (defaults.frequency === "once") {
+    if (defaults.date) recurrence.date = defaults.date;
+    return recurrence;
+  }
+  recurrence.interval = Number(defaults.interval);
+  if (defaults.frequency === "weekly") {
+    recurrence.weekday = Number(defaults.weekday);
+    return recurrence;
+  }
+  if (defaults.frequency === "monthly") {
+    if (defaults.monthlyMode === "weekday") {
+      recurrence.weekday = Number(defaults.weekday);
+      recurrence.nth = Number(defaults.nth);
+    } else {
+      recurrence.month_day = Number(defaults.month_day);
+    }
+    return recurrence;
+  }
+  recurrence.month = Number(defaults.month);
+  if (defaults.yearlyMode === "weekday") {
+    recurrence.weekday = Number(defaults.weekday);
+    recurrence.nth = Number(defaults.nth);
+  } else {
+    recurrence.month_day = Number(defaults.month_day);
+  }
+  return recurrence;
+}
+
+function createVenueFormBaseline(venue) {
+  return {
+    name: venue?.name || "",
+    venueType: venue?.venueType || "pub",
+    web_site: venue?.web_site || "",
+    map: venue?.map || "",
+    address: venue?.address || "",
+    notes: venue?.notes || "",
+    pubImage: venue?.pubImage || "",
+    parking: Boolean(venue?.parking),
+    food: Boolean(venue?.food),
+    dog_friend: Boolean(venue?.dog_friend),
+    beer_gerden: Boolean(venue?.beer_gerden),
+    out_of_town: Boolean(venue?.out_of_town),
+    banned: Boolean(venue?.banned),
+    recurrence: createRecurrenceBaseline(venue),
   };
 }
 
@@ -453,19 +507,67 @@ function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecur
 function PubForm({ method, pub_object }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
-  const [venueType, setVenueType] = useState(pub_object ? pub_object.venueType || "pub" : "pub");
+  const actionData = useActionData();
+  const [venue, setVenue] = useState(pub_object);
+  const [formKey, setFormKey] = useState(0);
+  const [dismissedConflict, setDismissedConflict] = useState(null);
+  const [venueType, setVenueType] = useState(venue ? venue.venueType || "pub" : "pub");
   const [recurrenceFrequency, setRecurrenceFrequency] = useState(
-    pub_object?.recurrence?.frequency || "none"
+    venue?.recurrence?.frequency || "none"
   );
 
   const isSubmitting = navigation.state === "submitting";
+
+  useEffect(() => {
+    if (actionData?.savedVenue) {
+      const savedVenue = normalizeVenue(actionData.savedVenue);
+      if (savedVenue) {
+        setVenue(savedVenue);
+        setFormKey((key) => key + 1);
+      }
+    }
+  }, [actionData]);
+
+  useEffect(() => {
+    setVenueType(venue?.venueType || "pub");
+    setRecurrenceFrequency(venue?.recurrence?.frequency || "none");
+  }, [venue]);
+
+  function loadCurrentVenue() {
+    const currentVenue = normalizeVenue(actionData?.conflict?.currentVenue);
+    if (!currentVenue) {
+      return;
+    }
+    setVenue(currentVenue);
+    setFormKey((key) => key + 1);
+    setDismissedConflict(actionData.conflict);
+  }
 
   function cancelHandler() {
     navigate("..");
   }
 
+  const conflict = actionData?.conflict && dismissedConflict !== actionData.conflict
+    ? actionData.conflict
+    : null;
+
   return (
-    <RouterForm method={method}>
+    <>
+      {conflict && (
+        <div className="alert alert-warning" role="alert">
+          <p>{conflict.message || "Some venue fields changed while you were editing."}</p>
+          {conflict.fields?.length > 0 && <p>Conflicting fields: {conflict.fields.join(", ")}</p>}
+          <Button type="button" variant="secondary" onClick={loadCurrentVenue}>Load current venue</Button>
+        </div>
+      )}
+      {actionData?.saveError && <p className="alert alert-danger" role="alert">{actionData.saveError}</p>}
+      <RouterForm key={formKey} method={method}>
+      {method === "patch" && venue && (
+        <>
+          <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venue))} />
+          <input type="hidden" name="edit_tokens" value={JSON.stringify(venue.edit_tokens || {})} />
+        </>
+      )}
       <Card>
         <Card.Body className="text-body">
           <Row className="g-3">
@@ -506,7 +608,7 @@ function PubForm({ method, pub_object }) {
                   type="text"
                   name="name"
                   required
-                  defaultValue={pub_object ? pub_object.name : ""}
+                  defaultValue={venue ? venue.name : ""}
                 />
               </BsForm.Group>
             </Col>
@@ -518,7 +620,7 @@ function PubForm({ method, pub_object }) {
                   type="text"
                   name="web_site"
                   title="Nice to have the website to show in notification messages"
-                  defaultValue={pub_object ? pub_object.web_site : ""}
+                  defaultValue={venue ? venue.web_site : ""}
                 />
               </BsForm.Group>
             </Col>
@@ -530,7 +632,7 @@ function PubForm({ method, pub_object }) {
                   type="text"
                   name="map"
                   title="Usually a google maps link to include in the notification messages"
-                  defaultValue={pub_object ? pub_object.map : ""}
+                  defaultValue={venue ? venue.map : ""}
                 />
               </BsForm.Group>
             </Col>
@@ -543,7 +645,7 @@ function PubForm({ method, pub_object }) {
                   rows={3}
                   name="address"
                   title="The address"
-                  defaultValue={pub_object ? pub_object.address : ""}
+                  defaultValue={venue ? venue.address : ""}
                 />
               </BsForm.Group>
             </Col>
@@ -556,7 +658,7 @@ function PubForm({ method, pub_object }) {
                   rows={3}
                   name="notes"
                   title="The notes"
-                  defaultValue={pub_object ? pub_object.notes : ""}
+                  defaultValue={venue ? venue.notes : ""}
                 />
               </BsForm.Group>
             </Col>
@@ -568,13 +670,13 @@ function PubForm({ method, pub_object }) {
                   type="text"
                   name="pubImage"
                   title="Pub Image"
-                  defaultValue={pub_object ? pub_object.pubImage : ""}
+                  defaultValue={venue ? venue.pubImage : ""}
                 />
               </BsForm.Group>
             </Col>
 
             <RecurrenceFields
-              pub_object={pub_object}
+              pub_object={venue}
               venueType={venueType}
               recurrenceFrequency={recurrenceFrequency}
               setRecurrenceFrequency={setRecurrenceFrequency}
@@ -589,7 +691,7 @@ function PubForm({ method, pub_object }) {
                       return null;
                     }
 
-                    return <PubCheckbox key={key} name={key} label={value} pub_object={pub_object} />;
+                    return <PubCheckbox key={key} name={key} label={value} pub_object={venue} />;
                   })}
                 </tbody>
               </Table>
@@ -597,7 +699,8 @@ function PubForm({ method, pub_object }) {
           </Row>
         </Card.Body>
       </Card>
-    </RouterForm>
+      </RouterForm>
+    </>
   );
 }
 

@@ -67,6 +67,15 @@ func equalOptional[Value comparable](left, right *Value) bool {
 
 var ErrNotFound = fmt.Errorf("venue not found")
 var ErrCacheMiss = fmt.Errorf("venue cache miss")
+var ErrFieldConflict = fmt.Errorf("venue field conflict")
+
+type FieldUpdate struct {
+	APIField       string
+	FirestoreField string
+	Value          any
+	CanonicalValue any
+	BaselineDigest string
+}
 
 func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 	if doc.ID == "" {

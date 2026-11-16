@@ -671,7 +671,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Venue'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: The venue patch is invalid or one of its signed field tokens cannot be verified.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: invalid_edit_token
+                  message: A venue field baseline token is invalid.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -679,7 +687,30 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: One or more submitted venue fields conflict with values committed since their baselines were issued. No patch fields are applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, current_venue]
+                properties:
+                  error:
+                    type: object
+                    required: [code, message, fields]
+                    properties:
+                      code:
+                        type: string
+                        enum: [field_conflict]
+                      message:
+                        type: string
+                      fields:
+                        type: array
+                        items:
+                          type: string
+                  current_venue:
+                    $ref: '#/components/schemas/Venue'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -1240,6 +1271,16 @@ components:
             error:
               code: conflict
               message: The operation conflicts with the current state.
+    PreconditionRequired:
+      description: A signed venue field baseline is required for every patched field.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: precondition_required
+              message: A baseline token is required for every changed venue field.
     InternalError:
       description: Unexpected server error.
       content:
@@ -1464,7 +1505,7 @@ components:
       additionalProperties: true
     Venue:
       type: object
-      required: [id, name, venue_type, address, food, banned, visible_group_ids, previous_venue_ids]
+      required: [id, name, venue_type, address, food, banned, visible_group_ids, previous_venue_ids, edit_tokens]
       properties:
         id:
           type: string
@@ -1513,6 +1554,11 @@ components:
         previous_venue_ids:
           type: array
           items:
+            type: string
+        edit_tokens:
+          type: object
+          description: Signed field baselines keyed by editable venue API field name.
+          additionalProperties:
             type: string
     VenueWrite:
       type: object
@@ -1564,7 +1610,8 @@ components:
       additionalProperties: false
     VenuePatch:
       type: object
-      minProperties: 1
+      required: [edit_tokens]
+      minProperties: 2
       properties:
         name:
           type: string
@@ -1608,6 +1655,11 @@ components:
         visible_group_ids:
           type: array
           items:
+            type: string
+        edit_tokens:
+          type: object
+          description: Signed baseline tokens for exactly the venue fields included in this patch.
+          additionalProperties:
             type: string
       additionalProperties: false
     VenueList:

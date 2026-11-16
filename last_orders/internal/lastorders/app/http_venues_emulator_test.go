@@ -34,7 +34,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = firestoreClient.Close() })
-	venueCollection := firestoreClient.Collection("venues")
+	venueCollection := firestoreClient.Collection("pubs")
 	roleCollection := firestoreClient.Collection("roles")
 	for id, data := range map[string]map[string]any{
 		"seed-venue": {"name": "Seed Pub", "venueType": "pub", "address": "Seed Street", "location_id": "north", "food": true, "visible_group_ids": []string{"group-a"}, "previous_venue_ids": []string{"old-pub"}},
@@ -90,9 +90,10 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	}
 	var list struct {
 		Venues []struct {
-			ID               string   `json:"id"`
-			VisibleGroupIDs  []string `json:"visible_group_ids"`
-			PreviousVenueIDs []string `json:"previous_venue_ids"`
+			ID               string            `json:"id"`
+			VisibleGroupIDs  []string          `json:"visible_group_ids"`
+			PreviousVenueIDs []string          `json:"previous_venue_ids"`
+			EditTokens       map[string]string `json:"edit_tokens"`
 		} `json:"venues"`
 	}
 	if err := json.NewDecoder(listResponse.Body).Decode(&list); err != nil {
@@ -102,6 +103,9 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	listResponse.Body.Close()
 	if len(list.Venues) != 1 || list.Venues[0].ID != "seed-venue" || len(list.Venues[0].VisibleGroupIDs) != 1 || list.Venues[0].VisibleGroupIDs[0] != "group-a" || len(list.Venues[0].PreviousVenueIDs) != 1 || list.Venues[0].PreviousVenueIDs[0] != "old-pub" {
 		t.Fatalf("emulator-backed venue list=%+v", list.Venues)
+	}
+	if list.Venues[0].EditTokens["name"] == "" {
+		t.Fatalf("emulator-backed venue list omitted field tokens: %+v", list.Venues[0])
 	}
 
 	streamCtx, closeStream := context.WithCancel(ctx)
@@ -123,15 +127,32 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	if initial.event != "venues" || !strings.Contains(initial.data, "seed-venue") {
 		t.Fatalf("initial emulator stream frame=%+v", initial)
 	}
+	var initialSnapshot struct {
+		Venues []struct {
+			ID         string            `json:"id"`
+			EditTokens map[string]string `json:"edit_tokens"`
+		} `json:"venues"`
+	}
+	if err := json.Unmarshal([]byte(initial.data), &initialSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(initialSnapshot.Venues) != 1 || initialSnapshot.Venues[0].ID != "seed-venue" || initialSnapshot.Venues[0].EditTokens["name"] == "" {
+		t.Fatalf("initial venue stream omitted field tokens: %+v", initialSnapshot.Venues)
+	}
 
 	created := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/venues", "Bearer valid-token", `{"name":"New Pub","venue_type":"pub","address":"Main Road","location_id":"north"}`)
 	if created.StatusCode != http.StatusCreated {
 		body := readVenueResponseBody(t, created)
 		t.Fatalf("create venue status=%d body=%s", created.StatusCode, body)
 	}
-	var createdVenue struct {
-		ID string `json:"id"`
+	type venueRepresentation struct {
+		ID         string            `json:"id"`
+		Name       string            `json:"name"`
+		Address    string            `json:"address"`
+		Notes      string            `json:"notes"`
+		EditTokens map[string]string `json:"edit_tokens"`
 	}
+	var createdVenue venueRepresentation
 	if err := json.NewDecoder(created.Body).Decode(&createdVenue); err != nil {
 		created.Body.Close()
 		t.Fatal(err)
@@ -145,15 +166,111 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("stream did not include Firestore-created venue: %+v", createdFrame)
 	}
 
-	patched := doVenueRequest(t, client, http.MethodPatch, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", `{"name":"Renamed Pub"}`)
-	if patched.StatusCode != http.StatusOK {
-		body := readVenueResponseBody(t, patched)
-		t.Fatalf("patch venue status=%d body=%s", patched.StatusCode, body)
+	patchVenue := func(fields map[string]any, tokens map[string]string) *http.Response {
+		t.Helper()
+		fields["edit_tokens"] = tokens
+		body, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doVenueRequest(t, client, http.MethodPatch, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", string(body))
 	}
-	patched.Body.Close()
-	patchedFrame := readVenueSSEFrame(t, streamReader)
-	if !strings.Contains(patchedFrame.data, "Renamed Pub") || strings.Contains(patchedFrame.data, "New Pub") {
-		t.Fatalf("stream did not reflect Firestore venue edit: %+v", patchedFrame)
+	decodeVenue := func(response *http.Response) venueRepresentation {
+		t.Helper()
+		defer response.Body.Close()
+		var venue venueRepresentation
+		if err := json.NewDecoder(response.Body).Decode(&venue); err != nil {
+			t.Fatal(err)
+		}
+		return venue
+	}
+
+	addressToken := createdVenue.EditTokens["address"]
+	notesToken := createdVenue.EditTokens["notes"]
+	if addressToken == "" || notesToken == "" {
+		t.Fatalf("create response omitted editable-field tokens: %+v", createdVenue.EditTokens)
+	}
+	addressResponse := patchVenue(map[string]any{"address": "Concurrent Road"}, map[string]string{"address": addressToken})
+	if addressResponse.StatusCode != http.StatusOK {
+		body := readVenueResponseBody(t, addressResponse)
+		t.Fatalf("first independent patch status=%d body=%s", addressResponse.StatusCode, body)
+	}
+	addressFrame := readVenueSSEFrame(t, streamReader)
+	if !strings.Contains(addressFrame.data, "Concurrent Road") {
+		t.Fatalf("venue stream omitted first independent edit: %+v", addressFrame)
+	}
+
+	notesResponse := patchVenue(map[string]any{"notes": "Kept independent note"}, map[string]string{"notes": notesToken})
+	if notesResponse.StatusCode != http.StatusOK {
+		body := readVenueResponseBody(t, notesResponse)
+		t.Fatalf("second independent patch status=%d body=%s", notesResponse.StatusCode, body)
+	}
+	mergedVenue := decodeVenue(notesResponse)
+	if mergedVenue.Address != "Concurrent Road" || mergedVenue.Notes != "Kept independent note" {
+		t.Fatalf("disjoint edits were not both retained: %+v", mergedVenue)
+	}
+	mergedFrame := readVenueSSEFrame(t, streamReader)
+	if !strings.Contains(mergedFrame.data, "Kept independent note") || !strings.Contains(mergedFrame.data, "Concurrent Road") {
+		t.Fatalf("venue stream omitted merged venue: %+v", mergedFrame)
+	}
+
+	staleNameToken := mergedVenue.EditTokens["name"]
+	winnerResponse := patchVenue(map[string]any{"name": "Manager One Name"}, map[string]string{"name": staleNameToken})
+	if winnerResponse.StatusCode != http.StatusOK {
+		body := readVenueResponseBody(t, winnerResponse)
+		t.Fatalf("first same-field patch status=%d body=%s", winnerResponse.StatusCode, body)
+	}
+	winnerVenue := decodeVenue(winnerResponse)
+	if winnerVenue.Name != "Manager One Name" {
+		t.Fatalf("first same-field patch returned venue=%+v", winnerVenue)
+	}
+	winnerFrame := readVenueSSEFrame(t, streamReader)
+	if !strings.Contains(winnerFrame.data, "Manager One Name") {
+		t.Fatalf("venue stream omitted first same-field edit: %+v", winnerFrame)
+	}
+
+	conflictResponse := patchVenue(
+		map[string]any{"name": "Manager Two Name", "notes": "Must not be partially applied"},
+		map[string]string{"name": staleNameToken, "notes": mergedVenue.EditTokens["notes"]},
+	)
+	if conflictResponse.StatusCode != http.StatusConflict {
+		body := readVenueResponseBody(t, conflictResponse)
+		t.Fatalf("divergent same-field patch status=%d body=%s, want 409", conflictResponse.StatusCode, body)
+	}
+	var conflict struct {
+		Error struct {
+			Code   string   `json:"code"`
+			Fields []string `json:"fields"`
+		} `json:"error"`
+		CurrentVenue venueRepresentation `json:"current_venue"`
+	}
+	if err := json.NewDecoder(conflictResponse.Body).Decode(&conflict); err != nil {
+		conflictResponse.Body.Close()
+		t.Fatal(err)
+	}
+	conflictResponse.Body.Close()
+	if conflict.Error.Code != "field_conflict" || len(conflict.Error.Fields) != 1 || conflict.Error.Fields[0] != "name" {
+		t.Fatalf("conflict response=%+v, want field_conflict for name", conflict)
+	}
+	if conflict.CurrentVenue.Name != "Manager One Name" || conflict.CurrentVenue.Notes != "Kept independent note" {
+		t.Fatalf("conflict did not include authoritative current venue: %+v", conflict.CurrentVenue)
+	}
+	stored, err := venueCollection.Doc(createdVenue.ID).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Data()["name"] != "Manager One Name" || stored.Data()["notes"] != "Kept independent note" {
+		t.Fatalf("conflicting multi-field patch partially changed Firestore: %v", stored.Data())
+	}
+
+	convergedResponse := patchVenue(map[string]any{"name": "Manager One Name"}, map[string]string{"name": staleNameToken})
+	if convergedResponse.StatusCode != http.StatusOK {
+		body := readVenueResponseBody(t, convergedResponse)
+		t.Fatalf("already-converged patch status=%d body=%s", convergedResponse.StatusCode, body)
+	}
+	convergedVenue := decodeVenue(convergedResponse)
+	if convergedVenue.Name != "Manager One Name" || convergedVenue.Address != "Concurrent Road" || convergedVenue.Notes != "Kept independent note" {
+		t.Fatalf("already-converged patch did not return full current venue: %+v", convergedVenue)
 	}
 
 	deleted := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", "")
@@ -166,7 +283,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	if strings.Contains(deletedFrame.data, createdVenue.ID) {
 		t.Fatalf("stream still contains soft-deleted Firestore venue: %+v", deletedFrame)
 	}
-	stored, err := venueCollection.Doc(createdVenue.ID).Get(ctx)
+	stored, err = venueCollection.Doc(createdVenue.ID).Get(ctx)
 	if err != nil {
 		t.Fatalf("soft-deleted Firestore document disappeared: %v", err)
 	}

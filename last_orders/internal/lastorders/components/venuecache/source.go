@@ -47,6 +47,10 @@ type Writer interface {
 	CanManage(context.Context, string) (bool, error)
 }
 
+type ConditionalWriter interface {
+	PatchWithBaseline(context.Context, string, []FieldUpdate) (Document, []string, error)
+}
+
 type FirestoreSource struct {
 	client *firestore.Client
 }
@@ -106,6 +110,88 @@ func (s *FirestoreSource) Patch(ctx context.Context, venueID string, fields map[
 		return Document{}, err
 	}
 	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+}
+
+func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate) (Document, []string, error) {
+	if len(fields) == 0 {
+		return Document{}, nil, fmt.Errorf("venue patch is empty")
+	}
+	ref := s.client.Collection(collection).Doc(venueID)
+	var result Document
+	var conflicts []string
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(ref)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrNotFound
+			}
+			return err
+		}
+		data := snapshot.Data()
+		projection, err := ProjectionFromDocument(Document{ID: snapshot.Ref.ID, Data: data})
+		if err != nil {
+			return err
+		}
+		currentValues := CanonicalAPIValues(projection)
+		conflicts = nil
+		for _, field := range fields {
+			currentDigest, err := CanonicalValueDigest(currentValues[field.APIField])
+			if err != nil {
+				return err
+			}
+			submittedDigest, err := CanonicalValueDigest(field.CanonicalValue)
+			if err != nil {
+				return err
+			}
+			if currentDigest != field.BaselineDigest && currentDigest != submittedDigest {
+				conflicts = append(conflicts, field.APIField)
+			}
+		}
+		sort.Strings(conflicts)
+		if len(conflicts) > 0 {
+			result = Document{ID: snapshot.Ref.ID, Data: data}
+			return nil
+		}
+		updates := make([]firestore.Update, 0, len(fields))
+		resultData := make(map[string]any, len(data)+len(fields))
+		for key, value := range data {
+			resultData[key] = value
+		}
+		for _, field := range fields {
+			currentDigest, err := CanonicalValueDigest(currentValues[field.APIField])
+			if err != nil {
+				return err
+			}
+			submittedDigest, err := CanonicalValueDigest(field.CanonicalValue)
+			if err != nil {
+				return err
+			}
+			if currentDigest == submittedDigest {
+				continue
+			}
+			updates = append(updates, firestore.Update{Path: field.FirestoreField, Value: field.Value})
+			if field.Value == firestore.Delete {
+				delete(resultData, field.FirestoreField)
+			} else {
+				resultData[field.FirestoreField] = field.Value
+			}
+		}
+		result = Document{ID: snapshot.Ref.ID, Data: resultData}
+		if len(updates) == 0 {
+			return nil
+		}
+		return tx.Update(ref, updates)
+	})
+	if status.Code(err) == codes.NotFound {
+		return Document{}, nil, ErrNotFound
+	}
+	if err != nil {
+		return Document{}, nil, err
+	}
+	if len(conflicts) > 0 {
+		return result, conflicts, ErrFieldConflict
+	}
+	return result, nil, nil
 }
 
 func (s *FirestoreSource) SoftDelete(ctx context.Context, venueID string) (Document, error) {
