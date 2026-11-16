@@ -6,33 +6,33 @@ import ActivePolls from "./ActivePolls";
 
 const {
   completePollMock,
-  usePollsMock,
-  usePubsMock,
+  useActiveMeetsMock,
+  useVenuesMock,
   useRoleMock,
 } = vi.hoisted(() => {
   return {
     completePollMock: vi.fn(async () => undefined),
-    usePollsMock: vi.fn(),
-    usePubsMock: vi.fn(),
+    useActiveMeetsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useRoleMock: vi.fn(),
   };
 });
 
 vi.mock("../../dbtools/polls", () => {
   return {
-    complete_a_poll: completePollMock,
+    completeMeetVoting: completePollMock,
   };
 });
 
 vi.mock("../../hooks/usePolls", () => {
   return {
-    default: usePollsMock,
+    useActiveMeets: useActiveMeetsMock,
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -50,11 +50,14 @@ vi.mock("../UI/NewPoll", () => {
 
 vi.mock("../UI/ActivePoll", () => {
   return {
-    default: ({ on_complete, poll_id }) => {
+    default: ({ on_complete, poll_id, poll_data }) => {
       return (
-        <button onClick={() => on_complete("selected-venue", "Selected Venue", poll_id)}>
-          trigger-complete
-        </button>
+        <>
+          <span>{poll_data.date}</span>
+          <button onClick={() => on_complete("selected-venue", "Selected Venue", poll_id)}>
+            trigger-complete
+          </button>
+        </>
       );
     },
   };
@@ -79,7 +82,7 @@ vi.mock("./CompletePollModal", () => {
 
 function createPollData(poll) {
   return {
-    polls: {
+    meets: {
       "poll-1": poll,
     },
     dates: new Set([poll.date || "2026-03-30"]),
@@ -93,8 +96,8 @@ describe("ActivePolls", () => {
   beforeEach(() => {
     completePollMock.mockReset();
     completePollMock.mockResolvedValue(undefined);
-    usePollsMock.mockReset();
-    usePubsMock.mockReset();
+    useActiveMeetsMock.mockReset();
+    useVenuesMock.mockReset();
     useRoleMock.mockReset();
     useRoleMock.mockImplementation((roleName) => {
       if (roleName === "canCompletePoll") {
@@ -108,14 +111,37 @@ describe("ActivePolls", () => {
     cleanup();
   });
 
+  it("shows an overdue incomplete Meet in Active Polls", () => {
+    useActiveMeetsMock.mockReturnValue(createPollData({ date: "2020-01-01", votingCompleted: false, venues: {} }));
+    useVenuesMock.mockReturnValue({});
+
+    render(<ActivePolls />);
+
+    expect(screen.getByRole("heading", { name: "Active Polls" })).toBeTruthy();
+    expect(screen.getByText("2020-01-01")).toBeTruthy();
+  });
+
+  it("does not start completion without permission", () => {
+    useRoleMock.mockReturnValue(false);
+    useActiveMeetsMock.mockReturnValue(createPollData({ date: "2026-03-30", venues: {} }));
+    useVenuesMock.mockReturnValue({});
+
+    render(<ActivePolls />);
+
+    fireEvent.click(screen.getByText("trigger-complete"));
+
+    expect(screen.queryByTestId("complete-poll-modal")).toBeNull();
+    expect(completePollMock).not.toHaveBeenCalled();
+  });
+
   it("completes without restaurant when no restaurants exist on the poll", async () => {
-    usePollsMock.mockReturnValue(createPollData({
+    useActiveMeetsMock.mockReturnValue(createPollData({
       date: "2026-03-30",
-      pubs: {
+      venues: {
         "selected-venue": { name: "The Maypole" },
       },
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "selected-venue": { name: "The Maypole", venueType: "pub" },
     });
 
@@ -130,14 +156,14 @@ describe("ActivePolls", () => {
   });
 
   it("auto-selects the single restaurant and includes it in completion", async () => {
-    usePollsMock.mockReturnValue(createPollData({
+    useActiveMeetsMock.mockReturnValue(createPollData({
       date: "2026-03-30",
-      pubs: {
+      venues: {
         "selected-venue": { name: "The Maypole" },
         r1: { name: "Bistro 12" },
       },
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "selected-venue": { name: "The Maypole", venueType: "pub" },
       r1: { name: "Bistro 12", venueType: "restaurant" },
     });
@@ -153,15 +179,15 @@ describe("ActivePolls", () => {
   });
 
   it("allows no restaurant or an explicit restaurant choice when multiple restaurants exist", async () => {
-    usePollsMock.mockReturnValue(createPollData({
+    useActiveMeetsMock.mockReturnValue(createPollData({
       date: "2026-03-30",
-      pubs: {
+      venues: {
         "selected-venue": { name: "The Maypole" },
         r1: { name: "Bistro 12" },
         r2: { name: "Pasta House" },
       },
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "selected-venue": { name: "The Maypole", venueType: "pub" },
       r1: { name: "Bistro 12", venueType: "restaurant" },
       r2: { name: "Pasta House", venueType: "restaurant" },
@@ -188,14 +214,14 @@ describe("ActivePolls", () => {
   });
 
   it("persists a user-updated restaurant meetup time", async () => {
-    usePollsMock.mockReturnValue(createPollData({
+    useActiveMeetsMock.mockReturnValue(createPollData({
       date: "2026-03-30",
-      pubs: {
+      venues: {
         "selected-venue": { name: "The Maypole" },
         r1: { name: "Bistro 12" },
       },
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "selected-venue": { name: "The Maypole", venueType: "pub" },
       r1: { name: "Bistro 12", venueType: "restaurant" },
     });

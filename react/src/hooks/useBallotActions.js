@@ -15,7 +15,7 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
 /**
  * Hook that manages batch ballot actions (setting attendance for all pubs at once)
  * Returns handlers for setting all pubs to "can come" or "cannot come"
- * @param {{ pubs?: Record<string, unknown> } | null | undefined} pollData
+ * @param {{ venues?: Record<string, unknown> } | null | undefined} pollData
  * @param {string | null | undefined} currUserId
  * @param {(pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} setGlobalAttendanceStatus
  * @returns {BallotActionsResult}
@@ -23,8 +23,8 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
 export function useBallotActions(pollData, currUserId, setGlobalAttendanceStatus) {
   // Get all non-global pub IDs
   const pollPubIds = useMemo(() => {
-    return Object.keys(pollData?.pubs || {}).filter((pubId) => pubId !== "any");
-  }, [pollData?.pubs]);
+    return Object.keys(pollData?.venues || {}).filter((pubId) => pubId !== "any");
+  }, [pollData?.venues]);
 
   // Handler to set all pubs to "can come"
   const setAllAttendanceToCanCome = useCallback(async () => {

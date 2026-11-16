@@ -1,7 +1,7 @@
 // @ts-check
 
 import { useCallback } from "react";
-import { deletePubFromPoll } from "../dbtools/polls";
+import { removeVenueFromMeet } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError } from "../utils/notify";
 import { runAttendanceAction } from "../utils/asyncErrorHandler";
@@ -97,9 +97,9 @@ export function useVotableRow(pubId, currUserId, votes, attendance, setAttendanc
   // Delete pub from poll handler
   const deleteHandler = useCallback(async () => {
     try {
-      await deletePubFromPoll(pollId, pubId, pollDate, pubName);
+      await removeVenueFromMeet(pollId, pubId, pollDate, pubName);
     } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to remove this pub from the poll."));
+      notifyError(getUserFacingErrorMessage(error, "Unable to remove this venue from the poll."));
     }
   }, [pollDate, pollId, pubId, pubName]);
 

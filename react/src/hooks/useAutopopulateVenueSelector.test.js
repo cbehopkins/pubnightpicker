@@ -9,7 +9,7 @@ vi.mock("./useWinningVenueStats", () => ({
     default: vi.fn(),
 }));
 
-vi.mock("./usePubs", () => ({
+vi.mock("./useVenues", () => ({
     default: vi.fn(),
 }));
 
@@ -19,7 +19,7 @@ vi.mock("../utils/statsRanking", () => ({
 }));
 
 import useWinningVenueStats from "./useWinningVenueStats";
-import usePubs from "./usePubs";
+import useVenues from "./useVenues";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 
 const MOCK_PUBS = {
@@ -37,7 +37,7 @@ describe("useAutopopulateVenueSelector", () => {
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(new Date("2026-05-11T12:00:00Z"));
         vi.clearAllMocks();
-        vi.mocked(usePubs).mockReturnValue(MOCK_PUBS);
+        vi.mocked(useVenues).mockReturnValue(MOCK_PUBS);
     });
 
     afterEach(() => {
@@ -221,7 +221,7 @@ describe("useAutopopulateVenueSelector", () => {
     });
 
     it("returns pub-only candidates when venue data includes mixed types", async () => {
-        vi.mocked(usePubs).mockReturnValue({
+        vi.mocked(useVenues).mockReturnValue({
             v1: { name: "Venue 1", venueType: "pub" },
             v2: { name: "Venue 2", venueType: "restaurant" },
             v3: { name: "Venue 3", venueType: "event" },
@@ -271,7 +271,7 @@ describe("useAutopopulateVenueSelector", () => {
     });
 
     it("excludes venues marked banned from autopopulate categories", async () => {
-        vi.mocked(usePubs).mockReturnValue({
+        vi.mocked(useVenues).mockReturnValue({
             v1: { name: "Venue 1", venueType: "pub", banned: false },
             v2: { name: "Venue 2", venueType: "pub", banned: false },
             v3: { name: "Venue 3", venueType: "pub", banned: false },

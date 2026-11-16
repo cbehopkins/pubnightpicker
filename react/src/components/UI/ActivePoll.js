@@ -9,10 +9,9 @@ import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
 import useRole from "../../hooks/useRole";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { AntiPubParams } from "../pages/PubForm";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
-import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
+import { addVenueToMeet, deleteMeet } from "../../dbtools/polls";
 import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
 import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 import { getUserFacingErrorMessage } from "../../permissions";
@@ -25,7 +24,16 @@ import EventChatModal from "../pages/EventChatModal";
 /** @typedef {{ name?: string, venueType?: string, [key: string]: unknown }} PubParametersEntry */
 /** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
 /** @typedef {Record<string, boolean>} FilterMap */
-/** @typedef {{ pubs?: Record<string, unknown>, date?: string }} PollData */
+/** @typedef {{ venues?: Record<string, unknown>, date?: string }} MeetData */
+
+const venueFilters = {
+    parking: "Parking",
+    food: "Food",
+    dogFriendly: "Dog Friendly",
+    beerGarden: "Beer Garden",
+    outOfTown: "Out Of Town (Cambridge)",
+    banned: "Banned",
+};
 
 /**
  * @param {FilterMap} anObject
@@ -105,7 +113,7 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, 
  * @param {{
  *  poll_id: string,
  *  pub_parameters: PubParametersMap,
- *  poll_data: PollData,
+ *  poll_data: MeetData,
  *  on_complete: (pubId: string, pubName: string, pollId: string) => void,
  *  mobile?: boolean,
  * }} props
@@ -123,7 +131,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         leastVisited,
         random: randomVenues,
         isLoading: isAutopopulateLoading,
-    } = useAutopopulateVenueSelector(poll_id, poll_data.pubs);
+    } = useAutopopulateVenueSelector(poll_id, poll_data.venues);
     const isAutopopulateEnabled = mostVisited.length > 0 || leastVisited.length > 0 || randomVenues.length > 0;
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [pubFilters, setPubFilters] = useState({});
@@ -149,7 +157,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         async (event) => {
             event.preventDefault();
             try {
-                await add_new_pub_to_poll(selectedPub, poll_id, pub_parameters, poll_data.date);
+                await addVenueToMeet(selectedPub, poll_id, pub_parameters, poll_data.date);
                 if (pub_parameters[selectedPub]?.banned) {
                     const selectedPubName = pub_parameters[selectedPub]?.name || "Selected venue";
                     setManualAddWarning(`${selectedPubName} is marked as banned. Please only keep it in the poll if you really need to.`);
@@ -158,7 +166,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
 
                 setManualAddWarning("");
             } catch (error) {
-                notifyError(getUserFacingErrorMessage(error, "Unable to add the pub to this poll."));
+                notifyError(getUserFacingErrorMessage(error, "Unable to add the venue to this poll."));
             }
         },
         [selectedPub, poll_id, pub_parameters, poll_data.date]
@@ -167,7 +175,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     const { handleAutopopulate } = useAutopopulateAction({
         pollId: poll_id,
         pollDate: poll_data.date,
-        pollPubs: poll_data.pubs,
+        pollPubs: poll_data.venues,
         pubParameters: pub_parameters,
         mostVisited,
         leastVisited,
@@ -179,7 +187,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         async (event) => {
             event.preventDefault();
             try {
-                await deletePoll(poll_id);
+                await deleteMeet(poll_id);
             } catch (error) {
                 notifyError(getUserFacingErrorMessage(error, "Unable to delete this poll."));
             }
@@ -189,7 +197,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
 
     const filteredPubOptions = mungePubList(
         pub_parameters,
-        poll_data.pubs,
+        poll_data.venues,
         pubFilters,
         pubAntiFilters,
         venueTypeFilter
@@ -217,13 +225,14 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                     <PubFilter
                         title="Filter venue list to contain only items that have:"
                         set_pub_filters={setPubFilters}
+                        pub_params={venueFilters}
                     />
                 )}
                 {canAddPub && (
                     <PubFilter
                         title="Filter venue list to contain only items that do not have:"
                         set_pub_filters={setPubAntiFilters}
-                        pub_params={AntiPubParams}
+                        pub_params={{ outOfTown: venueFilters.outOfTown }}
                     />
                 )}
                 {canAddPub && (

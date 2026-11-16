@@ -1,9 +1,9 @@
 import { sortVenueOptionsByName } from "./venueSort";
 
-export function getRestaurantOptionsForPoll(poll, venues) {
-  const pollPubs = poll?.pubs || {};
+export function getRestaurantOptionsForPoll(meet, venues) {
+  const meetVenues = meet?.venues || {};
   const restaurantOptions = [];
-  for (const [venueId, pollVenue] of Object.entries(pollPubs)) {
+  for (const [venueId, pollVenue] of Object.entries(meetVenues)) {
     if (venueId === "any") {
       continue;
     }

@@ -16,6 +16,7 @@ vi.mock("firebase/firestore", () => ({
 vi.mock("../../dbtools/pollActionAudit", () => ({ logPollActionAudit: vi.fn(), POLL_ACTION_CREATE: "create" }));
 vi.mock("../UI/Button", () => ({ default: ({ children, ...props }) => <button {...props}>{children}</button> }));
 import NewPoll from "./NewPoll";
+import { logPollActionAudit } from "../../dbtools/pollActionAudit";
 
 beforeEach(() => { vi.clearAllMocks(); authMock.currentUser = { uid: "creator-user" }; });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -25,6 +26,9 @@ it("records the creator in the initial poll write", async () => {
     fireEvent.change(container.querySelector("input"), { target: { value: "2026-10-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Poll" }));
     await waitFor(() => expect(addDocMock).toHaveBeenCalledWith("polls", { date: "2026-10-15", completed: false, createdByUid: "creator-user" }));
+    await waitFor(() => expect(logPollActionAudit).toHaveBeenCalledWith("create", { pollId: "created-poll", pollDate: "2026-10-15" }));
+    expect(setDocMock).toHaveBeenCalledWith("votes/created-poll", { any: [] });
+    expect(setDocMock).toHaveBeenCalledWith("attendance/created-poll", {});
 });
 
 it("does not create a poll without an authenticated actor", async () => {

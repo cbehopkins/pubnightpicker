@@ -23,7 +23,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 /** @typedef {Record<string, string[]>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollPubEntry */
-/** @typedef {{ pubs?: Record<string, PollPubEntry>, date?: string }} PollData */
+/** @typedef {{ venues?: Record<string, PollPubEntry>, date?: string }} PollData */
 /** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
 /**
@@ -304,9 +304,9 @@ function RespondMenu({
                   await onSetAllCanCome();
                   setShowActions(false);
                 }}
-                title="Set can come for every pub in this poll"
+                title="Set can come for every venue in this poll"
               >
-                I'm coming (all pubs)
+                I'm coming (all venues)
               </Button>
               <Button
                 type="button"
@@ -316,9 +316,9 @@ function RespondMenu({
                   await onSetAllCannotCome();
                   setShowActions(false);
                 }}
-                title="Set cannot come for every pub in this poll"
+                title="Set cannot come for every venue in this poll"
               >
-                I can't come (all pubs)
+                I can't come (all venues)
               </Button>
             </>
           )}

@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActivePoll from "./ActivePoll";
-import { add_new_pub_to_poll } from "../../dbtools/polls";
+import { addVenueToMeet } from "../../dbtools/polls";
 
 const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActionMock } = vi.hoisted(() => ({
     useRoleMock: vi.fn(),
@@ -13,8 +13,8 @@ const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActio
 }));
 
 vi.mock("../../dbtools/polls", () => ({
-    add_new_pub_to_poll: vi.fn(async () => undefined),
-    deletePoll: vi.fn(async () => undefined),
+    addVenueToMeet: vi.fn(async () => undefined),
+    deleteMeet: vi.fn(async () => undefined),
 }));
 
 vi.mock("../../hooks/useRole", () => ({
@@ -57,7 +57,9 @@ vi.mock("./PubOptions", () => ({
 }));
 
 vi.mock("./PubFilter", () => ({
-    default: () => <div data-testid="pub-filter" />,
+    default: ({ set_pub_filters }) => (
+        <button onClick={() => set_pub_filters({ dogFriendly: true })}>Dog friendly filter</button>
+    ),
 }));
 
 vi.mock("./NotificationPingStatus", () => ({
@@ -79,7 +81,7 @@ function renderComponent(overrides = {}) {
                 v4: { name: "Venue 4", venueType: "pub" },
                 ...(overrides.pubParameters || {}),
             }}
-            poll_data={{ date: "2026-05-11", pubs: { ...overrides.currentPubs } }}
+            poll_data={{ date: "2026-05-11", venues: { ...overrides.currentPubs } }}
             on_complete={vi.fn()}
         />
     );
@@ -163,9 +165,24 @@ describe("ActivePoll autopopulate", () => {
         fireEvent.click(screen.getByRole("button", { name: /add venue to poll/i }));
 
         await waitFor(() => {
-            expect(add_new_pub_to_poll).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
+            expect(addVenueToMeet).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
         });
 
         expect(screen.getByRole("alert").textContent).toMatch(/marked as banned/i);
+    });
+
+    it("filters domain venues and excludes choices already on the meet", () => {
+        renderComponent({
+            currentPubs: { v1: { name: "Venue 1" } },
+            pubParameters: {
+                v1: { name: "Venue 1", dogFriendly: true },
+                v2: { name: "Venue 2", dogFriendly: true },
+            },
+        });
+
+        fireEvent.click(screen.getAllByRole("button", { name: "Dog friendly filter" })[0]);
+        expect(screen.queryByRole("option", { name: "Venue 1" })).toBeNull();
+        expect(screen.getByRole("option", { name: "Venue 2" })).toBeTruthy();
+        expect(screen.queryByRole("option", { name: "Venue 3" })).toBeNull();
     });
 });
