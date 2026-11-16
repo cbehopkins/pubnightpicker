@@ -35,7 +35,7 @@ vi.mock("../../hooks/useAutopopulateAction", () => ({
     }),
 }));
 
-vi.mock("../pages/PubForm", () => ({
+vi.mock("../pages/VenueForm", () => ({
     AntiPubParams: {},
 }));
 

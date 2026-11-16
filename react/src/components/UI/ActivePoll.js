@@ -9,7 +9,7 @@ import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
 import useRole from "../../hooks/useRole";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { AntiPubParams } from "../pages/PubForm";
+import { AntiPubParams } from "../pages/VenueForm";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";

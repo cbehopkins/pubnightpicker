@@ -85,13 +85,13 @@ vi.mock("./hooks/useWebPushLifecycle", () => {
 vi.mock("./components/login/Login", () => ({ default: () => null }));
 vi.mock("./components/login/Register", () => ({ default: () => null }));
 vi.mock("./components/login/Reset", () => ({ default: () => null }));
-vi.mock("./components/pages/ManagePubs", () => ({ default: () => null }));
+vi.mock("./components/pages/ManageVenues", () => ({ default: () => null }));
 vi.mock("./components/pages/ManageUsers", () => ({
   default: () => null,
   ManageUserDetail: () => null,
 }));
 vi.mock("./components/pages/Error", () => ({ default: () => null }));
-vi.mock("./components/pages/NewPub", () => ({
+vi.mock("./components/pages/NewVenue", () => ({
   default: () => null,
   action: vi.fn(),
 }));
@@ -107,7 +107,7 @@ vi.mock("./components/pages/AttendanceVenueStats", () => ({
   default: () => null,
 }));
 vi.mock("./components/pages/RootLayout", () => ({ default: () => null }));
-vi.mock("./components/pages/EditPub", () => ({
+vi.mock("./components/pages/EditVenue", () => ({
   default: () => null,
   loader: vi.fn(),
 }));

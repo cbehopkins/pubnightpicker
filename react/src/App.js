@@ -8,13 +8,13 @@ import Login from "./components/login/Login";
 import Register from "./components/login/Register";
 import Reset from "./components/login/Reset";
 import ErrorPage from "./components/pages/Error";
-import NewPubPage, {
-  action as manipulatePubAction,
-} from "./components/pages/NewPub";
+import NewVenuePage, {
+  action as manipulateVenueAction,
+} from "./components/pages/NewVenue";
 import ActivePolls from "./components/pages/ActivePolls";
 
 import RootLayout from "./components/pages/RootLayout";
-import EditPubPage, { loader as pubLoader } from "./components/pages/EditPub";
+import EditVenuePage, { loader as venueLoader } from "./components/pages/EditVenue";
 import Preferences, {
   action as notificationAction,
 } from "./components/pages/Preferences";
@@ -28,7 +28,7 @@ import useSelf from "./hooks/useSelf";
 import useWebPushLifecycle from "./hooks/useWebPushLifecycle";
 import { setRoles } from "./store/authSlice";
 
-const ManagePubs = lazy(() => import("./components/pages/ManagePubs"));
+const ManageVenues = lazy(() => import("./components/pages/ManageVenues"));
 const ManageUsers = lazy(() => import("./components/pages/ManageUsers"));
 const ManageUserDetail = lazy(() =>
   import("./components/pages/ManageUsers").then((module) => ({
@@ -136,19 +136,19 @@ function App() {
           children: [
             {
               index: true,
-              element: <LazyRoute><ManagePubs /></LazyRoute>,
+              element: <LazyRoute><ManageVenues /></LazyRoute>,
             },
             {
-              path: ":pubId",
-              id: "pub_id",
-              loader: pubLoader,
-              action: manipulatePubAction,
-              element: <EditPubPage />,
+              path: ":venueId",
+              id: "venue_id",
+              loader: venueLoader,
+              action: manipulateVenueAction,
+              element: <EditVenuePage />,
             },
             {
               path: "new",
-              element: <NewPubPage />,
-              action: manipulatePubAction,
+              element: <NewVenuePage />,
+              action: manipulateVenueAction,
             },
           ],
         },

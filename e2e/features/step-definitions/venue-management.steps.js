@@ -6,7 +6,7 @@ import { nextAvailablePollDate, withEmulatorAdmin, withEmulatorUser } from "../s
 import { londonDate, shiftDate } from "../support/calendar.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-const TEXT_FIELDS = ["Name", "Address", "Venue Web Site", "Map", "Notes"];
+const TEXT_FIELDS = ["Name", "Address", "Venue Web Site", "Map", "Notes", "Link to Venue Image"];
 
 When("{word} attempts to create a venue directly through Last Orders", async function (name) {
     const email = this.actorEmails?.get(name);
@@ -114,7 +114,7 @@ Then("{word} sees the public venue without management actions", async function (
 export async function fillVenue(page, details) {
     await page.getByLabel("Venue Type", { exact: true }).selectOption({ label: details["Venue Type"] });
     for (const field of TEXT_FIELDS) {
-        await page.getByLabel(field, { exact: true }).fill(details[field]);
+        await page.getByLabel(field, { exact: true }).fill(details[field] ?? "");
     }
     for (const field of ["Parking", "Dog Friendly", "Beer Garden", "Out Of Town (Cambridge)", "Banned"]) {
         await page.getByRole("checkbox", { name: field, exact: true }).setChecked(details[field] === "true");
@@ -200,7 +200,7 @@ When("{word} opens the journey venue for editing", async function (name) {
 Then("{word} sees the saved journey venue details", async function (name) {
     const page = this.actors.get(name);
     for (const field of TEXT_FIELDS) {
-        assert.equal(await page.getByLabel(field, { exact: true }).inputValue(), this.venueDetails[field], field);
+        assert.equal(await page.getByLabel(field, { exact: true }).inputValue(), this.venueDetails[field] ?? "", field);
     }
     const selectedType = await page.getByLabel("Venue Type", { exact: true }).locator("option:checked").innerText();
     assert.equal(selectedType, this.venueDetails["Venue Type"]);

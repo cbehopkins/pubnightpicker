@@ -1,20 +1,20 @@
 import { NavLink } from "react-router-dom";
 import { useState } from "react";
-import styles from "./ManagePubs.module.css";
-import { usePubsState } from "../../hooks/usePubs";
+import styles from "./ManageVenues.module.css";
+import { useVenuesState } from "../../hooks/useVenues";
 import useRole from "../../hooks/useRole";
 import Button from "../UI/Button";
-import { deletePub } from "../../dbtools/pubs";
+import { deleteVenue } from "../../dbtools/venues";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import { compareVenueNames } from "../../utils/venueSort";
 import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../../constants/venueTypes";
 
-const ManagePubs = () => {
+const ManageVenues = () => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
   const [deleteReviews, setDeleteReviews] = useState({});
-  const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
-  const sortedPubsByName = Object.entries(pub_parameters)
+  const { venues, isLoading, isStale, errorMessage, retry } = useVenuesState();
+  const sortedVenuesByName = Object.entries(venues)
     .filter(([, value]) => {
       if (venueTypeFilter === "all") {
         return true;
@@ -72,9 +72,9 @@ const ManagePubs = () => {
       </div>
 
       <div className={`${styles.content} d-flex flex-column gap-2`}>
-        {sortedPubsByName.map(([pubName, key]) => {
-          const currentVenue = deleteReviews[key] ?? pub_parameters[key];
-          const displayName = currentVenue?.name ?? pubName;
+        {sortedVenuesByName.map(([venueName, key]) => {
+          const currentVenue = deleteReviews[key] ?? venues[key];
+          const displayName = currentVenue?.name ?? venueName;
           return (
             <div key={key} className="d-flex align-items-center gap-2 flex-wrap">
               {canManagePubs && (
@@ -84,7 +84,7 @@ const ManagePubs = () => {
                   size="sm"
                   onClick={async () => {
                     try {
-                      await deletePub(key, currentVenue?.delete_token);
+                      await deleteVenue(key, currentVenue?.deleteToken);
                       setDeleteReviews((reviews) => {
                         const nextReviews = { ...reviews };
                         delete nextReviews[key];
@@ -95,7 +95,7 @@ const ManagePubs = () => {
                         setDeleteReviews((reviews) => ({ ...reviews, [key]: error.currentVenue }));
                         return;
                       }
-                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this pub."));
+                      notifyError(getUserFacingErrorMessage(error, "Unable to delete this venue."));
                     }
                   }}
                 >
@@ -117,7 +117,7 @@ const ManagePubs = () => {
                   <p className="mb-1">This venue changed after it was loaded. Review the current details before choosing Delete reviewed venue.</p>
                   <p className="mb-0">
                     <strong>{displayName}</strong>
-                    {currentVenue.venue_type && ` (${currentVenue.venue_type})`}
+                    {currentVenue.venueType && ` (${currentVenue.venueType})`}
                     {currentVenue.address && `, ${currentVenue.address}`}
                     {currentVenue.notes && `. ${currentVenue.notes}`}
                   </p>
@@ -131,4 +131,4 @@ const ManagePubs = () => {
   );
 };
 
-export default ManagePubs;
+export default ManageVenues;

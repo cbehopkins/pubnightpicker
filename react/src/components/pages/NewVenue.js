@@ -1,7 +1,7 @@
 import { redirect } from "react-router-dom";
-import PubForm, { PubParams } from "./PubForm";
+import VenueForm, { VenueParams } from "./VenueForm";
 import ProtectedRoute from "../ProtectedRoute";
-import { addNewPub, modifyPub } from "../../dbtools/pubs";
+import { addNewVenue, modifyVenue } from "../../dbtools/venues";
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 
@@ -60,11 +60,11 @@ function buildRecurrenceFromFormData(data) {
   return undefined;
 }
 
-function NewPubPage() {
-  return <PubForm method="post" />;
+function NewVenuePage() {
+  return <VenueForm method="post" />;
 }
 
-export default ProtectedRoute(NewPubPage, "canManagePubs", "/");
+export default ProtectedRoute(NewVenuePage, "canManagePubs", "/");
 
 function parseFormObject(data, fieldName) {
   try {
@@ -78,34 +78,34 @@ function parseFormObject(data, fieldName) {
 export async function action({ request, params }) {
   const method = request.method;
   const data = await request.formData();
-  const pub_id = params.pubId;
-  const pubParams = {
+  const venueId = params.venueId;
+  const venueParams = {
     name: data.get("name"),
     venueType: data.get("venueType") || "pub",
-    web_site: data.get("web_site"),
+    website: data.get("website"),
     map: data.get("map"),
     address: data.get("address"),
     notes: data.get("notes"),
-    pubImage: data.get("pubImage")
+    image: data.get("image")
   };
   const recurrence = buildRecurrenceFromFormData(data);
-  for (const key of Object.keys(PubParams)) {
-    if (key === "food" && pubParams.venueType === "restaurant") {
-      pubParams[key] = true;
+  for (const key of Object.keys(VenueParams)) {
+    if (key === "food" && venueParams.venueType === "restaurant") {
+      venueParams[key] = true;
       continue;
     }
 
-    pubParams[key] = Boolean(data.get(key));
+    venueParams[key] = Boolean(data.get(key));
   }
-  pubParams.recurrence = pubParams.venueType === "event" ? recurrence ?? null : null;
+  venueParams.recurrence = venueParams.venueType === "event" ? recurrence ?? null : null;
   try {
     if (method === "POST") {
-      await addNewPub(pubParams);
+      await addNewVenue(venueParams);
     }
     if (method === "PATCH") {
       const baseline = parseFormObject(data, "venue_baseline");
       const editTokens = parseFormObject(data, "edit_tokens");
-      await modifyPub(pub_id, pubParams, baseline, editTokens);
+      await modifyVenue(venueId, venueParams, baseline, editTokens);
       return redirect("/venues");
     }
   } catch (error) {
@@ -121,7 +121,7 @@ export async function action({ request, params }) {
     if (error?.code === "invalid_edit_token" || error?.code === "precondition_required") {
       return { saveError: error.message };
     }
-    notifyError(getUserFacingErrorMessage(error, "Unable to save this pub."));
+    notifyError(getUserFacingErrorMessage(error, "Unable to save this venue."));
     return null;
   }
   return redirect("/venues");
