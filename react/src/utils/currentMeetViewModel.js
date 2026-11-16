@@ -8,8 +8,8 @@ import { getEffectiveAttendanceState } from "./attendanceState";
 /**
  * @typedef {Object} PubParametersEntry
  * @property {string=} name
- * @property {string=} web_site
- * @property {string=} pubImage
+ * @property {string=} website
+ * @property {string=} image
  * @property {string=} address
  */
 
@@ -76,7 +76,7 @@ export function getDedupedVotesForVenue(votes, venueId) {
  * }} input
  * @returns {CurrentEventViewModel | null}
  */
-export function buildCurrentEventViewModel({
+export function buildCurrentMeetViewModel({
     current_pub_id,
     restaurant_id,
     restaurant_time,
@@ -100,8 +100,8 @@ export function buildCurrentEventViewModel({
     const mainVenue = {
         id: current_pub_id,
         name: currentVenue.name,
-        website: currentVenue.web_site,
-        image: currentVenue.pubImage,
+        website: currentVenue.website,
+        image: currentVenue.image,
         address: currentVenue.address,
         dedupedVotes: mainVotes,
         allowShowVoters: show_voters && (pubWasVotedFor || mainAttendance.hasAttendanceData),
@@ -120,8 +120,8 @@ export function buildCurrentEventViewModel({
             id: restaurant_id,
             name: restaurantSource.name,
             restaurantTime: restaurant_time,
-            website: restaurantSource.web_site,
-            image: restaurantSource.pubImage,
+            website: restaurantSource.website,
+            image: restaurantSource.image,
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
             allowShowVoters: show_voters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),

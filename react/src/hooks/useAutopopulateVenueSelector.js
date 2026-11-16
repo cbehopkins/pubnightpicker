@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useWinningVenueStats from "./useWinningVenueStats";
-import usePubs from "./usePubs";
+import useVenues from "./useVenues";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 import { getDateWeeksAgo } from "../utils/autopoplateFiltering";
 import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
@@ -30,14 +30,14 @@ import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
  * @returns {AutopopulateVenues}
  */
 export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
-    const allVenues = usePubs();
+    const allVenues = useVenues();
 
     // Base window: 4 weeks
     const baselineWeeks = 4;
     const baselineCutoffDate = useMemo(() => getDateWeeksAgo(baselineWeeks), []);
 
     // Query last 52 weeks to have historical data for expansion
-    const { polls, isLoading: pollsLoading, errorMessage: pollsError } = useWinningVenueStats(1);
+    const { meets, isLoading: pollsLoading, errorMessage: pollsError } = useWinningVenueStats(1);
 
     const [mostVisited, setMostVisited] = useState(/** @type {RankedStatRow[]} */([]));
     const [leastVisited, setLeastVisited] = useState(/** @type {RankedStatRow[]} */([]));
@@ -46,7 +46,7 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
 
     // Build ranked rows and compute autopopulate options.
     useEffect(() => {
-        if (pollsLoading || !polls || Object.keys(polls).length === 0) {
+        if (pollsLoading || !meets || Object.keys(meets).length === 0) {
             setMostVisited([]);
             setLeastVisited([]);
             setRandomVenues([]);
@@ -56,7 +56,7 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
 
         try {
             // Build initial ranked rows from all polls
-            const allRankedRows = buildWinningVenueRows({ polls, venues: allVenues });
+            const allRankedRows = buildWinningVenueRows({ meets, venues: allVenues });
             const pubOnlyRankedRows = allRankedRows.filter((row) => {
                 const venueType = allVenues[row.id]?.venueType || row.venueType || DEFAULT_VENUE_TYPE;
                 return venueType === DEFAULT_VENUE_TYPE;
@@ -125,7 +125,7 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
             setRandomVenues([]);
             setError("Unable to compute autopopulate venues right now.");
         }
-    }, [polls, pollsLoading, pollsError, allVenues, currentPubIds, baselineCutoffDate]);
+    }, [meets, pollsLoading, pollsError, allVenues, currentPubIds, baselineCutoffDate]);
 
     return {
         mostVisited,

@@ -3,8 +3,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { NavLink, useSearchParams } from "react-router-dom";
-import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
-import usePubs from "../../hooks/usePubs";
+import { usePastMeets, useCurrentMeets } from "../../hooks/usePolls";
+import useVenues from "../../hooks/useVenues";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
@@ -13,7 +13,7 @@ import useUserPrivateData from "../../hooks/useUserPrivateData";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useReschedulePoll } from "../../hooks/useReschedulePoll";
 import { useEventAttendance } from "../../hooks/useEventAttendance";
-import styles from "./CurrentEvents.module.css";
+import styles from "./CurrentMeets.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
@@ -37,11 +37,11 @@ function ensureAbsoluteUrl(url) {
   return `https://${url}`;
 }
 import { notifyError } from "../../utils/notify";
-import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
+import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
-/** @typedef {{ name?: string, web_site?: string, pubImage?: string, address?: string }} PubParametersEntry */
+/** @typedef {{ name?: string, website?: string, image?: string, address?: string }} PubParametersEntry */
 /** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
-/** @typedef {{ selected?: string, restaurant?: string | null, restaurant_time?: string | null, date?: string }} EventPollValue */
+/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} EventPollValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, EventPollValue]> }} SortedPollCollection */
 
 /** @typedef {import("../../store").RootState} RootState */
@@ -96,11 +96,11 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const pubEntry = pub_parameters[value.selected];
+  const pubEntry = pub_parameters[value.selectedVenueId];
   const pubName = pubEntry?.name;
-  const pubWebsite = pubEntry?.web_site;
-  const pubImage = normalizeImageUrl(pubEntry?.pubImage);
-  const userEta = (currUserId && pubEntry && attendance[value.selected]?.eta?.[currUserId]) || null;
+  const pubWebsite = pubEntry?.website;
+  const pubImage = normalizeImageUrl(pubEntry?.image);
+  const userEta = (currUserId && pubEntry && attendance[value.selectedVenueId]?.eta?.[currUserId]) || null;
 
   useEffect(() => {
     setHasImageLoadError(false);
@@ -150,7 +150,7 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
                 type="button"
                 variant="outline-danger"
                 className="btn-sm"
-                onClick={() => clearEta(value.selected, currUserId)}
+                onClick={() => clearEta(value.selectedVenueId, currUserId)}
               >
                 Remove ETA
               </Button>
@@ -179,7 +179,7 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   );
 }
 
-export function PastEvents() {
+export function PastMeets() {
   const [searchParams, setSearchParams] = useSearchParams();
   const pubCountParam = Number(searchParams.get("pastPageSize"));
   const pubCount = [5, 10, 20].includes(pubCountParam) ? pubCountParam : 5;
@@ -188,15 +188,15 @@ export function PastEvents() {
     .filter(Boolean);
   const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
 
-  const { pollData, hasNextPage, lastVisibleId, isLoading } = usePastCompletePolls(
+  const { meetData, hasNextPage, lastVisibleId, isLoading } = usePastMeets(
     pubCount,
     currentCursorId
   );
 
   const hasPreviousPage = cursorTrail.length > 0;
   const pageIndex = cursorTrail.length;
-  const pub_parameters = usePubs();
-  const sortedPollsByDate = [...pollData.sortedByDate(true)];
+  const pub_parameters = useVenues();
+  const sortedMeetsByDate = [...meetData.sortedByDate(true)];
   const canChat = useRole("canChat");
   const canViewStats = useAdmin();
 
@@ -243,7 +243,7 @@ export function PastEvents() {
           <div className="col-md-8">
             <h1 className="h2 mb-2">Past Meets</h1>
             <p className="text-body-secondary mb-0">
-              Browse previous pub nights in an album-style view.
+              Browse previous Meets in an album-style view.
             </p>
           </div>
           <div className="col-md-4">
@@ -274,7 +274,7 @@ export function PastEvents() {
         </div>
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
-          {sortedPollsByDate.map(([key, value]) => {
+          {sortedMeetsByDate.map(([key, value]) => {
             return <PastEvent key={key} poll_id={key} value={value} pub_parameters={pub_parameters} can_chat={canChat} />;
           })}
         </div>
@@ -348,7 +348,7 @@ function CurrentEvent({
     poll_id,
     canReadProtectedEventData
   );
-  const eventViewModel = buildCurrentEventViewModel({
+  const eventViewModel = buildCurrentMeetViewModel({
     current_pub_id,
     restaurant_id,
     restaurant_time,
@@ -569,7 +569,7 @@ function CurrentEvent({
   );
 }
 
-function CurrentEvents() {
+function CurrentMeets() {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => {
@@ -579,8 +579,8 @@ function CurrentEvents() {
   );
   const privateData = useUserPrivateData(currUserId);
   const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
-  const pollData = useFutureCompletePolls();
-  const pub_parameters = usePubs();
+  const meetData = useCurrentMeets();
+  const pub_parameters = useVenues();
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
@@ -593,7 +593,7 @@ function CurrentEvents() {
         <div className="mb-4">
           <h1 className="h2 mb-1">Current Meets</h1>
           <p className="text-body-secondary mb-0">
-            Upcoming pub night details and attendance tracking.
+            Upcoming Meet details and attendance tracking.
           </p>
         </div>
         {rescheduleState.isRescheduling && (
@@ -611,14 +611,14 @@ function CurrentEvents() {
             onCancel={rescheduleState.cancelReschedule}
           />
         )}
-        {[...pollData.sortedByDate()].map(([key, value]) => {
+        {[...meetData.sortedByDate()].map(([key, value]) => {
           return (
             <CurrentEvent
               key={key}
               poll_id={key}
-              current_pub_id={value.selected}
-              restaurant_id={value.restaurant}
-              restaurant_time={value.restaurant_time}
+              current_pub_id={value.selectedVenueId}
+              restaurant_id={value.restaurantId}
+              restaurant_time={value.restaurantTime}
               date={value.date}
               pub_parameters={pub_parameters}
               can_reschedule={canReschedule}
@@ -635,4 +635,4 @@ function CurrentEvents() {
   );
 }
 
-export default CurrentEvents;
+export default CurrentMeets;

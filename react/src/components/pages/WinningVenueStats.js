@@ -5,7 +5,7 @@ import { NavLink, useSearchParams } from "react-router-dom";
 import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
 import StatsWindowModal from "../UI/StatsWindowModal";
-import usePubs from "../../hooks/usePubs";
+import useVenues from "../../hooks/useVenues";
 import useWinningVenueStats from "../../hooks/useWinningVenueStats";
 import { buildWinningVenueRows, splitRankedStatRows } from "../../utils/statsRanking";
 import StatRankingList from "../UI/StatRankingList";
@@ -27,12 +27,12 @@ export function WinningVenueStatsPage() {
     const [isWindowModalOpen, setIsWindowModalOpen] = useState(false);
     const [venueTypeFilter, setVenueTypeFilter] = useState(DEFAULT_VENUE_TYPE);
 
-    const pubParameters = usePubs();
-    const { polls, isLoading, errorMessage, startDate, endDate } = useWinningVenueStats(yearCount);
+    const pubParameters = useVenues();
+    const { meets, isLoading, errorMessage, startDate, endDate } = useWinningVenueStats(yearCount);
 
     const rankedRows = useMemo(
-        () => buildWinningVenueRows({ polls, venues: pubParameters }),
-        [polls, pubParameters]
+        () => buildWinningVenueRows({ meets, venues: pubParameters }),
+        [meets, pubParameters]
     );
     const filteredRankedRows = useMemo(() => {
         if (venueTypeFilter === "all") {
@@ -62,7 +62,7 @@ export function WinningVenueStatsPage() {
                     <div>
                         <h1 className="display-6 fw-bold mb-2">Winning Venue Stats</h1>
                         <p className="lead text-body-secondary mb-0">
-                            Venues selected from completed polls during the {getWindowLabel(yearCount)}.
+                            Venues selected for Meets during the {getWindowLabel(yearCount)}.
                         </p>
                     </div>
 
@@ -112,7 +112,7 @@ export function WinningVenueStatsPage() {
                         <StatRankingList
                             title="Most often selected"
                             subtitle="Winning venues ranked from highest to lowest in the chosen period."
-                            emptyMessage="No completed polls were found in this time window."
+                            emptyMessage="No completed Meets were found in this time window."
                             items={most}
                         />
                     </div>
@@ -120,7 +120,7 @@ export function WinningVenueStatsPage() {
                         <StatRankingList
                             title="Least often selected"
                             subtitle="Venues that rarely or never won during the same window."
-                            emptyMessage="No completed polls were found in this time window."
+                            emptyMessage="No completed Meets were found in this time window."
                             items={least}
                         />
                     </div>
