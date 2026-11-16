@@ -114,7 +114,7 @@ Feature: Authorised members create and edit venues
     When Beth loads the current venue after a field conflict
     Then Beth sees the journey venue field "Name" as "Alice's name"
     When Beth retries the journey venue field "Name" to "Beth's final name"
-    Then Beth sees the journey venue field "Name" as "Beth's final name"
+    Then Beth sees the journey venue listed as "Pub"
 
   Scenario: A manager reviews the venue before retrying a stale deletion
     Given a fresh emulator database has been bootstrapped with the journey admin

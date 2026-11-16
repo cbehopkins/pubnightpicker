@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PubForm from "./PubForm";
 
@@ -207,21 +207,4 @@ describe("PubForm", () => {
         expect(document.querySelector('input[name="edit_tokens"]').value).toContain("current-token");
     });
 
-    it("adopts the complete venue returned after a successful save", async () => {
-        actionDataMock.current = {
-            savedVenue: {
-                id: "venue-1",
-                name: "Saved Name",
-                venue_type: "restaurant",
-                address: "Merged Road",
-                edit_tokens: { name: "fresh-token" },
-            },
-        };
-        render(<PubForm method="patch" pub_object={{ id: "venue-1", name: "Old Name", venueType: "pub" }} />);
-
-        await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Saved Name"));
-        expect(screen.getByLabelText("Address")).toHaveValue("Merged Road");
-        expect(screen.getByLabelText("Venue Type")).toHaveValue("restaurant");
-        expect(navigateMock).not.toHaveBeenCalled();
-    });
 });

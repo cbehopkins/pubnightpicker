@@ -136,7 +136,12 @@ export async function saveVenue(page, expectedPatchStatus = null) {
     } else {
         assert.equal(response.status(), expectedPatchStatus, `Venue patch response status: ${response.status()}`);
     }
-    assert.equal(page.url(), url, "A venue update should keep the editor open");
+    if (response.status() === 200) {
+        await page.waitForURL(`${BASE_URL}/venues`);
+    } else {
+        assert.equal(page.url(), url, "A conflicting venue update should keep the editor open");
+    }
+    return response.status();
 }
 
 async function waitForVenueFieldValue(page, field, value) {
@@ -216,16 +221,29 @@ When("{word} updates the journey venue with these details:", async function (nam
 
 When("{word} changes the journey venue field {string} to {string}", async function (_name, field, value) {
     const page = this.actors.get(_name);
+    if (new URL(page.url()).pathname === "/venues") {
+        await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).click();
+        await page.getByLabel("Name", { exact: true }).waitFor();
+    }
     await page.getByLabel(field, { exact: true }).fill(value);
-    await saveVenue(page);
-    await waitForVenueFieldValue(page, field, value);
+    const status = await saveVenue(page);
+    if (status === 409) {
+        await waitForVenueFieldValue(page, field, value);
+    }
+    if (field === "Name" && status === 200) {
+        this.venueDetails.Name = value;
+        await page.getByRole("link", { name: value, exact: true }).waitFor();
+    }
 });
 
 When("{word} retries the journey venue field {string} to {string}", async function (name, field, value) {
     const page = this.actors.get(name);
     await page.getByLabel(field, { exact: true }).fill(value);
     await saveVenue(page, 200);
-    await waitForVenueFieldValue(page, field, value);
+    if (field === "Name") {
+        this.venueDetails.Name = value;
+        await page.getByRole("link", { name: value, exact: true }).waitFor();
+    }
 });
 
 When("{word} saves the journey venue", async function (name) {
@@ -234,6 +252,10 @@ When("{word} saves the journey venue", async function (name) {
 
 When("{word} drafts the journey venue field {string} to {string}", async function (name, field, value) {
     const page = this.actors.get(name);
+    if (new URL(page.url()).pathname === "/venues") {
+        await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).click();
+        await page.getByLabel("Name", { exact: true }).waitFor();
+    }
     await page.getByLabel(field, { exact: true }).fill(value);
 });
 

@@ -623,17 +623,6 @@ function PubForm({ method, pub_object }) {
   }, [pub_object, venue, venueBaseline]);
 
   useEffect(() => {
-    if (actionData?.savedVenue) {
-      const savedVenue = normalizeVenue(actionData.savedVenue);
-      if (savedVenue) {
-        setVenue(savedVenue);
-        setVenueBaseline(savedVenue);
-        setFormKey((key) => key + 1);
-      }
-    }
-  }, [actionData]);
-
-  useEffect(() => {
     setVenueType(venue?.venueType || "pub");
     setRecurrenceFrequency(venue?.recurrence?.frequency || "none");
   }, [venue]);
@@ -701,143 +690,143 @@ function PubForm({ method, pub_object }) {
       )}
       {actionData?.saveError && <p className="alert alert-danger" role="alert">{actionData.saveError}</p>}
       <RouterForm ref={formRef} key={formKey} method={method} onChange={handleFormChange}>
-      {method === "patch" && venue && (
-        <>
-          <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venueBaseline))} />
-          <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.edit_tokens || {})} />
-        </>
-      )}
-      <Card>
-        <Card.Body className="text-body">
-          <Row className="g-3">
-            <Col xs={12}>
-              <BsForm.Group controlId="venueType">
-                <BsForm.Label>Venue Type</BsForm.Label>
-                <BsForm.Select
-                  name="venueType"
-                  value={venueType}
-                  onChange={(event) => {
-                    setVenueType(event.target.value);
-                  }}
-                >
-                  {VenueTypes.map((type) => {
-                    return (
-                      <option key={type} value={type}>
-                        {type.charAt(0).toUpperCase() + type.slice(1)}
-                      </option>
-                    );
-                  })}
-                </BsForm.Select>
-              </BsForm.Group>
-            </Col>
+        {method === "patch" && venue && (
+          <>
+            <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venueBaseline))} />
+            <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.edit_tokens || {})} />
+          </>
+        )}
+        <Card>
+          <Card.Body className="text-body">
+            <Row className="g-3">
+              <Col xs={12}>
+                <BsForm.Group controlId="venueType">
+                  <BsForm.Label>Venue Type</BsForm.Label>
+                  <BsForm.Select
+                    name="venueType"
+                    value={venueType}
+                    onChange={(event) => {
+                      setVenueType(event.target.value);
+                    }}
+                  >
+                    {VenueTypes.map((type) => {
+                      return (
+                        <option key={type} value={type}>
+                          {type.charAt(0).toUpperCase() + type.slice(1)}
+                        </option>
+                      );
+                    })}
+                  </BsForm.Select>
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12} className="d-flex gap-2">
-              <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Submitting..." : "Save"}
-              </Button>
-            </Col>
+              <Col xs={12} className="d-flex gap-2">
+                <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Submitting..." : "Save"}
+                </Button>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="name">
-                <BsForm.Label>Name</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="name"
-                  required
-                  defaultValue={venue ? venue.name : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="name">
+                  <BsForm.Label>Name</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="name"
+                    required
+                    defaultValue={venue ? venue.name : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="web_site">
-                <BsForm.Label>Venue Web Site</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="web_site"
-                  title="Nice to have the website to show in notification messages"
-                  defaultValue={venue ? venue.web_site : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="web_site">
+                  <BsForm.Label>Venue Web Site</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="web_site"
+                    title="Nice to have the website to show in notification messages"
+                    defaultValue={venue ? venue.web_site : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="map">
-                <BsForm.Label>Map</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="map"
-                  title="Usually a google maps link to include in the notification messages"
-                  defaultValue={venue ? venue.map : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="map">
+                  <BsForm.Label>Map</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="map"
+                    title="Usually a google maps link to include in the notification messages"
+                    defaultValue={venue ? venue.map : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="address">
-                <BsForm.Label>Address</BsForm.Label>
-                <BsForm.Control
-                  as="textarea"
-                  rows={3}
-                  name="address"
-                  title="The address"
-                  defaultValue={venue ? venue.address : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="address">
+                  <BsForm.Label>Address</BsForm.Label>
+                  <BsForm.Control
+                    as="textarea"
+                    rows={3}
+                    name="address"
+                    title="The address"
+                    defaultValue={venue ? venue.address : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="notes">
-                <BsForm.Label>Notes</BsForm.Label>
-                <BsForm.Control
-                  as="textarea"
-                  rows={3}
-                  name="notes"
-                  title="The notes"
-                  defaultValue={venue ? venue.notes : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="notes">
+                  <BsForm.Label>Notes</BsForm.Label>
+                  <BsForm.Control
+                    as="textarea"
+                    rows={3}
+                    name="notes"
+                    title="The notes"
+                    defaultValue={venue ? venue.notes : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="pubImage">
-                <BsForm.Label>Link to Venue Image</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="pubImage"
-                  title="Pub Image"
-                  defaultValue={venue ? venue.pubImage : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="pubImage">
+                  <BsForm.Label>Link to Venue Image</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="pubImage"
+                    title="Pub Image"
+                    defaultValue={venue ? venue.pubImage : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <RecurrenceFields
-              pub_object={venue}
-              venueType={venueType}
-              recurrenceFrequency={recurrenceFrequency}
-              setRecurrenceFrequency={setRecurrenceFrequency}
-            />
+              <RecurrenceFields
+                pub_object={venue}
+                venueType={venueType}
+                recurrenceFrequency={recurrenceFrequency}
+                setRecurrenceFrequency={setRecurrenceFrequency}
+              />
 
-            <Col xs={12}>
-              <h5 className="mb-2">Venue Attributes</h5>
-              <Table bordered hover size="sm" responsive className="mb-0 align-middle">
-                <tbody>
-                  {Object.entries(PubParams).map(([key, value]) => {
-                    if (venueType === "restaurant" && key === "food") {
-                      return null;
-                    }
+              <Col xs={12}>
+                <h5 className="mb-2">Venue Attributes</h5>
+                <Table bordered hover size="sm" responsive className="mb-0 align-middle">
+                  <tbody>
+                    {Object.entries(PubParams).map(([key, value]) => {
+                      if (venueType === "restaurant" && key === "food") {
+                        return null;
+                      }
 
-                    return <PubCheckbox key={key} name={key} label={value} pub_object={venue} />;
-                  })}
-                </tbody>
-              </Table>
-            </Col>
-          </Row>
-        </Card.Body>
-      </Card>
+                      return <PubCheckbox key={key} name={key} label={value} pub_object={venue} />;
+                    })}
+                  </tbody>
+                </Table>
+              </Col>
+            </Row>
+          </Card.Body>
+        </Card>
       </RouterForm>
     </>
   );
