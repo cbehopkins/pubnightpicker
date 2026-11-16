@@ -28,7 +28,7 @@ import {
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
-import usePolls from "../../hooks/usePolls";
+import { useActiveMeets } from "../../hooks/usePolls";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import { DEFAULT_NOTIFICATION_SETTINGS, setAdminDeletePaused, setNotificationSetting, watchAdminDeletePaused, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
 
@@ -91,19 +91,19 @@ function AutopopulateCandidateBucket({ title, rows, emptyText }) {
     );
 }
 
-function AutopopulateCandidatePollCard({ pollId, poll }) {
+function AutopopulateCandidatePollCard({ pollId, meet }) {
     const {
         mostVisited,
         leastVisited,
         random,
         isLoading,
         error,
-    } = useAutopopulateVenueSelector(pollId, poll?.pubs);
+    } = useAutopopulateVenueSelector(pollId, meet?.venues);
 
     return (
         <article className="card mb-3">
             <div className="card-body">
-                <h3 className="h6 mb-1">Poll: {poll?.date || "Unknown date"}</h3>
+                <h3 className="h6 mb-1">Poll: {meet?.date || "Unknown date"}</h3>
                 <p className="small text-body-secondary mb-3">pollId={pollId}</p>
                 {isLoading && (
                     <p className="small text-body-secondary mb-0">Loading candidate venues...</p>
@@ -177,16 +177,16 @@ export function AutopopulateCandidateListsPanel() {
 }
 
 function AutopopulateCandidateListsContent() {
-    const pollData = usePolls();
-    const activePolls = [...pollData.sortedByDate()];
+    const meetData = useActiveMeets();
+    const activeMeets = [...meetData.sortedByDate()];
 
     return (
         <>
-            {activePolls.length === 0 ? (
+            {activeMeets.length === 0 ? (
                 <p className="small text-body-secondary mb-0">No active polls found.</p>
             ) : (
-                activePolls.map(([pollId, poll]) => (
-                    <AutopopulateCandidatePollCard key={pollId} pollId={pollId} poll={poll} />
+                activeMeets.map(([pollId, meet]) => (
+                    <AutopopulateCandidatePollCard key={pollId} pollId={pollId} meet={meet} />
                 ))
             )}
         </>

@@ -20,7 +20,7 @@ const systemVenues = {
 describe("getRestaurantOptionsForPoll", () => {
   it("filters and sorts restaurant options from a poll, ignoring pubs and 'any'", () => {
     const poll = {
-      pubs: {
+      venues: {
         venueA: { name: "Zulu Kitchen" },
         venueB: { name: "The Maypole" },
         venueC: { name: "Alto" },
@@ -98,7 +98,7 @@ describe("createCompletingPollState — pub with food", () => {
       "The Oak",
       "poll-1",
       {
-        pubs: {
+        venues: {
           "venue-pub-food": { name: "The Oak" },
           "venue-restaurant": { name: "Pizza Town" },
         },
@@ -120,7 +120,7 @@ describe("createCompletingPollState — pub without food", () => {
       "The Maypole",
       "poll-1",
       {
-        pubs: {
+        venues: {
           "venue-pub": { name: "The Maypole" },
           "venue-restaurant": { name: "Pizza Town" },
         },
@@ -142,7 +142,7 @@ describe("createCompletingPollState — pub without food", () => {
       "The Maypole",
       "poll-1",
       {
-        pubs: {
+        venues: {
           "venue-pub": { name: "The Maypole" },
           "venue-restaurant": { name: "Pizza Town" },
           "venue-restaurant-2": { name: "Bistro 12" },
@@ -165,7 +165,7 @@ describe("createCompletingPollState — pub without food", () => {
       "The Maypole",
       "poll-1",
       {
-        pubs: {
+        venues: {
           "venue-pub": { name: "The Maypole" },
         },
       },

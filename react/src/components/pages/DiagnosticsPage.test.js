@@ -64,7 +64,7 @@ vi.mock("../UI/BackendPingPanel", () => ({
 }));
 
 vi.mock("../../hooks/usePolls", () => ({
-    default: usePollsMock,
+    useActiveMeets: usePollsMock,
 }));
 
 vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
@@ -277,7 +277,7 @@ describe("AutopopulateCandidateListsPanel", () => {
     beforeEach(() => {
         usePollsMock.mockReturnValue({
             sortedByDate: () => [
-                ["poll-1", { date: "2026-06-10", pubs: { "venue-1": true } }],
+                ["poll-1", { date: "2026-06-10", venues: { "venue-1": true } }],
             ],
         });
 
@@ -343,6 +343,7 @@ describe("AutopopulateCandidateListsPanel", () => {
         expect(screen.getByText(/The Oak/)).toBeTruthy();
         expect(screen.getByText(/The Crown/)).toBeTruthy();
         expect(screen.getByText(/The Bell/)).toBeTruthy();
+        expect(useAutopopulateVenueSelectorMock).toHaveBeenCalledWith("poll-1", { "venue-1": true });
 
         fireEvent.click(screen.getByRole("button", { name: "Hide Candidate Lists" }));
 

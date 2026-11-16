@@ -1,7 +1,7 @@
 // @ts-check
 
 import styles from "./ActivePolls.module.css";
-import usePolls from "../../hooks/usePolls";
+import { useActiveMeets } from "../../hooks/usePolls";
 import useVenues from "../../hooks/useVenues";
 import ActivePoll from "../UI/ActivePoll";
 import NewPoll from "../UI/NewPoll";
@@ -10,15 +10,15 @@ import { useIsMobileView } from "../../hooks/useIsMobileView";
 import { useCompletePolls } from "../../hooks/useCompletePolls";
 import CompletePollModal from "./CompletePollModal";
 
-/** @typedef {{ selected?: string, date?: string }} PollValue */
-/** @typedef {{ dates: Set<string>, sortedByDate: () => Iterable<[string, PollValue]> }} PollData */
+/** @typedef {{ date?: string, venues?: Record<string, unknown> }} MeetValue */
+/** @typedef {{ meets: Record<string, MeetValue>, dates: Set<string>, sortedByDate: () => Iterable<[string, MeetValue]> }} MeetData */
 
 /**
  * @param {unknown} value
- * @returns {PollData}
+ * @returns {MeetData}
  */
-function toPollData(value) {
-  return /** @type {PollData} */ (value);
+function toMeetData(value) {
+  return /** @type {MeetData} */ (value);
 }
 
 function ActivePolls() {
@@ -26,12 +26,12 @@ function ActivePolls() {
   const canCreatePoll = useRole("canCreatePoll");
   const canCompletePoll = useRole("canCompletePoll");
 
-  const pollData = toPollData(usePolls());
+  const meetData = toMeetData(useActiveMeets());
   const venues = useVenues();
-  const currentPollDates = pollData.dates;
+  const currentPollDates = meetData.dates;
 
   // Get poll completion workflow hooks
-  const completePollsState = useCompletePolls(pollData, venues, canCompletePoll);
+  const completePollsState = useCompletePolls(meetData, venues, canCompletePoll);
 
   const styleToUse = mobile ? styles.poll_mobile : styles.poll;
 
@@ -55,12 +55,12 @@ function ActivePolls() {
         />
       )}
       {/* js needs to die, and have a very cheap funeral!!! */}
-      {[...pollData.sortedByDate()].map(([id, poll]) => (
+      {[...meetData.sortedByDate()].map(([id, meet]) => (
         <div className={styleToUse} key={id}>
           <ActivePoll
             poll_id={id}
             pub_parameters={venues}
-            poll_data={poll}
+            poll_data={meet}
             on_complete={completePollsState.completeHandler}
             mobile={mobile}
           />

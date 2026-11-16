@@ -12,7 +12,7 @@ const { addNewPubMock, notifyInfoMock, notifyErrorMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../dbtools/polls", () => ({
-    add_new_pub_to_poll: addNewPubMock,
+    addVenueToMeet: addNewPubMock,
 }));
 
 vi.mock("../utils/notify", () => ({

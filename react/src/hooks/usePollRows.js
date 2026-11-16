@@ -7,7 +7,7 @@ import { useMemo } from "react";
 /**
  * Hook that extracts and sorts pub rows from poll data
  * Returns array of [pubName, pubId] tuples sorted alphabetically, with "Global" always first
- * @param {{ pubs?: Record<string, { name?: string }>} | null | undefined} pollData
+ * @param {{ venues?: Record<string, { name?: string }>} | null | undefined} pollData
  * @returns {PollRow[]}
  */
 export function usePollRows(pollData) {
@@ -17,8 +17,8 @@ export function usePollRows(pollData) {
 
     /** @type {PollRow[]} */
     const pubRows = [];
-    if (pollData && pollData.pubs) {
-      for (const [id, pub] of Object.entries(pollData.pubs)) {
+    if (pollData && pollData.venues) {
+      for (const [id, pub] of Object.entries(pollData.venues)) {
         if (id === "any") {
           continue;
         }

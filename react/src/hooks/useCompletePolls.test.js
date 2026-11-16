@@ -6,7 +6,7 @@ import { useCompletePolls } from "./useCompletePolls";
 
 vi.mock("../dbtools/polls", () => {
   return {
-    complete_a_poll: vi.fn(async () => undefined),
+    completeMeetVoting: vi.fn(async () => undefined),
   };
 });
 
@@ -25,9 +25,9 @@ vi.mock("../utils/notify", () => {
 describe("useCompletePolls", () => {
   it("defaults restaurant time to 18:30 when a restaurant is selected later", () => {
     const pollData = {
-      polls: {
+      meets: {
         "poll-1": {
-          pubs: {
+          venues: {
             "pub-1": { name: "The Maypole" },
           },
         },
@@ -57,9 +57,9 @@ describe("useCompletePolls", () => {
 
   it("clears restaurant time when no restaurant is selected", () => {
     const pollData = {
-      polls: {
+      meets: {
         "poll-1": {
-          pubs: {
+          venues: {
             "pub-1": { name: "The Maypole" },
             "restaurant-1": { name: "Pizza Town" },
           },

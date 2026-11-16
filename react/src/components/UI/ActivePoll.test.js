@@ -3,18 +3,19 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActivePoll from "./ActivePoll";
-import { add_new_pub_to_poll } from "../../dbtools/polls";
+import { addVenueToMeet } from "../../dbtools/polls";
 
-const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActionMock } = vi.hoisted(() => ({
+const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActionMock, pollVotePropsMock } = vi.hoisted(() => ({
     useRoleMock: vi.fn(),
     useOnlineStatusMock: vi.fn(),
     useAutoPopulateMock: vi.fn(),
     autopopulateActionMock: vi.fn(async () => undefined),
+    pollVotePropsMock: vi.fn(),
 }));
 
 vi.mock("../../dbtools/polls", () => ({
-    add_new_pub_to_poll: vi.fn(async () => undefined),
-    deletePoll: vi.fn(async () => undefined),
+    addVenueToMeet: vi.fn(async () => undefined),
+    deleteMeet: vi.fn(async () => undefined),
 }));
 
 vi.mock("../../hooks/useRole", () => ({
@@ -36,7 +37,10 @@ vi.mock("../../hooks/useAutopopulateAction", () => ({
 }));
 
 vi.mock("./PollVote", () => ({
-    default: () => <div data-testid="poll-vote" />,
+    default: (props) => {
+        pollVotePropsMock(props);
+        return <div data-testid="poll-vote" />;
+    },
 }));
 
 vi.mock("./PubOptions", () => ({
@@ -71,7 +75,7 @@ function renderComponent(overrides = {}) {
                 v4: { name: "Venue 4", venueType: "pub" },
                 ...(overrides.pubParameters || {}),
             }}
-            poll_data={{ date: "2026-05-11", pubs: { ...overrides.currentPubs } }}
+            poll_data={{ date: "2026-05-11", venues: { ...overrides.currentPubs } }}
             on_complete={vi.fn()}
         />
     );
@@ -104,6 +108,17 @@ describe("ActivePoll autopopulate", () => {
     it("renders autopopulate button when add-pub permission is available", () => {
         renderComponent();
         expect(screen.getByRole("button", { name: /autopopulate/i })).toBeTruthy();
+    });
+
+    it("passes Meet venues to voting and autopopulate", () => {
+        const venues = { v1: { name: "Venue 1" } };
+        renderComponent({ currentPubs: venues });
+
+        expect(pollVotePropsMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            poll_id: "poll-1",
+            poll_data: { date: "2026-05-11", venues },
+        }));
+        expect(useAutoPopulateMock).toHaveBeenLastCalledWith("poll-1", venues);
     });
 
     it("adds up to three distinct venues when autopopulate is clicked", async () => {
@@ -155,7 +170,7 @@ describe("ActivePoll autopopulate", () => {
         fireEvent.click(screen.getByRole("button", { name: /add venue to poll/i }));
 
         await waitFor(() => {
-            expect(add_new_pub_to_poll).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
+            expect(addVenueToMeet).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
         });
 
         expect(screen.getByRole("alert").textContent).toMatch(/marked as banned/i);
@@ -189,5 +204,20 @@ describe("ActivePoll autopopulate", () => {
 
         expect(screen.getByRole("option", { name: "In town" })).toBeTruthy();
         expect(screen.queryByRole("option", { name: "Out of town" })).toBeNull();
+    });
+
+    it("filters domain venues and excludes choices already on the meet", () => {
+        renderComponent({
+            currentPubs: { v1: { name: "Venue 1" } },
+            pubParameters: {
+                v1: { name: "Venue 1", dogFriendly: true },
+                v2: { name: "Venue 2", dogFriendly: true },
+            },
+        });
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "Dog Friendly" }));
+        expect(screen.queryByRole("option", { name: "Venue 1" })).toBeNull();
+        expect(screen.getByRole("option", { name: "Venue 2" })).toBeTruthy();
+        expect(screen.queryByRole("option", { name: "Venue 3" })).toBeNull();
     });
 });

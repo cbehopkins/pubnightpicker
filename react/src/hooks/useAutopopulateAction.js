@@ -1,7 +1,7 @@
 // @ts-check
 
 import { useCallback } from "react";
-import { add_new_pub_to_poll } from "../dbtools/polls";
+import { addVenueToMeet } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError, notifyInfo } from "../utils/notify";
 import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
@@ -43,7 +43,7 @@ export default function useAutopopulateAction({
             let successCount = 0;
             for (const venueId of venuesToAdd) {
                 try {
-                    await add_new_pub_to_poll(venueId, pollId, pubParameters, pollDate);
+                    await addVenueToMeet(venueId, pollId, pubParameters, pollDate);
                     successCount++;
                 } catch (err) {
                     console.error(`Failed to add venue ${venueId}:`, err);
