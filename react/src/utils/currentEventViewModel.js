@@ -6,14 +6,14 @@ import { getEffectiveAttendanceState } from "./attendanceState";
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 
 /**
- * @typedef {Object} PubParametersEntry
+ * @typedef {Object} VenueEntry
  * @property {string=} name
- * @property {string=} web_site
- * @property {string=} pubImage
+ * @property {string=} website
+ * @property {string=} image
  * @property {string=} address
  */
 
-/** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
+/** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
 
 /**
  * @typedef {Object} EventVenueViewModel
@@ -65,10 +65,10 @@ export function getDedupedVotesForVenue(votes, venueId) {
 
 /**
  * @param {{
- *   current_pub_id: string,
+ *   currentVenueId: string,
  *   restaurant_id: string | null | undefined,
  *   restaurant_time: string | null | undefined,
- *   pub_parameters: PubParametersMap,
+ *   venues: VenueMap,
  *   votes: VotesMap,
  *   attendance: AttendanceMap | null | undefined,
  *   currUserId: string | null | undefined,
@@ -77,39 +77,39 @@ export function getDedupedVotesForVenue(votes, venueId) {
  * @returns {CurrentEventViewModel | null}
  */
 export function buildCurrentEventViewModel({
-    current_pub_id,
+    currentVenueId,
     restaurant_id,
     restaurant_time,
-    pub_parameters,
+    venues,
     votes,
     attendance,
     currUserId,
     show_voters,
 }) {
-    const currentVenue = pub_parameters[current_pub_id];
+    const currentVenue = venues[currentVenueId];
     if (!currentVenue) {
         return null;
     }
 
-    const mainAttendance = getEffectiveAttendanceState(attendance, current_pub_id, currUserId);
-    const mainVotes = getDedupedVotesForVenue(votes, current_pub_id);
-    const pubWasVotedFor = current_pub_id in votes || Boolean(votes.any);
-    const mainEtaMap = (attendance && attendance[current_pub_id]?.eta) || {};
+    const mainAttendance = getEffectiveAttendanceState(attendance, currentVenueId, currUserId);
+    const mainVotes = getDedupedVotesForVenue(votes, currentVenueId);
+    const venueWasVotedFor = currentVenueId in votes || Boolean(votes.any);
+    const mainEtaMap = (attendance && attendance[currentVenueId]?.eta) || {};
 
     /** @type {EventVenueViewModel} */
     const mainVenue = {
-        id: current_pub_id,
+        id: currentVenueId,
         name: currentVenue.name,
-        website: currentVenue.web_site,
-        image: currentVenue.pubImage,
+        website: currentVenue.website,
+        image: currentVenue.image,
         address: currentVenue.address,
         dedupedVotes: mainVotes,
-        allowShowVoters: show_voters && (pubWasVotedFor || mainAttendance.hasAttendanceData),
+        allowShowVoters: show_voters && (venueWasVotedFor || mainAttendance.hasAttendanceData),
         etaMap: mainEtaMap,
         ...mainAttendance,
     };
 
-    const restaurantSource = restaurant_id ? pub_parameters[restaurant_id] : null;
+    const restaurantSource = restaurant_id ? venues[restaurant_id] : null;
     /** @type {RestaurantVenueViewModel | null} */
     let restaurantVenue = null;
     if (restaurantSource) {
@@ -120,8 +120,8 @@ export function buildCurrentEventViewModel({
             id: restaurant_id,
             name: restaurantSource.name,
             restaurantTime: restaurant_time,
-            website: restaurantSource.web_site,
-            image: restaurantSource.pubImage,
+            website: restaurantSource.website,
+            image: restaurantSource.image,
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
             allowShowVoters: show_voters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),

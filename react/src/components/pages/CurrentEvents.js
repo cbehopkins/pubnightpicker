@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { NavLink, useSearchParams } from "react-router-dom";
 import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
-import usePubs from "../../hooks/usePubs";
+import useVenues from "../../hooks/useVenues";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
@@ -39,8 +39,8 @@ function ensureAbsoluteUrl(url) {
 import { notifyError } from "../../utils/notify";
 import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
 
-/** @typedef {{ name?: string, web_site?: string, pubImage?: string, address?: string }} PubParametersEntry */
-/** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
+/** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
+/** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
 /** @typedef {{ selected?: string, restaurant?: string | null, restaurant_time?: string | null, date?: string }} EventPollValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, EventPollValue]> }} SortedPollCollection */
 
@@ -82,9 +82,9 @@ function normalizeImageUrl(value) {
 }
 
 /**
- * @param {{ value: EventPollValue, pub_parameters: PubParametersMap, poll_id: string, can_chat: boolean }} props
+ * @param {{ value: EventPollValue, venues: VenueMap, poll_id: string, can_chat: boolean }} props
  */
-function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
+function PastEvent({ value, venues, poll_id, can_chat }) {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => {
@@ -96,29 +96,29 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const pubEntry = pub_parameters[value.selected];
-  const pubName = pubEntry?.name;
-  const pubWebsite = pubEntry?.web_site;
-  const pubImage = normalizeImageUrl(pubEntry?.pubImage);
-  const userEta = (currUserId && pubEntry && attendance[value.selected]?.eta?.[currUserId]) || null;
+  const venue = venues[value.selected];
+  const venueName = venue?.name;
+  const venueWebsite = venue?.website;
+  const venueImage = normalizeImageUrl(venue?.image);
+  const userEta = (currUserId && venue && attendance[value.selected]?.eta?.[currUserId]) || null;
 
   useEffect(() => {
     setHasImageLoadError(false);
-  }, [pubImage]);
+  }, [venueImage]);
 
-  if (!pubEntry) {
+  if (!venue) {
     return <div></div>;
   }
 
-  const shouldShowImage = pubImage && !hasImageLoadError;
+  const shouldShowImage = venueImage && !hasImageLoadError;
 
   return (
     <div className="col">
       <div className="card shadow-sm h-100">
         {shouldShowImage ? (
           <img
-            src={pubImage}
-            alt={`Photo of ${pubName}`}
+            src={venueImage}
+            alt={`Photo of ${venueName}`}
             className={`card-img-top ${styles.pastEventImage}`}
             onError={() => setHasImageLoadError(true)}
           />
@@ -131,16 +131,16 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
         )}
         <div className="card-body d-flex flex-column">
           <h5 className="card-title mb-2">
-            {pubWebsite ? (
+            {venueWebsite ? (
               <a
-                href={ensureAbsoluteUrl(pubWebsite)}
+                href={ensureAbsoluteUrl(venueWebsite)}
                 target="_blank"
                 rel="noreferrer"
               >
-                {pubName}
+                {venueName}
               </a>
             ) : (
-              pubName
+              venueName
             )}
           </h5>
           {userEta && currUserId && (
@@ -195,7 +195,7 @@ export function PastEvents() {
 
   const hasPreviousPage = cursorTrail.length > 0;
   const pageIndex = cursorTrail.length;
-  const pub_parameters = usePubs();
+  const venues = useVenues();
   const sortedPollsByDate = [...pollData.sortedByDate(true)];
   const canChat = useRole("canChat");
   const canViewStats = useAdmin();
@@ -243,7 +243,7 @@ export function PastEvents() {
           <div className="col-md-8">
             <h1 className="h2 mb-2">Past Meets</h1>
             <p className="text-body-secondary mb-0">
-              Browse previous pub nights in an album-style view.
+              Browse previous Meets in an album-style view.
             </p>
           </div>
           <div className="col-md-4">
@@ -275,7 +275,7 @@ export function PastEvents() {
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
           {sortedPollsByDate.map(([key, value]) => {
-            return <PastEvent key={key} poll_id={key} value={value} pub_parameters={pub_parameters} can_chat={canChat} />;
+            return <PastEvent key={key} poll_id={key} value={value} venues={venues} can_chat={canChat} />;
           })}
         </div>
 
@@ -308,11 +308,11 @@ export function PastEvents() {
 /**
  * @param {{
  *  poll_id: string,
- *  current_pub_id: string,
+ *  currentVenueId: string,
  *  restaurant_id: string | null | undefined,
  *  restaurant_time: string | null | undefined,
  *  date: string,
- *  pub_parameters: PubParametersMap,
+ *  venues: VenueMap,
  *  can_reschedule: boolean,
  *  can_delete_event: boolean,
  *  can_chat: boolean,
@@ -323,11 +323,11 @@ export function PastEvents() {
  */
 function CurrentEvent({
   poll_id,
-  current_pub_id,
+  currentVenueId,
   restaurant_id,
   restaurant_time,
   date,
-  pub_parameters,
+  venues,
   can_reschedule,
   can_delete_event,
   can_chat,
@@ -349,10 +349,10 @@ function CurrentEvent({
     canReadProtectedEventData
   );
   const eventViewModel = buildCurrentEventViewModel({
-    current_pub_id,
+    currentVenueId,
     restaurant_id,
     restaurant_time,
-    pub_parameters,
+    venues,
     votes,
     attendance,
     currUserId: normalizedUserId,
@@ -527,7 +527,7 @@ function CurrentEvent({
                 disabled={!isOnline}
                 title={isOnline ? undefined : "Unavailable offline"}
                 onClick={() =>
-                  on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
+                  on_open_reschedule(poll_id, currentVenueId, restaurant_id, restaurant_time)
                 }
               >
                 Reschedule Meet
@@ -580,12 +580,12 @@ function CurrentEvents() {
   const privateData = useUserPrivateData(currUserId);
   const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
   const pollData = useFutureCompletePolls();
-  const pub_parameters = usePubs();
+  const venues = useVenues();
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
   const canChat = useRole("canChat");
-  const rescheduleState = useReschedulePoll(pub_parameters, canReschedule);
+  const rescheduleState = useReschedulePoll(venues, canReschedule);
 
   return (
     <section className="py-4 py-md-5">
@@ -593,7 +593,7 @@ function CurrentEvents() {
         <div className="mb-4">
           <h1 className="h2 mb-1">Current Meets</h1>
           <p className="text-body-secondary mb-0">
-            Upcoming pub night details and attendance tracking.
+            Upcoming Meet details and attendance tracking.
           </p>
         </div>
         {rescheduleState.isRescheduling && (
@@ -616,11 +616,11 @@ function CurrentEvents() {
             <CurrentEvent
               key={key}
               poll_id={key}
-              current_pub_id={value.selected}
+              currentVenueId={value.selected}
               restaurant_id={value.restaurant}
               restaurant_time={value.restaurant_time}
               date={value.date}
-              pub_parameters={pub_parameters}
+              venues={venues}
               can_reschedule={canReschedule}
               can_delete_event={canDeleteEvent}
               can_chat={canChat}

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useWinningVenueStats from "./useWinningVenueStats";
-import usePubs from "./usePubs";
+import useVenues from "./useVenues";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 import { getDateWeeksAgo } from "../utils/autopoplateFiltering";
 import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
@@ -30,7 +30,7 @@ import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
  * @returns {AutopopulateVenues}
  */
 export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
-    const allVenues = usePubs();
+    const allVenues = useVenues();
 
     // Base window: 4 weeks
     const baselineWeeks = 4;

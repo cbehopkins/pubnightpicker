@@ -2,7 +2,7 @@
 
 import styles from "./ActivePolls.module.css";
 import usePolls from "../../hooks/usePolls";
-import usePubs from "../../hooks/usePubs";
+import useVenues from "../../hooks/useVenues";
 import ActivePoll from "../UI/ActivePoll";
 import NewPoll from "../UI/NewPoll";
 import useRole from "../../hooks/useRole";
@@ -27,11 +27,11 @@ function ActivePolls() {
   const canCompletePoll = useRole("canCompletePoll");
 
   const pollData = toPollData(usePolls());
-  const pubs = usePubs();
+  const venues = useVenues();
   const currentPollDates = pollData.dates;
 
   // Get poll completion workflow hooks
-  const completePollsState = useCompletePolls(pollData, pubs, canCompletePoll);
+  const completePollsState = useCompletePolls(pollData, venues, canCompletePoll);
 
   const styleToUse = mobile ? styles.poll_mobile : styles.poll;
 
@@ -59,7 +59,7 @@ function ActivePolls() {
         <div className={styleToUse} key={id}>
           <ActivePoll
             poll_id={id}
-            pub_parameters={pubs}
+            pub_parameters={venues}
             poll_data={poll}
             on_complete={completePollsState.completeHandler}
             mobile={mobile}

@@ -4,9 +4,9 @@ import { buildCurrentEventViewModel, getDedupedVotesForVenue } from "./currentEv
 describe("currentEventViewModel", () => {
   it("returns null when the selected venue is missing", () => {
     const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
+      currentVenueId: "venue-1",
       restaurant_id: undefined,
-      pub_parameters: {},
+      venues: {},
       votes: {},
       attendance: {},
       currUserId: "user-1",
@@ -18,12 +18,12 @@ describe("currentEventViewModel", () => {
 
   it("builds the main venue view model with deduped votes and attendance state", () => {
     const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
+      currentVenueId: "venue-1",
       restaurant_id: undefined,
-      pub_parameters: {
+      venues: {
         "venue-1": {
           name: "The Maypole",
-          web_site: "https://example.com/maypole",
+          website: "https://example.com/maypole",
           address: "8 Portugal Place",
         },
       },
@@ -51,10 +51,10 @@ describe("currentEventViewModel", () => {
 
   it("builds a separate restaurant view model when restaurant is present", () => {
     const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
+      currentVenueId: "venue-1",
       restaurant_id: "venue-2",
       restaurant_time: "18:30",
-      pub_parameters: {
+      venues: {
         "venue-1": { name: "The Maypole" },
         "venue-2": { name: "Bistro 12", address: "12 Market Street" },
       },
@@ -93,9 +93,9 @@ describe("currentEventViewModel", () => {
 
   it("applies global attendance sentinel to the selected venue", () => {
     const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
+      currentVenueId: "venue-1",
       restaurant_id: undefined,
-      pub_parameters: {
+      venues: {
         "venue-1": {
           name: "The Maypole",
         },

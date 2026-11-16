@@ -5,7 +5,7 @@ import { NavLink, useSearchParams } from "react-router-dom";
 import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
 import StatsWindowModal from "../UI/StatsWindowModal";
-import usePubs from "../../hooks/usePubs";
+import useVenues from "../../hooks/useVenues";
 import useAttendanceVenueStats from "../../hooks/useAttendanceVenueStats";
 import { buildVenueCountRows, splitRankedStatRows } from "../../utils/statsRanking";
 import StatRankingList from "../UI/StatRankingList";
@@ -27,7 +27,7 @@ export function AttendanceVenueStatsPage() {
     const [isWindowModalOpen, setIsWindowModalOpen] = useState(false);
     const [venueTypeFilter, setVenueTypeFilter] = useState(DEFAULT_VENUE_TYPE);
 
-    const pubParameters = usePubs();
+    const venues = useVenues();
     const {
         countsByVenueId,
         lastDateByVenueId,
@@ -41,9 +41,9 @@ export function AttendanceVenueStatsPage() {
         () => buildVenueCountRows({
             countsByVenueId,
             lastDateByVenueId,
-            venues: pubParameters,
+            venues,
         }),
-        [countsByVenueId, lastDateByVenueId, pubParameters]
+        [countsByVenueId, lastDateByVenueId, venues]
     );
     const filteredRankedRows = useMemo(() => {
         if (venueTypeFilter === "all") {
