@@ -137,7 +137,7 @@ describe("ActivePolls", () => {
     expect(activePollPropsMock).toHaveBeenLastCalledWith(expect.objectContaining({
       poll_id: "poll-1",
       poll_data: meet,
-      pub_parameters: venues,
+      venues,
     }));
   });
 

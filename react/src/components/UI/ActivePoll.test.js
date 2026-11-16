@@ -43,13 +43,13 @@ vi.mock("./PollVote", () => ({
     },
 }));
 
-vi.mock("./PubOptions", () => ({
-    default: ({ pub_parameters, selectPubHandler }) => (
-        <select data-testid="pub-options-select" defaultValue="" onChange={selectPubHandler}>
+vi.mock("./VenueOptions", () => ({
+    default: ({ venues, selectVenueHandler }) => (
+        <select data-testid="pub-options-select" defaultValue="" onChange={selectVenueHandler}>
             <option value="">Select a venue to add here</option>
-            {Object.keys(pub_parameters).map((id) => (
+            {Object.keys(venues).map((id) => (
                 <option key={id} value={id}>
-                    {pub_parameters[id]?.name || id}
+                    {venues[id]?.name || id}
                 </option>
             ))}
         </select>
@@ -68,7 +68,7 @@ function renderComponent(overrides = {}) {
     return render(
         <ActivePoll
             poll_id="poll-1"
-            pub_parameters={{
+            venues={{
                 v1: { name: "Venue 1", venueType: "pub", banned: true },
                 v2: { name: "Venue 2", venueType: "pub" },
                 v3: { name: "Venue 3", venueType: "pub" },

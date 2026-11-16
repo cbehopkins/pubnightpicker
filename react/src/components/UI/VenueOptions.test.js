@@ -2,17 +2,17 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import PubOptions from "./PubOptions";
+import VenueOptions from "./VenueOptions";
 
-describe("PubOptions", () => {
+describe("VenueOptions", () => {
     it("renders banned venues with highlighted text color", () => {
         render(
-            <PubOptions
-                pub_parameters={{
+            <VenueOptions
+                venues={{
                     a: { name: "Anchor Inn" },
                     b: { name: "Broken Keg", banned: true },
                 }}
-                selectPubHandler={vi.fn()}
+                selectVenueHandler={vi.fn()}
             />
         );
 
@@ -25,12 +25,12 @@ describe("PubOptions", () => {
 
     it("still keeps venues sorted by name", () => {
         render(
-            <PubOptions
-                pub_parameters={{
+            <VenueOptions
+                venues={{
                     z: { name: "Zebra Arms", banned: true },
                     a: { name: "Anchor Inn" },
                 }}
-                selectPubHandler={vi.fn()}
+                selectVenueHandler={vi.fn()}
             />
         );
 

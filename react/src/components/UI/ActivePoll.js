@@ -2,8 +2,8 @@
 
 import { useCallback, useState } from "react";
 import PollVote from "./PollVote";
-import PubOptions from "./PubOptions";
-import PubFilter, { antiVenueParams } from "./PubFilter";
+import VenueOptions from "./VenueOptions";
+import VenueFilter, { antiVenueParams } from "./VenueFilter";
 import Button from "./Button";
 import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
@@ -21,8 +21,8 @@ import EventChatModal from "../pages/EventChatModal";
 
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
 
-/** @typedef {{ name?: string, venueType?: string, [key: string]: unknown }} PubParametersEntry */
-/** @typedef {Record<string, PubParametersEntry | undefined>} PubParametersMap */
+/** @typedef {{ name?: string, venueType?: string, [key: string]: unknown }} VenueParametersEntry */
+/** @typedef {Record<string, VenueParametersEntry | undefined>} VenueParametersMap */
 /** @typedef {Record<string, boolean>} FilterMap */
 /** @typedef {{ venues?: Record<string, unknown>, date?: string }} MeetData */
 
@@ -42,48 +42,44 @@ function anyEntryTrue(anObject) {
 }
 
 /**
- * @param {PubParametersMap} pub_parameters
- * @param {Record<string, unknown> | null | undefined} current_pubs
- * @param {FilterMap} pubFilters
- * @param {FilterMap} pubAntiFilters
+ * @param {VenueParametersMap} venues
+ * @param {Record<string, unknown> | null | undefined} currentVenues
+ * @param {FilterMap} venueFilters
+ * @param {FilterMap} venueAntiFilters
  * @param {string} venueTypeFilter
- * @returns {PubParametersMap}
+ * @returns {VenueParametersMap}
  */
-function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, venueTypeFilter) {
-    const allAvailablePubs = new Set(Object.keys(pub_parameters || {}));
-    const currentlySelectedPubs = new Set(Object.keys(current_pubs || {}));
-    const availablePubs = [...allAvailablePubs].filter((pubId) => {
-        // Remove any pubs we've already selected from the list
-        if (currentlySelectedPubs.has(pubId)) {
+function filterVenueList(venues, currentVenues, venueFilters, venueAntiFilters, venueTypeFilter) {
+    const allAvailableVenues = new Set(Object.keys(venues || {}));
+    const currentlySelectedVenues = new Set(Object.keys(currentVenues || {}));
+    const availableVenues = [...allAvailableVenues].filter((venueId) => {
+        if (currentlySelectedVenues.has(venueId)) {
             return false;
         }
 
         if (venueTypeFilter !== "all") {
-            const venueType = pub_parameters[pubId]?.venueType || DEFAULT_VENUE_TYPE;
+            const venueType = venues[venueId]?.venueType || DEFAULT_VENUE_TYPE;
             if (venueType !== venueTypeFilter) {
                 return false;
             }
         }
 
-        // Remove any pubs with a filter that is set to true
-        // Where the pub in question also has that set to true
-        const pubParams = pub_parameters[pubId] || {};
-        for (const [key, value] of Object.entries(pubFilters)) {
+        const venueParams = venues[venueId] || {};
+        for (const [key, value] of Object.entries(venueFilters)) {
             if (value) {
-                if (!(Object.hasOwn(pubParams, key) && pubParams[key])) {
+                if (!(Object.hasOwn(venueParams, key) && venueParams[key])) {
                     return false;
                 }
             }
         }
 
-        // If there are no anti-filters enabled, this pub is accepted.
-        if (!anyEntryTrue(pubAntiFilters)) {
+        if (!anyEntryTrue(venueAntiFilters)) {
             return true;
         }
 
-        for (const [key, value] of Object.entries(pubAntiFilters)) {
+        for (const [key, value] of Object.entries(venueAntiFilters)) {
             if (value) {
-                if (Object.hasOwn(pubParams, key) && pubParams[key]) {
+                if (Object.hasOwn(venueParams, key) && venueParams[key]) {
                     return false;
                 }
             }
@@ -92,26 +88,26 @@ function mungePubList(pub_parameters, current_pubs, pubFilters, pubAntiFilters, 
         return true;
     });
 
-    const filteredPubs = availablePubs.reduce((object, key) => {
-        object[key] = pub_parameters[key];
+    const filteredVenues = availableVenues.reduce((object, key) => {
+        object[key] = venues[key];
         return object;
-    }, /** @type {PubParametersMap} */({}));
+    }, /** @type {VenueParametersMap} */({}));
 
-    return filteredPubs;
+    return filteredVenues;
 }
 
 /**
  * @param {{
  *  poll_id: string,
- *  pub_parameters: PubParametersMap,
+ *  venues: VenueParametersMap,
  *  poll_data: MeetData,
- *  on_complete: (pubId: string, pubName: string, pollId: string) => void,
+ *  on_complete: (venueId: string, venueName: string, pollId: string) => void,
  *  mobile?: boolean,
  * }} props
  */
-function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile }) {
+function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
     const canDeletePoll = useRole("canCreatePoll");
-    const canAddPub = useRole("canAddPubToPoll");
+    const canAddVenue = useRole("canAddPubToPoll");
     const canChat = useRole("canChat");
     const { isOnline } = useOnlineStatus();
     const [isChatOpen, setIsChatOpen] = useState(false);
@@ -125,33 +121,33 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
     } = useAutopopulateVenueSelector(poll_id, poll_data.venues);
     const isAutopopulateEnabled = mostVisited.length > 0 || leastVisited.length > 0 || randomVenues.length > 0;
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
-    const [pubFilters, setPubFilters] = useState({});
+    const [venueFilters, setVenueFilters] = useState({});
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
-    const [pubAntiFilters, setPubAntiFilters] = useState({});
+    const [venueAntiFilters, setVenueAntiFilters] = useState({});
     /** @type {[VenueType, import("react").Dispatch<import("react").SetStateAction<VenueType>>]} */
     const [venueTypeFilter, setVenueTypeFilter] = useState("all");
 
-    const [selectedPub, setSelectedPub] = useState("");
+    const [selectedVenue, setSelectedVenue] = useState("");
     const [manualAddWarning, setManualAddWarning] = useState("");
     /** @type {(event: import("react").ChangeEvent<HTMLSelectElement>) => void} */
-    const selectPubHandler = useCallback(
+    const selectVenueHandler = useCallback(
         (event) => {
             event.preventDefault();
-            setSelectedPub(event.target.value);
+            setSelectedVenue(event.target.value);
             setManualAddWarning("");
         },
-        [setSelectedPub, setManualAddWarning]
+        [setSelectedVenue, setManualAddWarning]
     );
 
     /** @type {(event: import("react").MouseEvent<HTMLButtonElement>) => Promise<void>} */
-    const addNewPubToPoll = useCallback(
+    const addNewVenueToPoll = useCallback(
         async (event) => {
             event.preventDefault();
             try {
-                await addVenueToMeet(selectedPub, poll_id, pub_parameters, poll_data.date);
-                if (pub_parameters[selectedPub]?.banned) {
-                    const selectedPubName = pub_parameters[selectedPub]?.name || "Selected venue";
-                    setManualAddWarning(`${selectedPubName} is marked as banned. Please only keep it in the poll if you really need to.`);
+                await addVenueToMeet(selectedVenue, poll_id, venues, poll_data.date);
+                if (venues[selectedVenue]?.banned) {
+                    const selectedVenueName = venues[selectedVenue]?.name || "Selected venue";
+                    setManualAddWarning(`${selectedVenueName} is marked as banned. Please only keep it in the poll if you really need to.`);
                     return;
                 }
 
@@ -160,14 +156,14 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                 notifyError(getUserFacingErrorMessage(error, "Unable to add the venue to this poll."));
             }
         },
-        [selectedPub, poll_id, pub_parameters, poll_data.date]
+        [selectedVenue, poll_id, venues, poll_data.date]
     );
 
     const { handleAutopopulate } = useAutopopulateAction({
         pollId: poll_id,
         pollDate: poll_data.date,
-        pollPubs: poll_data.venues,
-        pubParameters: pub_parameters,
+        pollVenues: poll_data.venues,
+        venueParameters: venues,
         mostVisited,
         leastVisited,
         randomVenues,
@@ -186,11 +182,11 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
         [poll_id]
     );
 
-    const filteredPubOptions = mungePubList(
-        pub_parameters,
+    const filteredVenueOptions = filterVenueList(
+        venues,
         poll_data.venues,
-        pubFilters,
-        pubAntiFilters,
+        venueFilters,
+        venueAntiFilters,
         venueTypeFilter
     );
 
@@ -212,20 +208,20 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                         </Button>
                     )}
                 </div>
-                {canAddPub && (
-                    <PubFilter
+                {canAddVenue && (
+                    <VenueFilter
                         title="Filter venue list to contain only items that have:"
-                        set_pub_filters={setPubFilters}
+                        setVenueFilters={setVenueFilters}
                     />
                 )}
-                {canAddPub && (
-                    <PubFilter
+                {canAddVenue && (
+                    <VenueFilter
                         title="Filter venue list to contain only items that do not have:"
-                        set_pub_filters={setPubAntiFilters}
-                        pub_params={antiVenueParams}
+                        setVenueFilters={setVenueAntiFilters}
+                        venueParams={antiVenueParams}
                     />
                 )}
-                {canAddPub && (
+                {canAddVenue && (
                     <div className={styles.filterRow}>
                         <label htmlFor={`venue-type-filter-${poll_id}`}>Filter by venue type:</label>
                         <select
@@ -259,10 +255,10 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                             Delete Poll
                         </Button>
                     )}
-                    {canAddPub && (
+                    {canAddVenue && (
                         <>
-                            <PubOptions pub_parameters={filteredPubOptions} selectPubHandler={selectPubHandler} />
-                            <Button type="button" onClick={addNewPubToPoll}>
+                            <VenueOptions venues={filteredVenueOptions} selectVenueHandler={selectVenueHandler} />
+                            <Button type="button" onClick={addNewVenueToPoll}>
                                 Add Venue To Poll
                             </Button>
                             {manualAddWarning && (

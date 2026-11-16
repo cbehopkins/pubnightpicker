@@ -26,10 +26,10 @@ import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
  * two categories expose at least three unique venues, or the full ranked list is exhausted.
  *
  * @param {string} pollId - Poll ID (for logging)
- * @param {Record<string, unknown> | undefined} currentPubIds - Venues already on the poll (to exclude)
+ * @param {Record<string, unknown> | undefined} currentVenueIds - Venues already on the poll (to exclude)
  * @returns {AutopopulateVenues}
  */
-export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
+export default function useAutopopulateVenueSelector(pollId, currentVenueIds) {
     const allVenues = useVenues();
 
     // Base window: 4 weeks
@@ -69,15 +69,14 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
                 lastDateByVenueId[row.id] = row.lastWonDate;
             }
 
-            // Convert currentPubIds to Set for fast lookup
-            const currentPubIdSet = new Set(Object.keys(currentPubIds || {}));
+            const currentVenueIdSet = new Set(Object.keys(currentVenueIds || {}));
 
             // Keep the recent-visit exclusion fixed at 4 weeks.
             const isVenueViable = (row) => {
                 const lastDate = lastDateByVenueId[row.id];
                 const isRecentlyVisited = Boolean(lastDate && lastDate >= baselineCutoffDate);
                 const isBanned = Boolean(allVenues[row.id]?.banned);
-                return !isRecentlyVisited && !currentPubIdSet.has(row.id) && !isBanned;
+                return !isRecentlyVisited && !currentVenueIdSet.has(row.id) && !isBanned;
             };
 
             const finalRandom = pubOnlyRankedRows.filter(isVenueViable);
@@ -125,7 +124,7 @@ export default function useAutopopulateVenueSelector(pollId, currentPubIds) {
             setRandomVenues([]);
             setError("Unable to compute autopopulate venues right now.");
         }
-    }, [meets, pollsLoading, pollsError, allVenues, currentPubIds, baselineCutoffDate]);
+    }, [meets, pollsLoading, pollsError, allVenues, currentVenueIds, baselineCutoffDate]);
 
     return {
         mostVisited,

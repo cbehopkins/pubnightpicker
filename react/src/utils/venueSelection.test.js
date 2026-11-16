@@ -92,7 +92,7 @@ describe("getDefaultRestaurantTime", () => {
 });
 
 describe("createCompletingPollState — pub with food", () => {
-  it("sets pubHasFood true and does not auto-select a restaurant even when one is on the poll", () => {
+  it("sets venueHasFood true and does not auto-select a restaurant even when one is on the poll", () => {
     const state = createCompletingPollState(
       "venue-pub-food",
       "The Oak",
@@ -106,7 +106,7 @@ describe("createCompletingPollState — pub with food", () => {
       systemVenues,
     );
 
-    expect(state.pubHasFood).toBe(true);
+    expect(state.venueHasFood).toBe(true);
     expect(state.restaurantId).toBe("");
     expect(state.restaurantTime).toBe("");
     expect(getRestaurantIdForCompletion(state)).toBeUndefined();
@@ -128,7 +128,7 @@ describe("createCompletingPollState — pub without food", () => {
       systemVenues,
     );
 
-    expect(state.pubHasFood).toBe(false);
+    expect(state.venueHasFood).toBe(false);
     expect(state.restaurantOptions).toEqual([{ id: "venue-restaurant", name: "Pizza Town" }]);
     expect(state.restaurantId).toBe("venue-restaurant");
     expect(state.restaurantTime).toBe("18:30");
@@ -151,7 +151,7 @@ describe("createCompletingPollState — pub without food", () => {
       systemVenues,
     );
 
-    expect(state.pubHasFood).toBe(false);
+    expect(state.venueHasFood).toBe(false);
     expect(state.restaurantId).toBe("");
     expect(state.restaurantTime).toBe("");
     expect(isRestaurantChoiceRequired(state)).toBe(true);
@@ -172,7 +172,7 @@ describe("createCompletingPollState — pub without food", () => {
       systemVenues,
     );
 
-    expect(state.pubHasFood).toBe(false);
+    expect(state.venueHasFood).toBe(false);
     expect(state.restaurantOptions).toEqual([]);
     expect(state.restaurantId).toBe("");
     expect(state.restaurantTime).toBe("");

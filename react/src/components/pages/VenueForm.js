@@ -73,18 +73,6 @@ function formatDateForDisplay(dateStr) {
   }
 }
 
-// Positive parameters about a pub - things you want to search for
-const PubParams = {
-  parking: "Parking",
-  food: "Food",
-  dog_friend: "Dog Friendly",
-  beer_gerden: "Beer Garden",
-  out_of_town: "Out Of Town (Cambridge)",
-  banned: "Banned",
-};
-
-// Bad things about a pub, things you want to search for the absence of
-const AntiPubParams = { out_of_town: PubParams.out_of_town };
 const VenueParams = {
   parking: "Parking",
   food: "Food",
@@ -94,9 +82,8 @@ const VenueParams = {
   banned: "Banned",
 };
 
-// Generic checkbox component for pub parameters
 /**
- * @typedef {Object} PubCheckboxProps
+ * @typedef {Object} VenueCheckboxProps
  * @property {string} name
  * @property {string} label
  * @property {string=} label_mod
@@ -104,8 +91,8 @@ const VenueParams = {
  * @property {(event: import("react").ChangeEvent<HTMLInputElement>, name: string) => void=} onChange
  */
 
-/** @param {PubCheckboxProps} props */
-function PubCheckbox({ name, label, label_mod, venueObject, onChange }) {
+/** @param {VenueCheckboxProps} props */
+function VenueCheckbox({ name, label, label_mod, venueObject, onChange }) {
   const value = Boolean(venueObject && Object.hasOwn(venueObject, name) && venueObject[name]);
 
   // We can have the same name in multiple filter contexts
@@ -830,7 +817,7 @@ function VenueForm({ method, venueObject }) {
                         return null;
                       }
 
-                      return <PubCheckbox key={key} name={key} label={value} venueObject={venue} />;
+                      return <VenueCheckbox key={key} name={key} label={value} venueObject={venue} />;
                     })}
                   </tbody>
                 </Table>
@@ -844,4 +831,4 @@ function VenueForm({ method, venueObject }) {
 }
 
 export default VenueForm;
-export { AntiPubParams, PubParams, PubCheckbox, VenueParams };
+export { VenueParams };

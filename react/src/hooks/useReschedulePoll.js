@@ -8,12 +8,12 @@ import {
   getDefaultRestaurantTime,
 } from "../utils/venueSelection";
 
-function createReschedulingPollState(pollId, currentPubId, restaurantId, restaurantTime, venues) {
+function createReschedulingPollState(pollId, currentVenueId, restaurantId, restaurantTime, venues) {
   return {
     pollId,
-    currentPubId,
-    selectedPubId: currentPubId || "",
-    pubOptions: getAllMainVenueOptions(venues),
+    currentVenueId,
+    selectedVenueId: currentVenueId || "",
+    venueOptions: getAllMainVenueOptions(venues),
     restaurantOptions: getAllRestaurantVenues(venues),
     restaurantId: restaurantId || "",
     restaurantTime: getDefaultRestaurantTime(restaurantId, restaurantTime || ""),
@@ -23,17 +23,17 @@ function createReschedulingPollState(pollId, currentPubId, restaurantId, restaur
 export function useReschedulePoll(venues, canReschedule) {
   const [reschedulingPoll, setReschedulingPoll] = useState(null);
 
-  const openRescheduleModal = useCallback((pollId, currentPubId, restaurantId, restaurantTime) => {
+  const openRescheduleModal = useCallback((pollId, currentVenueId, restaurantId, restaurantTime) => {
     if (!canReschedule) {
       return;
     }
 
     setReschedulingPoll(
-      createReschedulingPollState(pollId, currentPubId, restaurantId, restaurantTime, venues)
+      createReschedulingPollState(pollId, currentVenueId, restaurantId, restaurantTime, venues)
     );
   }, [canReschedule, venues]);
 
-  const setSelectedPub = useCallback((pubId) => {
+  const setSelectedVenue = useCallback((venueId) => {
     setReschedulingPoll((prev) => {
       if (!prev) {
         return prev;
@@ -41,7 +41,7 @@ export function useReschedulePoll(venues, canReschedule) {
 
       return {
         ...prev,
-        selectedPubId: pubId,
+        selectedVenueId: venueId,
       };
     });
   }, []);
@@ -78,15 +78,15 @@ export function useReschedulePoll(venues, canReschedule) {
   }, []);
 
   const saveReschedule = useCallback(async () => {
-    if (!canReschedule || !reschedulingPoll?.pollId || !reschedulingPoll?.selectedPubId) {
+    if (!canReschedule || !reschedulingPoll?.pollId || !reschedulingPoll?.selectedVenueId) {
       return;
     }
 
     try {
       await reschedule_a_poll(
         reschedulingPoll.pollId,
-        reschedulingPoll.currentPubId,
-        reschedulingPoll.selectedPubId,
+        reschedulingPoll.currentVenueId,
+        reschedulingPoll.selectedVenueId,
         reschedulingPoll.restaurantId || undefined,
         reschedulingPoll.restaurantId ? reschedulingPoll.restaurantTime : undefined,
       );
@@ -96,20 +96,20 @@ export function useReschedulePoll(venues, canReschedule) {
     }
   }, [canReschedule, reschedulingPoll]);
 
-  const selectedPubId = reschedulingPoll?.selectedPubId || "";
-  const pubHasFood = Boolean(selectedPubId && venues?.[selectedPubId]?.food);
+  const selectedVenueId = reschedulingPoll?.selectedVenueId || "";
+  const venueHasFood = Boolean(selectedVenueId && venues?.[selectedVenueId]?.food);
 
   return {
     reschedulingPoll,
-    selectedPubId,
-    pubHasFood,
-    pubOptions: reschedulingPoll?.pubOptions || [],
+    selectedVenueId,
+    venueHasFood,
+    venueOptions: reschedulingPoll?.venueOptions || [],
     restaurantOptions: reschedulingPoll?.restaurantOptions || [],
     chosenRestaurantId: reschedulingPoll?.restaurantId || "",
     restaurantTime: reschedulingPoll?.restaurantTime || "",
     isRescheduling: Boolean(reschedulingPoll),
     openRescheduleModal,
-    setSelectedPub,
+    setSelectedVenue,
     setRestaurantChoice,
     setRestaurantTime,
     cancelReschedule,

@@ -2,21 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./NewVenue";
 
 const {
-    addNewPubMock,
-    modifyPubMock,
+    addNewVenueMock,
+    modifyVenueMock,
     notifyErrorMock,
 } = vi.hoisted(() => {
     return {
-        addNewPubMock: vi.fn(),
-        modifyPubMock: vi.fn(),
+        addNewVenueMock: vi.fn(),
+        modifyVenueMock: vi.fn(),
         notifyErrorMock: vi.fn(),
     };
 });
 
-vi.mock("../../dbtools/pubs", () => {
+vi.mock("../../dbtools/venues", () => {
     return {
-        addNewPub: addNewPubMock,
-        modifyPub: modifyPubMock,
+        addNewVenue: addNewVenueMock,
+        modifyVenue: modifyVenueMock,
     };
 });
 
@@ -39,8 +39,8 @@ function createRequest(method, formValues) {
 
 describe("NewVenue action", () => {
     beforeEach(() => {
-        addNewPubMock.mockReset();
-        modifyPubMock.mockReset();
+        addNewVenueMock.mockReset();
+        modifyVenueMock.mockReset();
         notifyErrorMock.mockReset();
     });
 
@@ -48,22 +48,22 @@ describe("NewVenue action", () => {
         const response = await action({
             request: createRequest("POST", {
                 name: "Test Pub",
-                web_site: "https://example.com",
+                website: "https://example.com",
                 map: "https://maps.example.com",
                 address: "1 Test Street",
-                pubImage: "https://img.example.com/pub.png",
+                image: "https://img.example.com/pub.png",
             }),
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledTimes(1);
-        expect(addNewPubMock).toHaveBeenCalledWith(expect.objectContaining({ venueType: "pub" }));
-        expect(modifyPubMock).not.toHaveBeenCalled();
+        expect(addNewVenueMock).toHaveBeenCalledTimes(1);
+        expect(addNewVenueMock).toHaveBeenCalledWith(expect.objectContaining({ venueType: "pub" }));
+        expect(modifyVenueMock).not.toHaveBeenCalled();
         expect(response.status).toBe(302);
         expect(response.headers.get("Location")).toBe("/venues");
     });
 
-    it("preserves domain form fields in the legacy create request", async () => {
+    it("preserves domain form fields in the create request", async () => {
         await action({
             request: createRequest("POST", {
                 name: "Venue",
@@ -76,12 +76,12 @@ describe("NewVenue action", () => {
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledWith(expect.objectContaining({
-            web_site: "https://example.com",
-            pubImage: "https://example.com/image.png",
-            dog_friend: true,
-            beer_gerden: true,
-            out_of_town: true,
+        expect(addNewVenueMock).toHaveBeenCalledWith(expect.objectContaining({
+            website: "https://example.com",
+            image: "https://example.com/image.png",
+            dogFriendly: true,
+            beerGarden: true,
+            outOfTown: true,
         }));
     });
 
@@ -94,7 +94,7 @@ describe("NewVenue action", () => {
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledWith(
+        expect(addNewVenueMock).toHaveBeenCalledWith(
             expect.objectContaining({ venueType: "restaurant", food: true })
         );
     });
@@ -108,7 +108,7 @@ describe("NewVenue action", () => {
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledWith(
+        expect(addNewVenueMock).toHaveBeenCalledWith(
             expect.objectContaining({ venueType: "pub", food: false })
         );
     });
@@ -127,7 +127,7 @@ describe("NewVenue action", () => {
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledWith(
+        expect(addNewVenueMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 venueType: "event",
                 recurrence: expect.objectContaining({
@@ -155,7 +155,7 @@ describe("NewVenue action", () => {
             params: {},
         });
 
-        expect(addNewPubMock).toHaveBeenCalledWith(
+        expect(addNewVenueMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 venueType: "event",
                 recurrence: expect.objectContaining({
@@ -187,7 +187,7 @@ describe("NewVenue action", () => {
         };
         const editTokens = { name: "signed-name-baseline", website_url: "signed-website-baseline" };
         const savedVenue = { id: "pub-123", name: "Updated Pub", venue_type: "pub" };
-        modifyPubMock.mockResolvedValueOnce(savedVenue);
+        modifyVenueMock.mockResolvedValueOnce(savedVenue);
         const response = await action({
             request: createRequest("PATCH", {
                 name: "Updated Pub",
@@ -204,10 +204,10 @@ describe("NewVenue action", () => {
             params: { venueId: "pub-123" },
         });
 
-        expect(modifyPubMock).toHaveBeenCalledWith(
+        expect(modifyVenueMock).toHaveBeenCalledWith(
             "pub-123",
-            expect.objectContaining({ name: "Updated Pub", web_site: "https://updated.example" }),
-            expect.objectContaining({ name: "Old Pub", web_site: "https://old.example", dog_friend: false }),
+            expect.objectContaining({ name: "Updated Pub", website: "https://updated.example" }),
+            expect.objectContaining({ name: "Old Pub", website: "https://old.example", dogFriendly: false }),
             editTokens,
         );
         expect(response.status).toBe(302);
@@ -219,26 +219,26 @@ describe("NewVenue action", () => {
             request: createRequest("PATCH", {
                 name: "Updated Pub",
                 venueType: "pub",
-                web_site: "",
+                website: "",
                 map: "",
                 address: "",
                 notes: "This should be saved but is currently dropped",
-                pubImage: "",
+                image: "",
                 recurrence_frequency: "none",
-                venue_baseline: { name: "Old Pub", venueType: "pub", web_site: "", map: "", address: "", notes: "Old note", pubImage: "", parking: false, food: false, dog_friend: false, beer_gerden: false, out_of_town: false, banned: false, recurrence: null },
+                venue_baseline: { name: "Old Pub", venueType: "pub", website: "", map: "", address: "", notes: "Old note", image: "", parking: false, food: false, dogFriendly: false, beerGarden: false, outOfTown: false, banned: false, recurrence: null },
                 edit_tokens: { name: "name-token", notes: "notes-token" },
             }),
             params: { venueId: "pub-123" },
         });
 
-        expect(modifyPubMock).toHaveBeenCalledTimes(1);
-        const payload = modifyPubMock.mock.calls[0][1];
+        expect(modifyVenueMock).toHaveBeenCalledTimes(1);
+        const payload = modifyVenueMock.mock.calls[0][1];
         expect(payload).toHaveProperty("notes", "This should be saved but is currently dropped");
-        expect(modifyPubMock.mock.calls[0][3]).toHaveProperty("notes", "notes-token");
+        expect(modifyVenueMock.mock.calls[0][3]).toHaveProperty("notes", "notes-token");
     });
 
     it("returns field conflicts to the editor without showing a generic toast", async () => {
-        modifyPubMock.mockRejectedValueOnce(Object.assign(new Error("The name changed."), {
+        modifyVenueMock.mockRejectedValueOnce(Object.assign(new Error("The name changed."), {
             code: "field_conflict",
             fields: ["name"],
             currentVenue: { id: "pub-123", name: "Current Name" },
@@ -248,11 +248,11 @@ describe("NewVenue action", () => {
             request: createRequest("PATCH", {
                 name: "Draft Name",
                 venueType: "pub",
-                web_site: "",
+                website: "",
                 map: "",
                 address: "1 Old Street",
                 notes: "",
-                pubImage: "",
+                image: "",
                 recurrence_frequency: "none",
                 venue_baseline: { name: "Old Name" },
                 edit_tokens: { name: "signed-token" },
@@ -264,14 +264,14 @@ describe("NewVenue action", () => {
             conflict: {
                 message: "The name changed.",
                 fields: ["name"],
-                currentVenue: { id: "pub-123", name: "Current Name", venueType: "pub" },
+                currentVenue: { id: "pub-123", name: "Current Name" },
             },
         });
         expect(notifyErrorMock).not.toHaveBeenCalled();
     });
 
     it("shows a user-facing error and aborts redirect on failure", async () => {
-        addNewPubMock.mockRejectedValueOnce(new Error("backend exploded"));
+        addNewVenueMock.mockRejectedValueOnce(new Error("backend exploded"));
 
         const result = await action({
             request: createRequest("POST", {

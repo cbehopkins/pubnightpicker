@@ -318,7 +318,7 @@ export function PastMeets() {
  *  can_chat: boolean,
  *  eta_default_time: string,
  *  show_voters: boolean,
- *  on_open_reschedule: (pollId: string, pubId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
+ *  on_open_reschedule: (pollId: string, venueId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
  * }} props
  */
 function CurrentEvent({
@@ -598,13 +598,13 @@ function CurrentMeets() {
         </div>
         {rescheduleState.isRescheduling && (
           <ReschedulePollModal
-            selectedPubId={rescheduleState.selectedPubId}
-            pubHasFood={rescheduleState.pubHasFood}
-            pubOptions={rescheduleState.pubOptions}
+            selectedVenueId={rescheduleState.selectedVenueId}
+            venueHasFood={rescheduleState.venueHasFood}
+            venueOptions={rescheduleState.venueOptions}
             restaurantOptions={rescheduleState.restaurantOptions}
             chosenRestaurantId={rescheduleState.chosenRestaurantId}
             restaurantTime={rescheduleState.restaurantTime}
-            onPubChange={rescheduleState.setSelectedPub}
+            onVenueChange={rescheduleState.setSelectedVenue}
             onRestaurantChange={rescheduleState.setRestaurantChoice}
             onRestaurantTimeChange={rescheduleState.setRestaurantTime}
             onConfirm={rescheduleState.saveReschedule}

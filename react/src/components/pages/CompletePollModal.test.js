@@ -35,8 +35,8 @@ vi.mock("./VenueAssignmentModal", () => {
 function createProps(overrides = {}) {
     return {
         pollId: "poll-123",
-        pubName: "The Maypole",
-        pubHasFood: false,
+        venueName: "The Maypole",
+        venueHasFood: false,
         availableRestaurants: [],
         restaurantSource: "system",
         chosenRestaurantId: "",
@@ -78,7 +78,7 @@ describe("CompletePollModal", () => {
 
         useNotificationPingMock.mockReturnValue({ status: "ok", runPing });
 
-        render(<CompletePollModal {...createProps({ pubHasFood: true, onConfirm })} />);
+        render(<CompletePollModal {...createProps({ venueHasFood: true, onConfirm })} />);
 
         fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -112,7 +112,7 @@ describe("CompletePollModal", () => {
 
         useNotificationPingMock.mockReturnValue({ status: "error", runPing });
 
-        render(<CompletePollModal {...createProps({ pubHasFood: true, onConfirm })} />);
+        render(<CompletePollModal {...createProps({ venueHasFood: true, onConfirm })} />);
 
         fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -132,7 +132,7 @@ describe("CompletePollModal", () => {
         render(
             <CompletePollModal
                 {...createProps({
-                    pubHasFood: false,
+                    venueHasFood: false,
                     chosenRestaurantId: "",
                     onConfirm,
                 })}
@@ -159,7 +159,7 @@ describe("CompletePollModal", () => {
         render(
             <CompletePollModal
                 {...createProps({
-                    pubHasFood: false,
+                    venueHasFood: false,
                     chosenRestaurantId: "",
                     onConfirm,
                 })}

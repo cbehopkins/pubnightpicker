@@ -7,49 +7,49 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
 
 /**
  * @typedef {Object} BallotActionsResult
- * @property {string[]} pollPubIds
+ * @property {string[]} pollVenueIds
  * @property {() => Promise<void>} setAllAttendanceToCanCome
  * @property {() => Promise<void>} setAllAttendanceToCannotCome
  */
 
 /**
- * Hook that manages batch ballot actions (setting attendance for all pubs at once)
- * Returns handlers for setting all pubs to "can come" or "cannot come"
+ * Hook that manages batch ballot actions (setting attendance for all venues at once)
+ * Returns handlers for setting all venues to "can come" or "cannot come"
  * @param {{ venues?: Record<string, unknown> } | null | undefined} pollData
  * @param {string | null | undefined} currUserId
- * @param {(pubIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} setGlobalAttendanceStatus
+ * @param {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} setGlobalAttendanceStatus
  * @returns {BallotActionsResult}
  */
 export function useBallotActions(pollData, currUserId, setGlobalAttendanceStatus) {
-  // Get all non-global pub IDs
-  const pollPubIds = useMemo(() => {
-    return Object.keys(pollData?.venues || {}).filter((pubId) => pubId !== "any");
+  // Get all non-global venue IDs
+  const pollVenueIds = useMemo(() => {
+    return Object.keys(pollData?.venues || {}).filter((venueId) => venueId !== "any");
   }, [pollData?.venues]);
 
-  // Handler to set all pubs to "can come"
+  // Handler to set all venues to "can come"
   const setAllAttendanceToCanCome = useCallback(async () => {
-    if (!currUserId || pollPubIds.length === 0) {
+    if (!currUserId || pollVenueIds.length === 0) {
       return;
     }
 
     await runAttendanceAction(() =>
-      setGlobalAttendanceStatus(pollPubIds, currUserId, "canCome")
+      setGlobalAttendanceStatus(pollVenueIds, currUserId, "canCome")
     );
-  }, [currUserId, pollPubIds, setGlobalAttendanceStatus]);
+  }, [currUserId, pollVenueIds, setGlobalAttendanceStatus]);
 
-  // Handler to set all pubs to "cannot come"
+  // Handler to set all venues to "cannot come"
   const setAllAttendanceToCannotCome = useCallback(async () => {
-    if (!currUserId || pollPubIds.length === 0) {
+    if (!currUserId || pollVenueIds.length === 0) {
       return;
     }
 
     await runAttendanceAction(() =>
-      setGlobalAttendanceStatus(pollPubIds, currUserId, "cannotCome")
+      setGlobalAttendanceStatus(pollVenueIds, currUserId, "cannotCome")
     );
-  }, [currUserId, pollPubIds, setGlobalAttendanceStatus]);
+  }, [currUserId, pollVenueIds, setGlobalAttendanceStatus]);
 
   return {
-    pollPubIds,
+    pollVenueIds,
     setAllAttendanceToCanCome,
     setAllAttendanceToCannotCome,
   };
