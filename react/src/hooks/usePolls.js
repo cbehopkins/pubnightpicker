@@ -12,7 +12,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
-import { PollData, getTodaysDate, millisecUntilMidnight } from "../utils/pollSorting";
+import { MeetData, PollData, getTodaysDate, millisecUntilMidnight } from "../utils/pollSorting";
 
 function useTodaysDate() {
   const [todaysDate, setTodaysDate] = useState(getTodaysDate());
@@ -117,6 +117,21 @@ function usePolls() {
   );
   const polls = useQueryDb(q);
   return new PollData(polls);
+}
+
+export function useActiveMeets() {
+  const pollData = usePolls();
+  return new MeetData(pollData.polls);
+}
+
+export function useCurrentMeets() {
+  const pollData = useFutureCompletePolls();
+  return new MeetData(pollData.polls);
+}
+
+export function usePastMeets(count = 5, cursorId = null) {
+  const result = usePastCompletePolls(count, cursorId);
+  return { ...result, meetData: new MeetData(result.pollData.polls) };
 }
 
 export default usePolls;
