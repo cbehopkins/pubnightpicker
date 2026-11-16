@@ -717,7 +717,14 @@ paths:
       tags: [Venues]
       operationId: deleteVenue
       summary: Soft-delete a venue
-      description: Requires the caller's `canManagePubs` permission or global `admin` role. This is distinct from the `banned` domain property.
+      description: Requires the caller's `canManagePubs` permission or global `admin` role. This is distinct from the `banned` domain property. Send the quoted `delete_token` from the venue representation in `If-Match`.
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity tag containing the venue's signed whole-document delete token.
+          schema:
+            type: string
       security:
         - bearerAuth: []
       responses:
@@ -729,8 +736,30 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
+        '400':
+          description: The If-Match token is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: invalid_edit_token
+                  message: A venue delete token is invalid.
+        '412':
+          description: The venue changed since the supplied token was issued. No deletion occurred.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, current_venue]
+                properties:
+                  error:
+                    $ref: '#/components/schemas/ErrorResponse/properties/error'
+                  current_venue:
+                    $ref: '#/components/schemas/Venue'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '500':
           $ref: '#/components/responses/InternalError'
   /venues/stream:
@@ -1272,7 +1301,7 @@ components:
               code: conflict
               message: The operation conflicts with the current state.
     PreconditionRequired:
-      description: A signed venue field baseline is required for every patched field.
+      description: A required signed venue edit baseline or whole-document delete token is missing.
       content:
         application/json:
           schema:
@@ -1280,7 +1309,7 @@ components:
           example:
             error:
               code: precondition_required
-              message: A baseline token is required for every changed venue field.
+              message: A required venue precondition token is missing.
     InternalError:
       description: Unexpected server error.
       content:
@@ -1505,7 +1534,7 @@ components:
       additionalProperties: true
     Venue:
       type: object
-      required: [id, name, venue_type, address, food, banned, visible_group_ids, previous_venue_ids, edit_tokens]
+      required: [id, name, venue_type, address, food, banned, visible_group_ids, previous_venue_ids, edit_tokens, delete_token]
       properties:
         id:
           type: string
@@ -1560,6 +1589,9 @@ components:
           description: Signed field baselines keyed by editable venue API field name.
           additionalProperties:
             type: string
+        delete_token:
+          type: string
+          description: Signed whole-document version token for a conditional DELETE request.
     VenueWrite:
       type: object
       required: [name, venue_type, address]

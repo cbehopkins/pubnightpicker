@@ -1020,7 +1020,11 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	if err != nil {
 		return fmt.Errorf("create venue edit token codec: %w", err)
 	}
-	venueEndpoint := &venuesendpoint.Endpoint{Reader: application.venueCacheService, Ready: application.venueCacheListener.Ready(), Hub: application.venueStreamHub, Cursors: application.venueCursorCodec, EditTokens: editTokenCodec, Auth: cfg.AuthVerifier}
+	deleteTokenCodec, err := venuesendpoint.NewDeleteTokenCodec(key)
+	if err != nil {
+		return fmt.Errorf("create venue delete token codec: %w", err)
+	}
+	venueEndpoint := &venuesendpoint.Endpoint{Reader: application.venueCacheService, Ready: application.venueCacheListener.Ready(), Hub: application.venueStreamHub, Cursors: application.venueCursorCodec, EditTokens: editTokenCodec, DeleteTokens: deleteTokenCodec, Auth: cfg.AuthVerifier}
 	venueEndpoint.Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {

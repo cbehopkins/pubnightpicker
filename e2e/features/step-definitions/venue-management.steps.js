@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
 import { Given, When, Then } from "@cucumber/cucumber";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, updateDoc } from "firebase/firestore";
 import { nextAvailablePollDate, withEmulatorAdmin, withEmulatorUser } from "../support/emulator.js";
 import { londonDate, shiftDate } from "../support/calendar.js";
 
@@ -300,6 +300,55 @@ When("{word} deletes the journey venue", async function (name) {
     await venueLink.waitFor();
     await venueLink.locator("..").getByRole("button", { name: "Delete", exact: true }).click();
     await venueLink.waitFor({ state: "hidden" });
+});
+
+When("{word}'s delete races with a venue update", async function (name) {
+    const page = this.actors.get(name);
+    const venueLink = page.getByRole("link", { name: this.venueDetails.Name, exact: true });
+    const venuePath = new URL(await venueLink.getAttribute("href"), BASE_URL).pathname;
+    const venueId = venuePath.split("/").at(-1);
+    let updateApplied = false;
+    this.staleDeleteAttempts = 0;
+    this.deleteRaceMatcher = (url) => url.pathname.endsWith(`/api/venues/${venueId}`);
+    this.deleteRaceHandler = async (route) => {
+        if (route.request().method() === "DELETE") {
+            this.staleDeleteAttempts += 1;
+            if (!updateApplied) {
+                await withEmulatorAdmin(async (db) => {
+                    await updateDoc(doc(db, "pubs", venueId), {
+                        notes: "Changed while delete was in flight",
+                    });
+                });
+                updateApplied = true;
+            }
+        }
+        await route.continue();
+    };
+    await page.route(this.deleteRaceMatcher, this.deleteRaceHandler);
+    const deleteResponse = page.waitForResponse((response) =>
+        response.request().method() === "DELETE" && response.url().includes(`/api/venues/${venueId}`));
+    await venueLink.locator("..").getByRole("button", { name: "Delete", exact: true }).click();
+    const response = await deleteResponse;
+    assert.equal(response.status(), 412, "the in-flight delete should be rejected as stale");
+});
+
+Then("{word} reviews the current venue after stale deletion", async function (name) {
+    const page = this.actors.get(name);
+    const alert = page.getByRole("alert");
+    await alert.getByText("Changed while delete was in flight", { exact: false }).waitFor();
+    await alert.getByText(this.venueDetails.Name, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Delete reviewed venue", exact: true }).waitFor();
+    assert.equal(this.staleDeleteAttempts, 1, "stale deletion must not be retried automatically");
+});
+
+When("{word} deliberately retries the reviewed deletion", async function (name) {
+    const page = this.actors.get(name);
+    const deleteResponse = page.waitForResponse((response) =>
+        response.request().method() === "DELETE" && response.url().includes("/api/venues/"));
+    await page.getByRole("button", { name: "Delete reviewed venue", exact: true }).click();
+    const response = await deleteResponse;
+    assert.equal(response.status(), 204, "a deliberate retry with the reviewed token should delete the venue");
+    await page.unroute(this.deleteRaceMatcher, this.deleteRaceHandler);
 });
 
 Then("{word} no longer sees the journey venue without reloading", async function (name) {

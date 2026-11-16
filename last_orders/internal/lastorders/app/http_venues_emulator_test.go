@@ -94,6 +94,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 			VisibleGroupIDs  []string          `json:"visible_group_ids"`
 			PreviousVenueIDs []string          `json:"previous_venue_ids"`
 			EditTokens       map[string]string `json:"edit_tokens"`
+			DeleteToken      string            `json:"delete_token"`
 		} `json:"venues"`
 	}
 	if err := json.NewDecoder(listResponse.Body).Decode(&list); err != nil {
@@ -104,8 +105,8 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	if len(list.Venues) != 1 || list.Venues[0].ID != "seed-venue" || len(list.Venues[0].VisibleGroupIDs) != 1 || list.Venues[0].VisibleGroupIDs[0] != "group-a" || len(list.Venues[0].PreviousVenueIDs) != 1 || list.Venues[0].PreviousVenueIDs[0] != "old-pub" {
 		t.Fatalf("emulator-backed venue list=%+v", list.Venues)
 	}
-	if list.Venues[0].EditTokens["name"] == "" {
-		t.Fatalf("emulator-backed venue list omitted field tokens: %+v", list.Venues[0])
+	if list.Venues[0].EditTokens["name"] == "" || list.Venues[0].DeleteToken == "" {
+		t.Fatalf("emulator-backed venue list omitted edit or delete tokens: %+v", list.Venues[0])
 	}
 
 	streamCtx, closeStream := context.WithCancel(ctx)
@@ -129,15 +130,26 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	}
 	var initialSnapshot struct {
 		Venues []struct {
-			ID         string            `json:"id"`
-			EditTokens map[string]string `json:"edit_tokens"`
+			ID          string            `json:"id"`
+			EditTokens  map[string]string `json:"edit_tokens"`
+			DeleteToken string            `json:"delete_token"`
 		} `json:"venues"`
 	}
 	if err := json.Unmarshal([]byte(initial.data), &initialSnapshot); err != nil {
 		t.Fatal(err)
 	}
-	if len(initialSnapshot.Venues) != 1 || initialSnapshot.Venues[0].ID != "seed-venue" || initialSnapshot.Venues[0].EditTokens["name"] == "" {
-		t.Fatalf("initial venue stream omitted field tokens: %+v", initialSnapshot.Venues)
+	if len(initialSnapshot.Venues) != 1 || initialSnapshot.Venues[0].ID != "seed-venue" || initialSnapshot.Venues[0].EditTokens["name"] == "" || initialSnapshot.Venues[0].DeleteToken == "" {
+		t.Fatalf("initial venue stream omitted edit or delete tokens: %+v", initialSnapshot.Venues)
+	}
+	currentDelete := doVenueDeleteRequest(t, client, baseURL+"/api/venues/seed-venue", "Bearer valid-token", list.Venues[0].DeleteToken)
+	if currentDelete.StatusCode != http.StatusNoContent {
+		body := readVenueResponseBody(t, currentDelete)
+		t.Fatalf("current-version delete status=%d body=%s", currentDelete.StatusCode, body)
+	}
+	currentDelete.Body.Close()
+	seedDeletedFrame := readVenueSSEFrame(t, streamReader)
+	if strings.Contains(seedDeletedFrame.data, "seed-venue") {
+		t.Fatalf("current-version delete left seed venue in stream: %+v", seedDeletedFrame)
 	}
 
 	created := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/venues", "Bearer valid-token", `{"name":"New Pub","venue_type":"pub","address":"Main Road","location_id":"north"}`)
@@ -146,11 +158,12 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("create venue status=%d body=%s", created.StatusCode, body)
 	}
 	type venueRepresentation struct {
-		ID         string            `json:"id"`
-		Name       string            `json:"name"`
-		Address    string            `json:"address"`
-		Notes      string            `json:"notes"`
-		EditTokens map[string]string `json:"edit_tokens"`
+		ID          string            `json:"id"`
+		Name        string            `json:"name"`
+		Address     string            `json:"address"`
+		Notes       string            `json:"notes"`
+		EditTokens  map[string]string `json:"edit_tokens"`
+		DeleteToken string            `json:"delete_token"`
 	}
 	var createdVenue venueRepresentation
 	if err := json.NewDecoder(created.Body).Decode(&createdVenue); err != nil {
@@ -273,10 +286,48 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("already-converged patch did not return full current venue: %+v", convergedVenue)
 	}
 
-	deleted := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", "")
+	staleDeleteToken := convergedVenue.DeleteToken
+	if staleDeleteToken == "" {
+		t.Fatal("PATCH response omitted whole-document delete token")
+	}
+	if _, err := venueCollection.Doc(createdVenue.ID).Update(ctx, []firestore.Update{{Path: "notes", Value: "Updated after delete token"}}); err != nil {
+		t.Fatal(err)
+	}
+	updatedAfterTokenFrame := readVenueSSEFrame(t, streamReader)
+	if !strings.Contains(updatedAfterTokenFrame.data, "Updated after delete token") {
+		t.Fatalf("venue stream omitted post-token update: %+v", updatedAfterTokenFrame)
+	}
+	staleDelete := doVenueDeleteRequest(t, client, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", staleDeleteToken)
+	if staleDelete.StatusCode != http.StatusPreconditionFailed {
+		body := readVenueResponseBody(t, staleDelete)
+		t.Fatalf("stale delete status=%d body=%s, want 412", staleDelete.StatusCode, body)
+	}
+	var staleDeleteResult struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		CurrentVenue venueRepresentation `json:"current_venue"`
+	}
+	if err := json.NewDecoder(staleDelete.Body).Decode(&staleDeleteResult); err != nil {
+		staleDelete.Body.Close()
+		t.Fatal(err)
+	}
+	staleDelete.Body.Close()
+	if staleDeleteResult.Error.Code != "precondition_failed" || staleDeleteResult.CurrentVenue.Notes != "Updated after delete token" || staleDeleteResult.CurrentVenue.DeleteToken == "" || staleDeleteResult.CurrentVenue.DeleteToken == staleDeleteToken {
+		t.Fatalf("stale delete response did not include current venue and fresh token: %+v", staleDeleteResult)
+	}
+	stored, err = venueCollection.Doc(createdVenue.ID).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stored.Data()["deleted_on"]; ok || stored.Data()["notes"] != "Updated after delete token" {
+		t.Fatalf("stale delete mutated the Firestore venue: %v", stored.Data())
+	}
+
+	deleted := doVenueDeleteRequest(t, client, baseURL+"/api/venues/"+createdVenue.ID, "Bearer valid-token", staleDeleteResult.CurrentVenue.DeleteToken)
 	if deleted.StatusCode != http.StatusNoContent {
 		body := readVenueResponseBody(t, deleted)
-		t.Fatalf("delete venue status=%d body=%s", deleted.StatusCode, body)
+		t.Fatalf("current-version delete status=%d body=%s", deleted.StatusCode, body)
 	}
 	deleted.Body.Close()
 	deletedFrame := readVenueSSEFrame(t, streamReader)
@@ -301,7 +352,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	if err := json.NewDecoder(listAfterDelete.Body).Decode(&remaining); err != nil {
 		t.Fatal(err)
 	}
-	if len(remaining.Venues) != 1 || remaining.Venues[0].ID != "seed-venue" {
+	if len(remaining.Venues) != 0 {
 		t.Fatalf("venues after soft delete=%+v", remaining.Venues)
 	}
 
@@ -342,7 +393,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		if err := json.Unmarshal([]byte(frame.data), &snapshot); err != nil {
 			t.Fatalf("decode reconnect snapshot %q: %v", frame.data, err)
 		}
-		if snapshot.Cursor != frame.id || len(snapshot.Venues) != 1 || snapshot.Venues[0].ID != "seed-venue" {
+		if snapshot.Cursor != frame.id || len(snapshot.Venues) != 0 {
 			t.Fatalf("reconnect snapshot=%+v event ID=%q, want complete current snapshot and matching cursor", snapshot, frame.id)
 		}
 	}
@@ -399,6 +450,21 @@ func doVenueRequest(t *testing.T, client *http.Client, method, url, authorizatio
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func doVenueDeleteRequest(t *testing.T, client *http.Client, url, authorization, token string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", authorization)
+	request.Header.Set("If-Match", `"`+token+`"`)
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

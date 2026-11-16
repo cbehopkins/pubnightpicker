@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/firebaseauth"
@@ -24,6 +25,8 @@ type testReader struct {
 	writeCalls        int
 	conditionalErr    error
 	conditionalFields []string
+	deleteErr         error
+	deleteCurrent     *venuecache.VenueProjection
 }
 
 func (r *testReader) Get(_ context.Context, id string) (venuecache.VenueProjection, error) {
@@ -98,18 +101,33 @@ func (r *testReader) PatchWithBaseline(_ context.Context, id string, updates []v
 	}
 	return venuecache.VenueProjection{}, nil, venuecache.ErrNotFound
 }
-func (r *testReader) Delete(_ context.Context, id string) error {
+func (r *testReader) DeleteWithVersion(_ context.Context, id string, _ time.Time) (venuecache.VenueProjection, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.writeCalls++
 	for index, item := range r.snapshot.Venues {
 		if item.ID == id {
+			if r.deleteErr != nil {
+				if r.deleteCurrent != nil {
+					return *r.deleteCurrent, r.deleteErr
+				}
+				return item, r.deleteErr
+			}
 			r.snapshot.Venues = append(r.snapshot.Venues[:index], r.snapshot.Venues[index+1:]...)
 			r.snapshot.State.Sequence++
-			return nil
+			return venuecache.VenueProjection{}, nil
 		}
 	}
-	return venuecache.ErrNotFound
+	return venuecache.VenueProjection{}, venuecache.ErrNotFound
+}
+
+func testDeleteTokenCodec(t *testing.T) *DeleteTokenCodec {
+	t.Helper()
+	codec, err := NewDeleteTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return codec
 }
 
 type testVerifier struct{}
@@ -279,7 +297,7 @@ func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
 		canManage: true,
 		snapshot:  venuecache.Snapshot{State: basestore.SyncState{Generation: "generation-1", Sequence: 1}},
 	}
-	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens, DeleteTokens: testDeleteTokenCodec(t)}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 
@@ -315,6 +333,7 @@ func TestVenueCRUDRoutesUpdateCollection(t *testing.T) {
 
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/venues/created-1", nil)
 	deleteRequest.Header.Set("Authorization", "Bearer valid")
+	deleteRequest.Header.Set("If-Match", `"`+patchedVenue.DeleteToken+`"`)
 	deleted := httptest.NewRecorder()
 	mux.ServeHTTP(deleted, deleteRequest)
 	if deleted.Code != http.StatusNoContent {
@@ -393,6 +412,28 @@ func TestVenuePatchRequiresBaselineTokenBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestVenueDeleteRequiresWholeDocumentTokenBeforeWriting(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot:  venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/venues/venue-1", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusPreconditionRequired || !strings.Contains(response.Body.String(), `"code":"precondition_required"`) {
+		t.Fatalf("delete without If-Match status=%d body=%s, want 428 precondition_required", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("tokenless delete reached writer %d times", reader.writeCalls)
+	}
+}
+
 func TestVenueReadIncludesPerFieldBaselineTokens(t *testing.T) {
 	reader := &testReader{
 		snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
@@ -401,7 +442,7 @@ func TestVenueReadIncludesPerFieldBaselineTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := &Endpoint{Reader: reader, EditTokens: editTokens}
+	endpoint := &Endpoint{Reader: reader, EditTokens: editTokens, DeleteTokens: testDeleteTokenCodec(t)}
 	request := httptest.NewRequest(http.MethodGet, "/api/venues/venue-1", nil)
 	request.SetPathValue("venue_id", "venue-1")
 	response := httptest.NewRecorder()
@@ -411,7 +452,8 @@ func TestVenueReadIncludesPerFieldBaselineTokens(t *testing.T) {
 		t.Fatalf("get status=%d body=%s", response.Code, response.Body)
 	}
 	var result struct {
-		EditTokens map[string]string `json:"edit_tokens"`
+		EditTokens  map[string]string `json:"edit_tokens"`
+		DeleteToken string            `json:"delete_token"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -420,6 +462,9 @@ func TestVenueReadIncludesPerFieldBaselineTokens(t *testing.T) {
 		if result.EditTokens[field] == "" {
 			t.Errorf("GET response has no baseline token for %q: %s", field, response.Body)
 		}
+	}
+	if result.DeleteToken == "" {
+		t.Fatalf("GET response has no whole-document delete token: %s", response.Body)
 	}
 }
 
@@ -510,7 +555,12 @@ func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := &testReader{canManage: true}
-	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
+	deleteTokens := testDeleteTokenCodec(t)
+	deleteToken, err := deleteTokens.Issue("missing", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens, DeleteTokens: deleteTokens}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 	for _, test := range []struct {
@@ -527,12 +577,87 @@ func TestVenueRoutesReturnNotFoundForMissingItems(t *testing.T) {
 			if test.method != http.MethodGet {
 				request.Header.Set("Authorization", "Bearer valid")
 			}
+			if test.method == http.MethodDelete {
+				request.Header.Set("If-Match", `"`+deleteToken+`"`)
+			}
 			response := httptest.NewRecorder()
 			mux.ServeHTTP(response, request)
 			if response.Code != http.StatusNotFound {
 				t.Fatalf("status=%d body=%s, want 404", response.Code, response.Body)
 			}
 		})
+	}
+}
+
+func TestVenueDeleteRejectsInvalidTokenBeforeWriting(t *testing.T) {
+	reader := &testReader{canManage: true, snapshot: venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}}}
+	deleteTokens := testDeleteTokenCodec(t)
+	wrongVenueToken, err := deleteTokens.Issue("venue-2", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, DeleteTokens: deleteTokens}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/venues/venue-1", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	request.Header.Set("If-Match", `"`+wrongVenueToken+`"`)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_edit_token"`) {
+		t.Fatalf("delete with invalid If-Match status=%d body=%s, want 400 invalid_edit_token", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("invalid-token delete reached writer %d times", reader.writeCalls)
+	}
+}
+
+func TestVenueDeleteReturnsCurrentVenueForStaleToken(t *testing.T) {
+	deleteTokens := testDeleteTokenCodec(t)
+	baselineTime := time.Date(2026, time.November, 15, 12, 0, 0, 123, time.UTC)
+	currentTime := baselineTime.Add(time.Second)
+	token, err := deleteTokens.Issue("venue-1", baselineTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentVenue := venuecache.VenueProjection{ID: "venue-1", Name: "Updated venue", Address: "New Road", UpdateTime: currentTime}
+	reader := &testReader{
+		canManage:     true,
+		deleteErr:     venuecache.ErrVersionConflict,
+		deleteCurrent: &currentVenue,
+		snapshot:      venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Old venue", UpdateTime: baselineTime}}},
+	}
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens, DeleteTokens: deleteTokens}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/venues/venue-1", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	request.Header.Set("If-Match", `"`+token+`"`)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale delete status=%d body=%s, want 412", response.Code, response.Body)
+	}
+	var result struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		CurrentVenue venue `json:"current_venue"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error.Code != "precondition_failed" || result.CurrentVenue.Name != "Updated venue" || result.CurrentVenue.DeleteToken == "" {
+		t.Fatalf("stale delete response=%+v", result)
+	}
+	if reader.writeCalls != 1 {
+		t.Fatalf("stale delete writer calls=%d, want 1", reader.writeCalls)
 	}
 }
 
@@ -552,7 +677,7 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 		Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Initial Pub"}},
 	}}
 	hub := sse.NewHub()
-	endpoint := &Endpoint{Reader: reader, Ready: ready, Hub: hub, Cursors: codec, EditTokens: editTokens, Auth: testVerifier{}}
+	endpoint := &Endpoint{Reader: reader, Ready: ready, Hub: hub, Cursors: codec, EditTokens: editTokens, DeleteTokens: testDeleteTokenCodec(t), Auth: testVerifier{}}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 	server := httptest.NewServer(mux)
@@ -635,6 +760,7 @@ func TestVenueStreamRouteSnapshotsChangesAndReconnects(t *testing.T) {
 
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/venues/created-1", nil)
 	deleteRequest.Header.Set("Authorization", "Bearer valid")
+	deleteRequest.Header.Set("If-Match", `"`+createdVenue.DeleteToken+`"`)
 	deleted := httptest.NewRecorder()
 	mux.ServeHTTP(deleted, deleteRequest)
 	if deleted.Code != http.StatusNoContent {

@@ -54,13 +54,13 @@ func Wrap(origins []string, next http.Handler, previewSites ...string) (http.Han
 			}
 			for _, name := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				name = strings.ToLower(strings.TrimSpace(name))
-				if name != "" && name != "authorization" && name != "content-type" && name != "last-event-id" {
+				if name != "" && name != "authorization" && name != "content-type" && name != "if-match" && name != "last-event-id" {
 					firebaseauth.WriteError(w, http.StatusForbidden, "forbidden_preflight", "This API header is not allowed.")
 					return
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, Last-Event-ID")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return

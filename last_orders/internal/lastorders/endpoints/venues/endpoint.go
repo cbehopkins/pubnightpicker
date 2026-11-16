@@ -28,7 +28,7 @@ type reader interface {
 	CanManage(context.Context, string) (bool, error)
 	Create(context.Context, map[string]any) (venuecache.VenueProjection, error)
 	Patch(context.Context, string, map[string]any) (venuecache.VenueProjection, error)
-	Delete(context.Context, string) error
+	DeleteWithVersion(context.Context, string, time.Time) (venuecache.VenueProjection, error)
 }
 
 type conditionalReader interface {
@@ -42,12 +42,13 @@ type decodedVenueWrite struct {
 }
 
 type Endpoint struct {
-	Reader     reader
-	Ready      <-chan struct{}
-	Hub        *sse.Hub
-	Cursors    *sse.CursorCodec
-	EditTokens *EditTokenCodec
-	Auth       firebaseauth.Verifier
+	Reader       reader
+	Ready        <-chan struct{}
+	Hub          *sse.Hub
+	Cursors      *sse.CursorCodec
+	EditTokens   *EditTokenCodec
+	DeleteTokens *DeleteTokenCodec
+	Auth         firebaseauth.Verifier
 }
 
 type venue struct {
@@ -71,6 +72,7 @@ type venue struct {
 	VisibleGroupIDs    []string          `json:"visible_group_ids"`
 	PreviousVenueIDs   []string          `json:"previous_venue_ids"`
 	EditTokens         map[string]string `json:"edit_tokens"`
+	DeleteToken        string            `json:"delete_token"`
 }
 
 type listResponse struct {
@@ -354,7 +356,39 @@ func (e *Endpoint) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {
-	if err := e.Reader.Delete(r.Context(), r.PathValue("venue_id")); err != nil {
+	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
+	if ifMatch == "" {
+		writeError(w, http.StatusPreconditionRequired, "precondition_required", "A whole-document version token is required to delete a venue.")
+		return
+	}
+	if len(ifMatch) < 3 || ifMatch[0] != '"' || ifMatch[len(ifMatch)-1] != '"' {
+		writeError(w, http.StatusBadRequest, "invalid_edit_token", "A venue delete token is invalid.")
+		return
+	}
+	if e.DeleteTokens == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Venue delete tokens are unavailable.")
+		return
+	}
+	venueID := r.PathValue("venue_id")
+	updateTime, err := e.DeleteTokens.Validate(ifMatch[1:len(ifMatch)-1], venueID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_edit_token", "A venue delete token is invalid.")
+		return
+	}
+	currentItem, err := e.Reader.DeleteWithVersion(r.Context(), venueID, updateTime)
+	if errors.Is(err, venuecache.ErrVersionConflict) {
+		current, representErr := e.represent(currentItem)
+		if representErr != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create current venue response.")
+			return
+		}
+		writeJSON(w, http.StatusPreconditionFailed, map[string]any{
+			"error":         map[string]string{"code": "precondition_failed", "message": "The venue changed after it was loaded."},
+			"current_venue": current,
+		})
+		return
+	}
+	if err != nil {
 		if errors.Is(err, venuecache.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "Venue not found.")
 			return
@@ -625,6 +659,13 @@ func fromProjection(item venuecache.VenueProjection) venue {
 
 func (e *Endpoint) represent(item venuecache.VenueProjection) (venue, error) {
 	result := fromProjection(item)
+	if e.DeleteTokens != nil {
+		deleteToken, err := e.DeleteTokens.Issue(item.ID, item.UpdateTime)
+		if err != nil {
+			return venue{}, err
+		}
+		result.DeleteToken = deleteToken
+	}
 	if e.EditTokens == nil {
 		return result, nil
 	}

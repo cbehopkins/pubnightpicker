@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 )
@@ -157,18 +158,26 @@ func (s *Service) PatchWithBaseline(ctx context.Context, venueID string, fields 
 	return projection, nil, nil
 }
 
-func (s *Service) Delete(ctx context.Context, venueID string) error {
-	writer, ok := s.source.(Writer)
+func (s *Service) DeleteWithVersion(ctx context.Context, venueID string, expectedUpdateTime time.Time) (VenueProjection, error) {
+	writer, ok := s.source.(ConditionalDeleteWriter)
 	if !ok {
-		return fmt.Errorf("venue writes are unavailable")
+		return VenueProjection{}, fmt.Errorf("conditional venue deletes are unavailable")
 	}
-	if _, err := writer.SoftDelete(ctx, venueID); err != nil {
-		return err
+	doc, err := writer.SoftDeleteIfUnchanged(ctx, venueID, expectedUpdateTime)
+	if errors.Is(err, ErrVersionConflict) {
+		projection, projectionErr := ProjectionFromDocument(doc)
+		if projectionErr != nil {
+			return VenueProjection{}, projectionErr
+		}
+		return projection, err
+	}
+	if err != nil {
+		return VenueProjection{}, err
 	}
 	if err := s.store.Delete(ctx, venueID); err != nil {
-		return fmt.Errorf("persist deleted venue projection: %w", err)
+		return VenueProjection{}, fmt.Errorf("persist deleted venue projection: %w", err)
 	}
-	return nil
+	return VenueProjection{}, nil
 }
 
 func (s *Service) SourceWatch(ctx context.Context) (ChangeStream, error) {

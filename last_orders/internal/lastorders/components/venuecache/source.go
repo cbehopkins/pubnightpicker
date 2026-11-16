@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -20,8 +21,9 @@ const (
 )
 
 type Document struct {
-	ID   string
-	Data map[string]any
+	ID         string
+	Data       map[string]any
+	UpdateTime time.Time
 }
 
 type Change struct {
@@ -43,12 +45,15 @@ type Source interface {
 type Writer interface {
 	Create(context.Context, map[string]any) (Document, error)
 	Patch(context.Context, string, map[string]any) (Document, error)
-	SoftDelete(context.Context, string) (Document, error)
 	CanManage(context.Context, string) (bool, error)
 }
 
 type ConditionalWriter interface {
 	PatchWithBaseline(context.Context, string, []FieldUpdate) (Document, []string, error)
+}
+
+type ConditionalDeleteWriter interface {
+	SoftDeleteIfUnchanged(context.Context, string, time.Time) (Document, error)
 }
 
 type FirestoreSource struct {
@@ -70,7 +75,7 @@ func (s *FirestoreSource) Get(ctx context.Context, venueID string) (Document, er
 		}
 		return Document{}, err
 	}
-	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+	return Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime}, nil
 }
 
 func (s *FirestoreSource) Create(ctx context.Context, fields map[string]any) (Document, error) {
@@ -82,7 +87,7 @@ func (s *FirestoreSource) Create(ctx context.Context, fields map[string]any) (Do
 	if err != nil {
 		return Document{}, err
 	}
-	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+	return Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime}, nil
 }
 
 func (s *FirestoreSource) Patch(ctx context.Context, venueID string, fields map[string]any) (Document, error) {
@@ -109,7 +114,7 @@ func (s *FirestoreSource) Patch(ctx context.Context, venueID string, fields map[
 	if err != nil {
 		return Document{}, err
 	}
-	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+	return Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime}, nil
 }
 
 func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate) (Document, []string, error) {
@@ -149,7 +154,7 @@ func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string,
 		}
 		sort.Strings(conflicts)
 		if len(conflicts) > 0 {
-			result = Document{ID: snapshot.Ref.ID, Data: data}
+			result = Document{ID: snapshot.Ref.ID, Data: data, UpdateTime: snapshot.UpdateTime}
 			return nil
 		}
 		updates := make([]firestore.Update, 0, len(fields))
@@ -176,7 +181,7 @@ func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string,
 				resultData[field.FirestoreField] = field.Value
 			}
 		}
-		result = Document{ID: snapshot.Ref.ID, Data: resultData}
+		result = Document{ID: snapshot.Ref.ID, Data: resultData, UpdateTime: snapshot.UpdateTime}
 		if len(updates) == 0 {
 			return nil
 		}
@@ -191,22 +196,41 @@ func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string,
 	if len(conflicts) > 0 {
 		return result, conflicts, ErrFieldConflict
 	}
+	doc, err := ref.Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return Document{}, nil, ErrNotFound
+		}
+		return Document{}, nil, err
+	}
+	result = Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime}
 	return result, nil, nil
 }
 
-func (s *FirestoreSource) SoftDelete(ctx context.Context, venueID string) (Document, error) {
+func (s *FirestoreSource) SoftDeleteIfUnchanged(ctx context.Context, venueID string, expectedUpdateTime time.Time) (Document, error) {
 	ref := s.client.Collection(collection).Doc(venueID)
-	if _, err := ref.Update(ctx, []firestore.Update{{Path: "deleted_on", Value: firestore.ServerTimestamp}}); err != nil {
-		if status.Code(err) == codes.NotFound {
-			return Document{}, ErrNotFound
+	var current Document
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(ref)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrNotFound
+			}
+			return err
 		}
-		return Document{}, err
+		current = Document{ID: snapshot.Ref.ID, Data: snapshot.Data(), UpdateTime: snapshot.UpdateTime}
+		if !snapshot.UpdateTime.Equal(expectedUpdateTime) {
+			return ErrVersionConflict
+		}
+		return tx.Update(ref, []firestore.Update{{Path: "deleted_on", Value: firestore.ServerTimestamp}})
+	})
+	if status.Code(err) == codes.NotFound {
+		return Document{}, ErrNotFound
 	}
-	doc, err := ref.Get(ctx)
 	if err != nil {
-		return Document{}, err
+		return current, err
 	}
-	return Document{ID: doc.Ref.ID, Data: doc.Data()}, nil
+	return Document{}, nil
 }
 
 func (s *FirestoreSource) CanManage(ctx context.Context, uid string) (bool, error) {
@@ -235,7 +259,7 @@ func (s *FirestoreSource) ListEventVenues(ctx context.Context) ([]Document, erro
 	}
 	venues := make([]Document, 0, len(docs))
 	for _, doc := range docs {
-		venues = append(venues, Document{ID: doc.Ref.ID, Data: doc.Data()})
+		venues = append(venues, Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime})
 	}
 	return venues, nil
 }
@@ -262,7 +286,7 @@ func (s *firestoreChangeStream) Next() ([]Change, error) {
 		if !ok {
 			continue
 		}
-		changes = append(changes, Change{Kind: kind, Doc: Document{ID: change.Doc.Ref.ID, Data: change.Doc.Data()}})
+		changes = append(changes, Change{Kind: kind, Doc: Document{ID: change.Doc.Ref.ID, Data: change.Doc.Data(), UpdateTime: change.Doc.UpdateTime}})
 	}
 	return changes, nil
 }

@@ -14,6 +14,7 @@ const collection = "pubs"
 // VenueProjection contains the backend fields retained from a pubs document.
 type VenueProjection struct {
 	ID                 string
+	UpdateTime         time.Time
 	Name               string
 	VenueType          string
 	Website            string
@@ -37,6 +38,7 @@ type VenueProjection struct {
 
 func (projection VenueProjection) Equal(other VenueProjection) bool {
 	return projection.ID == other.ID &&
+		projection.UpdateTime.Equal(other.UpdateTime) &&
 		projection.Name == other.Name &&
 		projection.VenueType == other.VenueType &&
 		projection.Website == other.Website &&
@@ -68,6 +70,7 @@ func equalOptional[Value comparable](left, right *Value) bool {
 var ErrNotFound = fmt.Errorf("venue not found")
 var ErrCacheMiss = fmt.Errorf("venue cache miss")
 var ErrFieldConflict = fmt.Errorf("venue field conflict")
+var ErrVersionConflict = fmt.Errorf("venue document version conflict")
 
 type FieldUpdate struct {
 	APIField       string
@@ -87,6 +90,7 @@ func ProjectionFromDocument(doc Document) (VenueProjection, error) {
 	}
 	projection := VenueProjection{
 		ID:                 doc.ID,
+		UpdateTime:         doc.UpdateTime,
 		Name:               name,
 		VenueType:          optionalString(doc.Data, "venueType"),
 		Website:            optionalString(doc.Data, "web_site"),
@@ -170,7 +174,7 @@ func FromDocument(doc *firestore.DocumentSnapshot) (VenueProjection, error) {
 	if doc == nil || doc.Ref == nil {
 		return VenueProjection{}, fmt.Errorf("venue document is nil")
 	}
-	return ProjectionFromDocument(Document{ID: doc.Ref.ID, Data: doc.Data()})
+	return ProjectionFromDocument(Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime})
 }
 
 func requiredString(data map[string]any, field string) (string, error) {

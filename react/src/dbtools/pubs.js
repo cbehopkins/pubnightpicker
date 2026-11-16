@@ -55,7 +55,7 @@ export async function modifyPub(id, pubParams, baseline, editTokens) {
     });
 }
 
-export async function deletePub(id) {
+export async function deletePub(id, deleteToken) {
     assertCurrentUserPermission(PERMISSIONS.canManagePubs, "deleting a pub");
-    return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, { method: "DELETE", ifMatch: deleteToken });
 }

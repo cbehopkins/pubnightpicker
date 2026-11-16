@@ -32,7 +32,7 @@ func migrate(ctx context.Context, base *basestore.Store) error {
 	if err := tx.QueryRowContext(ctx, `SELECT version FROM venue_cache_schema WHERE singleton = 1`).Scan(&version); err != nil {
 		return fmt.Errorf("read venue cache schema version: %w", err)
 	}
-	if version < 0 || version > 3 {
+	if version < 0 || version > 4 {
 		return fmt.Errorf("unsupported venue cache schema version %d", version)
 	}
 	if version == 0 {
@@ -61,6 +61,15 @@ func migrate(ctx context.Context, base *basestore.Store) error {
 			return fmt.Errorf("add venue relationship projections: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE venue_cache_schema SET version = 3 WHERE singleton = 1`); err != nil {
+			return fmt.Errorf("record venue cache schema version: %w", err)
+		}
+		version = 3
+	}
+	if version == 3 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE venue_cache ADD COLUMN firestore_update_time TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add venue Firestore update time: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE venue_cache_schema SET version = 4 WHERE singleton = 1`); err != nil {
 			return fmt.Errorf("record venue cache schema version: %w", err)
 		}
 	}

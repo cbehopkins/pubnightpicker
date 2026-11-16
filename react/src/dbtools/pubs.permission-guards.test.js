@@ -71,7 +71,7 @@ describe("pub dbtools permission guards", () => {
     });
 
     it("guards deletePub with canManagePubs", async () => {
-        await deletePub("pub-2");
+        await deletePub("pub-2", "signed-document-version");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
@@ -79,6 +79,7 @@ describe("pub dbtools permission guards", () => {
         );
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-2", {
             method: "DELETE",
+            ifMatch: "signed-document-version",
         });
     });
 });

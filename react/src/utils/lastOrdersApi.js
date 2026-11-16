@@ -7,6 +7,7 @@ export async function requestLastOrders(path, {
     method = "POST",
     body = null,
     contentType = "application/json",
+    ifMatch = null,
     query = null,
     signal = new AbortController().signal,
 } = {}) {
@@ -36,6 +37,9 @@ export async function requestLastOrders(path, {
             ensureCurrentSession();
             const hasBody = body !== null || method === "POST";
             const headers = { Authorization: `Bearer ${token}` };
+            if (ifMatch !== null) {
+                headers["If-Match"] = `"${ifMatch}"`;
+            }
             if (hasBody) {
                 headers["Content-Type"] = contentType;
             }

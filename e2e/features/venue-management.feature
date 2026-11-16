@@ -113,3 +113,24 @@ Feature: Authorised members create and edit venues
     Then Beth sees the journey venue field "Name" as "Alice's name"
     When Beth changes the journey venue field "Name" to "Beth's final name"
     Then Beth sees the journey venue field "Name" as "Beth's final name"
+
+  Scenario: A manager reviews the venue before retrying a stale deletion
+    Given a fresh emulator database has been bootstrapped with the journey admin
+    When Alice creates an account
+    Then Alice is logged in
+    When the journey admin logs in through a separate browser context
+    And the admin grants Alice the following permissions:
+      | permission        |
+      | Can Manage Venues |
+    And Alice opens Manage Venues
+    When Alice creates a "Pub" venue with these details:
+      | Name    | Venue For Stale Delete |
+      | Address | 1 Original Road        |
+      | Venue Web Site | https://original.example.test |
+      | Map     | https://maps.example.test/original |
+      | Notes   | Original details       |
+    Then Alice sees the journey venue listed as "Pub"
+    When Alice's delete races with a venue update
+    Then Alice reviews the current venue after stale deletion
+    When Alice deliberately retries the reviewed deletion
+    Then Alice no longer sees the journey venue without reloading
