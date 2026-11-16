@@ -120,3 +120,11 @@ export async function complete_a_poll(key, poll_id, pollDate, restaurantId, rest
         console.warn("Poll completed but audit logging failed", auditError);
     }
 };
+
+export {
+    add_new_pub_to_poll as addVenueToMeet,
+    complete_a_poll as completeMeetVoting,
+    deletePoll as deleteMeet,
+    deletePubFromPoll as removeVenueFromMeet,
+    reschedule_a_poll as rescheduleMeet,
+};

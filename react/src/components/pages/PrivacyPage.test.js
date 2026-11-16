@@ -180,7 +180,11 @@ describe("PrivacyPage", () => {
                 return createSnapshot([
                     createDocSnapshot("poll-1", {
                         date: "2026-04-04",
-                        completed: false,
+                        completed: true,
+                        selected: "venueA",
+                        previous_pubs: ["deletedVenue"],
+                        restaurant: "venueB",
+                        restaurant_time: "18:30",
                         pubs: {
                             venueA: { name: "Venue A" },
                             venueB: { name: "Venue B" },
@@ -299,7 +303,19 @@ describe("PrivacyPage", () => {
         expect(payload.raw.messages).toHaveLength(1);
         expect(payload.raw.messages[0].text).toBe("Hello world");
 
-        expect(payload.lookup.polls["poll-1"].date).toBe("2026-04-04");
+        expect(payload.lookup.polls["poll-1"].rawPoll).toEqual({
+            date: "2026-04-04",
+            completed: true,
+            selected: "venueA",
+            previous_pubs: ["deletedVenue"],
+            restaurant: "venueB",
+            restaurant_time: "18:30",
+            pubs: {
+                venueA: { name: "Venue A" },
+                venueB: { name: "Venue B" },
+                deletedVenue: { notes: "Historical venue" },
+            },
+        });
         expect(payload.lookup.venues.venueA.name).toBe("Venue A");
         expect(payload.lookup.venues.venueA.venueRecord.address).toBe("1 Main St");
         expect(payload.lookup.venues.venueB.venueRecord.address).toBe("2 High St");
@@ -313,6 +329,8 @@ describe("PrivacyPage", () => {
         expect(payload.expanded.profile.preferredName).toBe("Preferred User");
         expect(payload.expanded.profile.notificationPreferences.votesVisible).toBe(false);
         expect(payload.expanded.votes["poll-1"].event.pollId).toBe("poll-1");
+        expect(payload.expanded.votes["poll-1"].event.completed).toBe(true);
+        expect(payload.expanded.votes["poll-1"].event.rawPoll).toEqual(payload.lookup.polls["poll-1"].rawPoll);
         expect(payload.expanded.votes["poll-1"].votes[0].venue.name).toBe("Venue A");
         expect(payload.expanded.attendance["poll-1"].attendance[1].venue.name).toBe("Venue B");
         expect(payload.expanded.messages[0].sentAt).toBe("2026-04-13T14:00:00.000Z");
