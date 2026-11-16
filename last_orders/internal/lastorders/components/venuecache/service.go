@@ -133,12 +133,12 @@ func (s *Service) Patch(ctx context.Context, venueID string, fields map[string]a
 	return projection, nil
 }
 
-func (s *Service) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate) (VenueProjection, []string, error) {
+func (s *Service) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate, resolve func(VenueProjection, []FieldUpdate) ([]FieldUpdate, []string, error)) (VenueProjection, []string, error) {
 	writer, ok := s.source.(ConditionalWriter)
 	if !ok {
 		return VenueProjection{}, nil, fmt.Errorf("conditional venue writes are unavailable")
 	}
-	doc, conflicts, err := writer.PatchWithBaseline(ctx, venueID, fields)
+	doc, conflicts, err := writer.PatchWithBaseline(ctx, venueID, fields, resolve)
 	if err != nil && !errors.Is(err, ErrFieldConflict) {
 		return VenueProjection{}, nil, err
 	}

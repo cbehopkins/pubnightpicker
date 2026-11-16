@@ -9,7 +9,7 @@ import (
 	"io"
 	"strings"
 
-	"last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/services/venueedit"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -48,7 +48,7 @@ func (c *EditTokenCodec) Issue(venueID, field string, value any) (string, error)
 	if c == nil || len(c.key) != sha256.Size || venueID == "" || field == "" {
 		return "", ErrInvalidEditToken
 	}
-	digest, err := venuecache.CanonicalValueDigest(value)
+	digest, err := venueedit.CanonicalValueDigest(value)
 	if err != nil {
 		return "", err
 	}

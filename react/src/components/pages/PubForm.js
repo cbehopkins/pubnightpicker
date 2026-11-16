@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
 import { Form as RouterForm, useActionData, useNavigate, useNavigation } from "react-router-dom";
 import { normalizeVenue } from "../../hooks/usePubs";
+import { venueApiFieldNames } from "../../utils/venueApiFields";
 
 const VenueTypes = ["pub", "restaurant", "event"];
 const RecurrenceFrequencies = ["none", "once", "weekly", "monthly", "yearly"];
@@ -274,10 +275,11 @@ function reconcileVenueSnapshot(snapshot, draftValues, baselineVenue) {
 
     nextDraft[field] = draftValue;
     nextBaseline[field] = previousBaseline[field];
-    if (baselineVenue.edit_tokens?.[field] === undefined) {
-      delete nextTokens[field];
+    const apiField = venueApiFieldNames[field] || field;
+    if (baselineVenue.edit_tokens?.[apiField] === undefined) {
+      delete nextTokens[apiField];
     } else {
-      nextTokens[field] = baselineVenue.edit_tokens[field];
+      nextTokens[apiField] = baselineVenue.edit_tokens[apiField];
     }
   }
 

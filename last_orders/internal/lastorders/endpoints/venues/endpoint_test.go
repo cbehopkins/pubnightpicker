@@ -78,7 +78,7 @@ func (r *testReader) Patch(_ context.Context, id string, fields map[string]any) 
 	return venuecache.VenueProjection{}, venuecache.ErrNotFound
 }
 
-func (r *testReader) PatchWithBaseline(_ context.Context, id string, updates []venuecache.FieldUpdate) (venuecache.VenueProjection, []string, error) {
+func (r *testReader) PatchWithBaseline(_ context.Context, id string, updates []venuecache.FieldUpdate, resolve func(venuecache.VenueProjection, []venuecache.FieldUpdate) ([]venuecache.FieldUpdate, []string, error)) (venuecache.VenueProjection, []string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.writeCalls++
@@ -89,7 +89,14 @@ func (r *testReader) PatchWithBaseline(_ context.Context, id string, updates []v
 		if r.conditionalErr != nil {
 			return item, append([]string(nil), r.conditionalFields...), r.conditionalErr
 		}
-		for _, update := range updates {
+		resolved, conflicts, err := resolve(item, updates)
+		if err != nil {
+			return venuecache.VenueProjection{}, nil, err
+		}
+		if len(conflicts) > 0 {
+			return item, conflicts, venuecache.ErrFieldConflict
+		}
+		for _, update := range resolved {
 			switch update.APIField {
 			case "name":
 				item.Name = update.Value.(string)
@@ -491,6 +498,78 @@ func TestVenuePatchRejectsInvalidBaselineTokenBeforeWriting(t *testing.T) {
 	}
 	if reader.writeCalls != 0 {
 		t.Fatalf("invalid-token patch reached writer %d times", reader.writeCalls)
+	}
+}
+
+func TestVenuePatchRejectsBaselineTokenReusedForAnotherField(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot:  venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
+	editTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameToken, err := editTokens.Issue("venue-1", "name", "Current venue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: editTokens}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	body := `{"address":"Updated Road","edit_tokens":{"address":"` + nameToken + `"}}`
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_edit_token"`) {
+		t.Fatalf("field-reused token status=%d body=%s, want 400 invalid_edit_token", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("field-reused token reached writer %d times", reader.writeCalls)
+	}
+}
+
+func TestVenuePatchRejectsBaselineTokenAfterKeyRotation(t *testing.T) {
+	reader := &testReader{
+		canManage: true,
+		snapshot:  venuecache.Snapshot{Venues: []venuecache.VenueProjection{{ID: "venue-1", Name: "Current venue"}}},
+	}
+	oldTokens, err := NewEditTokenCodec([]byte("test-only-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldToken, err := oldTokens.Issue("venue-1", "name", "Current venue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedTokens, err := NewEditTokenCodec([]byte("rotated-test-cursor-signing-key-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := &Endpoint{Reader: reader, Auth: testVerifier{}, EditTokens: rotatedTokens}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	body, err := json.Marshal(map[string]any{
+		"name":       "Updated venue",
+		"edit_tokens": map[string]string{"name": oldToken},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/venues/venue-1", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_edit_token"`) {
+		t.Fatalf("pre-rotation token status=%d body=%s, want 400 invalid_edit_token", response.Code, response.Body)
+	}
+	if reader.writeCalls != 0 {
+		t.Fatalf("pre-rotation token reached writer %d times", reader.writeCalls)
 	}
 }
 

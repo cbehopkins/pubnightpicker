@@ -105,13 +105,15 @@ Feature: Authorised members create and edit venues
     Then Beth sees the journey venue field "Notes" as "Alice's notes"
     And Beth sees the journey venue field "Address" as "Independent Road"
     When Beth changes the journey venue field "Address" to "Independent Road"
+    And Beth drafts the journey venue field "Name" to "Beth's draft"
     When Alice changes the journey venue field "Name" to "Alice's name"
-    And Beth changes the journey venue field "Name" to "Beth's draft"
+    Then Beth sees the journey venue field "Name" as "Beth's draft"
+    When Beth saves the journey venue
     Then Beth sees a field conflict for "name"
     And Beth sees the journey venue field "Name" as "Beth's draft"
     When Beth loads the current venue after a field conflict
     Then Beth sees the journey venue field "Name" as "Alice's name"
-    When Beth changes the journey venue field "Name" to "Beth's final name"
+    When Beth retries the journey venue field "Name" to "Beth's final name"
     Then Beth sees the journey venue field "Name" as "Beth's final name"
 
   Scenario: A manager reviews the venue before retrying a stale deletion

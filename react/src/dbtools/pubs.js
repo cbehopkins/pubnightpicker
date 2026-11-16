@@ -1,28 +1,12 @@
 import { assertCurrentUserPermission, PERMISSIONS } from "../permissions";
 import { requestLastOrders } from "../utils/lastOrdersApi";
-
-const apiFieldNames = {
-    name: "name",
-    venueType: "venue_type",
-    web_site: "website_url",
-    map: "map_url",
-    address: "address",
-    notes: "notes",
-    pubImage: "image_url",
-    recurrence: "recurrence",
-    parking: "parking",
-    food: "food",
-    dog_friend: "dog_friendly",
-    beer_gerden: "beer_garden",
-    out_of_town: "out_of_town",
-    banned: "banned",
-};
+import { venueApiFieldNames } from "../utils/venueApiFields";
 
 const nullableApiFields = new Set(["web_site", "map", "pubImage"]);
 
 function toApiFields(pubParams) {
     return Object.fromEntries(
-        Object.entries(apiFieldNames)
+        Object.entries(venueApiFieldNames)
             .filter(([fieldName]) => Object.hasOwn(pubParams, fieldName))
             .map(([fieldName, apiFieldName]) => {
                 const value = pubParams[fieldName];

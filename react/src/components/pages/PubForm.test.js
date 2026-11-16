@@ -154,6 +154,36 @@ describe("PubForm", () => {
         expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).name).toBe("name-v3");
     });
 
+    it("preserves the original API token when a dirty venue type receives a stream update", () => {
+        const { rerender } = render(
+            <PubForm
+                method="patch"
+                pub_object={{
+                    name: "The Maypole",
+                    venueType: "pub",
+                    edit_tokens: { venue_type: "venue-type-v1" },
+                }}
+            />
+        );
+
+        fireEvent.change(screen.getByLabelText("Venue Type"), { target: { value: "restaurant" } });
+
+        rerender(
+            <PubForm
+                method="patch"
+                pub_object={{
+                    name: "The Maypole",
+                    venueType: "event",
+                    edit_tokens: { venue_type: "venue-type-v2" },
+                }}
+            />
+        );
+
+        expect(screen.getByLabelText("Venue Type")).toHaveValue("restaurant");
+        expect(JSON.parse(document.querySelector('input[name="venue_baseline"]').value).venueType).toBe("pub");
+        expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).venue_type).toBe("venue-type-v1");
+    });
+
     it("preserves the form draft until the manager loads the current venue after a conflict", () => {
         actionDataMock.current = {
             conflict: {

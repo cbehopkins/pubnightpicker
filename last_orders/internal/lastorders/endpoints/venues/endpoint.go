@@ -18,6 +18,7 @@ import (
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/services/venueedit"
 
 	"cloud.google.com/go/firestore"
 )
@@ -32,7 +33,7 @@ type reader interface {
 }
 
 type conditionalReader interface {
-	PatchWithBaseline(context.Context, string, []venuecache.FieldUpdate) (venuecache.VenueProjection, []string, error)
+	PatchWithBaseline(context.Context, string, []venuecache.FieldUpdate, func(venuecache.VenueProjection, []venuecache.FieldUpdate) ([]venuecache.FieldUpdate, []string, error)) (venuecache.VenueProjection, []string, error)
 }
 
 type decodedVenueWrite struct {
@@ -325,7 +326,7 @@ func (e *Endpoint) patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Conditional venue writes are unavailable.")
 		return
 	}
-	item, conflicts, err := conditional.PatchWithBaseline(r.Context(), venueID, updates)
+	item, conflicts, err := conditional.PatchWithBaseline(r.Context(), venueID, updates, venueedit.ResolvePatch)
 	if errors.Is(err, venuecache.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "Venue not found.")
 		return
@@ -669,7 +670,7 @@ func (e *Endpoint) represent(item venuecache.VenueProjection) (venue, error) {
 	if e.EditTokens == nil {
 		return result, nil
 	}
-	values := venuecache.CanonicalAPIValues(item)
+	values := venueedit.CanonicalAPIValues(item)
 	result.EditTokens = make(map[string]string, len(venueFields))
 	for field := range venueFields {
 		token, err := e.EditTokens.Issue(item.ID, field, values[field])

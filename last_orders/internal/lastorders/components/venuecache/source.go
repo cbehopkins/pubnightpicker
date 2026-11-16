@@ -49,7 +49,7 @@ type Writer interface {
 }
 
 type ConditionalWriter interface {
-	PatchWithBaseline(context.Context, string, []FieldUpdate) (Document, []string, error)
+	PatchWithBaseline(context.Context, string, []FieldUpdate, func(VenueProjection, []FieldUpdate) ([]FieldUpdate, []string, error)) (Document, []string, error)
 }
 
 type ConditionalDeleteWriter interface {
@@ -117,9 +117,12 @@ func (s *FirestoreSource) Patch(ctx context.Context, venueID string, fields map[
 	return Document{ID: doc.Ref.ID, Data: doc.Data(), UpdateTime: doc.UpdateTime}, nil
 }
 
-func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate) (Document, []string, error) {
+func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate, resolve func(VenueProjection, []FieldUpdate) ([]FieldUpdate, []string, error)) (Document, []string, error) {
 	if len(fields) == 0 {
 		return Document{}, nil, fmt.Errorf("venue patch is empty")
+	}
+	if resolve == nil {
+		return Document{}, nil, fmt.Errorf("venue patch resolver is required")
 	}
 	ref := s.client.Collection(collection).Doc(venueID)
 	var result Document
@@ -133,47 +136,25 @@ func (s *FirestoreSource) PatchWithBaseline(ctx context.Context, venueID string,
 			return err
 		}
 		data := snapshot.Data()
-		projection, err := ProjectionFromDocument(Document{ID: snapshot.Ref.ID, Data: data})
+		projection, err := ProjectionFromDocument(Document{ID: snapshot.Ref.ID, Data: data, UpdateTime: snapshot.UpdateTime})
 		if err != nil {
 			return err
 		}
-		currentValues := CanonicalAPIValues(projection)
-		conflicts = nil
-		for _, field := range fields {
-			currentDigest, err := CanonicalValueDigest(currentValues[field.APIField])
-			if err != nil {
-				return err
-			}
-			submittedDigest, err := CanonicalValueDigest(field.CanonicalValue)
-			if err != nil {
-				return err
-			}
-			if currentDigest != field.BaselineDigest && currentDigest != submittedDigest {
-				conflicts = append(conflicts, field.APIField)
-			}
+		resolvedFields, currentConflicts, err := resolve(projection, fields)
+		if err != nil {
+			return err
 		}
-		sort.Strings(conflicts)
+		conflicts = currentConflicts
 		if len(conflicts) > 0 {
 			result = Document{ID: snapshot.Ref.ID, Data: data, UpdateTime: snapshot.UpdateTime}
 			return nil
 		}
-		updates := make([]firestore.Update, 0, len(fields))
-		resultData := make(map[string]any, len(data)+len(fields))
+		updates := make([]firestore.Update, 0, len(resolvedFields))
+		resultData := make(map[string]any, len(data)+len(resolvedFields))
 		for key, value := range data {
 			resultData[key] = value
 		}
-		for _, field := range fields {
-			currentDigest, err := CanonicalValueDigest(currentValues[field.APIField])
-			if err != nil {
-				return err
-			}
-			submittedDigest, err := CanonicalValueDigest(field.CanonicalValue)
-			if err != nil {
-				return err
-			}
-			if currentDigest == submittedDigest {
-				continue
-			}
+		for _, field := range resolvedFields {
 			updates = append(updates, firestore.Update{Path: field.FirestoreField, Value: field.Value})
 			if field.Value == firestore.Delete {
 				delete(resultData, field.FirestoreField)

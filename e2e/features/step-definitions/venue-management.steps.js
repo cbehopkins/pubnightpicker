@@ -119,7 +119,7 @@ export async function fillVenue(page, details) {
     }
 }
 
-export async function saveVenue(page) {
+export async function saveVenue(page, expectedPatchStatus = null) {
     const url = page.url();
     const isEditing = new URL(url).pathname !== "/venues/new";
     const patchResponse = isEditing
@@ -131,8 +131,21 @@ export async function saveVenue(page) {
         return;
     }
     const response = await patchResponse;
-    assert.ok([200, 409].includes(response.status()), `Venue patch response status: ${response.status()}`);
+    if (expectedPatchStatus === null) {
+        assert.ok([200, 409].includes(response.status()), `Venue patch response status: ${response.status()}`);
+    } else {
+        assert.equal(response.status(), expectedPatchStatus, `Venue patch response status: ${response.status()}`);
+    }
     assert.equal(page.url(), url, "A venue update should keep the editor open");
+}
+
+async function waitForVenueFieldValue(page, field, value) {
+    await page.waitForFunction(({ fieldName, fieldValue }) => {
+        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
+        const input = label && document.getElementById(label.htmlFor);
+        return input?.value === fieldValue;
+    }, { fieldName: field, fieldValue: value });
+    return page.getByLabel(field, { exact: true }).inputValue();
 }
 
 When("{word} opens Manage Venues", async function (name) {
@@ -205,12 +218,18 @@ When("{word} changes the journey venue field {string} to {string}", async functi
     const page = this.actors.get(_name);
     await page.getByLabel(field, { exact: true }).fill(value);
     await saveVenue(page);
-    await page.getByLabel(field, { exact: true }).waitFor();
-    await page.waitForFunction(({ fieldName, fieldValue }) => {
-        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
-        const input = label && document.getElementById(label.htmlFor);
-        return input?.value === fieldValue;
-    }, { fieldName: field, fieldValue: value });
+    await waitForVenueFieldValue(page, field, value);
+});
+
+When("{word} retries the journey venue field {string} to {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    await page.getByLabel(field, { exact: true }).fill(value);
+    await saveVenue(page, 200);
+    await waitForVenueFieldValue(page, field, value);
+});
+
+When("{word} saves the journey venue", async function (name) {
+    await saveVenue(this.actors.get(name));
 });
 
 When("{word} drafts the journey venue field {string} to {string}", async function (name, field, value) {
@@ -220,12 +239,7 @@ When("{word} drafts the journey venue field {string} to {string}", async functio
 
 Then("{word} sees the journey venue field {string} as {string}", async function (name, field, value) {
     const page = this.actors.get(name);
-    await page.waitForFunction(({ fieldName, fieldValue }) => {
-        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
-        const input = label && document.getElementById(label.htmlFor);
-        return input?.value === fieldValue;
-    }, { fieldName: field, fieldValue: value });
-    assert.equal(await page.getByLabel(field, { exact: true }).inputValue(), value, field);
+    assert.equal(await waitForVenueFieldValue(page, field, value), value, field);
 });
 
 Then("{word} sees a field conflict for {string}", async function (name, field) {

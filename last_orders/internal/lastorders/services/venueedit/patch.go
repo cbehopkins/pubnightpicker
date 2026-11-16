@@ -1,14 +1,44 @@
-package venuecache
+package venueedit
 
 import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
+
+	"last_orders/internal/lastorders/components/venuecache"
 )
 
-// CanonicalAPIValues returns the public API value of every editable venue field.
-func CanonicalAPIValues(venue VenueProjection) map[string]any {
+func ResolvePatch(current venuecache.VenueProjection, fields []venuecache.FieldUpdate) ([]venuecache.FieldUpdate, []string, error) {
+	currentValues := CanonicalAPIValues(current)
+	updates := make([]venuecache.FieldUpdate, 0, len(fields))
+	conflicts := make([]string, 0)
+	for _, field := range fields {
+		currentDigest, err := CanonicalValueDigest(currentValues[field.APIField])
+		if err != nil {
+			return nil, nil, err
+		}
+		submittedDigest, err := CanonicalValueDigest(field.CanonicalValue)
+		if err != nil {
+			return nil, nil, err
+		}
+		if currentDigest != field.BaselineDigest && currentDigest != submittedDigest {
+			conflicts = append(conflicts, field.APIField)
+			continue
+		}
+		if currentDigest != submittedDigest {
+			updates = append(updates, field)
+		}
+	}
+	sort.Strings(conflicts)
+	if len(conflicts) > 0 {
+		return nil, conflicts, nil
+	}
+	return updates, nil, nil
+}
+
+func CanonicalAPIValues(venue venuecache.VenueProjection) map[string]any {
 	values := map[string]any{
 		"name":                 venue.Name,
 		"venue_type":           venue.VenueType,
