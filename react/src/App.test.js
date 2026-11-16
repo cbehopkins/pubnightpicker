@@ -96,9 +96,9 @@ vi.mock("./components/pages/NewVenue", () => ({
   action: vi.fn(),
 }));
 vi.mock("./components/pages/ActivePolls", () => ({ default: () => null }));
-vi.mock("./components/pages/CurrentEvents", () => ({
+vi.mock("./components/pages/CurrentMeets", () => ({
   default: () => null,
-  PastEvents: () => null,
+  PastMeets: () => null,
 }));
 vi.mock("./components/pages/WinningVenueStats", () => ({
   default: () => null,

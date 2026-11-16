@@ -76,7 +76,7 @@ export function getDedupedVotesForVenue(votes, venueId) {
  * }} input
  * @returns {CurrentEventViewModel | null}
  */
-export function buildCurrentEventViewModel({
+export function buildCurrentMeetViewModel({
     currentVenueId,
     restaurant_id,
     restaurant_time,

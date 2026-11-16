@@ -39,12 +39,12 @@ export function compareRankedStatRowsAscending(left, right) {
 }
 
 /**
- * Build ranked venue stats from completed poll documents.
+ * Build ranked venue stats from completed Meets.
  *
- * @param {{ polls?: Record<string, { selected?: string, date?: string }>, venues?: Record<string, VenueLike | undefined> }} input
+ * @param {{ meets?: Record<string, { selectedVenueId?: string, date?: string }>, venues?: Record<string, VenueLike | undefined> }} input
  * @returns {RankedStatRow[]}
  */
-export function buildWinningVenueRows({ polls = {}, venues = {} }) {
+export function buildWinningVenueRows({ meets = {}, venues = {} }) {
     /** @type {Record<string, RankedStatRow>} */
     const rowsById = {};
 
@@ -58,8 +58,8 @@ export function buildWinningVenueRows({ polls = {}, venues = {} }) {
         };
     }
 
-    for (const poll of Object.values(polls || {})) {
-        const venueId = poll?.selected;
+    for (const meet of Object.values(meets || {})) {
+        const venueId = meet?.selectedVenueId;
         if (!venueId) {
             continue;
         }
@@ -77,8 +77,8 @@ export function buildWinningVenueRows({ polls = {}, venues = {} }) {
         const row = rowsById[venueId];
         row.count += 1;
 
-        if (poll.date && (!row.lastWonDate || poll.date > row.lastWonDate)) {
-            row.lastWonDate = poll.date;
+        if (meet.date && (!row.lastWonDate || meet.date > row.lastWonDate)) {
+            row.lastWonDate = meet.date;
         }
     }
 

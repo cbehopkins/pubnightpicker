@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { NavLink, useSearchParams } from "react-router-dom";
-import { usePastCompletePolls, useFutureCompletePolls } from "../../hooks/usePolls";
+import { usePastMeets, useCurrentMeets } from "../../hooks/usePolls";
 import useVenues from "../../hooks/useVenues";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
@@ -13,7 +13,7 @@ import useUserPrivateData from "../../hooks/useUserPrivateData";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useReschedulePoll } from "../../hooks/useReschedulePoll";
 import { useEventAttendance } from "../../hooks/useEventAttendance";
-import styles from "./CurrentEvents.module.css";
+import styles from "./CurrentMeets.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
@@ -37,11 +37,11 @@ function ensureAbsoluteUrl(url) {
   return `https://${url}`;
 }
 import { notifyError } from "../../utils/notify";
-import { buildCurrentEventViewModel } from "../../utils/currentEventViewModel";
+import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
 /** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
-/** @typedef {{ selected?: string, restaurant?: string | null, restaurant_time?: string | null, date?: string }} EventPollValue */
+/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} EventPollValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, EventPollValue]> }} SortedPollCollection */
 
 /** @typedef {import("../../store").RootState} RootState */
@@ -96,11 +96,11 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const venue = venues[value.selected];
+  const venue = venues[value.selectedVenueId];
   const venueName = venue?.name;
   const venueWebsite = venue?.website;
   const venueImage = normalizeImageUrl(venue?.image);
-  const userEta = (currUserId && venue && attendance[value.selected]?.eta?.[currUserId]) || null;
+  const userEta = (currUserId && venue && attendance[value.selectedVenueId]?.eta?.[currUserId]) || null;
 
   useEffect(() => {
     setHasImageLoadError(false);
@@ -150,7 +150,7 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
                 type="button"
                 variant="outline-danger"
                 className="btn-sm"
-                onClick={() => clearEta(value.selected, currUserId)}
+                onClick={() => clearEta(value.selectedVenueId, currUserId)}
               >
                 Remove ETA
               </Button>
@@ -179,7 +179,7 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
   );
 }
 
-export function PastEvents() {
+export function PastMeets() {
   const [searchParams, setSearchParams] = useSearchParams();
   const pubCountParam = Number(searchParams.get("pastPageSize"));
   const pubCount = [5, 10, 20].includes(pubCountParam) ? pubCountParam : 5;
@@ -188,7 +188,7 @@ export function PastEvents() {
     .filter(Boolean);
   const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
 
-  const { pollData, hasNextPage, lastVisibleId, isLoading } = usePastCompletePolls(
+  const { meetData, hasNextPage, lastVisibleId, isLoading } = usePastMeets(
     pubCount,
     currentCursorId
   );
@@ -196,7 +196,7 @@ export function PastEvents() {
   const hasPreviousPage = cursorTrail.length > 0;
   const pageIndex = cursorTrail.length;
   const venues = useVenues();
-  const sortedPollsByDate = [...pollData.sortedByDate(true)];
+  const sortedMeetsByDate = [...meetData.sortedByDate(true)];
   const canChat = useRole("canChat");
   const canViewStats = useAdmin();
 
@@ -274,7 +274,7 @@ export function PastEvents() {
         </div>
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
-          {sortedPollsByDate.map(([key, value]) => {
+          {sortedMeetsByDate.map(([key, value]) => {
             return <PastEvent key={key} poll_id={key} value={value} venues={venues} can_chat={canChat} />;
           })}
         </div>
@@ -348,7 +348,7 @@ function CurrentEvent({
     poll_id,
     canReadProtectedEventData
   );
-  const eventViewModel = buildCurrentEventViewModel({
+  const eventViewModel = buildCurrentMeetViewModel({
     currentVenueId,
     restaurant_id,
     restaurant_time,
@@ -569,7 +569,7 @@ function CurrentEvent({
   );
 }
 
-function CurrentEvents() {
+function CurrentMeets() {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => {
@@ -579,7 +579,7 @@ function CurrentEvents() {
   );
   const privateData = useUserPrivateData(currUserId);
   const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
-  const pollData = useFutureCompletePolls();
+  const meetData = useCurrentMeets();
   const venues = useVenues();
   const canReschedule = useRole("canCompletePoll");
   const canDeleteEvent = useRole("canCreatePoll");
@@ -611,14 +611,14 @@ function CurrentEvents() {
             onCancel={rescheduleState.cancelReschedule}
           />
         )}
-        {[...pollData.sortedByDate()].map(([key, value]) => {
+        {[...meetData.sortedByDate()].map(([key, value]) => {
           return (
             <CurrentEvent
               key={key}
               poll_id={key}
-              currentVenueId={value.selected}
-              restaurant_id={value.restaurant}
-              restaurant_time={value.restaurant_time}
+              currentVenueId={value.selectedVenueId}
+              restaurant_id={value.restaurantId}
+              restaurant_time={value.restaurantTime}
               date={value.date}
               venues={venues}
               can_reschedule={canReschedule}
@@ -635,4 +635,4 @@ function CurrentEvents() {
   );
 }
 
-export default CurrentEvents;
+export default CurrentMeets;

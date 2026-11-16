@@ -45,10 +45,10 @@ const AdminLogsPage = lazy(() =>
 const AdminConfigPage = lazy(() =>
   import("./components/pages/DiagnosticsPage").then((module) => ({ default: module.AdminConfigPage })),
 );
-const CurrentEvents = lazy(() => import("./components/pages/CurrentEvents"));
-const PastEvents = lazy(() =>
-  import("./components/pages/CurrentEvents").then((module) => ({
-    default: module.PastEvents,
+const CurrentMeets = lazy(() => import("./components/pages/CurrentMeets"));
+const PastMeets = lazy(() =>
+  import("./components/pages/CurrentMeets").then((module) => ({
+    default: module.PastMeets,
   })),
 );
 const WinningVenueStats = lazy(() => import("./components/pages/WinningVenueStats"));
@@ -212,11 +212,11 @@ function App() {
         },
         {
           path: "current_meets",
-          element: <LazyRoute><CurrentEvents /></LazyRoute>,
+          element: <LazyRoute><CurrentMeets /></LazyRoute>,
         },
         {
           path: "past_meets",
-          element: <LazyRoute><PastEvents /></LazyRoute>,
+          element: <LazyRoute><PastMeets /></LazyRoute>,
         },
         {
           path: "stats",

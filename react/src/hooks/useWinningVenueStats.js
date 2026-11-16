@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { getTodaysDate } from "../utils/pollSorting";
+import { getTodaysDate, MeetData } from "../utils/pollSorting";
 
 function getDateYearsAgo(yearCount) {
     const normalizedYears = Number.isFinite(yearCount) && yearCount > 0 ? yearCount : 1;
@@ -14,7 +14,7 @@ function getDateYearsAgo(yearCount) {
 
 /**
  * @param {number} yearCount
- * @returns {{ polls: Record<string, { selected?: string, date?: string }>, isLoading: boolean, errorMessage: string | null, startDate: string, endDate: string }}
+ * @returns {{ meets: Record<string, { selectedVenueId?: string, date?: string }>, isLoading: boolean, errorMessage: string | null, startDate: string, endDate: string }}
  */
 export default function useWinningVenueStats(yearCount) {
     const endDate = getTodaysDate();
@@ -30,13 +30,13 @@ export default function useWinningVenueStats(yearCount) {
         [endDate, startDate]
     );
 
-    const [polls, setPolls] = useState({});
+    const [meets, setMeets] = useState({});
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState(null);
 
     useEffect(() => {
         setIsLoading(true);
-        setPolls({});
+        setMeets({});
         setErrorMessage(null);
 
         const unsubscribe = onSnapshot(
@@ -47,13 +47,13 @@ export default function useWinningVenueStats(yearCount) {
                 snapshot.forEach((docSnapshot) => {
                     nextPolls[docSnapshot.id] = docSnapshot.data();
                 });
-                setPolls(nextPolls);
+                setMeets(new MeetData(nextPolls).meets);
                 setErrorMessage(null);
                 setIsLoading(false);
             },
             (error) => {
                 console.error("Error loading winning venue stats", error);
-                setPolls({});
+                setMeets({});
                 setErrorMessage("Unable to load winning venue stats right now.");
                 setIsLoading(false);
             }
@@ -63,7 +63,7 @@ export default function useWinningVenueStats(yearCount) {
     }, [statsQuery]);
 
     return {
-        polls,
+        meets,
         isLoading,
         errorMessage,
         startDate,

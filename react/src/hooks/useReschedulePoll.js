@@ -92,7 +92,7 @@ export function useReschedulePoll(venues, canReschedule) {
       );
       setReschedulingPoll(null);
     } catch (error) {
-      notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this event."));
+      notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this meet."));
     }
   }, [canReschedule, reschedulingPoll]);
 

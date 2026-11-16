@@ -71,9 +71,9 @@ describe("WinningVenueStatsPage", () => {
     });
 
     useWinningVenueStatsMock.mockReturnValue({
-      polls: {
-        p1: { selected: "venue-1", date: "2026-04-01" },
-        p2: { selected: "venue-3", date: "2026-04-03" },
+      meets: {
+        p1: { selectedVenueId: "venue-1", date: "2026-04-01" },
+        p2: { selectedVenueId: "venue-3", date: "2026-04-03" },
       },
       isLoading: false,
       errorMessage: null,
@@ -143,7 +143,7 @@ describe("WinningVenueStatsPage", () => {
 
   it("renders an error alert when stats query fails", () => {
     useWinningVenueStatsMock.mockReturnValue({
-      polls: {},
+      meets: {},
       isLoading: false,
       errorMessage: "Unable to load winning venue stats right now.",
       startDate: "2025-05-11",

@@ -94,7 +94,7 @@ export function AttendanceVenueStatsPage() {
                     Showing {venueLimit} venues per list from {startDate} through {endDate}.
                 </div>
                 <div className="mt-2 small text-body-secondary">
-                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that poll.
+                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that Meet.
                 </div>
 
                 <div className="mt-3 d-flex flex-wrap align-items-center gap-2">
@@ -125,7 +125,7 @@ export function AttendanceVenueStatsPage() {
                     <div className="col-lg-6">
                         <StatRankingList
                             title="Highest attendance confirmations"
-                            subtitle="Total can-come confirmations across polls in the chosen period."
+                            subtitle="Total can-come confirmations across Meets in the chosen period."
                             emptyMessage="No attendance data was found in this time window."
                             items={most}
                         />
