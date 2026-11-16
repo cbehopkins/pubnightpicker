@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	HandlerEvaluateEventVenue cellar.HandlerName = "recurrence.evaluate_event_venue"
-	HandlerStaleEvent         cellar.HandlerName = "recurrence.stale_event"
-	HandlerCreateEventPoll    cellar.HandlerName = "recurrence.create_event_poll"
+	HandlerEvaluateEventVenue           cellar.HandlerName = "recurrence.evaluate_event_venue"
+	HandlerStaleEvent                   cellar.HandlerName = "recurrence.stale_event"
+	HandlerCreateMeetForEventOccurrence cellar.HandlerName = "recurrence.create_event_poll"
 )
 
 const (
@@ -29,9 +29,9 @@ type StaleEventAdvancer interface {
 	AdvanceStaleEvent(ctx context.Context, eventID string) error
 }
 
-// EventPollCreator materialises the poll for a due occurrence. Satisfied by *recurrence.Service.
-type EventPollCreator interface {
-	CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error
+// EventOccurrenceMeetCreator creates the Meet for a due occurrence. Satisfied by *recurrence.Service.
+type EventOccurrenceMeetCreator interface {
+	CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error
 }
 
 type ObservationClaimCache interface {
@@ -117,9 +117,9 @@ func (h EvaluateEventVenueHandler) createStaleEventTruth(venue recurrence.EventV
 }
 
 func (h EvaluateEventVenueHandler) createEventDueTruth(venue recurrence.EventVenue) cellar.Result {
-	envelope, err := truths.NewEnvelope(truths.CreateEventPollFanout, truths.CreateEventPoll{EventID: venue.ID, OccurrenceDate: venue.NextOccurrenceDate})
+	envelope, err := truths.NewEnvelope(truths.CreateMeetForEventOccurrenceFanout, truths.CreateMeetForEventOccurrence{EventID: venue.ID, OccurrenceDate: venue.NextOccurrenceDate})
 	if err != nil {
-		return cellar.ErrorResult{Message: "build create event poll envelope", Err: err}
+		return cellar.ErrorResult{Message: "build create meet for event occurrence envelope", Err: err}
 	}
 	return h.createTruth(listenerEventDue, recurrence.EventDueKey(venue.ID, venue.NextOccurrenceDate), envelope)
 }
@@ -158,12 +158,12 @@ func (h StaleEventHandler) Handle(ctx context.Context, payload truths.StaleEvent
 	return cellar.Complete{}
 }
 
-type CreateEventPollHandler struct {
-	Service EventPollCreator
+type CreateMeetForEventOccurrenceHandler struct {
+	Service EventOccurrenceMeetCreator
 	Logger  *slog.Logger
 }
 
-func (h CreateEventPollHandler) Handle(ctx context.Context, payload truths.CreateEventPoll) cellar.Result {
+func (h CreateMeetForEventOccurrenceHandler) Handle(ctx context.Context, payload truths.CreateMeetForEventOccurrence) cellar.Result {
 	if h.Service == nil {
 		return cellar.ErrorResult{Message: "recurrence service is nil"}
 	}
@@ -171,12 +171,12 @@ func (h CreateEventPollHandler) Handle(ctx context.Context, payload truths.Creat
 		return cellar.Complete{}
 	}
 
-	if err := h.Service.CreateEventPoll(ctx, payload.EventID, payload.OccurrenceDate); err != nil {
-		return cellar.ErrorResult{Message: "create event poll", Err: err}
+	if err := h.Service.CreateMeetForEventOccurrence(ctx, payload.EventID, payload.OccurrenceDate); err != nil {
+		return cellar.ErrorResult{Message: "create meet for event occurrence", Err: err}
 	}
 
 	if h.Logger != nil {
-		h.Logger.Info("event poll materialisation processed", "event_id", payload.EventID, "occurrence_date", payload.OccurrenceDate)
+		h.Logger.Info("event occurrence meet creation processed", "event_id", payload.EventID, "occurrence_date", payload.OccurrenceDate)
 	}
 	return cellar.Complete{}
 }

@@ -170,7 +170,7 @@ func TestAdvanceStaleEventFromPastDateAgainstEmulator(t *testing.T) {
 	}
 }
 
-func TestCreateEventPollUsesFirebaseStateWhenCacheIsStale(t *testing.T) {
+func TestCreateMeetForEventOccurrenceUsesFirebaseStateWhenCacheIsStale(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -216,7 +216,7 @@ func TestCreateEventPollUsesFirebaseStateWhenCacheIsStale(t *testing.T) {
 	}
 	svc.cache = cacheService
 
-	if err := svc.CreateEventPoll(ctx, eventID, current); err != nil {
+	if err := svc.CreateMeetForEventOccurrence(ctx, eventID, current); err != nil {
 		t.Fatalf("create event poll with Firebase authoritative date: %v", err)
 	}
 	polls, err := client.Collection("polls").Where("eventVenueId", "==", eventID).Documents(ctx).GetAll()
@@ -241,7 +241,7 @@ func (s staleSource) ListEventVenues(context.Context) ([]venuecache.Document, er
 
 func (s staleSource) Watch(context.Context) (venuecache.ChangeStream, error) { return nil, nil }
 
-func TestCreateEventPollAgainstEmulator(t *testing.T) {
+func TestCreateMeetForEventOccurrenceAgainstEmulator(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -265,7 +265,7 @@ func TestCreateEventPollAgainstEmulator(t *testing.T) {
 		t.Fatal("seeded occurrence should be inside the creation window")
 	}
 
-	if err := svc.CreateEventPoll(ctx, eventID, occurrence); err != nil {
+	if err := svc.CreateMeetForEventOccurrence(ctx, eventID, occurrence); err != nil {
 		t.Fatalf("create event poll: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestCreateEventPollAgainstEmulator(t *testing.T) {
 	if _, err := client.Collection("votes").Doc(pollID).Set(ctx, map[string]any{"any": []any{"member-1"}}); err != nil {
 		t.Fatalf("seed vote: %v", err)
 	}
-	if err := svc.CreateEventPoll(ctx, eventID, occurrence); err != nil {
+	if err := svc.CreateMeetForEventOccurrence(ctx, eventID, occurrence); err != nil {
 		t.Fatalf("replay create event poll: %v", err)
 	}
 
@@ -332,7 +332,7 @@ func TestCreateEventPollAgainstEmulator(t *testing.T) {
 	}
 }
 
-func TestCreateEventPollSkipsSupersededOccurrenceAgainstEmulator(t *testing.T) {
+func TestCreateMeetForEventOccurrenceSkipsSupersededOccurrenceAgainstEmulator(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -353,7 +353,7 @@ func TestCreateEventPollSkipsSupersededOccurrenceAgainstEmulator(t *testing.T) {
 		t.Fatalf("seed venue: %v", err)
 	}
 
-	if err := svc.CreateEventPoll(ctx, eventID, observed); err != nil {
+	if err := svc.CreateMeetForEventOccurrence(ctx, eventID, observed); err != nil {
 		t.Fatalf("create event poll: %v", err)
 	}
 
