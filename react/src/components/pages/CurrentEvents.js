@@ -165,7 +165,7 @@ function PastEvent({ value, pub_parameters, poll_id, can_chat }) {
                 className="btn-sm"
                 onClick={() => setIsChatOpen(true)}
               >
-                Event Chat
+                Meet Chat
               </Button>
             )}
           </div>
@@ -411,7 +411,7 @@ function CurrentEvent({
                 className="btn-sm flex-shrink-0"
                 onClick={() => setIsChatOpen(true)}
               >
-                Event Chat
+                Meet Chat
               </Button>
             )}
           </div>

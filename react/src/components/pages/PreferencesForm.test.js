@@ -329,7 +329,7 @@ describe("PushPreferences", () => {
         expect(screen.getByLabelText("A poll opens").checked).toBe(true);
         expect(screen.getByLabelText("A poll completes").checked).toBe(true);
         expect(screen.getByLabelText("A message is sent in global chat").checked).toBe(false);
-        expect(screen.getByLabelText("A message is sent in an event chat I am attending").checked).toBe(false);
+        expect(screen.getByLabelText("A message is sent in a Meet chat I am attending").checked).toBe(false);
     });
 
     it("renders Push Preferences with subscription status and buttons when enabled", () => {

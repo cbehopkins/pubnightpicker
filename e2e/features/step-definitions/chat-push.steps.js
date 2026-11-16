@@ -13,7 +13,7 @@ function categoryTable(category, enabled) {
         { category: "A poll opens", enabled: "false" },
         { category: "A poll completes", enabled: "false" },
         { category: "A message is sent in global chat", enabled: category === "globalChat" ? enabled : "false" },
-        { category: "A message is sent in an event chat I am attending", enabled: category === "eventChat" ? enabled : "false" },
+        { category: "A message is sent in a Meet chat I am attending", enabled: category === "eventChat" ? enabled : "false" },
     ];
 }
 
@@ -92,7 +92,7 @@ async function messageSnapshot(world, actor, scopeType, scopeId) {
 async function assertChatPush(world, actor, scopeType, scopeId, recipientNames) {
     const { id: messageId, text } = await messageSnapshot(world, actor, scopeType, scopeId);
     const eventType = scopeType === "global" ? "chat_message_sent_global" : "chat_message_sent_event";
-    const expectedUrl = scopeType === "global" ? `${BASE_URL}/chat` : `${BASE_URL}/chat/event/${scopeId}`;
+    const expectedUrl = scopeType === "global" ? `${BASE_URL}/chat` : `${BASE_URL}/chat/meet/${scopeId}`;
     await waitForBackendRecord((record) =>
         record.msg === "chat push processing completed" && record.message_id === messageId &&
         record.scope_type === scopeType && record.scope_id === scopeId,
@@ -117,6 +117,12 @@ async function assertChatPush(world, actor, scopeType, scopeId, recipientNames) 
         assert.equal(payload.url, expectedUrl);
         if (scopeType === "event") assert.equal(payload.pollId, scopeId);
         else assert.equal(payload.pollId, null);
+    }
+    if (scopeType === "event" && recipientNames.length > 0) {
+        const page = world.actors.get(recipientNames[0]);
+        await page.goto(sends[0].payload.url);
+        await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
+        await page.getByText(text, { exact: true }).waitFor();
     }
 }
 
@@ -157,8 +163,8 @@ When("{word} joins the event chat conversation", async function (name) {
     const page = this.actors.get(name);
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
     await page.getByRole("heading", { name: this.eventChatPollDate, exact: true }).waitFor();
-    await page.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
     const text = `event-join-${name}-${randomUUID()}`;
     await page.getByLabel("Chat message", { exact: true }).fill(text);
     await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -179,8 +185,8 @@ When("{word} joins the event chat conversation", async function (name) {
 
 When("{word} mutes notifications for the journey event", async function (name) {
     const page = this.actors.get(name);
-    await page.getByRole("button", { name: "Mute event chat notifications", exact: true }).click();
-    await page.getByText("Event chat notifications are muted for this event.", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Mute Meet chat notifications", exact: true }).click();
+    await page.getByText("Meet chat notifications are muted for this Meet.", { exact: true }).waitFor();
 });
 
 Then("Last Orders observes Hal's event-chat mute", async function () {
@@ -200,8 +206,8 @@ When("{word} sends the final event chat message", async function (name) {
     this.chatMessages.event = text;
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
     await page.getByRole("heading", { name: this.eventChatPollDate, exact: true }).waitFor();
-    await page.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
     await page.getByLabel("Chat message", { exact: true }).fill(text);
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await page.getByText(text, { exact: true }).waitFor();

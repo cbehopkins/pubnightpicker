@@ -7,7 +7,7 @@ const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const CATEGORY_FIELDS = new Map([
     ["A poll opens", "pollOpens"], ["A poll completes", "pollCompletes"],
     ["A message is sent in global chat", "globalChat"],
-    ["A message is sent in an event chat I am attending", "eventChat"],
+    ["A message is sent in a Meet chat I am attending", "eventChat"],
 ]);
 
 async function actorPushState(world, name, db) {

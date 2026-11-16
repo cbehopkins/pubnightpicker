@@ -75,15 +75,15 @@ describe("EventChatModal", () => {
         setEventChatMutedMock.mockResolvedValue(undefined);
     });
 
-    it("links the modal title to the dedicated event chat page", () => {
+    it("links the modal title to the dedicated Meet Chat page", () => {
         render(
             <MemoryRouter>
                 <EventChatModal pollId="poll-42" onClose={() => undefined} />
             </MemoryRouter>,
         );
 
-        const link = screen.getByRole("link", { name: "Event Chat" });
-        expect(link.getAttribute("href")).toBe("/chat/event/poll-42");
+        const link = screen.getByRole("link", { name: "Meet Chat" });
+        expect(link.getAttribute("href")).toBe("/chat/meet/poll-42");
     });
 
     it("shows the mute button when push notifications are enabled", async () => {
@@ -122,7 +122,7 @@ describe("EventChatModal", () => {
 
         const button = await waitFor(() =>
             within(rendered.container).getByRole("button", {
-                name: "Mute event chat notifications",
+                name: "Mute Meet chat notifications",
             })
         );
         fireEvent.click(button);

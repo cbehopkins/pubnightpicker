@@ -196,12 +196,12 @@ describe("App routes", () => {
     vi.mocked(useLocation).mockReturnValue({ state: null });
   });
 
-  it("registers the dedicated event chat route", () => {
+  it("registers the dedicated Meet Chat route", () => {
     render(<App />);
 
     const routeConfig = createBrowserRouterMock.mock.calls[0][0];
     const rootRoute = routeConfig[0];
-    const eventChatRoute = rootRoute.children.find((child) => child.path === "chat/event/:pollId");
+    const eventChatRoute = rootRoute.children.find((child) => child.path === "chat/meet/:meetId");
 
     expect(eventChatRoute).toBeTruthy();
   });

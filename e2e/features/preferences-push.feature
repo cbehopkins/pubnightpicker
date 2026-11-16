@@ -17,7 +17,7 @@ Feature: Members voluntarily opt in to browser push
       | A poll opens                                   | true    |
       | A poll completes                               | false   |
       | A message is sent in global chat                | true    |
-      | A message is sent in an event chat I am attending | false |
+      | A message is sent in a Meet chat I am attending | false |
     And Penny reloads My Preferences
     Then Penny sees the saved push notification categories
     And Penny has an active synthetic push endpoint and enabled preference

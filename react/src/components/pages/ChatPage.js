@@ -18,7 +18,7 @@ export default function ChatPage() {
     const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
     const canChat = useRole("canChat");
     const navigate = useNavigate();
-    const { pollId } = useParams();
+    const { meetId } = useParams();
     const [eventChatMuted, setEventChatMutedState] = useState(false);
     const [eventChatMuteBusy, setEventChatMuteBusy] = useState(false);
     const [globalChatMuted, setGlobalChatMutedState] = useState(false);
@@ -32,15 +32,15 @@ export default function ChatPage() {
     }, [navigate, loggedIn]);
 
     const chatScope = useMemo(() => {
-        if (!pollId) {
+        if (!meetId) {
             return undefined;
         }
-        return { scopeType: /** @type {"event"} */ ("event"), scopeId: pollId };
-    }, [pollId]);
+        return { scopeType: /** @type {"event"} */ ("event"), scopeId: meetId };
+    }, [meetId]);
 
     useEffect(() => {
         const loadEventMuteState = async () => {
-            if (!pollId || !uid) {
+            if (!meetId || !uid) {
                 setEventChatMutedState(false);
                 setWebPushEnabled(false);
                 return;
@@ -51,7 +51,7 @@ export default function ChatPage() {
                 setWebPushEnabled(userData.webPushEnabled === true);
                 const pushPreferences = userData.pushPreferences || {};
                 const mutedPollIds = pushPreferences.eventChatMutedPollIds || [];
-                setEventChatMutedState(mutedPollIds.includes(pollId));
+                setEventChatMutedState(mutedPollIds.includes(meetId));
             } catch {
                 setEventChatMutedState(false);
                 setWebPushEnabled(false);
@@ -59,11 +59,11 @@ export default function ChatPage() {
         };
 
         void loadEventMuteState();
-    }, [pollId, uid]);
+    }, [meetId, uid]);
 
     useEffect(() => {
         const loadGlobalMuteState = async () => {
-            if (pollId || !uid) {
+            if (meetId || !uid) {
                 setGlobalChatMutedState(false);
                 setWebPushEnabled(false);
                 return;
@@ -82,18 +82,18 @@ export default function ChatPage() {
         };
 
         void loadGlobalMuteState();
-    }, [pollId, uid]);
+    }, [meetId, uid]);
 
-    const heading = pollId ? "Event Chat" : "Chat Page";
+    const heading = meetId ? "Meet Chat" : "Chat Page";
 
     const toggleEventMute = async () => {
-        if (!pollId || !uid) {
+        if (!meetId || !uid) {
             return;
         }
         setEventChatMuteBusy(true);
         try {
             const nextMuted = !eventChatMuted;
-            await setEventChatMuted(uid, pollId, nextMuted);
+            await setEventChatMuted(uid, meetId, nextMuted);
             setEventChatMutedState(nextMuted);
         } finally {
             setEventChatMuteBusy(false);
@@ -101,7 +101,7 @@ export default function ChatPage() {
     };
 
     const toggleGlobalMute = async () => {
-        if (pollId || !uid) {
+        if (meetId || !uid) {
             return;
         }
         setGlobalChatMuteBusy(true);
@@ -118,15 +118,15 @@ export default function ChatPage() {
         <div className="d-flex flex-column gap-2 mb-3">
             <div className="d-flex align-items-center justify-content-between gap-2">
                 <h1 className="mb-0">{heading}</h1>
-                {pollId && webPushEnabled && (
+                {meetId && webPushEnabled && (
                     <ChatMuteButton
                         muted={eventChatMuted}
                         busy={eventChatMuteBusy}
                         onToggle={() => { void toggleEventMute(); }}
-                        label={eventChatMuted ? "Unmute event chat notifications" : "Mute event chat notifications"}
+                        label={eventChatMuted ? "Unmute Meet chat notifications" : "Mute Meet chat notifications"}
                     />
                 )}
-                {!pollId && uid && webPushEnabled && (
+                {!meetId && uid && webPushEnabled && (
                     <ChatMuteButton
                         muted={globalChatMuted}
                         busy={globalChatMuteBusy}
@@ -135,24 +135,24 @@ export default function ChatPage() {
                     />
                 )}
             </div>
-            {pollId && webPushEnabled && (
+            {meetId && webPushEnabled && (
                 <div className="d-flex flex-column gap-1">
                     <div>
                         <Link to="/current_meets">Back to current meets</Link>
                     </div>
                     <small className="text-body-secondary">
                         {eventChatMuted
-                            ? "Event chat notifications are muted for this event."
-                            : "Event chat notifications are enabled for this event."}
+                            ? "Meet chat notifications are muted for this Meet."
+                            : "Meet chat notifications are enabled for this Meet."}
                     </small>
                 </div>
             )}
-            {pollId && !webPushEnabled && (
+            {meetId && !webPushEnabled && (
                 <div>
                     <Link to="/current_meets">Back to current meets</Link>
                 </div>
             )}
-            {!pollId && uid && webPushEnabled && (
+            {!meetId && uid && webPushEnabled && (
                 <small className="text-body-secondary">
                     {globalChatMuted
                         ? "Global chat notifications are muted."
