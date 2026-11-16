@@ -73,8 +73,8 @@ export function WinningVenueStatsPage() {
                         <NavLink className="btn btn-outline-primary" to="/stats/attendance">
                             Attendance Stats
                         </NavLink>
-                        <NavLink className="btn btn-outline-primary" to="/past_events">
-                            Back to Past Events
+                        <NavLink className="btn btn-outline-primary" to="/past_meets">
+                            Back to Past Meets
                         </NavLink>
                     </div>
                 </div>

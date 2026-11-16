@@ -143,7 +143,7 @@ receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue
 to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
 for both; Bob sees those totals and adds his vote. Claire chooses the winning
 pub, both users see the poll disappear from Active Polls, and both find the
-meet in Current Events. They then exchange messages in global and event chat,
+meet in Current Meets. They then exchange messages in global and event chat,
 verify that messages remain in their intended scope, and reopen event chat to
 check persistence. Vote totals are checked without granting Can Show Voters or
 administrator access to either member.
