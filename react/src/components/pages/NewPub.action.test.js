@@ -146,7 +146,7 @@ describe("NewPub action", () => {
         );
     });
 
-    it("submits the venue baseline and field tokens and stays on the editor after PATCH", async () => {
+    it("submits the venue baseline and field tokens and redirects after a successful PATCH", async () => {
         const baseline = {
             name: "Old Pub",
             venueType: "pub",
@@ -188,7 +188,8 @@ describe("NewPub action", () => {
             baseline,
             editTokens,
         );
-        expect(response).toEqual({ savedVenue });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("Location")).toBe("/venues");
     });
 
     it("persists notes when editing a pub", async () => {

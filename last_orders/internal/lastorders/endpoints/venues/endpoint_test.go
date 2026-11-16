@@ -554,7 +554,7 @@ func TestVenuePatchRejectsBaselineTokenAfterKeyRotation(t *testing.T) {
 	endpoint.Register(mux)
 
 	body, err := json.Marshal(map[string]any{
-		"name":       "Updated venue",
+		"name":        "Updated venue",
 		"edit_tokens": map[string]string{"name": oldToken},
 	})
 	if err != nil {

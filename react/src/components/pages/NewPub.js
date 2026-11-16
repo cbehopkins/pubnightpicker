@@ -105,8 +105,8 @@ export async function action({ request, params }) {
     if (method === "PATCH") {
       const baseline = parseFormObject(data, "venue_baseline");
       const editTokens = parseFormObject(data, "edit_tokens");
-      const savedVenue = await modifyPub(pub_id, pubParams, baseline, editTokens);
-      return { savedVenue };
+      await modifyPub(pub_id, pubParams, baseline, editTokens);
+      return redirect("/venues");
     }
   } catch (error) {
     if (error?.code === "field_conflict") {
