@@ -103,9 +103,9 @@ func clearOccurrence(tx *firestore.Transaction, ref *firestore.DocumentRef, doc 
 	return tx.Update(ref, []firestore.Update{{Path: NextOccurrenceField, Value: firestore.Delete}})
 }
 
-// CreateEventPoll materialises the poll for a due occurrence, or completes silently
-// when a poll for (eventVenueId, occurrenceDate) already exists.
-func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate string) error {
+// CreateMeetForEventOccurrence creates the Meet for a due occurrence, or completes
+// silently when one for (eventVenueId, occurrenceDate) already exists.
+func (s *Service) CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error {
 	venueDoc, err := s.client.Collection(venueCollection).Doc(eventID).Get(ctx)
 	if err != nil {
 		return err
@@ -123,7 +123,7 @@ func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate s
 		return nil
 	}
 	if current != occurrenceDate {
-		s.logger.Info("event occurrence superseded before poll creation", "event_id", eventID, "observed", occurrenceDate, "current", current)
+		s.logger.Info("event occurrence superseded before meet creation", "event_id", eventID, "observed", occurrenceDate, "current", current)
 		return nil
 	}
 
@@ -181,6 +181,6 @@ func (s *Service) CreateEventPoll(ctx context.Context, eventID, occurrenceDate s
 		s.logger.Warn("poll creation audit failed", "poll_id", pollRef.ID, "err", err)
 	}
 
-	s.logger.Info("event poll created", "event_id", eventID, "poll_id", pollRef.ID, "occurrence", occurrenceDate)
+	s.logger.Info("meet for event occurrence created", "event_id", eventID, "poll_id", pollRef.ID, "occurrence", occurrenceDate)
 	return nil
 }
