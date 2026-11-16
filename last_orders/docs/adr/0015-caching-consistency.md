@@ -30,14 +30,15 @@ The initial implementation does not require a transaction spanning Firestore and
 
 The backend must distinguish a failed authoritative write from a successful write whose subsequent cache update or notification failed.
 
-When concurrent writes overlap on the same resource or field, V1 accepts the
-value Firestore ultimately records as current. Handpump does not compare
-client-generated timestamps or versions, detect the conflict, reject either
-write, or promise which caller wins. This matches the current frontend
-behavior. Concurrent edits can therefore overwrite one another; callers read
-the current authoritative state on a later operation and projections converge
-to that state as Firestore changes are observed. Firestore's own operation
-semantics still apply to non-overlapping field updates.
+Except where a domain-specific concurrency rule is stated below, when concurrent
+writes overlap on the same resource or field, V1 accepts the value Firestore
+ultimately records as current. Handpump does not compare client-generated
+timestamps or versions, detect the conflict, reject either write, or promise
+which caller wins. This matches the current frontend behavior. Concurrent edits
+can therefore overwrite one another; callers read the current authoritative
+state on a later operation and projections converge to that state as Firestore
+changes are observed. Firestore's own operation semantics still apply to
+non-overlapping field updates.
 
 ### 2. Instance-local read caches
 
@@ -106,6 +107,16 @@ For ordinary editable Meet state, last-write-wins is acceptable. If concurrent
 writes overlap, no deterministic winner is promised; Handpump reflects the
 value Firestore records as current and its projections eventually converge to
 that state.
+
+Venue catalogue PATCH is an exception. The client supplies a signed baseline
+for each changed field, and Handpump compares those baselines with authoritative
+Firestore state in the same transaction as the patch. Changes to different
+fields are retained together. A field already equal to the submitted value is
+accepted as converged; if a changed field differs from both its baseline and
+the submitted value, the complete patch is rejected without mutation. Arrays
+and compound fields such as recurrence are compared atomically, not recursively
+merged. This rule does not change the consistency policy for Meets or other
+domains.
 
 This includes edits such as changing the selected venue, restaurant time or rescheduling a Meet. The initial design does not require distributed locks or sophisticated automatic conflict resolution. Occasional conflicting edits may be resolved manually by the users.
 

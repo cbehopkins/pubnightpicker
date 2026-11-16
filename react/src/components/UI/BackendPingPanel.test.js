@@ -190,6 +190,21 @@ describe("BackendPingPanel", () => {
         }));
     });
 
+    it("preserves venue field-conflict details from Last Orders", async () => {
+        const conflict = {
+            error: { code: "field_conflict", message: "The name changed.", fields: ["name"] },
+            current_venue: { id: "venue-1", name: "Current name" },
+        };
+        fetchMock.mockResolvedValue(jsonResponse(conflict, 409));
+
+        await expect(requestLastOrders("api/venues/venue-1", { method: "PATCH", body: { name: "Draft" } }))
+            .rejects.toMatchObject({
+                code: "field_conflict",
+                fields: ["name"],
+                currentVenue: conflict.current_venue,
+            });
+    });
+
     it("sends Last Orders list query parameters on authenticated GET requests", async () => {
         const page = { venues: [], next_cursor: null };
         fetchMock.mockResolvedValue(jsonResponse(page));

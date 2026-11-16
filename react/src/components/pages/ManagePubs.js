@@ -12,6 +12,7 @@ import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../..
 
 const ManagePubs = () => {
   const [venueTypeFilter, setVenueTypeFilter] = useState("all");
+  const [deleteReviews, setDeleteReviews] = useState({});
   const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
   const sortedPubsByName = Object.entries(pub_parameters)
     .filter(([, value]) => {
@@ -72,6 +73,8 @@ const ManagePubs = () => {
 
       <div className={`${styles.content} d-flex flex-column gap-2`}>
         {sortedPubsByName.map(([pubName, key]) => {
+          const currentVenue = deleteReviews[key] ?? pub_parameters[key];
+          const displayName = currentVenue?.name ?? pubName;
           return (
             <div key={key} className="d-flex align-items-center gap-2 flex-wrap">
               {canManagePubs && (
@@ -81,13 +84,22 @@ const ManagePubs = () => {
                   size="sm"
                   onClick={async () => {
                     try {
-                      await deletePub(key);
+                      await deletePub(key, currentVenue?.delete_token);
+                      setDeleteReviews((reviews) => {
+                        const nextReviews = { ...reviews };
+                        delete nextReviews[key];
+                        return nextReviews;
+                      });
                     } catch (error) {
+                      if (error?.code === "precondition_failed" && error.currentVenue?.id === key) {
+                        setDeleteReviews((reviews) => ({ ...reviews, [key]: error.currentVenue }));
+                        return;
+                      }
                       notifyError(getUserFacingErrorMessage(error, "Unable to delete this pub."));
                     }
                   }}
                 >
-                  Delete
+                  {deleteReviews[key] ? "Delete reviewed venue" : "Delete"}
                 </Button>
               )}
               {canManagePubs ? (
@@ -95,10 +107,21 @@ const ManagePubs = () => {
                   className="link-primary link-underline-opacity-0 link-underline-opacity-100-hover fw-medium"
                   to={`/venues/${key}`}
                 >
-                  {pubName}
+                  {displayName}
                 </NavLink>
               ) : (
-                <span className="text-body">{pubName}</span>
+                <span className="text-body">{displayName}</span>
+              )}
+              {deleteReviews[key] && (
+                <div className="alert alert-warning w-100 mb-0" role="alert">
+                  <p className="mb-1">This venue changed after it was loaded. Review the current details before choosing Delete reviewed venue.</p>
+                  <p className="mb-0">
+                    <strong>{displayName}</strong>
+                    {currentVenue.venue_type && ` (${currentVenue.venue_type})`}
+                    {currentVenue.address && `, ${currentVenue.address}`}
+                    {currentVenue.notes && `. ${currentVenue.notes}`}
+                  </p>
+                </div>
               )}
             </div>
           );

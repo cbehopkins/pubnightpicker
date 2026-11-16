@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 )
@@ -132,18 +133,51 @@ func (s *Service) Patch(ctx context.Context, venueID string, fields map[string]a
 	return projection, nil
 }
 
-func (s *Service) Delete(ctx context.Context, venueID string) error {
-	writer, ok := s.source.(Writer)
+func (s *Service) PatchWithBaseline(ctx context.Context, venueID string, fields []FieldUpdate, resolve func(VenueProjection, []FieldUpdate) ([]FieldUpdate, []string, error)) (VenueProjection, []string, error) {
+	writer, ok := s.source.(ConditionalWriter)
 	if !ok {
-		return fmt.Errorf("venue writes are unavailable")
+		return VenueProjection{}, nil, fmt.Errorf("conditional venue writes are unavailable")
 	}
-	if _, err := writer.SoftDelete(ctx, venueID); err != nil {
-		return err
+	doc, conflicts, err := writer.PatchWithBaseline(ctx, venueID, fields, resolve)
+	if err != nil && !errors.Is(err, ErrFieldConflict) {
+		return VenueProjection{}, nil, err
+	}
+	projection, projectionErr := ProjectionFromDocument(doc)
+	if projectionErr != nil {
+		return VenueProjection{}, nil, projectionErr
+	}
+	if errors.Is(err, ErrFieldConflict) {
+		if cacheErr := s.store.Put(ctx, projection); cacheErr != nil {
+			s.logger.Warn("persist conflicting venue projection failed", "venue_id", venueID, "err", cacheErr)
+		}
+		return projection, conflicts, err
+	}
+	if cacheErr := s.store.Put(ctx, projection); cacheErr != nil {
+		return VenueProjection{}, nil, fmt.Errorf("persist updated venue projection: %w", cacheErr)
+	}
+	return projection, nil, nil
+}
+
+func (s *Service) DeleteWithVersion(ctx context.Context, venueID string, expectedUpdateTime time.Time) (VenueProjection, error) {
+	writer, ok := s.source.(ConditionalDeleteWriter)
+	if !ok {
+		return VenueProjection{}, fmt.Errorf("conditional venue deletes are unavailable")
+	}
+	doc, err := writer.SoftDeleteIfUnchanged(ctx, venueID, expectedUpdateTime)
+	if errors.Is(err, ErrVersionConflict) {
+		projection, projectionErr := ProjectionFromDocument(doc)
+		if projectionErr != nil {
+			return VenueProjection{}, projectionErr
+		}
+		return projection, err
+	}
+	if err != nil {
+		return VenueProjection{}, err
 	}
 	if err := s.store.Delete(ctx, venueID); err != nil {
-		return fmt.Errorf("persist deleted venue projection: %w", err)
+		return VenueProjection{}, fmt.Errorf("persist deleted venue projection: %w", err)
 	}
-	return nil
+	return VenueProjection{}, nil
 }
 
 func (s *Service) SourceWatch(ctx context.Context) (ChangeStream, error) {

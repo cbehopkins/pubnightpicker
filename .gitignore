@@ -8,6 +8,7 @@ firebase_sub/firestore.rules
 firebase_sub/firestore.indexes.json
 .env
 *.exe
+*.log
 last_orders/cmd/last-orders/*.db
 last_orders/cmd/last-orders/*.db-shm
 last_orders/cmd/last-orders/*.db-wal

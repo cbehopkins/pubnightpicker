@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"last_orders/internal/lastorders/basestore"
 )
@@ -57,7 +58,8 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 	rows, err := tx.QueryContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json,
+			firestore_update_time
 		FROM venue_cache WHERE deleted = 0
 		ORDER BY name COLLATE NOCASE, venue_id COLLATE NOCASE
 	`)
@@ -67,12 +69,12 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 	venues := make([]VenueProjection, 0)
 	for rows.Next() {
 		var venue VenueProjection
-		var visibleGroupIDsJSON, previousVenueIDsJSON string
+		var visibleGroupIDsJSON, previousVenueIDsJSON, updateTime string
 		if err := rows.Scan(&venue.ID, &venue.Name, &venue.VenueType, &venue.Website,
 			&venue.Map, &venue.Address, &venue.LocationID, &venue.PhotoURL, &venue.RecurrenceJSON,
 			&venue.NextOccurrenceDate, &venue.Notes, &venue.Parking, &venue.Food,
 			&venue.DogFriendly, &venue.BeerGarden, &venue.OutOfTown, &venue.Banned,
-			&visibleGroupIDsJSON, &previousVenueIDsJSON); err != nil {
+			&visibleGroupIDsJSON, &previousVenueIDsJSON, &updateTime); err != nil {
 			rows.Close()
 			return nil, basestore.SyncState{}, err
 		}
@@ -83,6 +85,11 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 		if err := json.Unmarshal([]byte(previousVenueIDsJSON), &venue.PreviousVenueIDs); err != nil {
 			rows.Close()
 			return nil, basestore.SyncState{}, fmt.Errorf("decode venue history: %w", err)
+		}
+		venue.UpdateTime, err = parseUpdateTime(updateTime)
+		if err != nil {
+			rows.Close()
+			return nil, basestore.SyncState{}, err
 		}
 		venues = append(venues, venue)
 	}
@@ -106,11 +113,12 @@ func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.Sync
 func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (VenueProjection, bool, error) {
 	var projection VenueProjection
 	var deleted bool
-	var visibleGroupIDsJSON, previousVenueIDsJSON string
+	var visibleGroupIDsJSON, previousVenueIDsJSON, updateTime string
 	err := queryer.QueryRowContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json, deleted
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json, deleted,
+			firestore_update_time
 		FROM venue_cache WHERE venue_id = ?
 	`, venueID).Scan(
 		&projection.ID, &projection.Name, &projection.VenueType, &projection.Website,
@@ -118,8 +126,11 @@ func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (
 		&projection.RecurrenceJSON, &projection.NextOccurrenceDate,
 		&projection.Notes, &projection.Parking, &projection.Food,
 		&projection.DogFriendly, &projection.BeerGarden, &projection.OutOfTown,
-		&projection.Banned, &visibleGroupIDsJSON, &previousVenueIDsJSON, &deleted,
+		&projection.Banned, &visibleGroupIDsJSON, &previousVenueIDsJSON, &deleted, &updateTime,
 	)
+	if err == nil {
+		projection.UpdateTime, err = parseUpdateTime(updateTime)
+	}
 	if err == nil {
 		err = json.Unmarshal([]byte(visibleGroupIDsJSON), &projection.VisibleGroupIDs)
 		if err == nil {
@@ -127,6 +138,17 @@ func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (
 		}
 	}
 	return projection, deleted, err
+}
+
+func parseUpdateTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	updateTime, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse venue Firestore update time: %w", err)
+	}
+	return updateTime, nil
 }
 
 func (s *Store) Put(ctx context.Context, projection VenueProjection) error {
@@ -229,13 +251,17 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 	if err != nil {
 		return fmt.Errorf("encode venue history: %w", err)
 	}
+	updateTime := ""
+	if !projection.UpdateTime.IsZero() {
+		updateTime = projection.UpdateTime.UTC().Format(time.RFC3339Nano)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO venue_cache(
 			venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
 			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json,
-			previous_venue_ids_json, change_version
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			previous_venue_ids_json, change_version, firestore_update_time
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(venue_id) DO UPDATE SET
 			name = excluded.name,
 			venue_type = excluded.venue_type,
@@ -256,13 +282,14 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 			visible_group_ids_json = excluded.visible_group_ids_json,
 			previous_venue_ids_json = excluded.previous_venue_ids_json,
 			change_version = excluded.change_version,
+			firestore_update_time = excluded.firestore_update_time,
 			deleted = 0
 	`, projection.ID, projection.Name, projection.VenueType, projection.Website,
 		projection.Map, projection.Address, projection.LocationID, projection.PhotoURL,
 		projection.RecurrenceJSON, projection.NextOccurrenceDate, projection.Notes,
 		projection.Parking, projection.Food, projection.DogFriendly,
 		projection.BeerGarden, projection.OutOfTown, projection.Banned,
-		string(visibleGroupIDsJSON), string(previousVenueIDsJSON), sequence)
+		string(visibleGroupIDsJSON), string(previousVenueIDsJSON), sequence, updateTime)
 	return err
 }
 

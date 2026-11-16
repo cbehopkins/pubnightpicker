@@ -19,7 +19,7 @@ function publish(nextState) {
   subscribers.forEach((subscriber) => subscriber());
 }
 
-function normalizeVenue(venue) {
+export function normalizeVenue(venue) {
   if (!venue || typeof venue !== "object" || typeof venue.id !== "string" || !venue.id || typeof venue.name !== "string") {
     return null;
   }

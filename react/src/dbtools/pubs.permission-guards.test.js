@@ -47,7 +47,12 @@ describe("pub dbtools permission guards", () => {
     });
 
     it("guards modifyPub with canManagePubs", async () => {
-        await modifyPub("pub-1", { name: "Updated Name" });
+        await modifyPub(
+            "pub-1",
+            { name: "Updated Name", address: "Same Road" },
+            { name: "Old Name", address: "Same Road" },
+            { name: "signed-name-token", address: "unchanged-field-token" },
+        );
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
@@ -56,12 +61,17 @@ describe("pub dbtools permission guards", () => {
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-1", {
             method: "PATCH",
             contentType: "application/merge-patch+json",
-            body: { name: "Updated Name" },
+            body: { name: "Updated Name", edit_tokens: { name: "signed-name-token" } },
         });
     });
 
+    it("does not send a PATCH when all venue fields match their baseline", async () => {
+        await expect(modifyPub("pub-1", { name: "The Maypole" }, { name: "The Maypole" }, {})).resolves.toBeNull();
+        expect(requestLastOrdersMock).not.toHaveBeenCalled();
+    });
+
     it("guards deletePub with canManagePubs", async () => {
-        await deletePub("pub-2");
+        await deletePub("pub-2", "signed-document-version");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canManagePubs",
@@ -69,6 +79,7 @@ describe("pub dbtools permission guards", () => {
         );
         expect(requestLastOrdersMock).toHaveBeenCalledWith("api/venues/pub-2", {
             method: "DELETE",
+            ifMatch: "signed-document-version",
         });
     });
 });

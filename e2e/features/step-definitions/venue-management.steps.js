@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
 import { Given, When, Then } from "@cucumber/cucumber";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, updateDoc } from "firebase/firestore";
 import { nextAvailablePollDate, withEmulatorAdmin, withEmulatorUser } from "../support/emulator.js";
 import { londonDate, shiftDate } from "../support/calendar.js";
 
@@ -119,9 +119,38 @@ export async function fillVenue(page, details) {
     }
 }
 
-export async function saveVenue(page) {
+export async function saveVenue(page, expectedPatchStatus = null) {
+    const url = page.url();
+    const isEditing = new URL(url).pathname !== "/venues/new";
+    const patchResponse = isEditing
+        ? page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().includes("/api/venues/"))
+        : null;
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await page.waitForURL(`${BASE_URL}/venues`);
+    if (!isEditing) {
+        await page.waitForURL(`${BASE_URL}/venues`);
+        return;
+    }
+    const response = await patchResponse;
+    if (expectedPatchStatus === null) {
+        assert.ok([200, 409].includes(response.status()), `Venue patch response status: ${response.status()}`);
+    } else {
+        assert.equal(response.status(), expectedPatchStatus, `Venue patch response status: ${response.status()}`);
+    }
+    if (response.status() === 200) {
+        await page.waitForURL(`${BASE_URL}/venues`);
+    } else {
+        assert.equal(page.url(), url, "A conflicting venue update should keep the editor open");
+    }
+    return response.status();
+}
+
+async function waitForVenueFieldValue(page, field, value) {
+    await page.waitForFunction(({ fieldName, fieldValue }) => {
+        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
+        const input = label && document.getElementById(label.htmlFor);
+        return input?.value === fieldValue;
+    }, { fieldName: field, fieldValue: value });
+    return page.getByLabel(field, { exact: true }).inputValue();
 }
 
 When("{word} opens Manage Venues", async function (name) {
@@ -190,6 +219,62 @@ When("{word} updates the journey venue with these details:", async function (nam
     await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).waitFor();
 });
 
+When("{word} changes the journey venue field {string} to {string}", async function (_name, field, value) {
+    const page = this.actors.get(_name);
+    if (new URL(page.url()).pathname === "/venues") {
+        await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).click();
+        await page.getByLabel("Name", { exact: true }).waitFor();
+    }
+    await page.getByLabel(field, { exact: true }).fill(value);
+    const status = await saveVenue(page);
+    if (status === 409) {
+        await waitForVenueFieldValue(page, field, value);
+    }
+    if (field === "Name" && status === 200) {
+        this.venueDetails.Name = value;
+        await page.getByRole("link", { name: value, exact: true }).waitFor();
+    }
+});
+
+When("{word} retries the journey venue field {string} to {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    await page.getByLabel(field, { exact: true }).fill(value);
+    await saveVenue(page, 200);
+    if (field === "Name") {
+        this.venueDetails.Name = value;
+        await page.getByRole("link", { name: value, exact: true }).waitFor();
+    }
+});
+
+When("{word} saves the journey venue", async function (name) {
+    await saveVenue(this.actors.get(name));
+});
+
+When("{word} drafts the journey venue field {string} to {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    if (new URL(page.url()).pathname === "/venues") {
+        await page.getByRole("link", { name: this.venueDetails.Name, exact: true }).click();
+        await page.getByLabel("Name", { exact: true }).waitFor();
+    }
+    await page.getByLabel(field, { exact: true }).fill(value);
+});
+
+Then("{word} sees the journey venue field {string} as {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    assert.equal(await waitForVenueFieldValue(page, field, value), value, field);
+});
+
+Then("{word} sees a field conflict for {string}", async function (name, field) {
+    const page = this.actors.get(name);
+    await page.getByRole("alert").getByText(`Conflicting fields: ${field}`, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Load current venue", exact: true }).waitFor();
+});
+
+When("{word} loads the current venue after a field conflict", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByRole("button", { name: "Load current venue", exact: true }).click();
+});
+
 Then("{word} sees the renamed journey venue without reloading", async function (name) {
     const page = this.actors.get(name);
     assert.equal(page.url(), `${BASE_URL}/venues`);
@@ -251,6 +336,55 @@ When("{word} deletes the journey venue", async function (name) {
     await venueLink.waitFor();
     await venueLink.locator("..").getByRole("button", { name: "Delete", exact: true }).click();
     await venueLink.waitFor({ state: "hidden" });
+});
+
+When("{word}'s delete races with a venue update", async function (name) {
+    const page = this.actors.get(name);
+    const venueLink = page.getByRole("link", { name: this.venueDetails.Name, exact: true });
+    const venuePath = new URL(await venueLink.getAttribute("href"), BASE_URL).pathname;
+    const venueId = venuePath.split("/").at(-1);
+    let updateApplied = false;
+    this.staleDeleteAttempts = 0;
+    this.deleteRaceMatcher = (url) => url.pathname.endsWith(`/api/venues/${venueId}`);
+    this.deleteRaceHandler = async (route) => {
+        if (route.request().method() === "DELETE") {
+            this.staleDeleteAttempts += 1;
+            if (!updateApplied) {
+                await withEmulatorAdmin(async (db) => {
+                    await updateDoc(doc(db, "pubs", venueId), {
+                        notes: "Changed while delete was in flight",
+                    });
+                });
+                updateApplied = true;
+            }
+        }
+        await route.continue();
+    };
+    await page.route(this.deleteRaceMatcher, this.deleteRaceHandler);
+    const deleteResponse = page.waitForResponse((response) =>
+        response.request().method() === "DELETE" && response.url().includes(`/api/venues/${venueId}`));
+    await venueLink.locator("..").getByRole("button", { name: "Delete", exact: true }).click();
+    const response = await deleteResponse;
+    assert.equal(response.status(), 412, "the in-flight delete should be rejected as stale");
+});
+
+Then("{word} reviews the current venue after stale deletion", async function (name) {
+    const page = this.actors.get(name);
+    const alert = page.getByRole("alert");
+    await alert.getByText("Changed while delete was in flight", { exact: false }).waitFor();
+    await alert.getByText(this.venueDetails.Name, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Delete reviewed venue", exact: true }).waitFor();
+    assert.equal(this.staleDeleteAttempts, 1, "stale deletion must not be retried automatically");
+});
+
+When("{word} deliberately retries the reviewed deletion", async function (name) {
+    const page = this.actors.get(name);
+    const deleteResponse = page.waitForResponse((response) =>
+        response.request().method() === "DELETE" && response.url().includes("/api/venues/"));
+    await page.getByRole("button", { name: "Delete reviewed venue", exact: true }).click();
+    const response = await deleteResponse;
+    assert.equal(response.status(), 204, "a deliberate retry with the reviewed token should delete the venue");
+    await page.unroute(this.deleteRaceMatcher, this.deleteRaceHandler);
 });
 
 Then("{word} no longer sees the journey venue without reloading", async function (name) {

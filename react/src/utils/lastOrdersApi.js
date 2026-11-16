@@ -7,6 +7,7 @@ export async function requestLastOrders(path, {
     method = "POST",
     body = null,
     contentType = "application/json",
+    ifMatch = null,
     query = null,
     signal = new AbortController().signal,
 } = {}) {
@@ -36,6 +37,9 @@ export async function requestLastOrders(path, {
             ensureCurrentSession();
             const hasBody = body !== null || method === "POST";
             const headers = { Authorization: `Bearer ${token}` };
+            if (ifMatch !== null) {
+                headers["If-Match"] = `"${ifMatch}"`;
+            }
             if (hasBody) {
                 headers["Content-Type"] = contentType;
             }
@@ -62,7 +66,25 @@ export async function requestLastOrders(path, {
                 throw new LastOrdersApiError("forbidden", "Last Orders refused access to this request.");
             }
             if (!response.ok) {
-                throw new LastOrdersApiError("backend_error", "Last Orders could not complete the request. Please try again.");
+                let errorData = null;
+                const errorContentType = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+                if (errorContentType === "application/json") {
+                    try {
+                        errorData = await response.json();
+                    } catch {
+                        ensureCurrentSession();
+                    }
+                }
+                const apiError = errorData?.error;
+                throw new LastOrdersApiError(
+                    typeof apiError?.code === "string" ? apiError.code : "backend_error",
+                    typeof apiError?.message === "string" ? apiError.message : "Last Orders could not complete the request. Please try again.",
+                    {
+                        status: response.status,
+                        fields: Array.isArray(apiError?.fields) ? apiError.fields : undefined,
+                        currentVenue: errorData?.current_venue,
+                    },
+                );
             }
             if (response.status === 204) {
                 return undefined;

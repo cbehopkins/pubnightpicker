@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
-import { Form as RouterForm, useNavigate, useNavigation } from "react-router-dom";
+import { Form as RouterForm, useActionData, useNavigate, useNavigation } from "react-router-dom";
+import { normalizeVenue } from "../../hooks/usePubs";
+import { venueApiFieldNames } from "../../utils/venueApiFields";
 
 const VenueTypes = ["pub", "restaurant", "event"];
 const RecurrenceFrequencies = ["none", "once", "weekly", "monthly", "yearly"];
@@ -145,6 +147,145 @@ function getRecurrenceDefaults(pub_object) {
     monthlyMode: isMonthlyByWeekday ? "weekday" : "fixed",
     yearlyMode: isYearlyByWeekday ? "weekday" : "fixed",
   };
+}
+
+function createRecurrenceBaseline(pub_object) {
+  const defaults = getRecurrenceDefaults(pub_object);
+  if (defaults.frequency === "none") {
+    return null;
+  }
+  const recurrence = { frequency: defaults.frequency };
+  if (defaults.frequency === "once") {
+    if (defaults.date) recurrence.date = defaults.date;
+    return recurrence;
+  }
+  recurrence.interval = Number(defaults.interval);
+  if (defaults.frequency === "weekly") {
+    recurrence.weekday = Number(defaults.weekday);
+    return recurrence;
+  }
+  if (defaults.frequency === "monthly") {
+    if (defaults.monthlyMode === "weekday") {
+      recurrence.weekday = Number(defaults.weekday);
+      recurrence.nth = Number(defaults.nth);
+    } else {
+      recurrence.month_day = Number(defaults.month_day);
+    }
+    return recurrence;
+  }
+  recurrence.month = Number(defaults.month);
+  if (defaults.yearlyMode === "weekday") {
+    recurrence.weekday = Number(defaults.weekday);
+    recurrence.nth = Number(defaults.nth);
+  } else {
+    recurrence.month_day = Number(defaults.month_day);
+  }
+  return recurrence;
+}
+
+function createVenueFormBaseline(venue) {
+  return {
+    name: venue?.name || "",
+    venueType: venue?.venueType || "pub",
+    web_site: venue?.web_site || "",
+    map: venue?.map || "",
+    address: venue?.address || "",
+    notes: venue?.notes || "",
+    pubImage: venue?.pubImage || "",
+    parking: Boolean(venue?.parking),
+    food: Boolean(venue?.food),
+    dog_friend: Boolean(venue?.dog_friend),
+    beer_gerden: Boolean(venue?.beer_gerden),
+    out_of_town: Boolean(venue?.out_of_town),
+    banned: Boolean(venue?.banned),
+    recurrence: createRecurrenceBaseline(venue),
+  };
+}
+
+function buildRecurrenceFromFormData(data) {
+  const frequency = data.get("recurrence_frequency") || "none";
+  if (frequency === "none") return null;
+
+  const recurrence = { frequency };
+  if (frequency === "once") {
+    const date = data.get("recurrence_date");
+    if (date) recurrence.date = date;
+    return recurrence;
+  }
+
+  const interval = data.get("recurrence_interval");
+  if (interval) recurrence.interval = Number(interval);
+
+  if (frequency === "weekly") {
+    const weekday = data.get("recurrence_weekday");
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    return recurrence;
+  }
+
+  if (frequency === "monthly" || frequency === "yearly") {
+    const month = frequency === "yearly" ? data.get("recurrence_month") : null;
+    const monthDay = data.get("recurrence_month_day");
+    const weekday = data.get("recurrence_weekday");
+    const nth = data.get("recurrence_nth");
+    if (month !== null) recurrence.month = Number(month);
+    if (monthDay !== null) recurrence.month_day = Number(monthDay);
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    if (nth !== null) recurrence.nth = Number(nth);
+  }
+  return recurrence;
+}
+
+function getVenueFormValues(form) {
+  const data = new FormData(form);
+  const venueType = data.get("venueType") || "pub";
+  const values = {
+    name: data.get("name") || "",
+    venueType,
+    web_site: data.get("web_site") || "",
+    map: data.get("map") || "",
+    address: data.get("address") || "",
+    notes: data.get("notes") || "",
+    pubImage: data.get("pubImage") || "",
+  };
+
+  for (const key of Object.keys(PubParams)) {
+    values[key] = key === "food" && venueType === "restaurant" ? true : Boolean(data.get(key));
+  }
+  values.recurrence = venueType === "event" ? buildRecurrenceFromFormData(data) : null;
+  return values;
+}
+
+function areFieldValuesEqual(first, second) {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
+
+function reconcileVenueSnapshot(snapshot, draftValues, baselineVenue) {
+  const snapshotValues = createVenueFormBaseline(snapshot);
+  const previousBaseline = createVenueFormBaseline(baselineVenue);
+  const nextDraft = { ...snapshot };
+  const nextBaseline = { ...snapshot };
+  const nextTokens = { ...(snapshot.edit_tokens || {}) };
+
+  for (const field of Object.keys(snapshotValues)) {
+    const draftValue = draftValues[field];
+    const isDirty = !areFieldValuesEqual(draftValue, previousBaseline[field]);
+    if (!isDirty || areFieldValuesEqual(draftValue, snapshotValues[field])) {
+      continue;
+    }
+
+    nextDraft[field] = draftValue;
+    nextBaseline[field] = previousBaseline[field];
+    const apiField = venueApiFieldNames[field] || field;
+    if (baselineVenue.edit_tokens?.[apiField] === undefined) {
+      delete nextTokens[apiField];
+    } else {
+      nextTokens[apiField] = baselineVenue.edit_tokens[apiField];
+    }
+  }
+
+  nextBaseline.edit_tokens = nextTokens;
+  nextDraft.edit_tokens = nextTokens;
+  return { draft: nextDraft, baseline: nextBaseline };
 }
 
 function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecurrenceFrequency }) {
@@ -453,151 +594,241 @@ function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecur
 function PubForm({ method, pub_object }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
-  const [venueType, setVenueType] = useState(pub_object ? pub_object.venueType || "pub" : "pub");
+  const actionData = useActionData();
+  const formRef = useRef(null);
+  const lastSnapshot = useRef(pub_object);
+  const [venue, setVenue] = useState(pub_object);
+  const [venueBaseline, setVenueBaseline] = useState(pub_object);
+  const [formKey, setFormKey] = useState(0);
+  const [dismissedConflict, setDismissedConflict] = useState(null);
+  const [venueType, setVenueType] = useState(venue ? venue.venueType || "pub" : "pub");
   const [recurrenceFrequency, setRecurrenceFrequency] = useState(
-    pub_object?.recurrence?.frequency || "none"
+    venue?.recurrence?.frequency || "none"
   );
 
   const isSubmitting = navigation.state === "submitting";
+
+  useEffect(() => {
+    if (!pub_object || pub_object === lastSnapshot.current) {
+      return;
+    }
+    lastSnapshot.current = pub_object;
+    const draftValues = formRef.current
+      ? getVenueFormValues(formRef.current)
+      : createVenueFormBaseline(venue);
+    const reconciled = reconcileVenueSnapshot(pub_object, draftValues, venueBaseline);
+    setVenue(reconciled.draft);
+    setVenueBaseline(reconciled.baseline);
+    setFormKey((key) => key + 1);
+  }, [pub_object, venue, venueBaseline]);
+
+  useEffect(() => {
+    setVenueType(venue?.venueType || "pub");
+    setRecurrenceFrequency(venue?.recurrence?.frequency || "none");
+  }, [venue]);
+
+  function loadCurrentVenue() {
+    const currentVenue = normalizeVenue(actionData?.conflict?.currentVenue);
+    if (!currentVenue) {
+      return;
+    }
+    setVenue(currentVenue);
+    setVenueBaseline(currentVenue);
+    setFormKey((key) => key + 1);
+    setDismissedConflict(actionData.conflict);
+  }
+
+  function handleFormChange(event) {
+    const targetName = event.target.name;
+    const field = targetName.startsWith("recurrence_") ? "recurrence" : targetName;
+    const latestSnapshot = lastSnapshot.current;
+    if (!latestSnapshot || !formRef.current) {
+      return;
+    }
+
+    const latestValues = createVenueFormBaseline(latestSnapshot);
+    if (!Object.hasOwn(latestValues, field)) {
+      return;
+    }
+    const draftValues = createVenueFormBaseline(getVenueFormValues(formRef.current));
+    if (!areFieldValuesEqual(draftValues[field], latestValues[field])) {
+      return;
+    }
+
+    setVenueBaseline((currentBaseline) => {
+      const currentValues = createVenueFormBaseline(currentBaseline);
+      if (areFieldValuesEqual(currentValues[field], latestValues[field])) {
+        return currentBaseline;
+      }
+      const editTokens = { ...(currentBaseline.edit_tokens || {}) };
+      const latestToken = latestSnapshot.edit_tokens?.[field];
+      if (latestToken === undefined) {
+        delete editTokens[field];
+      } else {
+        editTokens[field] = latestToken;
+      }
+      return { ...currentBaseline, [field]: latestValues[field], edit_tokens: editTokens };
+    });
+  }
 
   function cancelHandler() {
     navigate("..");
   }
 
+  const conflict = actionData?.conflict && dismissedConflict !== actionData.conflict
+    ? actionData.conflict
+    : null;
+
   return (
-    <RouterForm method={method}>
-      <Card>
-        <Card.Body className="text-body">
-          <Row className="g-3">
-            <Col xs={12}>
-              <BsForm.Group controlId="venueType">
-                <BsForm.Label>Venue Type</BsForm.Label>
-                <BsForm.Select
-                  name="venueType"
-                  value={venueType}
-                  onChange={(event) => {
-                    setVenueType(event.target.value);
-                  }}
-                >
-                  {VenueTypes.map((type) => {
-                    return (
-                      <option key={type} value={type}>
-                        {type.charAt(0).toUpperCase() + type.slice(1)}
-                      </option>
-                    );
-                  })}
-                </BsForm.Select>
-              </BsForm.Group>
-            </Col>
+    <>
+      {conflict && (
+        <div className="alert alert-warning" role="alert">
+          <p>{conflict.message || "Some venue fields changed while you were editing."}</p>
+          {conflict.fields?.length > 0 && <p>Conflicting fields: {conflict.fields.join(", ")}</p>}
+          <Button type="button" variant="secondary" onClick={loadCurrentVenue}>Load current venue</Button>
+        </div>
+      )}
+      {actionData?.saveError && <p className="alert alert-danger" role="alert">{actionData.saveError}</p>}
+      <RouterForm ref={formRef} key={formKey} method={method} onChange={handleFormChange}>
+        {method === "patch" && venue && (
+          <>
+            <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venueBaseline))} />
+            <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.edit_tokens || {})} />
+          </>
+        )}
+        <Card>
+          <Card.Body className="text-body">
+            <Row className="g-3">
+              <Col xs={12}>
+                <BsForm.Group controlId="venueType">
+                  <BsForm.Label>Venue Type</BsForm.Label>
+                  <BsForm.Select
+                    name="venueType"
+                    value={venueType}
+                    onChange={(event) => {
+                      setVenueType(event.target.value);
+                    }}
+                  >
+                    {VenueTypes.map((type) => {
+                      return (
+                        <option key={type} value={type}>
+                          {type.charAt(0).toUpperCase() + type.slice(1)}
+                        </option>
+                      );
+                    })}
+                  </BsForm.Select>
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12} className="d-flex gap-2">
-              <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Submitting..." : "Save"}
-              </Button>
-            </Col>
+              <Col xs={12} className="d-flex gap-2">
+                <Button type="button" variant="secondary" onClick={cancelHandler} disabled={isSubmitting}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Submitting..." : "Save"}
+                </Button>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="name">
-                <BsForm.Label>Name</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="name"
-                  required
-                  defaultValue={pub_object ? pub_object.name : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="name">
+                  <BsForm.Label>Name</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="name"
+                    required
+                    defaultValue={venue ? venue.name : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="web_site">
-                <BsForm.Label>Venue Web Site</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="web_site"
-                  title="Nice to have the website to show in notification messages"
-                  defaultValue={pub_object ? pub_object.web_site : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="web_site">
+                  <BsForm.Label>Venue Web Site</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="web_site"
+                    title="Nice to have the website to show in notification messages"
+                    defaultValue={venue ? venue.web_site : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="map">
-                <BsForm.Label>Map</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="map"
-                  title="Usually a google maps link to include in the notification messages"
-                  defaultValue={pub_object ? pub_object.map : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="map">
+                  <BsForm.Label>Map</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="map"
+                    title="Usually a google maps link to include in the notification messages"
+                    defaultValue={venue ? venue.map : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="address">
-                <BsForm.Label>Address</BsForm.Label>
-                <BsForm.Control
-                  as="textarea"
-                  rows={3}
-                  name="address"
-                  title="The address"
-                  defaultValue={pub_object ? pub_object.address : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="address">
+                  <BsForm.Label>Address</BsForm.Label>
+                  <BsForm.Control
+                    as="textarea"
+                    rows={3}
+                    name="address"
+                    title="The address"
+                    defaultValue={venue ? venue.address : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="notes">
-                <BsForm.Label>Notes</BsForm.Label>
-                <BsForm.Control
-                  as="textarea"
-                  rows={3}
-                  name="notes"
-                  title="The notes"
-                  defaultValue={pub_object ? pub_object.notes : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="notes">
+                  <BsForm.Label>Notes</BsForm.Label>
+                  <BsForm.Control
+                    as="textarea"
+                    rows={3}
+                    name="notes"
+                    title="The notes"
+                    defaultValue={venue ? venue.notes : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <Col xs={12}>
-              <BsForm.Group controlId="pubImage">
-                <BsForm.Label>Link to Venue Image</BsForm.Label>
-                <BsForm.Control
-                  type="text"
-                  name="pubImage"
-                  title="Pub Image"
-                  defaultValue={pub_object ? pub_object.pubImage : ""}
-                />
-              </BsForm.Group>
-            </Col>
+              <Col xs={12}>
+                <BsForm.Group controlId="pubImage">
+                  <BsForm.Label>Link to Venue Image</BsForm.Label>
+                  <BsForm.Control
+                    type="text"
+                    name="pubImage"
+                    title="Pub Image"
+                    defaultValue={venue ? venue.pubImage : ""}
+                  />
+                </BsForm.Group>
+              </Col>
 
-            <RecurrenceFields
-              pub_object={pub_object}
-              venueType={venueType}
-              recurrenceFrequency={recurrenceFrequency}
-              setRecurrenceFrequency={setRecurrenceFrequency}
-            />
+              <RecurrenceFields
+                pub_object={venue}
+                venueType={venueType}
+                recurrenceFrequency={recurrenceFrequency}
+                setRecurrenceFrequency={setRecurrenceFrequency}
+              />
 
-            <Col xs={12}>
-              <h5 className="mb-2">Venue Attributes</h5>
-              <Table bordered hover size="sm" responsive className="mb-0 align-middle">
-                <tbody>
-                  {Object.entries(PubParams).map(([key, value]) => {
-                    if (venueType === "restaurant" && key === "food") {
-                      return null;
-                    }
+              <Col xs={12}>
+                <h5 className="mb-2">Venue Attributes</h5>
+                <Table bordered hover size="sm" responsive className="mb-0 align-middle">
+                  <tbody>
+                    {Object.entries(PubParams).map(([key, value]) => {
+                      if (venueType === "restaurant" && key === "food") {
+                        return null;
+                      }
 
-                    return <PubCheckbox key={key} name={key} label={value} pub_object={pub_object} />;
-                  })}
-                </tbody>
-              </Table>
-            </Col>
-          </Row>
-        </Card.Body>
-      </Card>
-    </RouterForm>
+                      return <PubCheckbox key={key} name={key} label={value} pub_object={venue} />;
+                    })}
+                  </tbody>
+                </Table>
+              </Col>
+            </Row>
+          </Card.Body>
+        </Card>
+      </RouterForm>
+    </>
   );
 }
 

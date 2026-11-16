@@ -66,6 +66,15 @@ function NewPubPage() {
 
 export default ProtectedRoute(NewPubPage, "canManagePubs", "/");
 
+function parseFormObject(data, fieldName) {
+  try {
+    const value = JSON.parse(data.get(fieldName) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function action({ request, params }) {
   const method = request.method;
   const data = await request.formData();
@@ -80,7 +89,6 @@ export async function action({ request, params }) {
     pubImage: data.get("pubImage")
   };
   const recurrence = buildRecurrenceFromFormData(data);
-  console.log("Pub action data", data, "pubParms", pubParams);
   for (const key of Object.keys(PubParams)) {
     if (key === "food" && pubParams.venueType === "restaurant") {
       pubParams[key] = true;
@@ -90,16 +98,29 @@ export async function action({ request, params }) {
     pubParams[key] = Boolean(data.get(key));
   }
   pubParams.recurrence = pubParams.venueType === "event" ? recurrence ?? null : null;
-  console.log("Submitted parameters", pubParams)
   try {
     if (method === "POST") {
       await addNewPub(pubParams);
     }
     if (method === "PATCH") {
-      console.log("Modifying pub", pub_id, "with", pubParams, "data", data);
-      await modifyPub(pub_id, pubParams);
+      const baseline = parseFormObject(data, "venue_baseline");
+      const editTokens = parseFormObject(data, "edit_tokens");
+      await modifyPub(pub_id, pubParams, baseline, editTokens);
+      return redirect("/venues");
     }
   } catch (error) {
+    if (error?.code === "field_conflict") {
+      return {
+        conflict: {
+          message: error.message,
+          fields: error.fields || [],
+          currentVenue: error.currentVenue,
+        },
+      };
+    }
+    if (error?.code === "invalid_edit_token" || error?.code === "precondition_required") {
+      return { saveError: error.message };
+    }
     notifyError(getUserFacingErrorMessage(error, "Unable to save this pub."));
     return null;
   }

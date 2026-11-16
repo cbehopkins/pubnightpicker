@@ -69,3 +69,70 @@ Feature: Authorised members create and edit venues
       | Dana    | Erin   | Pub        | Restaurant     | false        |
       | Fiona   | George | Restaurant | Event          | true         |
       | Helen   | Ivan   | Event      | Pub            | false        |
+
+  Scenario: Venue managers merge disjoint edits and resolve a field conflict
+    Given a fresh emulator database has been bootstrapped with the journey admin
+    When Alice creates an account
+    Then Alice is logged in
+    When Beth creates an account
+    Then Beth is logged in
+    When the journey admin logs in through a separate browser context
+    And the admin grants Alice the following permissions:
+      | permission        |
+      | Can Manage Venues |
+    And the admin grants Beth the following permissions:
+      | permission        |
+      | Can Manage Venues |
+    And Alice opens Manage Venues
+    And Beth opens Manage Venues
+    When Alice creates a "Pub" venue with these details:
+      | Name                    | Concurrent Venue          |
+      | Address                 | 1 Original Road           |
+      | Venue Web Site          | https://original.example.test |
+      | Map                     | https://maps.example.test/original |
+      | Notes                   | Original notes            |
+      | Parking                 | false                     |
+      | Dog Friendly            | false                     |
+      | Beer Garden             | false                     |
+      | Out Of Town (Cambridge) | false                     |
+      | Banned                  | false                     |
+      | Food                    | false                     |
+    Then Beth sees the journey venue listed as "Pub"
+    When Alice opens the journey venue for editing
+    And Beth opens the journey venue for editing
+    When Beth drafts the journey venue field "Address" to "Independent Road"
+    And Alice changes the journey venue field "Notes" to "Alice's notes"
+    Then Beth sees the journey venue field "Notes" as "Alice's notes"
+    And Beth sees the journey venue field "Address" as "Independent Road"
+    When Beth changes the journey venue field "Address" to "Independent Road"
+    And Beth drafts the journey venue field "Name" to "Beth's draft"
+    When Alice changes the journey venue field "Name" to "Alice's name"
+    Then Beth sees the journey venue field "Name" as "Beth's draft"
+    When Beth saves the journey venue
+    Then Beth sees a field conflict for "name"
+    And Beth sees the journey venue field "Name" as "Beth's draft"
+    When Beth loads the current venue after a field conflict
+    Then Beth sees the journey venue field "Name" as "Alice's name"
+    When Beth retries the journey venue field "Name" to "Beth's final name"
+    Then Beth sees the journey venue listed as "Pub"
+
+  Scenario: A manager reviews the venue before retrying a stale deletion
+    Given a fresh emulator database has been bootstrapped with the journey admin
+    When Alice creates an account
+    Then Alice is logged in
+    When the journey admin logs in through a separate browser context
+    And the admin grants Alice the following permissions:
+      | permission        |
+      | Can Manage Venues |
+    And Alice opens Manage Venues
+    When Alice creates a "Pub" venue with these details:
+      | Name    | Venue For Stale Delete |
+      | Address | 1 Original Road        |
+      | Venue Web Site | https://original.example.test |
+      | Map     | https://maps.example.test/original |
+      | Notes   | Original details       |
+    Then Alice sees the journey venue listed as "Pub"
+    When Alice's delete races with a venue update
+    Then Alice reviews the current venue after stale deletion
+    When Alice deliberately retries the reviewed deletion
+    Then Alice no longer sees the journey venue without reloading

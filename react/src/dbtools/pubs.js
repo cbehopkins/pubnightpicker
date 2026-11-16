@@ -1,28 +1,12 @@
 import { assertCurrentUserPermission, PERMISSIONS } from "../permissions";
 import { requestLastOrders } from "../utils/lastOrdersApi";
-
-const apiFieldNames = {
-    name: "name",
-    venueType: "venue_type",
-    web_site: "website_url",
-    map: "map_url",
-    address: "address",
-    notes: "notes",
-    pubImage: "image_url",
-    recurrence: "recurrence",
-    parking: "parking",
-    food: "food",
-    dog_friend: "dog_friendly",
-    beer_gerden: "beer_garden",
-    out_of_town: "out_of_town",
-    banned: "banned",
-};
+import { venueApiFieldNames } from "../utils/venueApiFields";
 
 const nullableApiFields = new Set(["web_site", "map", "pubImage"]);
 
 function toApiFields(pubParams) {
     return Object.fromEntries(
-        Object.entries(apiFieldNames)
+        Object.entries(venueApiFieldNames)
             .filter(([fieldName]) => Object.hasOwn(pubParams, fieldName))
             .map(([fieldName, apiFieldName]) => {
                 const value = pubParams[fieldName];
@@ -36,16 +20,26 @@ export async function addNewPub(pubParams) {
     return requestLastOrders("api/venues", { body: toApiFields(pubParams) });
 }
 
-export async function modifyPub(id, pubParams) {
+export async function modifyPub(id, pubParams, baseline, editTokens) {
     assertCurrentUserPermission(PERMISSIONS.canManagePubs, "editing a pub");
+    const changedParams = Object.fromEntries(
+        Object.entries(pubParams).filter(([fieldName, value]) => JSON.stringify(value) !== JSON.stringify(baseline?.[fieldName]))
+    );
+    const fields = toApiFields(changedParams);
+    if (Object.keys(fields).length === 0) {
+        return null;
+    }
+    const fieldTokens = Object.fromEntries(
+        Object.keys(fields).map((fieldName) => [fieldName, editTokens?.[fieldName]])
+    );
     return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, {
         method: "PATCH",
         contentType: "application/merge-patch+json",
-        body: toApiFields(pubParams),
+        body: { ...fields, edit_tokens: fieldTokens },
     });
 }
 
-export async function deletePub(id) {
+export async function deletePub(id, deleteToken) {
     assertCurrentUserPermission(PERMISSIONS.canManagePubs, "deleting a pub");
-    return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return requestLastOrders(`api/venues/${encodeURIComponent(id)}`, { method: "DELETE", ifMatch: deleteToken });
 }

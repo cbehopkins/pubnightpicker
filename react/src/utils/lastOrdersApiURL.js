@@ -1,8 +1,11 @@
 export class LastOrdersApiError extends Error {
-    constructor(code, message) {
+    constructor(code, message, details = {}) {
         super(message);
         this.name = "LastOrdersApiError";
         this.code = code;
+        this.status = details.status;
+        this.fields = details.fields;
+        this.currentVenue = details.currentVenue;
     }
 }
 

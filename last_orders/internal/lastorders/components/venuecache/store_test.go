@@ -41,7 +41,7 @@ func TestStorePutGetReplaceAndDelete(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	projection := VenueProjection{
-		ID: "venue-1", Name: "The Crown", Website: "https://example.test",
+		ID: "venue-1", UpdateTime: time.Date(2026, time.November, 15, 12, 0, 0, 123, time.UTC), Name: "The Crown", Website: "https://example.test",
 		VisibleGroupIDs: []string{"group-1"}, PreviousVenueIDs: []string{"venue-old"},
 	}
 	if err := store.Put(ctx, projection); err != nil {
@@ -50,6 +50,10 @@ func TestStorePutGetReplaceAndDelete(t *testing.T) {
 	got, err := store.Get(ctx, projection.ID)
 	if err != nil || !got.Equal(projection) {
 		t.Fatalf("get = %#v, %v; want %#v", got, err, projection)
+	}
+	venues, _, err := store.Snapshot(ctx)
+	if err != nil || len(venues) != 1 || !venues[0].UpdateTime.Equal(projection.UpdateTime) {
+		t.Fatalf("snapshot update time = %+v, %v; want %v", venues, err, projection.UpdateTime)
 	}
 
 	projection.Name = "The New Crown"
