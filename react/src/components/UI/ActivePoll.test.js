@@ -177,12 +177,14 @@ describe("ActivePoll autopopulate", () => {
     });
 
     it("filters domain Venue attributes without excluding other Venue types", () => {
-        renderComponent({ pubParameters: {
-            v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
-            v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
-            v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
-            v4: { name: "No dogs pub", venueType: "pub", dogFriendly: false, beerGarden: true },
-        } });
+        renderComponent({
+            pubParameters: {
+                v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
+                v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
+                v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
+                v4: { name: "No dogs pub", venueType: "pub", dogFriendly: false, beerGarden: true },
+            }
+        });
 
         fireEvent.click(screen.getByRole("checkbox", { name: "Dog Friendly" }));
         fireEvent.click(screen.getByRole("checkbox", { name: "Beer Garden" }));
@@ -195,10 +197,12 @@ describe("ActivePoll autopopulate", () => {
     });
 
     it("uses the exclusion label to filter out of town venues", () => {
-        renderComponent({ pubParameters: {
-            v1: { name: "In town", outOfTown: false },
-            v2: { name: "Out of town", outOfTown: true },
-        } });
+        renderComponent({
+            pubParameters: {
+                v1: { name: "In town", outOfTown: false },
+                v2: { name: "Out of town", outOfTown: true },
+            }
+        });
 
         fireEvent.click(screen.getAllByText("Out Of Town (Cambridge)")[1]);
 
