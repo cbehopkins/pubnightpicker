@@ -100,10 +100,11 @@ Feature: Authorised members create and edit venues
     Then Beth sees the journey venue listed as "Pub"
     When Alice opens the journey venue for editing
     And Beth opens the journey venue for editing
-    When Alice changes the journey venue field "Notes" to "Alice's notes"
-    And Beth changes the journey venue field "Address" to "Independent Road"
+    When Beth drafts the journey venue field "Address" to "Independent Road"
+    And Alice changes the journey venue field "Notes" to "Alice's notes"
     Then Beth sees the journey venue field "Notes" as "Alice's notes"
     And Beth sees the journey venue field "Address" as "Independent Road"
+    When Beth changes the journey venue field "Address" to "Independent Road"
     When Alice changes the journey venue field "Name" to "Alice's name"
     And Beth changes the journey venue field "Name" to "Beth's draft"
     Then Beth sees a field conflict for "name"

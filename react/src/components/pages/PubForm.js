@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Card, Col, Form as BsForm, Row, Table } from "react-bootstrap";
 import { Form as RouterForm, useActionData, useNavigate, useNavigation } from "react-router-dom";
 import { normalizeVenue } from "../../hooks/usePubs";
@@ -199,6 +199,91 @@ function createVenueFormBaseline(venue) {
     banned: Boolean(venue?.banned),
     recurrence: createRecurrenceBaseline(venue),
   };
+}
+
+function buildRecurrenceFromFormData(data) {
+  const frequency = data.get("recurrence_frequency") || "none";
+  if (frequency === "none") return null;
+
+  const recurrence = { frequency };
+  if (frequency === "once") {
+    const date = data.get("recurrence_date");
+    if (date) recurrence.date = date;
+    return recurrence;
+  }
+
+  const interval = data.get("recurrence_interval");
+  if (interval) recurrence.interval = Number(interval);
+
+  if (frequency === "weekly") {
+    const weekday = data.get("recurrence_weekday");
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    return recurrence;
+  }
+
+  if (frequency === "monthly" || frequency === "yearly") {
+    const month = frequency === "yearly" ? data.get("recurrence_month") : null;
+    const monthDay = data.get("recurrence_month_day");
+    const weekday = data.get("recurrence_weekday");
+    const nth = data.get("recurrence_nth");
+    if (month !== null) recurrence.month = Number(month);
+    if (monthDay !== null) recurrence.month_day = Number(monthDay);
+    if (weekday !== null) recurrence.weekday = Number(weekday);
+    if (nth !== null) recurrence.nth = Number(nth);
+  }
+  return recurrence;
+}
+
+function getVenueFormValues(form) {
+  const data = new FormData(form);
+  const venueType = data.get("venueType") || "pub";
+  const values = {
+    name: data.get("name") || "",
+    venueType,
+    web_site: data.get("web_site") || "",
+    map: data.get("map") || "",
+    address: data.get("address") || "",
+    notes: data.get("notes") || "",
+    pubImage: data.get("pubImage") || "",
+  };
+
+  for (const key of Object.keys(PubParams)) {
+    values[key] = key === "food" && venueType === "restaurant" ? true : Boolean(data.get(key));
+  }
+  values.recurrence = venueType === "event" ? buildRecurrenceFromFormData(data) : null;
+  return values;
+}
+
+function areFieldValuesEqual(first, second) {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
+
+function reconcileVenueSnapshot(snapshot, draftValues, baselineVenue) {
+  const snapshotValues = createVenueFormBaseline(snapshot);
+  const previousBaseline = createVenueFormBaseline(baselineVenue);
+  const nextDraft = { ...snapshot };
+  const nextBaseline = { ...snapshot };
+  const nextTokens = { ...(snapshot.edit_tokens || {}) };
+
+  for (const field of Object.keys(snapshotValues)) {
+    const draftValue = draftValues[field];
+    const isDirty = !areFieldValuesEqual(draftValue, previousBaseline[field]);
+    if (!isDirty || areFieldValuesEqual(draftValue, snapshotValues[field])) {
+      continue;
+    }
+
+    nextDraft[field] = draftValue;
+    nextBaseline[field] = previousBaseline[field];
+    if (baselineVenue.edit_tokens?.[field] === undefined) {
+      delete nextTokens[field];
+    } else {
+      nextTokens[field] = baselineVenue.edit_tokens[field];
+    }
+  }
+
+  nextBaseline.edit_tokens = nextTokens;
+  nextDraft.edit_tokens = nextTokens;
+  return { draft: nextDraft, baseline: nextBaseline };
 }
 
 function RecurrenceFields({ pub_object, venueType, recurrenceFrequency, setRecurrenceFrequency }) {
@@ -508,7 +593,10 @@ function PubForm({ method, pub_object }) {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const actionData = useActionData();
+  const formRef = useRef(null);
+  const lastSnapshot = useRef(pub_object);
   const [venue, setVenue] = useState(pub_object);
+  const [venueBaseline, setVenueBaseline] = useState(pub_object);
   const [formKey, setFormKey] = useState(0);
   const [dismissedConflict, setDismissedConflict] = useState(null);
   const [venueType, setVenueType] = useState(venue ? venue.venueType || "pub" : "pub");
@@ -519,10 +607,25 @@ function PubForm({ method, pub_object }) {
   const isSubmitting = navigation.state === "submitting";
 
   useEffect(() => {
+    if (!pub_object || pub_object === lastSnapshot.current) {
+      return;
+    }
+    lastSnapshot.current = pub_object;
+    const draftValues = formRef.current
+      ? getVenueFormValues(formRef.current)
+      : createVenueFormBaseline(venue);
+    const reconciled = reconcileVenueSnapshot(pub_object, draftValues, venueBaseline);
+    setVenue(reconciled.draft);
+    setVenueBaseline(reconciled.baseline);
+    setFormKey((key) => key + 1);
+  }, [pub_object, venue, venueBaseline]);
+
+  useEffect(() => {
     if (actionData?.savedVenue) {
       const savedVenue = normalizeVenue(actionData.savedVenue);
       if (savedVenue) {
         setVenue(savedVenue);
+        setVenueBaseline(savedVenue);
         setFormKey((key) => key + 1);
       }
     }
@@ -539,8 +642,42 @@ function PubForm({ method, pub_object }) {
       return;
     }
     setVenue(currentVenue);
+    setVenueBaseline(currentVenue);
     setFormKey((key) => key + 1);
     setDismissedConflict(actionData.conflict);
+  }
+
+  function handleFormChange(event) {
+    const targetName = event.target.name;
+    const field = targetName.startsWith("recurrence_") ? "recurrence" : targetName;
+    const latestSnapshot = lastSnapshot.current;
+    if (!latestSnapshot || !formRef.current) {
+      return;
+    }
+
+    const latestValues = createVenueFormBaseline(latestSnapshot);
+    if (!Object.hasOwn(latestValues, field)) {
+      return;
+    }
+    const draftValues = createVenueFormBaseline(getVenueFormValues(formRef.current));
+    if (!areFieldValuesEqual(draftValues[field], latestValues[field])) {
+      return;
+    }
+
+    setVenueBaseline((currentBaseline) => {
+      const currentValues = createVenueFormBaseline(currentBaseline);
+      if (areFieldValuesEqual(currentValues[field], latestValues[field])) {
+        return currentBaseline;
+      }
+      const editTokens = { ...(currentBaseline.edit_tokens || {}) };
+      const latestToken = latestSnapshot.edit_tokens?.[field];
+      if (latestToken === undefined) {
+        delete editTokens[field];
+      } else {
+        editTokens[field] = latestToken;
+      }
+      return { ...currentBaseline, [field]: latestValues[field], edit_tokens: editTokens };
+    });
   }
 
   function cancelHandler() {
@@ -561,11 +698,11 @@ function PubForm({ method, pub_object }) {
         </div>
       )}
       {actionData?.saveError && <p className="alert alert-danger" role="alert">{actionData.saveError}</p>}
-      <RouterForm key={formKey} method={method}>
+      <RouterForm ref={formRef} key={formKey} method={method} onChange={handleFormChange}>
       {method === "patch" && venue && (
         <>
-          <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venue))} />
-          <input type="hidden" name="edit_tokens" value={JSON.stringify(venue.edit_tokens || {})} />
+          <input type="hidden" name="venue_baseline" value={JSON.stringify(createVenueFormBaseline(venueBaseline))} />
+          <input type="hidden" name="edit_tokens" value={JSON.stringify(venueBaseline.edit_tokens || {})} />
         </>
       )}
       <Card>

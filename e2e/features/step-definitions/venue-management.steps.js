@@ -213,8 +213,18 @@ When("{word} changes the journey venue field {string} to {string}", async functi
     }, { fieldName: field, fieldValue: value });
 });
 
+When("{word} drafts the journey venue field {string} to {string}", async function (name, field, value) {
+    const page = this.actors.get(name);
+    await page.getByLabel(field, { exact: true }).fill(value);
+});
+
 Then("{word} sees the journey venue field {string} as {string}", async function (name, field, value) {
     const page = this.actors.get(name);
+    await page.waitForFunction(({ fieldName, fieldValue }) => {
+        const label = [...document.querySelectorAll("label")].find((item) => item.textContent?.trim() === fieldName);
+        const input = label && document.getElementById(label.htmlFor);
+        return input?.value === fieldValue;
+    }, { fieldName: field, fieldValue: value });
     assert.equal(await page.getByLabel(field, { exact: true }).inputValue(), value, field);
 });
 

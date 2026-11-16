@@ -95,13 +95,18 @@ describe("usePubs", () => {
     const { result } = renderHook(() => usePubs());
     const source = eventSources[0];
     sendSnapshot(source, [
-      { id: "venue-1", name: "The Maypole", venue_type: "restaurant" },
+      { id: "venue-1", name: "The Maypole", venue_type: "restaurant", edit_tokens: { name: "maypole-v1" } },
       { id: "venue-2", name: "The Crown", venue_type: "pub" },
     ]);
-    sendSnapshot(source, [{ id: "venue-2", name: "The Crown", venue_type: "event" }]);
+    sendSnapshot(source, [{
+      id: "venue-2",
+      name: "The Crown",
+      venue_type: "event",
+      edit_tokens: { name: "crown-v2" },
+    }]);
 
     expect(result.current).toEqual({
-      "venue-2": { name: "The Crown", venueType: "event" },
+      "venue-2": { name: "The Crown", venueType: "event", edit_tokens: { name: "crown-v2" } },
     });
   });
 
@@ -110,7 +115,12 @@ describe("usePubs", () => {
     const source = eventSources[0];
     expect(result.current.isLoading).toBe(true);
 
-    sendSnapshot(source, [{ id: "venue-1", name: "The Maypole", venue_type: "pub" }]);
+    sendSnapshot(source, [{
+      id: "venue-1",
+      name: "The Maypole",
+      venue_type: "pub",
+      edit_tokens: { name: "maypole-v1" },
+    }]);
     expect(result.current).toMatchObject({ isLoading: false, isStale: false });
 
     act(() => source.interrupt());
@@ -119,9 +129,14 @@ describe("usePubs", () => {
       isStale: true,
     });
 
-    sendSnapshot(source, [{ id: "venue-2", name: "The Crown", venue_type: "event" }]);
+    sendSnapshot(source, [{
+      id: "venue-2",
+      name: "The Crown",
+      venue_type: "event",
+      edit_tokens: { name: "crown-v2" },
+    }]);
     expect(result.current).toMatchObject({
-      venues: { "venue-2": { name: "The Crown", venueType: "event" } },
+      venues: { "venue-2": { name: "The Crown", venueType: "event", edit_tokens: { name: "crown-v2" } } },
       isStale: false,
     });
   });
