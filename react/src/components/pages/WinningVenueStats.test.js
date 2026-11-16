@@ -17,7 +17,7 @@ const {
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
     default: usePubsMock,
   };
@@ -67,6 +67,7 @@ describe("WinningVenueStatsPage", () => {
       "venue-1": { name: "The Maypole", venueType: "pub" },
       "venue-2": { name: "The Anchor", venueType: "pub" },
       "venue-3": { name: "Bistro 12", venueType: "restaurant" },
+      "venue-4": { name: "Summer Festival", venueType: "event" },
     });
 
     useWinningVenueStatsMock.mockReturnValue({
@@ -118,6 +119,14 @@ describe("WinningVenueStatsPage", () => {
 
     expect(screen.queryAllByText("Bistro 12").length).toBeGreaterThan(0);
     expect(screen.queryByText("The Maypole")).toBeNull();
+  });
+
+  it("shows event Venues separately from pubs and restaurants", () => {
+    renderWinningPage();
+    fireEvent.change(screen.getByLabelText(/filter by venue type/i), { target: { value: "event" } });
+    expect(screen.queryAllByText("Summer Festival").length).toBeGreaterThan(0);
+    expect(screen.queryByText("The Maypole")).toBeNull();
+    expect(screen.queryByText("Bistro 12")).toBeNull();
   });
 
   it("applies settings from the modal and updates page text", () => {

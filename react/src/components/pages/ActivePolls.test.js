@@ -30,7 +30,7 @@ vi.mock("../../hooks/usePolls", () => {
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
     default: usePubsMock,
   };

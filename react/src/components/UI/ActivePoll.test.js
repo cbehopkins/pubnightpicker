@@ -35,10 +35,6 @@ vi.mock("../../hooks/useAutopopulateAction", () => ({
     }),
 }));
 
-vi.mock("../pages/PubForm", () => ({
-    AntiPubParams: {},
-}));
-
 vi.mock("./PollVote", () => ({
     default: () => <div data-testid="poll-vote" />,
 }));
@@ -54,10 +50,6 @@ vi.mock("./PubOptions", () => ({
             ))}
         </select>
     ),
-}));
-
-vi.mock("./PubFilter", () => ({
-    default: () => <div data-testid="pub-filter" />,
 }));
 
 vi.mock("./NotificationPingStatus", () => ({
@@ -167,5 +159,35 @@ describe("ActivePoll autopopulate", () => {
         });
 
         expect(screen.getByRole("alert").textContent).toMatch(/marked as banned/i);
+    });
+
+    it("filters domain Venue attributes without excluding other Venue types", () => {
+        renderComponent({ pubParameters: {
+            v1: { name: "Garden restaurant", venueType: "restaurant", dogFriendly: true, beerGarden: true, outOfTown: false },
+            v2: { name: "Out of town event", venueType: "event", dogFriendly: true, beerGarden: true, outOfTown: true },
+            v3: { name: "Indoor pub", venueType: "pub", dogFriendly: true, beerGarden: false },
+            v4: { name: "No dogs pub", venueType: "pub", dogFriendly: false, beerGarden: true },
+        } });
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "Dog Friendly" }));
+        fireEvent.click(screen.getByRole("checkbox", { name: "Beer Garden" }));
+        fireEvent.click(screen.getAllByRole("checkbox", { name: "Out Of Town (Cambridge)" })[1]);
+
+        expect(screen.getByRole("option", { name: "Garden restaurant" })).toBeTruthy();
+        expect(screen.queryByRole("option", { name: "Out of town event" })).toBeNull();
+        expect(screen.queryByRole("option", { name: "Indoor pub" })).toBeNull();
+        expect(screen.queryByRole("option", { name: "No dogs pub" })).toBeNull();
+    });
+
+    it("uses the exclusion label to filter out of town venues", () => {
+        renderComponent({ pubParameters: {
+            v1: { name: "In town", outOfTown: false },
+            v2: { name: "Out of town", outOfTown: true },
+        } });
+
+        fireEvent.click(screen.getAllByText("Out Of Town (Cambridge)")[1]);
+
+        expect(screen.getByRole("option", { name: "In town" })).toBeTruthy();
+        expect(screen.queryByRole("option", { name: "Out of town" })).toBeNull();
     });
 });

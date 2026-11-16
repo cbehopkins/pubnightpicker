@@ -3,13 +3,12 @@
 import { useCallback, useState } from "react";
 import PollVote from "./PollVote";
 import PubOptions from "./PubOptions";
-import PubFilter from "./PubFilter";
+import PubFilter, { antiVenueParams } from "./PubFilter";
 import Button from "./Button";
 import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
 import useRole from "../../hooks/useRole";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { AntiPubParams } from "../pages/PubForm";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { add_new_pub_to_poll, deletePoll } from "../../dbtools/polls";
@@ -158,7 +157,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
 
                 setManualAddWarning("");
             } catch (error) {
-                notifyError(getUserFacingErrorMessage(error, "Unable to add the pub to this poll."));
+                notifyError(getUserFacingErrorMessage(error, "Unable to add the venue to this poll."));
             }
         },
         [selectedPub, poll_id, pub_parameters, poll_data.date]
@@ -223,7 +222,7 @@ function ActivePoll({ poll_id, pub_parameters, poll_data, on_complete, mobile })
                     <PubFilter
                         title="Filter venue list to contain only items that do not have:"
                         set_pub_filters={setPubAntiFilters}
-                        pub_params={AntiPubParams}
+                        pub_params={antiVenueParams}
                     />
                 )}
                 {canAddPub && (

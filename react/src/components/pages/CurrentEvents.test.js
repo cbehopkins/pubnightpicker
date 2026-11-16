@@ -51,7 +51,7 @@ vi.mock("../../hooks/usePolls", () => {
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
     default: usePubsMock,
   };
@@ -219,6 +219,21 @@ describe("CurrentEvents", () => {
     expect(screen.getByText("The Maypole")).toBeTruthy();
     expect(screen.queryByText(/Restaurant:/)).toBeNull();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
+  });
+
+  it("displays a domain Venue's website and image on a current Meet", () => {
+    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
+      selected: "venue-main",
+      date: "2026-03-30",
+    }));
+    usePubsMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", website: "example.com", image: "https://img.example.com/maypole.png" },
+    });
+
+    render(<CurrentEvents />);
+
+    expect(screen.getByRole("link", { name: "The Maypole" }).getAttribute("href")).toBe("https://example.com");
+    expect(screen.getByAltText("What the venue looks like").getAttribute("src")).toBe("https://img.example.com/maypole.png");
   });
 
   it("shows a separate restaurant section when restaurant field is present", () => {
@@ -464,7 +479,7 @@ describe("PastEvents", () => {
       isLoading: false,
     });
     usePubsMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", pubImage: "not-a-valid-image-url" },
+      "venue-main": { name: "The Maypole", image: "not-a-valid-image-url" },
     });
 
     renderPastEvents();
@@ -481,7 +496,7 @@ describe("PastEvents", () => {
       isLoading: false,
     });
     usePubsMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", pubImage: "https://img.example.com/maypole.png" },
+      "venue-main": { name: "The Maypole", image: "https://img.example.com/maypole.png" },
     });
 
     renderPastEvents();
