@@ -56,9 +56,9 @@ Feature: Members organise and chat about a meet
     When Claire completes the poll by choosing "Journey Red Lion"
     Then Claire no longer sees the poll on Active Polls
     And Bob no longer sees the poll on Active Polls
-    When Claire opens Current Events
+    When Claire opens Current Meets
     Then Claire sees the meet at "Journey Red Lion"
-    When Bob opens Current Events
+    When Bob opens Current Meets
     Then Bob sees the meet at "Journey Red Lion"
     When Bob opens Chat Page
     And Claire opens Chat Page

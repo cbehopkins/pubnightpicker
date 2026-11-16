@@ -241,14 +241,14 @@ export function PastEvents() {
       <div className="container">
         <div className="row mb-4 align-items-end g-3">
           <div className="col-md-8">
-            <h1 className="h2 mb-2">Past Events</h1>
+            <h1 className="h2 mb-2">Past Meets</h1>
             <p className="text-body-secondary mb-0">
               Browse previous pub nights in an album-style view.
             </p>
           </div>
           <div className="col-md-4">
             <label htmlFor="pastEventCount" className="form-label">
-              Number of past events to show
+              Number of past meets to show
             </label>
             <select
               id="pastEventCount"
@@ -288,7 +288,7 @@ export function PastEvents() {
               onClick={goToPreviousPage}
               disabled={!hasPreviousPage || isLoading}
             >
-              Newer Events
+              Newer Meets
             </button>
             <button
               type="button"
@@ -296,7 +296,7 @@ export function PastEvents() {
               onClick={goToNextPage}
               disabled={!hasNextPage || isLoading}
             >
-              Older Events
+              Older Meets
             </button>
           </div>
         </div>
@@ -530,31 +530,31 @@ function CurrentEvent({
                   on_open_reschedule(poll_id, current_pub_id, restaurant_id, restaurant_time)
                 }
               >
-                Reschedule Event
+                Reschedule Meet
               </Button>
             )}
 
 
             {can_delete_event && (
               isOnline ? (
-                <QuestionRender className={styles.actionBlock} question="Delete This Event">
+                <QuestionRender className={styles.actionBlock} question="Delete This Meet">
                   <ConfirmModal
-                    title="Delete Current event"
-                    detail="The current event will be deleted"
+                    title="Delete Current Meet"
+                    detail="The current meet will be deleted"
                     confirm_text="Do Nothing"
                     cancel_text="Delete it"
                     on_cancel={async () => {
                       try {
                         await deletePoll(poll_id);
                       } catch (error) {
-                        notifyError(getUserFacingErrorMessage(error, "Unable to delete this event."));
+                        notifyError(getUserFacingErrorMessage(error, "Unable to delete this meet."));
                       }
                     }}
                   />
                 </QuestionRender>
               ) : (
                 <Button type="button" variant="outline-danger" disabled title="Unavailable offline">
-                  Delete This Event
+                  Delete This Meet
                 </Button>
               )
             )}
@@ -591,7 +591,7 @@ function CurrentEvents() {
     <section className="py-4 py-md-5">
       <div className="container">
         <div className="mb-4">
-          <h1 className="h2 mb-1">Current Events</h1>
+          <h1 className="h2 mb-1">Current Meets</h1>
           <p className="text-body-secondary mb-0">
             Upcoming pub night details and attendance tracking.
           </p>

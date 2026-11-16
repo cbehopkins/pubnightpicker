@@ -138,7 +138,7 @@ export default function ChatPage() {
             {pollId && webPushEnabled && (
                 <div className="d-flex flex-column gap-1">
                     <div>
-                        <Link to="/current_events">Back to current events</Link>
+                        <Link to="/current_meets">Back to current meets</Link>
                     </div>
                     <small className="text-body-secondary">
                         {eventChatMuted
@@ -149,7 +149,7 @@ export default function ChatPage() {
             )}
             {pollId && !webPushEnabled && (
                 <div>
-                    <Link to="/current_events">Back to current events</Link>
+                    <Link to="/current_meets">Back to current meets</Link>
                 </div>
             )}
             {!pollId && uid && webPushEnabled && (

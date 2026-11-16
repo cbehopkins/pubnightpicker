@@ -17,8 +17,8 @@ function Homepage() {
               View Active Polls
             </NavLink>
           )}
-          <NavLink className="btn btn-outline-primary" to="/current_events">
-            View Current Events
+          <NavLink className="btn btn-outline-primary" to="/current_meets">
+            View Current Meets
           </NavLink>
           {!loggedIn && (
             <>
@@ -38,7 +38,7 @@ function Homepage() {
         <ol className="ps-3">
           <li className="mb-2">Check whether a poll is currently open.</li>
           <li className="mb-2">Vote for your preferred venue.</li>
-          <li className="mb-2">View the selected venue and event details.</li>
+          <li className="mb-2">View the selected venue and meet details.</li>
         </ol>
       </section>
 
@@ -54,7 +54,7 @@ function Homepage() {
           <div className="col-sm-6 col-lg-3">
             <div className="border rounded p-3 h-100">
               <h3 className="h6 text-uppercase">Stay Updated</h3>
-              <p className="mb-0 text-body-secondary">See current event details and browse past events.</p>
+              <p className="mb-0 text-body-secondary">See current meet details and browse past meets.</p>
             </div>
           </div>
           <div className="col-sm-6 col-lg-3">

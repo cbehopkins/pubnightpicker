@@ -45,14 +45,14 @@ function ReschedulePollModal({
 
   return (
     <VenueAssignmentModal
-      title="Reschedule Event"
+      title="Reschedule Meet"
       subtitle="Update the fallback plan by choosing a new main venue and, if needed, a restaurant."
       mainVenueLabel="Main venue"
       mainVenueOptions={pubOptions}
       mainVenuePlaceholder="Select a main venue"
       selectedMainVenueId={selectedPubId}
       onMainVenueChange={onPubChange}
-      mainVenueHelpText="You can move the event to any non-restaurant venue in the system."
+      mainVenueHelpText="You can move the meet to any non-restaurant venue in the system."
       infoNote={infoNote}
       showRestaurantSection={true}
       restaurantLabel="Restaurant"
@@ -64,7 +64,7 @@ function ReschedulePollModal({
       onRestaurantChange={onRestaurantChange}
       onRestaurantTimeChange={onRestaurantTimeChange}
       confirmText="Save Changes"
-      footerNote="Only the latest main venue and restaurant choices will be kept on the event."
+      footerNote="Only the latest main venue and restaurant choices will be kept on the meet."
       onConfirm={onConfirm}
       onCancel={onCancel}
     />

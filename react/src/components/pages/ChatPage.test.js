@@ -100,7 +100,7 @@ describe("ChatPage", () => {
         render(<ChatPage />);
 
         expect(screen.getByText("Event Chat")).toBeTruthy();
-        expect(screen.getByText("Back to current events")).toBeTruthy();
+        expect(screen.getByRole("link", { name: "Back to current meets" }).getAttribute("href")).toBe("/current_meets");
         expect(chatBoxMock).toHaveBeenCalledWith(
             { scope: { scopeType: "event", scopeId: "poll-42" } },
             expect.anything(),

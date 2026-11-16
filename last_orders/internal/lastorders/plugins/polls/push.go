@@ -192,7 +192,7 @@ func (h PollCompletedPushHandler) Handle(ctx context.Context, payload truths.Pol
 		PollID:    payload.PollID,
 		Title:     "Pub Night @ " + venue.Name,
 		Body:      completedPushBody(payload.PollDate, venue.Name, restaurantName, payload.SelectedRestaurantTime),
-		URL:       h.Push.BaseURL() + "/current_events",
+		URL:       h.Push.BaseURL() + "/current_meets",
 		Tag:       "poll-complete:" + payload.PollID,
 	}
 	if record.PreviouslyActioned(completionactions.ActionPush) {
