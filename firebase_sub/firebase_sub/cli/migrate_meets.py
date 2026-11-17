@@ -11,7 +11,9 @@ def _get_db():
         app = firebase_admin.get_app()
     except ValueError:
         if os.getenv("FIRESTORE_EMULATOR_HOST"):
-            project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")
+            project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv(
+                "GCLOUD_PROJECT"
+            )
             if not project_id:
                 raise click.ClickException(
                     "Set GOOGLE_CLOUD_PROJECT when using the Firestore emulator."
@@ -60,9 +62,7 @@ def main(name: str) -> None:
     total_meets = len(meets)
     migrated_count = 0
     click.echo(f"Group ID: {group_ref.id}")
-    click.echo(
-        f"Created public Group; migrating {total_meets} Meet(s)."
-    )
+    click.echo(f"Created public Group; migrating {total_meets} Meet(s).")
     for meet in meets:
         try:
             meet.reference.update({"groupId": group_ref.id})

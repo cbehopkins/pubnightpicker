@@ -19,7 +19,7 @@ from google.cloud.firestore_v1.client import Client
 from firebase_sub.database.housekeeping_tasks import maintain_event_recurrence_polls
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PUB_FORM_PATH = REPO_ROOT / "react" / "src" / "components" / "pages" / "PubForm.js"
+PUB_FORM_PATH = REPO_ROOT / "react" / "src" / "components" / "pages" / "VenueForm.js"
 
 
 def _frontend_weekday_value_for_wednesday() -> int:
