@@ -1,14 +1,14 @@
-# Firestore Data Contract and Event Data Flow
+# Firestore Data Contract and Meet Data Flow
 
 ## Purpose
-This document describes the effective Firestore data contract used by the app and the normal event lifecycle:
+This document describes the effective Firestore data contract used by the app and the normal Meet lifecycle:
 - create a poll
 - add venues to a poll
 - vote and attendance updates
 - complete poll
-- render current event
+- render a current Meet
 
-It also captures the planned future rename from pubs to venues.
+The frontend uses Meet and Venue models while preserving the historical Firestore collection and field names.
 
 ## Canonical Schema Registry
 
@@ -19,8 +19,12 @@ The machine-readable source of truth for the current production schema is now in
 
 Scope policy:
 
-- Authoritative now: react and firebase_sub production behaviour.
-- Explicitly excluded until promoted: cellar, last_orders, sweego_client rewrite assumptions.
+- The registry records the client-visible schemas defined by React and the
+	legacy `firebase_sub` rules and implementation.
+- Last Orders is the current Go backend. Its behaviour is defined by the Go
+	listeners, services and tests; its exclusion from this registry means its
+	backend-specific contracts are not fully catalogued here.
+- Cellar and sweego_client are not Firestore contract owners.
 - Shared exceptions: `config/diagnostics` and `config/admin_delete` are consumed by
   React and Last Orders only.
 
@@ -29,12 +33,14 @@ This document remains a human-readable companion and flow guide.
 ## Source of Truth in Code
 Key implementation references:
 - src/dbtools/polls.js
-- src/dbtools/pubs.js
-- src/hooks/usePubs.js
+- src/dbtools/venues.js
+- src/hooks/useMeets.js
+- src/hooks/useVenues.js
+- src/utils/meetSorting.js
 - src/hooks/useVotes.js
 - src/hooks/useAttendance.js
 - src/components/pages/ActivePolls.js
-- src/components/pages/CurrentEvents.js
+- src/components/pages/CurrentMeets.js
 - firestore.rules
 
 ## Collections and Document Shapes
@@ -99,7 +105,7 @@ Fields commonly used:
 - banned: boolean optional
 
 Compatibility rule:
-- If venueType is missing, app treats it as pub (see src/hooks/usePubs.js).
+- If venueType is missing, the frontend treats it as pub (see src/utils/venueModel.js).
 
 ### polls collection
 Document id: poll id.
@@ -112,6 +118,11 @@ Fields:
 - restaurant: venue id when applicable and selected for restaurant branch
 - restaurant_time: optional string in HH:mm, meetup time chosen by completer when restaurant is associated
 - previous_pubs: array of venue ids, used on reschedule
+
+The frontend Meet adapter translates `completed` to `votingCompleted`, `pubs` to
+`venues`, `selected` to `selectedVenueId`, and the remaining venue/restaurant
+fields to their domain names. These are in-memory names only; reads and writes
+continue to use the fields listed above.
 
 polls.pubs map shape:
 - polls/{pollId}.pubs.{venueId}.name: string
@@ -190,7 +201,7 @@ Fields:
 - text: string (message body)
 - createdAt: timestamp
 - scopeType: string, one of "global" or "event" (required on all new writes)
-- scopeId: string ("main" for global chat, pollId for event chat)
+- scopeId: string ("main" for global chat; Meet document ID for the persisted "event" chat scope)
 
 Lazy migration note: legacy messages written before the scoped fields feature may
 lack `scopeType`/`scopeId`. The ChatBox component treats any message without
@@ -292,7 +303,7 @@ sequenceDiagram
 	UI->>PUB: read selected venue (+ optional restaurant venue)
 	UI->>V: read votes for selected/restaurant + any
 	UI->>A: read attendance for selected/restaurant
-	UI->>U: Render Current Event (venue + optional restaurant section)
+	UI->>U: Render Current Meet (venue + optional restaurant section)
 ```
 
 ### 1. Create Poll
@@ -337,7 +348,7 @@ Writes:
 - polls/{pollId}.restaurant set only when applicable
 - polls/{pollId}.restaurant_time set only when restaurant is applicable
 
-### 6. Current Event Rendering
+### 6. Current Meet Rendering
 Reads:
 - future completed polls
 - selected venue from polls
@@ -368,16 +379,9 @@ At a high level:
 - roles and users: restricted by auth and role checks
 - notification_req and notification_ack: admin read/write from web app; notification tool uses Admin SDK
 
-## Future Rename Note: pubs to venues
-Current state:
-- Collection name is pubs, while UI language is Venue.
+## Legacy Collection Names
 
-Planned direction:
-- Move to venues collection in a future migration.
-
-Recommendation for migration planning:
-- keep this document field-compatible with both names
-- later add a migration section with:
-1. dual-read period
-2. data copy/backfill approach
-3. cutover and cleanup plan
+The Firestore collections remain named `polls` and `pubs`, and the poll fields
+remain `completed`, `pubs`, `selected` and their existing variants. These are
+storage contracts, not the frontend domain model. No Firestore rename or data
+migration is part of the Meet and Venue terminology refactor.

@@ -132,6 +132,13 @@ def _find_firebase() -> list[str]:
 
 def _require_free_ports(ports: tuple[int, ...]) -> None:
     for port in ports:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                raise RuntimeError(
+                    f"Port {port} is unavailable; no existing service will be reused or stopped"
+                )
+        except OSError:
+            pass
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             if os.name != "nt":
                 probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -43,8 +43,28 @@ When("{word} sends a {word} chat message", async function (actorName, scope) {
     await sendChatMessage(this, actorName, scope);
 });
 
-When("{word} sends an event chat message", async function (actorName) {
+When("{word} sends a Meet Chat message", async function (actorName) {
     await sendChatMessage(this, actorName, "event");
+});
+
+Then("{word} sees the Meet Chat message", async function (actorName) {
+    const scope = "event";
+    assert.ok(["global", "event"].includes(scope));
+    const message = this.chatMessages?.[scope];
+    assert.ok(message, `No ${scope} chat message has been sent`);
+    await this.actors.get(actorName).getByText(message, { exact: true }).waitFor();
+});
+
+Then("{word} does not see the Meet Chat message", async function (actorName) {
+    const scope = "event";
+    assert.ok(["global", "event"].includes(scope));
+    const message = this.chatMessages?.[scope];
+    assert.ok(message, `No ${scope} chat message has been sent`);
+    assert.equal(
+        await this.actors.get(actorName).getByText(message, { exact: true }).count(),
+        0,
+        `${scope} message must not appear in the other chat scope`
+    );
 });
 
 Then("{word} sees the {word} chat message", async function (actorName, scope) {

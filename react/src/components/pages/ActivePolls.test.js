@@ -26,7 +26,7 @@ vi.mock("../../dbtools/polls", () => {
   };
 });
 
-vi.mock("../../hooks/usePolls", () => {
+vi.mock("../../hooks/useMeets", () => {
   return {
     useActiveMeets: useActiveMeetsMock,
   };

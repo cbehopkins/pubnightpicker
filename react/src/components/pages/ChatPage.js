@@ -3,18 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useSelector } from "react-redux";
+import { useAuthState } from "react-firebase-hooks/auth";
 import { doc, getDoc } from "firebase/firestore";
 import ChatBox from "../chat/ChatBox";
 import ChatMuteButton from "../chat/ChatMuteButton";
 import useRole from "../../hooks/useRole";
-import { db } from "../../firebase";
+import { auth, db } from "../../firebase";
 import { setEventChatMuted, setGlobalChatMuted } from "../../push/webPush";
 import styles from "../chat/chat.module.css";
 
 /** @typedef {import("../../store").RootState} RootState */
 
 export default function ChatPage() {
-    const loggedIn = useSelector(/** @param {RootState} state */(state) => state.auth.loggedIn);
+    const [user, authLoading] = useAuthState(auth);
     const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
     const canChat = useRole("canChat");
     const navigate = useNavigate();
@@ -26,10 +27,10 @@ export default function ChatPage() {
     const [webPushEnabled, setWebPushEnabled] = useState(false);
 
     useEffect(() => {
-        if (!loggedIn) {
+        if (!authLoading && !user) {
             navigate("/");
         }
-    }, [navigate, loggedIn]);
+    }, [navigate, authLoading, user]);
 
     const chatScope = useMemo(() => {
         if (!meetId) {

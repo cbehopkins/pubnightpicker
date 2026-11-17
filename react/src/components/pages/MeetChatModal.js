@@ -14,22 +14,22 @@ import { setEventChatMuted } from "../../push/webPush";
 /** @typedef {import("../../store").RootState} RootState */
 
 /**
- * @param {{ pollId: string, onClose: () => void }} props
+ * @param {{ meetId: string, onClose: () => void }} props
  */
-export default function EventChatModal({ pollId, onClose }) {
+export default function MeetChatModal({ meetId, onClose }) {
     const uid = useSelector(/** @param {RootState} state */(state) => state.auth.uid);
     const scope = useMemo(
-        () => ({ scopeType: /** @type {"event"} */ ("event"), scopeId: pollId }),
-        [pollId]
+        () => ({ scopeType: /** @type {"event"} */ ("event"), scopeId: meetId }),
+        [meetId]
     );
-    const [eventChatMuted, setEventChatMutedState] = useState(false);
-    const [eventChatMuteBusy, setEventChatMuteBusy] = useState(false);
+    const [meetChatMuted, setMeetChatMuted] = useState(false);
+    const [meetChatMuteBusy, setMeetChatMuteBusy] = useState(false);
     const [webPushEnabled, setWebPushEnabled] = useState(false);
 
     useEffect(() => {
         const loadMuteState = async () => {
-            if (!pollId || !uid) {
-                setEventChatMutedState(false);
+            if (!meetId || !uid) {
+                setMeetChatMuted(false);
                 return;
             }
             try {
@@ -37,28 +37,28 @@ export default function EventChatModal({ pollId, onClose }) {
                 const userData = userSnap.data() || {};
                 setWebPushEnabled(userData.webPushEnabled === true);
                 const pushPreferences = userData.pushPreferences || {};
-                const mutedPollIds = pushPreferences.eventChatMutedPollIds || [];
-                setEventChatMutedState(mutedPollIds.includes(pollId));
+                const mutedMeetIds = pushPreferences.eventChatMutedPollIds || [];
+                setMeetChatMuted(mutedMeetIds.includes(meetId));
             } catch {
-                setEventChatMutedState(false);
+                setMeetChatMuted(false);
                 setWebPushEnabled(false);
             }
         };
 
         void loadMuteState();
-    }, [pollId, uid]);
+    }, [meetId, uid]);
 
-    const toggleEventMute = async () => {
-        if (!pollId || !uid) {
+    const toggleMeetMute = async () => {
+        if (!meetId || !uid) {
             return;
         }
-        setEventChatMuteBusy(true);
+        setMeetChatMuteBusy(true);
         try {
-            const nextMuted = !eventChatMuted;
-            await setEventChatMuted(uid, pollId, nextMuted);
-            setEventChatMutedState(nextMuted);
+            const nextMuted = !meetChatMuted;
+            await setEventChatMuted(uid, meetId, nextMuted);
+            setMeetChatMuted(nextMuted);
         } finally {
-            setEventChatMuteBusy(false);
+            setMeetChatMuteBusy(false);
         }
     };
 
@@ -67,14 +67,14 @@ export default function EventChatModal({ pollId, onClose }) {
             <div className="d-flex flex-column gap-2">
                 <div className="d-flex align-items-center justify-content-between gap-2">
                     <h2 className="h5 mb-0">
-                        <Link to={`/chat/meet/${pollId}`} onClick={onClose}>Meet Chat</Link>
+                        <Link to={`/chat/meet/${meetId}`} onClick={onClose}>Meet Chat</Link>
                     </h2>
                     {uid && webPushEnabled && (
                         <ChatMuteButton
-                            muted={eventChatMuted}
-                            busy={eventChatMuteBusy}
-                            onToggle={() => { void toggleEventMute(); }}
-                            label={eventChatMuted ? "Unmute Meet chat notifications" : "Mute Meet chat notifications"}
+                            muted={meetChatMuted}
+                            busy={meetChatMuteBusy}
+                            onToggle={() => { void toggleMeetMute(); }}
+                            label={meetChatMuted ? "Unmute Meet chat notifications" : "Mute Meet chat notifications"}
                         />
                     )}
                     <Button
@@ -88,7 +88,7 @@ export default function EventChatModal({ pollId, onClose }) {
                 </div>
                 {uid && webPushEnabled && (
                     <small className="text-body-secondary">
-                        {eventChatMuted
+                        {meetChatMuted
                             ? "Meet chat notifications are muted for this Meet."
                             : "Meet chat notifications are enabled for this Meet."}
                     </small>

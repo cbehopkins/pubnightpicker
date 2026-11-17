@@ -22,14 +22,14 @@ import { DEFAULT_VENUE_TYPE } from "../constants/venueTypes";
 /**
  * Query winning-venue stats to find viable venues for autopopulate. Returns three categories:
  * mostVisited, leastVisited, and random (all not visited in the past 4 weeks, excluding venues
- * already on the poll). The ranking sample window for most/least expands progressively until those
+ * already on the Meet). The ranking sample window for most/least expands progressively until those
  * two categories expose at least three unique venues, or the full ranked list is exhausted.
  *
- * @param {string} pollId - Poll ID (for logging)
- * @param {Record<string, unknown> | undefined} currentVenueIds - Venues already on the poll (to exclude)
+ * @param {string} meetId - Meet document ID
+ * @param {Record<string, unknown> | undefined} currentVenueIds - Venues already on the Meet (to exclude)
  * @returns {AutopopulateVenues}
  */
-export default function useAutopopulateVenueSelector(pollId, currentVenueIds) {
+export default function useAutopopulateVenueSelector(meetId, currentVenueIds) {
     const allVenues = useVenues();
 
     // Base window: 4 weeks
@@ -55,7 +55,7 @@ export default function useAutopopulateVenueSelector(pollId, currentVenueIds) {
         }
 
         try {
-            // Build initial ranked rows from all polls
+            // Build initial ranked rows from all Meets
             const allRankedRows = buildWinningVenueRows({ meets, venues: allVenues });
             const pubOnlyRankedRows = allRankedRows.filter((row) => {
                 const venueType = allVenues[row.id]?.venueType || row.venueType || DEFAULT_VENUE_TYPE;
@@ -69,6 +69,7 @@ export default function useAutopopulateVenueSelector(pollId, currentVenueIds) {
                 lastDateByVenueId[row.id] = row.lastWonDate;
             }
 
+            // Convert currentVenueIds to Set for fast lookup
             const currentVenueIdSet = new Set(Object.keys(currentVenueIds || {}));
 
             // Keep the recent-visit exclusion fixed at 4 weeks.

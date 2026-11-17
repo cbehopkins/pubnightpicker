@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { NavLink, useSearchParams } from "react-router-dom";
-import { usePastMeets, useCurrentMeets } from "../../hooks/usePolls";
+import { usePastMeets, useCurrentMeets } from "../../hooks/useMeets";
 import useVenues from "../../hooks/useVenues";
 import useVotes from "../../hooks/useVotes";
 import useAttendance from "../../hooks/useAttendance";
@@ -11,17 +11,17 @@ import useRole from "../../hooks/useRole";
 import useAdmin from "../../hooks/useAdmin";
 import useUserPrivateData from "../../hooks/useUserPrivateData";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { useReschedulePoll } from "../../hooks/useReschedulePoll";
-import { useEventAttendance } from "../../hooks/useEventAttendance";
+import { useRescheduleMeet } from "../../hooks/useRescheduleMeet";
+import { useMeetAttendance } from "../../hooks/useMeetAttendance";
 import styles from "./CurrentMeets.module.css";
 import ShowAttendance from "../UI/ShowAttendance";
 import AttendanceActions from "../UI/AttendanceActions";
 import ConfirmModal, { QuestionRender } from "../UI/ConfirmModal";
 import Button from "../UI/Button";
-import ReschedulePollModal from "./ReschedulePollModal";
-import { deletePoll } from "../../dbtools/polls";
+import RescheduleMeetModal from "./RescheduleMeetModal";
+import { deleteMeet } from "../../dbtools/polls";
 import { getUserFacingErrorMessage } from "../../permissions";
-import EventChatModal from "./EventChatModal";
+import MeetChatModal from "./MeetChatModal";
 import ETAInput from "../UI/ETAInput";
 import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
@@ -41,8 +41,8 @@ import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
 /** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
-/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} EventPollValue */
-/** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, EventPollValue]> }} SortedPollCollection */
+/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
+/** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, MeetValue]> }} SortedMeetCollection */
 
 /** @typedef {import("../../store").RootState} RootState */
 
@@ -82,9 +82,9 @@ function normalizeImageUrl(value) {
 }
 
 /**
- * @param {{ value: EventPollValue, venues: VenueMap, poll_id: string, can_chat: boolean }} props
+ * @param {{ value: MeetValue, venues: VenueMap, meetId: string, canChat: boolean }} props
  */
-function PastEvent({ value, venues, poll_id, can_chat }) {
+function PastMeet({ value, venues, meetId, canChat }) {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => {
@@ -92,7 +92,7 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
       return typeof uid === "string" && uid.length > 0 ? uid : null;
     }
   );
-  const [attendance, , , , , , clearEta] = useAttendance(poll_id, Boolean(currUserId));
+  const [attendance, , , , , , clearEta] = useAttendance(meetId, Boolean(currUserId));
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
@@ -119,12 +119,12 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
           <img
             src={venueImage}
             alt={`Photo of ${venueName}`}
-            className={`card-img-top ${styles.pastEventImage}`}
+            className={`card-img-top ${styles.pastMeetImage}`}
             onError={() => setHasImageLoadError(true)}
           />
         ) : (
           <div
-            className={`${styles.pastEventImagePlaceholder} card-img-top d-flex align-items-center justify-content-center`}
+            className={`${styles.pastMeetImagePlaceholder} card-img-top d-flex align-items-center justify-content-center`}
           >
             <span className="text-body-secondary">No image available</span>
           </div>
@@ -158,7 +158,7 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
           )}
           <div className="d-flex align-items-center justify-content-between mt-auto pt-2">
             <p className="card-text text-body-secondary mb-0">{value.date}</p>
-            {can_chat && (
+            {canChat && (
               <Button
                 type="button"
                 variant="outline-secondary"
@@ -173,7 +173,7 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
       </div>
 
       {isChatOpen && (
-        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+        <MeetChatModal meetId={meetId} onClose={() => setIsChatOpen(false)} />
       )}
     </div>
   );
@@ -181,15 +181,15 @@ function PastEvent({ value, venues, poll_id, can_chat }) {
 
 export function PastMeets() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const pubCountParam = Number(searchParams.get("pastPageSize"));
-  const pubCount = [5, 10, 20].includes(pubCountParam) ? pubCountParam : 5;
+  const pageSizeParam = Number(searchParams.get("pastPageSize"));
+  const pageSize = [5, 10, 20].includes(pageSizeParam) ? pageSizeParam : 5;
   const cursorTrail = (searchParams.get("pastCursorTrail") || "")
     .split(",")
     .filter(Boolean);
   const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
 
   const { meetData, hasNextPage, lastVisibleId, isLoading } = usePastMeets(
-    pubCount,
+    pageSize,
     currentCursorId
   );
 
@@ -214,7 +214,7 @@ export function PastMeets() {
     [searchParams, setSearchParams]
   );
 
-  const selectPubCountHandler = useCallback(
+  const selectPageSizeHandler = useCallback(
     (event) => {
       event.preventDefault();
       writePaginationParams(Number(event.target.value), []);
@@ -226,15 +226,15 @@ export function PastMeets() {
     if (!hasNextPage || !lastVisibleId || isLoading) {
       return;
     }
-    writePaginationParams(pubCount, [...cursorTrail, lastVisibleId]);
-  }, [hasNextPage, lastVisibleId, isLoading, writePaginationParams, pubCount, cursorTrail]);
+    writePaginationParams(pageSize, [...cursorTrail, lastVisibleId]);
+  }, [hasNextPage, lastVisibleId, isLoading, writePaginationParams, pageSize, cursorTrail]);
 
   const goToPreviousPage = useCallback(() => {
     if (!hasPreviousPage || isLoading) {
       return;
     }
-    writePaginationParams(pubCount, cursorTrail.slice(0, -1));
-  }, [hasPreviousPage, isLoading, writePaginationParams, pubCount, cursorTrail]);
+    writePaginationParams(pageSize, cursorTrail.slice(0, -1));
+  }, [hasPreviousPage, isLoading, writePaginationParams, pageSize, cursorTrail]);
 
   return (
     <section className="py-4 py-md-5">
@@ -247,14 +247,14 @@ export function PastMeets() {
             </p>
           </div>
           <div className="col-md-4">
-            <label htmlFor="pastEventCount" className="form-label">
+            <label htmlFor="pastMeetCount" className="form-label">
               Number of past meets to show
             </label>
             <select
-              id="pastEventCount"
+              id="pastMeetCount"
               className="form-select"
-              value={pubCount}
-              onChange={selectPubCountHandler}
+              value={pageSize}
+              onChange={selectPageSizeHandler}
             >
               <option>5</option>
               <option>10</option>
@@ -275,7 +275,7 @@ export function PastMeets() {
 
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
           {sortedMeetsByDate.map(([key, value]) => {
-            return <PastEvent key={key} poll_id={key} value={value} venues={venues} can_chat={canChat} />;
+            return <PastMeet key={key} meetId={key} value={value} venues={venues} canChat={canChat} />;
           })}
         </div>
 
@@ -307,79 +307,79 @@ export function PastMeets() {
 
 /**
  * @param {{
- *  poll_id: string,
+ *  meetId: string,
  *  currentVenueId: string,
- *  restaurant_id: string | null | undefined,
- *  restaurant_time: string | null | undefined,
+ *  restaurantId: string | null | undefined,
+ *  restaurantTime: string | null | undefined,
  *  date: string,
  *  venues: VenueMap,
- *  can_reschedule: boolean,
- *  can_delete_event: boolean,
- *  can_chat: boolean,
- *  eta_default_time: string,
- *  show_voters: boolean,
- *  on_open_reschedule: (pollId: string, venueId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
+ *  canReschedule: boolean,
+ *  canDeleteMeet: boolean,
+ *  canChat: boolean,
+ *  etaDefaultTime: string,
+ *  showVoters: boolean,
+ *  onOpenReschedule: (meetId: string, venueId: string, restaurantId: string | null | undefined, restaurantTime: string | null | undefined) => void,
  * }} props
  */
-function CurrentEvent({
-  poll_id,
+function CurrentMeet({
+  meetId,
   currentVenueId,
-  restaurant_id,
-  restaurant_time,
+  restaurantId,
+  restaurantTime,
   date,
   venues,
-  can_reschedule,
-  can_delete_event,
-  can_chat,
-  eta_default_time,
-  show_voters,
-  on_open_reschedule,
+  canReschedule,
+  canDeleteMeet,
+  canChat,
+  etaDefaultTime,
+  showVoters,
+  onOpenReschedule,
 }) {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => state.auth.uid
   );
   const normalizedUserId = typeof currUserId === "string" ? currUserId : null;
-  const canReadProtectedEventData = Boolean(normalizedUserId);
+  const canReadProtectedMeetData = Boolean(normalizedUserId);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const { isOnline } = useOnlineStatus();
-  const [votes] = useVotes(poll_id, canReadProtectedEventData);
+  const [votes] = useVotes(meetId, canReadProtectedMeetData);
   const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
-    poll_id,
-    canReadProtectedEventData
+    meetId,
+    canReadProtectedMeetData
   );
-  const eventViewModel = buildCurrentMeetViewModel({
+  const meetViewModel = buildCurrentMeetViewModel({
     currentVenueId,
-    restaurant_id,
-    restaurant_time,
+    restaurantId,
+    restaurantTime,
     venues,
     votes,
     attendance,
     currUserId: normalizedUserId,
-    show_voters,
+    showVoters,
   });
 
-  const mainVenueImage = normalizeImageUrl(eventViewModel?.mainVenue?.image);
+  const mainVenueImage = normalizeImageUrl(meetViewModel?.mainVenue?.image);
   const [hasMainImageLoadError, setHasMainImageLoadError] = useState(false);
 
   useEffect(() => {
     setHasMainImageLoadError(false);
   }, [mainVenueImage]);
 
-  const attendanceHandlers = useEventAttendance(
+  const attendanceHandlers = useMeetAttendance(
     normalizedUserId,
     setAttendanceStatus,
     clearAttendance,
-    eventViewModel?.mainVenue?.id ?? "",
-    eventViewModel?.restaurantVenue?.id,
+    meetViewModel?.mainVenue?.id ?? "",
+    meetViewModel?.restaurantVenue?.id,
     setEta,
     clearEta
   );
 
-  if (!eventViewModel) {
+  if (!meetViewModel) {
     return <div></div>;
   }
-  const { mainVenue, restaurantVenue } = eventViewModel;
+  const { mainVenue, restaurantVenue } = meetViewModel;
   const shouldShowMainImage = mainVenueImage && !hasMainImageLoadError;
 
   return (
@@ -404,7 +404,7 @@ function CurrentEvent({
               )}
               <p className="text-body-secondary mb-0">{date}</p>
             </div>
-            {can_chat && (
+            {canChat && (
               <Button
                 type="button"
                 variant="outline-secondary"
@@ -432,7 +432,7 @@ function CurrentEvent({
           )}
 
           {!shouldShowMainImage && (
-            <div className={`mb-3 p-3 rounded ${styles.currentEventImagePlaceholder}`}>
+            <div className={`mb-3 p-3 rounded ${styles.currentMeetImagePlaceholder}`}>
               <span className="text-body-secondary">No image available</span>
             </div>
           )}
@@ -455,7 +455,7 @@ function CurrentEvent({
             <ETAInput
               className="mb-3"
               userEta={mainVenue.userEta}
-              defaultEta={eta_default_time}
+              defaultEta={etaDefaultTime}
               onSetEta={attendanceHandlers.setMainEta}
               onClearEta={attendanceHandlers.clearMainEta}
             />
@@ -500,7 +500,7 @@ function CurrentEvent({
                 <ETAInput
                   className="mb-3"
                   userEta={restaurantVenue.userEta}
-                  defaultEta={eta_default_time}
+                  defaultEta={etaDefaultTime}
                   onSetEta={attendanceHandlers.setRestaurantEta}
                   onClearEta={attendanceHandlers.clearRestaurantEta}
                 />
@@ -520,14 +520,14 @@ function CurrentEvent({
           )}
 
           <div className="d-flex flex-wrap gap-2">
-            {can_reschedule && (
+            {canReschedule && (
               <Button
                 type="button"
                 variant="outline-primary"
                 disabled={!isOnline}
                 title={isOnline ? undefined : "Unavailable offline"}
                 onClick={() =>
-                  on_open_reschedule(poll_id, currentVenueId, restaurant_id, restaurant_time)
+                  onOpenReschedule(meetId, currentVenueId, restaurantId, restaurantTime)
                 }
               >
                 Reschedule Meet
@@ -535,7 +535,7 @@ function CurrentEvent({
             )}
 
 
-            {can_delete_event && (
+            {canDeleteMeet && (
               isOnline ? (
                 <QuestionRender className={styles.actionBlock} question="Delete This Meet">
                   <ConfirmModal
@@ -545,7 +545,7 @@ function CurrentEvent({
                     cancel_text="Delete it"
                     on_cancel={async () => {
                       try {
-                        await deletePoll(poll_id);
+                        await deleteMeet(meetId);
                       } catch (error) {
                         notifyError(getUserFacingErrorMessage(error, "Unable to delete this meet."));
                       }
@@ -563,7 +563,7 @@ function CurrentEvent({
       </article>
 
       {isChatOpen && (
-        <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+        <MeetChatModal meetId={meetId} onClose={() => setIsChatOpen(false)} />
       )}
     </>
   );
@@ -582,10 +582,10 @@ function CurrentMeets() {
   const meetData = useCurrentMeets();
   const venues = useVenues();
   const canReschedule = useRole("canCompletePoll");
-  const canDeleteEvent = useRole("canCreatePoll");
+  const canDeleteMeet = useRole("canCreatePoll");
   const canShowVoters = useRole("canShowVoters");
   const canChat = useRole("canChat");
-  const rescheduleState = useReschedulePoll(venues, canReschedule);
+  const rescheduleState = useRescheduleMeet(venues, canReschedule);
 
   return (
     <section className="py-4 py-md-5">
@@ -597,10 +597,10 @@ function CurrentMeets() {
           </p>
         </div>
         {rescheduleState.isRescheduling && (
-          <ReschedulePollModal
+          <RescheduleMeetModal
             selectedVenueId={rescheduleState.selectedVenueId}
-            venueHasFood={rescheduleState.venueHasFood}
-            venueOptions={rescheduleState.venueOptions}
+            selectedVenueHasFood={rescheduleState.selectedVenueHasFood}
+            mainVenueOptions={rescheduleState.mainVenueOptions}
             restaurantOptions={rescheduleState.restaurantOptions}
             chosenRestaurantId={rescheduleState.chosenRestaurantId}
             restaurantTime={rescheduleState.restaurantTime}
@@ -613,20 +613,20 @@ function CurrentMeets() {
         )}
         {[...meetData.sortedByDate()].map(([key, value]) => {
           return (
-            <CurrentEvent
+            <CurrentMeet
               key={key}
-              poll_id={key}
+              meetId={key}
               currentVenueId={value.selectedVenueId}
-              restaurant_id={value.restaurantId}
-              restaurant_time={value.restaurantTime}
+              restaurantId={value.restaurantId}
+              restaurantTime={value.restaurantTime}
               date={value.date}
               venues={venues}
-              can_reschedule={canReschedule}
-              can_delete_event={canDeleteEvent}
-              can_chat={canChat}
-              eta_default_time={etaDefaultTime}
-              show_voters={canShowVoters}
-              on_open_reschedule={rescheduleState.openRescheduleModal}
+              canReschedule={canReschedule}
+              canDeleteMeet={canDeleteMeet}
+              canChat={canChat}
+              etaDefaultTime={etaDefaultTime}
+              showVoters={canShowVoters}
+              onOpenReschedule={rescheduleState.openRescheduleModal}
             />
           );
         })}

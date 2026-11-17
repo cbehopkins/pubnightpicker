@@ -22,7 +22,7 @@ import useWinningVenueStats from "./useWinningVenueStats";
 import useVenues from "./useVenues";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 
-const MOCK_PUBS = {
+const MOCK_VENUES = {
     v1: { name: "Venue 1", venueType: "pub" },
     v2: { name: "Venue 2", venueType: "pub" },
     v3: { name: "Venue 3", venueType: "pub" },
@@ -37,7 +37,7 @@ describe("useAutopopulateVenueSelector", () => {
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(new Date("2026-05-11T12:00:00Z"));
         vi.clearAllMocks();
-        vi.mocked(useVenues).mockReturnValue(MOCK_PUBS);
+        vi.mocked(useVenues).mockReturnValue(MOCK_VENUES);
     });
 
     afterEach(() => {

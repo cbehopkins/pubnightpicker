@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { getTodaysDate, MeetData } from "../utils/pollSorting";
+import { getTodaysDate, MeetData } from "../utils/meetSorting";
 import { ATTENDANCE_GLOBAL_KEY, getEffectiveAttendanceState } from "../utils/attendanceState";
 
 function getDateYearsAgo(yearCount) {
@@ -59,7 +59,7 @@ export function aggregateVenueAttendance(meets, attendanceByMeet) {
         const venueIds = getVenueIdsForMeet(meet, attendanceMap);
         for (const venueId of venueIds) {
             // We intentionally resolve effective attendance per venue so the global "any"
-            // attendance state contributes to each venue in the shortlist for that poll.
+            // attendance state contributes to each venue in the shortlist for that Meet.
             const effectiveAttendance = getEffectiveAttendanceState(attendanceMap, venueId, null);
             const canComeCount = effectiveAttendance.canCome.length;
             if (!countsByVenueId[venueId]) {
@@ -116,12 +116,12 @@ export default function useAttendanceVenueStats(yearCount) {
             statsQuery,
             async (snapshot) => {
                 /** @type {Record<string, { selected?: string, restaurant?: string | null, date?: string, pubs?: Record<string, unknown> }>} */
-                const pollsById = {};
+                const meetRecordsById = {};
                 snapshot.forEach((docSnapshot) => {
-                    pollsById[docSnapshot.id] = docSnapshot.data();
+                    meetRecordsById[docSnapshot.id] = docSnapshot.data();
                 });
 
-                const meetsById = new MeetData(pollsById).meets;
+                const meetsById = new MeetData(meetRecordsById).meets;
                 const meetIds = Object.keys(meetsById);
                 if (meetIds.length === 0) {
                     setCountsByVenueId({});

@@ -84,6 +84,19 @@ class JourneyRunnerTests(unittest.TestCase):
                     runner._require_free_ports((listener.getsockname()[1],))
                 self.assertGreater(listener.fileno(), 0)
 
+    @unittest.skipUnless(socket.has_ipv6, "IPv6 is unavailable")
+    def test_dual_stack_listener_is_rejected_by_ipv4_port_preflight(self) -> None:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("::", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    runner._require_free_ports((port,))
+
     def test_frontend_does_not_build_or_launch_backend(self) -> None:
         with patch.object(runner, "E2E_DIR", self.root), patch.object(
             runner, "_preflight"

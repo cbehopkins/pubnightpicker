@@ -1,18 +1,18 @@
 # Web Push Notification Contract
 
 Status: active
-Updated: 2026-05-29
+Updated: 2026-11-16
 
 ## Scope
 
-This contract defines web push behavior across the React app and the Python notifier.
+This contract defines web push behavior across the React app and Last Orders.
 
 - React client responsibilities:
   - permission request UX
   - service worker registration and push click handling
   - per-user endpoint registration lifecycle
   - per-type push preference storage (`users/{uid}.pushPreferences`)
-- Python notifier responsibilities:
+- Last Orders responsibilities:
   - decide when to send (poll lifecycle listeners + chat message listeners)
   - resolve recipients from active endpoint records filtered by per-type preference
   - send push messages
@@ -124,8 +124,8 @@ Notifier behavior:
 1. On new message in `messages` collection (Firestore trigger):
    - Resolve eligible recipients: active push endpoints where `webPushEnabled=true`
      and the matching `pushPreferences` boolean is true.
-   - For event chat (`scopeType=="event"`), additionally filter to users who are
-     attending the event (`attendance/{scopeId}`), excluding the message author.
+   - For Meet Chat (persisted `scopeType=="event"`), additionally filter to
+     users attending the Meet (`attendance/{scopeId}`), excluding the message author.
    - For global chat (`scopeType=="global"`), filter to all users who have opted in,
      excluding the message author.
    - Write a `chat_push_actions/{messageId}` doc with `notified` array of notified uids.
@@ -150,7 +150,7 @@ JSON payload sent by notifier for chat events:
 - pollId: string|null (null for global chat)
 - title: string
 - body: string (truncated message preview)
-- url: string (deep link to relevant page; event chat uses `/chat/event/{pollId}`)
+- url: string (deep link to relevant page; Meet Chat uses `/chat/meet/{meetId}`)
 - tag: string ("chat:{scopeId}" — groups notifications by conversation)
 - sentAt: ISO timestamp
 

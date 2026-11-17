@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { getTodaysDate, MeetData } from "../utils/pollSorting";
+import { getTodaysDate, MeetData } from "../utils/meetSorting";
 
 function getDateYearsAgo(yearCount) {
     const normalizedYears = Number.isFinite(yearCount) && yearCount > 0 ? yearCount : 1;
@@ -43,11 +43,11 @@ export default function useWinningVenueStats(yearCount) {
             statsQuery,
             (snapshot) => {
                 /** @type {Record<string, { selected?: string, date?: string }>} */
-                const nextPolls = {};
+                const meetRecords = {};
                 snapshot.forEach((docSnapshot) => {
-                    nextPolls[docSnapshot.id] = docSnapshot.data();
+                    meetRecords[docSnapshot.id] = docSnapshot.data();
                 });
-                setMeets(new MeetData(nextPolls).meets);
+                setMeets(new MeetData(meetRecords).meets);
                 setErrorMessage(null);
                 setIsLoading(false);
             },

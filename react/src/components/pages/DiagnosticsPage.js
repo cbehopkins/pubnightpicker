@@ -28,7 +28,7 @@ import {
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
-import { useActiveMeets } from "../../hooks/usePolls";
+import { useActiveMeets } from "../../hooks/useMeets";
 import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import { DEFAULT_NOTIFICATION_SETTINGS, setAdminDeletePaused, setNotificationSetting, watchAdminDeletePaused, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
 
@@ -91,20 +91,20 @@ function AutopopulateCandidateBucket({ title, rows, emptyText }) {
     );
 }
 
-function AutopopulateCandidatePollCard({ pollId, meet }) {
+function AutopopulateCandidateMeetCard({ meetId, meet }) {
     const {
         mostVisited,
         leastVisited,
         random,
         isLoading,
         error,
-    } = useAutopopulateVenueSelector(pollId, meet?.venues);
+    } = useAutopopulateVenueSelector(meetId, meet?.venues);
 
     return (
         <article className="card mb-3">
             <div className="card-body">
-                <h3 className="h6 mb-1">Poll: {meet?.date || "Unknown date"}</h3>
-                <p className="small text-body-secondary mb-3">pollId={pollId}</p>
+                <h3 className="h6 mb-1">Meet: {meet?.date || "Unknown date"}</h3>
+                <p className="small text-body-secondary mb-3">meetId={meetId}</p>
                 {isLoading && (
                     <p className="small text-body-secondary mb-0">Loading candidate venues...</p>
                 )}
@@ -185,8 +185,8 @@ function AutopopulateCandidateListsContent() {
             {activeMeets.length === 0 ? (
                 <p className="small text-body-secondary mb-0">No active polls found.</p>
             ) : (
-                activeMeets.map(([pollId, meet]) => (
-                    <AutopopulateCandidatePollCard key={pollId} pollId={pollId} meet={meet} />
+                activeMeets.map(([meetId, meet]) => (
+                    <AutopopulateCandidateMeetCard key={meetId} meetId={meetId} meet={meet} />
                 ))
             )}
         </>

@@ -9,10 +9,10 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
  */
 
 /**
- * @typedef {Object} ReschedulePollModalProps
+ * @typedef {Object} RescheduleMeetModalProps
  * @property {string=} selectedVenueId
- * @property {boolean=} venueHasFood
- * @property {VenueOption[]} venueOptions
+ * @property {boolean=} selectedVenueHasFood
+ * @property {VenueOption[]} mainVenueOptions
  * @property {VenueOption[]} restaurantOptions
  * @property {string=} chosenRestaurantId
  * @property {string=} restaurantTime
@@ -24,12 +24,12 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
  */
 
 /**
- * @param {ReschedulePollModalProps} props
+ * @param {RescheduleMeetModalProps} props
  */
-function ReschedulePollModal({
+function RescheduleMeetModal({
   selectedVenueId,
-  venueHasFood,
-  venueOptions,
+  selectedVenueHasFood,
+  mainVenueOptions,
   restaurantOptions,
   chosenRestaurantId,
   restaurantTime,
@@ -39,7 +39,7 @@ function ReschedulePollModal({
   onConfirm,
   onCancel,
 }) {
-  const infoNote = venueHasFood
+  const infoNote = selectedVenueHasFood
     ? "This venue serves food, so a separate restaurant is optional."
     : "Pick the fallback venue and optionally add or change the restaurant.";
 
@@ -48,7 +48,7 @@ function ReschedulePollModal({
       title="Reschedule Meet"
       subtitle="Update the fallback plan by choosing a new main venue and, if needed, a restaurant."
       mainVenueLabel="Main venue"
-      mainVenueOptions={venueOptions}
+      mainVenueOptions={mainVenueOptions}
       mainVenuePlaceholder="Select a main venue"
       selectedMainVenueId={selectedVenueId}
       onMainVenueChange={onVenueChange}
@@ -71,4 +71,4 @@ function ReschedulePollModal({
   );
 }
 
-export default ReschedulePollModal;
+export default RescheduleMeetModal;

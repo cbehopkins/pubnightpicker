@@ -39,12 +39,12 @@ const {
 
 vi.mock("../../dbtools/polls", () => {
   return {
-    deletePoll: deletePollMock,
-    reschedule_a_poll: reschedulePollMock,
+    deleteMeet: deletePollMock,
+    rescheduleMeet: reschedulePollMock,
   };
 });
 
-vi.mock("../../hooks/usePolls", () => {
+vi.mock("../../hooks/useMeets", () => {
   return {
     useCurrentMeets: useCurrentMeetsMock,
     usePastMeets: usePastMeetsMock,
@@ -83,7 +83,7 @@ vi.mock("../../hooks/useAdmin", () => {
 
 vi.mock("../../hooks/useUserPrivateData", () => ({ default: () => null }));
 
-vi.mock("./EventChatModal", () => ({ default: () => null }));
+vi.mock("./MeetChatModal", () => ({ default: () => null }));
 
 vi.mock("../../firebase", () => {
   throw new Error("CurrentMeets unit tests must not initialise Firebase.");
@@ -490,7 +490,7 @@ describe("PastMeets", () => {
     expect(screen.getByText("Page 1")).toBeTruthy();
   });
 
-  it("shows placeholder when venue image URL is invalid", () => {
+  it("shows a placeholder when the Venue image URL is invalid", () => {
     usePastMeetsMock.mockReturnValue({
       meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,

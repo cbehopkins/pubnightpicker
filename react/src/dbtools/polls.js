@@ -8,26 +8,26 @@ import {
     POLL_ACTION_DELETE_VENUE,
 } from "./pollActionAudit";
 
-export async function deletePoll(pollId) {
+export async function deleteMeet(meetId) {
     assertCurrentUserPermission(PERMISSIONS.canCreatePoll, "deleting a poll");
-    const pollsDocRef = deleteDoc(doc(db, "polls", pollId));
-    const openActionsDocRef = deleteDoc(doc(db, "open_actions", pollId));
-    const votesDocRef = deleteDoc(doc(db, "votes", pollId));
-    const attendanceDocRef = deleteDoc(doc(db, "attendance", pollId));
+    const pollsDocRef = deleteDoc(doc(db, "polls", meetId));
+    const openActionsDocRef = deleteDoc(doc(db, "open_actions", meetId));
+    const votesDocRef = deleteDoc(doc(db, "votes", meetId));
+    const attendanceDocRef = deleteDoc(doc(db, "attendance", meetId));
     await pollsDocRef;
     await openActionsDocRef;
     await votesDocRef;
     await attendanceDocRef;
 }
-export async function reschedule_a_poll(poll_id, currentVenueId, newVenueId, restaurantId, restaurantTime) {
+export async function rescheduleMeet(meetId, currentVenueId, nextVenueId, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "rescheduling a poll");
-    const docRef = doc(db, "polls", poll_id);
+    const docRef = doc(db, "polls", meetId);
     const payload = {
-        selected: newVenueId,
+        selected: nextVenueId,
         completedByUid: deleteField(),
     };
 
-    if (newVenueId && currentVenueId && newVenueId !== currentVenueId) {
+    if (nextVenueId && currentVenueId && nextVenueId !== currentVenueId) {
         payload.previous_pubs = arrayUnion(currentVenueId);
     }
 
@@ -86,7 +86,7 @@ export async function removeVenueFromMeet(pollId, venueId, pollDate, venueName) 
         }
     }
 }
-export async function complete_a_poll(key, poll_id, pollDate, restaurantId, restaurantTime) {
+export async function completeMeetVoting(key, poll_id, pollDate, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "completing a poll");
     const completedByUid = auth.currentUser?.uid;
     if (!completedByUid) throw new Error("No authenticated poll completer.");
@@ -119,10 +119,4 @@ export async function complete_a_poll(key, poll_id, pollDate, restaurantId, rest
     } catch (auditError) {
         console.warn("Poll completed but audit logging failed", auditError);
     }
-};
-
-export {
-    complete_a_poll as completeMeetVoting,
-    deletePoll as deleteMeet,
-    reschedule_a_poll as rescheduleMeet,
 };

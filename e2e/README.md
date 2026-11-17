@@ -143,9 +143,10 @@ receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue
 to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
 for both; Bob sees those totals and adds his vote. Claire chooses the winning
 pub, both users see the poll disappear from Active Polls, and both find the
-meet in Current Meets. They then exchange messages in global and event chat,
-verify that messages remain in their intended scope, and reopen event chat to
-check persistence. Vote totals are checked without granting Can Show Voters or
+meet in Current Meets. They then exchange messages in global chat and Meet Chat,
+verify that messages remain in their intended scope, and reopen Meet Chat to
+check persistence. Meet Chat retains the persisted `scopeType: "event"` value.
+Vote totals are checked without granting Can Show Voters or
 administrator access to either member.
 
 Only the venue catalogue is seeded directly: two pubs and a restaurant, using
@@ -172,22 +173,23 @@ creation and venue-selection permissions to check the picker using a temporary
 poll, which is deleted afterwards. The editor then soft-deletes the venue and
 the creator sees it disappear without reloading. Venue data is created
 entirely through the UI with unique names. The separate `@last_orders`
-recurrence feature registers its own actors and creates Events entirely through the UI.
+recurrence feature registers its own actors and creates Event Venues entirely through the UI.
 It verifies calculation and another member's edit of a monthly occurrence
 beyond the poll-creation window, then independently verifies a weekly Event
-due tomorrow materialises a poll, votes and attendance. Read assertions use the
+Venue due tomorrow materialises a Meet with votes and attendance. Read assertions use the
 authenticated emulator SDK and correlate by venue ID and occurrence date;
 computed results are never seeded. These scenarios do not prove restart/replay
 idempotency or notification delivery.
 
-The `@last_orders` chat-push feature covers global and event messages sent
+The `@last_orders` chat-push feature covers global and Meet Chat messages sent
 through the UI. Before sending, it waits for structured backend evidence that
 each synthetic user's chat preferences and endpoint have been committed to the
 notification projection. After sending, it waits for a correlated message
 processing record before asserting dummy push submissions and exclusions. The
-checks include author exclusion, global opt-out, event opt-out, event
-participation and a per-event mute. Backend evidence contains synthetic user
-IDs and endpoint IDs only, not endpoint URLs or subscription keys. These tests
+checks include author exclusion, global opt-out, Meet Chat opt-out, Meet
+participation and a per-Meet mute. The legacy `event_chat` preference and
+`event_chat_muted_poll_ids` projection names remain unchanged. Backend evidence
+contains synthetic user IDs and endpoint IDs only, not endpoint URLs or subscription keys. These tests
 verify backend submission to the dummy transport; they do not prove delivery to
 the browser or display by the operating system.
 

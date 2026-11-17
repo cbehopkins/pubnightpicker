@@ -155,10 +155,13 @@ indexes from Firebase.
 
 ## Meet Route Rollout
 
-Current Meets and Past Meets use `/current_meets` and `/past_meets`. Previously
-sent links to the replaced routes may stop working. The frontend and Last Orders
-are deployed independently, so notification links can temporarily be broken
-while their versions differ; coordinate their rollout.
+Current Meets, Past Meets and Meet Chat use `/current_meets`, `/past_meets` and
+`/chat/meet/:meetId`. The replaced `/current_events`, `/past_events` and
+`/chat/event/:pollId` routes are not retained; previously sent links using those
+routes may stop working. The frontend and Last Orders are released independently,
+so notification links can temporarily fail while their versions differ.
+Coordinate releases so the frontend and link-producing backend are updated
+together. Poll-opening links continue to use `/active_polls`.
 
 ## Admin Stats Pages
 

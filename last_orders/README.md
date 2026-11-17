@@ -356,7 +356,8 @@ Two optional booleans in the same document default to false:
 
 - `NotifyPollActorWhenSilenced`: permits live poll-opening email/push to the human
   creator and initial completion email/push to the human completer only.
-- `KeepChatNotificationsWhenSilenced`: permits normal global/event-chat pushes.
+- `KeepChatNotificationsWhenSilenced`: permits normal global and Meet Chat pushes
+  (the persisted Meet chat scope remains `event`).
 
 They are ignored when silence is off. Actor delivery respects existing personal
 preferences, addresses and active endpoints; chat preserves membership, mute and

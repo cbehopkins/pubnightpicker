@@ -16,7 +16,7 @@ import { getEffectiveAttendanceState } from "./attendanceState";
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
 
 /**
- * @typedef {Object} EventVenueViewModel
+ * @typedef {Object} MeetVenueViewModel
  * @property {string} id
  * @property {string | undefined} name
  * @property {string | undefined} website
@@ -34,14 +34,14 @@ import { getEffectiveAttendanceState } from "./attendanceState";
  */
 
 /**
- * @typedef {EventVenueViewModel & {
+ * @typedef {MeetVenueViewModel & {
  *   restaurantTime?: string | null | undefined
  * }} RestaurantVenueViewModel
  */
 
 /**
- * @typedef {Object} CurrentEventViewModel
- * @property {EventVenueViewModel} mainVenue
+ * @typedef {Object} CurrentMeetViewModel
+ * @property {MeetVenueViewModel} mainVenue
  * @property {RestaurantVenueViewModel | null} restaurantVenue
  */
 
@@ -66,25 +66,25 @@ export function getDedupedVotesForVenue(votes, venueId) {
 /**
  * @param {{
  *   currentVenueId: string,
- *   restaurant_id: string | null | undefined,
- *   restaurant_time: string | null | undefined,
+ *   restaurantId: string | null | undefined,
+ *   restaurantTime: string | null | undefined,
  *   venues: VenueMap,
  *   votes: VotesMap,
  *   attendance: AttendanceMap | null | undefined,
  *   currUserId: string | null | undefined,
- *   show_voters: boolean,
+ *   showVoters: boolean,
  * }} input
- * @returns {CurrentEventViewModel | null}
+ * @returns {CurrentMeetViewModel | null}
  */
 export function buildCurrentMeetViewModel({
     currentVenueId,
-    restaurant_id,
-    restaurant_time,
+    restaurantId,
+    restaurantTime,
     venues,
     votes,
     attendance,
     currUserId,
-    show_voters,
+    showVoters,
 }) {
     const currentVenue = venues[currentVenueId];
     if (!currentVenue) {
@@ -96,7 +96,7 @@ export function buildCurrentMeetViewModel({
     const venueWasVotedFor = currentVenueId in votes || Boolean(votes.any);
     const mainEtaMap = (attendance && attendance[currentVenueId]?.eta) || {};
 
-    /** @type {EventVenueViewModel} */
+    /** @type {MeetVenueViewModel} */
     const mainVenue = {
         id: currentVenueId,
         name: currentVenue.name,
@@ -104,27 +104,27 @@ export function buildCurrentMeetViewModel({
         image: currentVenue.image,
         address: currentVenue.address,
         dedupedVotes: mainVotes,
-        allowShowVoters: show_voters && (venueWasVotedFor || mainAttendance.hasAttendanceData),
+        allowShowVoters: showVoters && (venueWasVotedFor || mainAttendance.hasAttendanceData),
         etaMap: mainEtaMap,
         ...mainAttendance,
     };
 
-    const restaurantSource = restaurant_id ? venues[restaurant_id] : null;
+    const restaurantSource = restaurantId ? venues[restaurantId] : null;
     /** @type {RestaurantVenueViewModel | null} */
     let restaurantVenue = null;
     if (restaurantSource) {
-        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurant_id, currUserId);
-        const restaurantVotes = getDedupedVotesForVenue(votes, restaurant_id);
-        const restaurantEtaMap = (attendance && restaurant_id && attendance[restaurant_id]?.eta) || {};
+        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurantId, currUserId);
+        const restaurantVotes = getDedupedVotesForVenue(votes, restaurantId);
+        const restaurantEtaMap = (attendance && restaurantId && attendance[restaurantId]?.eta) || {};
         restaurantVenue = {
-            id: restaurant_id,
+            id: restaurantId,
             name: restaurantSource.name,
-            restaurantTime: restaurant_time,
+            restaurantTime,
             website: restaurantSource.website,
             image: restaurantSource.image,
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
-            allowShowVoters: show_voters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),
+            allowShowVoters: showVoters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),
             etaMap: restaurantEtaMap,
             ...restaurantAttendance,
         };

@@ -1,7 +1,7 @@
 // @ts-check
 
 import styles from "./ActivePolls.module.css";
-import { useActiveMeets } from "../../hooks/usePolls";
+import { useActiveMeets } from "../../hooks/useMeets";
 import useVenues from "../../hooks/useVenues";
 import ActivePoll from "../UI/ActivePoll";
 import NewPoll from "../UI/NewPoll";

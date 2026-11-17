@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { reschedule_a_poll } from "../dbtools/polls";
+import { rescheduleMeet } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError } from "../utils/notify";
 import {
@@ -8,33 +8,33 @@ import {
   getDefaultRestaurantTime,
 } from "../utils/venueSelection";
 
-function createReschedulingPollState(pollId, currentVenueId, restaurantId, restaurantTime, venues) {
+function createReschedulingMeetState(meetId, currentVenueId, restaurantId, restaurantTime, venues) {
   return {
-    pollId,
+    meetId,
     currentVenueId,
     selectedVenueId: currentVenueId || "",
-    venueOptions: getAllMainVenueOptions(venues),
+    mainVenueOptions: getAllMainVenueOptions(venues),
     restaurantOptions: getAllRestaurantVenues(venues),
     restaurantId: restaurantId || "",
     restaurantTime: getDefaultRestaurantTime(restaurantId, restaurantTime || ""),
   };
 }
 
-export function useReschedulePoll(venues, canReschedule) {
-  const [reschedulingPoll, setReschedulingPoll] = useState(null);
+export function useRescheduleMeet(venues, canReschedule) {
+  const [reschedulingMeet, setReschedulingMeet] = useState(null);
 
-  const openRescheduleModal = useCallback((pollId, currentVenueId, restaurantId, restaurantTime) => {
+  const openRescheduleModal = useCallback((meetId, currentVenueId, restaurantId, restaurantTime) => {
     if (!canReschedule) {
       return;
     }
 
-    setReschedulingPoll(
-      createReschedulingPollState(pollId, currentVenueId, restaurantId, restaurantTime, venues)
+    setReschedulingMeet(
+      createReschedulingMeetState(meetId, currentVenueId, restaurantId, restaurantTime, venues)
     );
   }, [canReschedule, venues]);
 
   const setSelectedVenue = useCallback((venueId) => {
-    setReschedulingPoll((prev) => {
+    setReschedulingMeet((prev) => {
       if (!prev) {
         return prev;
       }
@@ -47,7 +47,7 @@ export function useReschedulePoll(venues, canReschedule) {
   }, []);
 
   const setRestaurantChoice = useCallback((restaurantId) => {
-    setReschedulingPoll((prev) => {
+    setReschedulingMeet((prev) => {
       if (!prev) {
         return prev;
       }
@@ -61,7 +61,7 @@ export function useReschedulePoll(venues, canReschedule) {
   }, []);
 
   const setRestaurantTime = useCallback((restaurantTime) => {
-    setReschedulingPoll((prev) => {
+    setReschedulingMeet((prev) => {
       if (!prev) {
         return prev;
       }
@@ -74,40 +74,40 @@ export function useReschedulePoll(venues, canReschedule) {
   }, []);
 
   const cancelReschedule = useCallback(() => {
-    setReschedulingPoll(null);
+    setReschedulingMeet(null);
   }, []);
 
   const saveReschedule = useCallback(async () => {
-    if (!canReschedule || !reschedulingPoll?.pollId || !reschedulingPoll?.selectedVenueId) {
+    if (!canReschedule || !reschedulingMeet?.meetId || !reschedulingMeet?.selectedVenueId) {
       return;
     }
 
     try {
-      await reschedule_a_poll(
-        reschedulingPoll.pollId,
-        reschedulingPoll.currentVenueId,
-        reschedulingPoll.selectedVenueId,
-        reschedulingPoll.restaurantId || undefined,
-        reschedulingPoll.restaurantId ? reschedulingPoll.restaurantTime : undefined,
+      await rescheduleMeet(
+        reschedulingMeet.meetId,
+        reschedulingMeet.currentVenueId,
+        reschedulingMeet.selectedVenueId,
+        reschedulingMeet.restaurantId || undefined,
+        reschedulingMeet.restaurantId ? reschedulingMeet.restaurantTime : undefined,
       );
-      setReschedulingPoll(null);
+      setReschedulingMeet(null);
     } catch (error) {
       notifyError(getUserFacingErrorMessage(error, "Unable to reschedule this meet."));
     }
-  }, [canReschedule, reschedulingPoll]);
+  }, [canReschedule, reschedulingMeet]);
 
-  const selectedVenueId = reschedulingPoll?.selectedVenueId || "";
-  const venueHasFood = Boolean(selectedVenueId && venues?.[selectedVenueId]?.food);
+  const selectedVenueId = reschedulingMeet?.selectedVenueId || "";
+  const selectedVenueHasFood = Boolean(selectedVenueId && venues?.[selectedVenueId]?.food);
 
   return {
-    reschedulingPoll,
+    reschedulingMeet,
     selectedVenueId,
-    venueHasFood,
-    venueOptions: reschedulingPoll?.venueOptions || [],
-    restaurantOptions: reschedulingPoll?.restaurantOptions || [],
-    chosenRestaurantId: reschedulingPoll?.restaurantId || "",
-    restaurantTime: reschedulingPoll?.restaurantTime || "",
-    isRescheduling: Boolean(reschedulingPoll),
+    selectedVenueHasFood,
+    mainVenueOptions: reschedulingMeet?.mainVenueOptions || [],
+    restaurantOptions: reschedulingMeet?.restaurantOptions || [],
+    chosenRestaurantId: reschedulingMeet?.restaurantId || "",
+    restaurantTime: reschedulingMeet?.restaurantTime || "",
+    isRescheduling: Boolean(reschedulingMeet),
     openRescheduleModal,
     setSelectedVenue,
     setRestaurantChoice,

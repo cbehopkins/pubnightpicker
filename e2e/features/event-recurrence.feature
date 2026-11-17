@@ -42,6 +42,6 @@ Feature: Last Orders processes event recurrence
     And Will opens the journey venue for editing
     Then Last Orders persists the expected occurrence for the journey Event
     And Will sees the backend-computed Next Event in the venue form
-    And Last Orders materialises the journey Event poll with votes and attendance
+    And Last Orders materialises a Meet for the journey Event Venue with votes and attendance
     When Will opens Active Polls
     Then Will sees the generated poll with the journey Event venue

@@ -30,14 +30,14 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
  */
 
 /**
- * @param {string} pollId
+ * @param {string} meetId
  * @param {boolean} [enabled=true]
  * @returns {UseAttendanceResult}
  */
-function useAttendance(pollId, enabled = true) {
+function useAttendance(meetId, enabled = true) {
     /** @type {[AttendanceMap, import("react").Dispatch<import("react").SetStateAction<AttendanceMap>>]} */
     const [attendance, setAttendance] = useState({});
-    const docRef = useMemo(() => doc(db, "attendance", pollId), [pollId]);
+    const docRef = useMemo(() => doc(db, "attendance", meetId), [meetId]);
 
     /** @type {(payload: Record<string, unknown>) => Promise<void>} */
     const updateAttendanceDoc = useCallback(async (payload) => {

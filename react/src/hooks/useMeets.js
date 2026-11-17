@@ -12,13 +12,13 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
-import { MeetData, PollData, getTodaysDate, millisecUntilMidnight } from "../utils/pollSorting";
+import { MeetData, getTodaysDate, millisecUntilMidnight } from "../utils/meetSorting";
 
 function useTodaysDate() {
   const [todaysDate, setTodaysDate] = useState(getTodaysDate());
 
   useEffect(() => {
-    // When the date changes, then the events we should filter by should also change
+    // When the date changes, then the Meets we should filter by should also change
     const timeout = millisecUntilMidnight();
     const timeoutId = setTimeout(() => {
       setTodaysDate(getTodaysDate());
@@ -32,7 +32,7 @@ function useTodaysDate() {
   return todaysDate;
 }
 
-export function useFutureCompletePolls() {
+export function useCurrentMeets() {
   // FIXME add limit to this too - needs a UI update though to support
   const todaysDate = useTodaysDate();
   const q = useMemo(
@@ -44,11 +44,11 @@ export function useFutureCompletePolls() {
       ),
     [todaysDate]
   );
-  const polls = useQueryDb(q);
-  return new PollData(polls);
+  const meetRecords = useQueryDb(q);
+  return new MeetData(meetRecords);
 }
 
-export function usePastCompletePolls(pubCount = 5, cursorId = null) {
+export function usePastMeets(pageSize = 5, cursorId = null) {
   const todaysDate = useTodaysDate();
   const baseQuery = useMemo(
     () =>
@@ -61,7 +61,7 @@ export function usePastCompletePolls(pubCount = 5, cursorId = null) {
     [todaysDate]
   );
 
-  const [polls, setPolls] = useState({});
+  const [meetRecords, setMeetRecords] = useState({});
   const [lastVisibleId, setLastVisibleId] = useState(null);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -69,69 +69,52 @@ export function usePastCompletePolls(pubCount = 5, cursorId = null) {
   const fetchPage = useCallback(async () => {
     setIsLoading(true);
     try {
-      let pageQuery = query(baseQuery, limit(pubCount + 1));
+      let pageQuery = query(baseQuery, limit(pageSize + 1));
 
       if (cursorId) {
         const cursorSnapshot = await getDoc(doc(db, "polls", cursorId));
         if (cursorSnapshot.exists()) {
-          pageQuery = query(baseQuery, startAfter(cursorSnapshot), limit(pubCount + 1));
+          pageQuery = query(baseQuery, startAfter(cursorSnapshot), limit(pageSize + 1));
         }
       }
 
       const snapshot = await getDocs(pageQuery);
       let docs = [...snapshot.docs];
-      const computedHasNextPage = docs.length > pubCount;
+      const computedHasNextPage = docs.length > pageSize;
       if (computedHasNextPage) {
-        docs = docs.slice(0, pubCount);
+        docs = docs.slice(0, pageSize);
       }
 
-      const nextPolls = docs.reduce((acc, snap) => {
+      const nextMeetRecords = docs.reduce((acc, snap) => {
         acc[snap.id] = snap.data();
         return acc;
       }, {});
 
-      setPolls(nextPolls);
+      setMeetRecords(nextMeetRecords);
       setLastVisibleId(docs[docs.length - 1]?.id || null);
       setHasNextPage(computedHasNextPage);
     } finally {
       setIsLoading(false);
     }
-  }, [baseQuery, pubCount, cursorId]);
+  }, [baseQuery, pageSize, cursorId]);
 
   useEffect(() => {
     fetchPage();
   }, [fetchPage]);
 
   return {
-    pollData: new PollData(polls),
+    meetData: new MeetData(meetRecords),
     hasNextPage,
     lastVisibleId,
     isLoading,
   };
 }
 
-function usePolls() {
+export function useActiveMeets() {
   const q = useMemo(
     () => query(collection(db, "polls"), where("completed", "==", false)),
     []
   );
-  const polls = useQueryDb(q);
-  return new PollData(polls);
+  const meetRecords = useQueryDb(q);
+  return new MeetData(meetRecords);
 }
-
-export function useActiveMeets() {
-  const pollData = usePolls();
-  return new MeetData(pollData.polls);
-}
-
-export function useCurrentMeets() {
-  const pollData = useFutureCompletePolls();
-  return new MeetData(pollData.polls);
-}
-
-export function usePastMeets(count = 5, cursorId = null) {
-  const result = usePastCompletePolls(count, cursorId);
-  return { ...result, meetData: new MeetData(result.pollData.polls) };
-}
-
-export default usePolls;

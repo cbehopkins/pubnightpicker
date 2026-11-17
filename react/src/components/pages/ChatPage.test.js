@@ -6,6 +6,7 @@ import ChatPage from "./ChatPage";
 
 const {
     useSelectorMock,
+    useAuthStateMock,
     useRoleMock,
     useNavigateMock,
     useParamsMock,
@@ -16,6 +17,7 @@ const {
     setGlobalChatMutedMock,
 } = vi.hoisted(() => ({
     useSelectorMock: vi.fn(),
+    useAuthStateMock: vi.fn(),
     useRoleMock: vi.fn(),
     useNavigateMock: vi.fn(),
     useParamsMock: vi.fn(),
@@ -28,6 +30,10 @@ const {
 
 vi.mock("react-redux", () => ({
     useSelector: useSelectorMock,
+}));
+
+vi.mock("react-firebase-hooks/auth", () => ({
+    useAuthState: useAuthStateMock,
 }));
 
 vi.mock("../../hooks/useRole", () => ({
@@ -55,6 +61,7 @@ vi.mock("firebase/firestore", () => ({
 
 vi.mock("../../firebase", () => ({
     db: {},
+    auth: {},
 }));
 
 vi.mock("../../push/webPush", () => ({
@@ -75,6 +82,7 @@ describe("ChatPage", () => {
         setGlobalChatMutedMock.mockReset();
 
         useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: true, uid: "user-1" } }));
+        useAuthStateMock.mockReturnValue([{ uid: "user-1" }, false]);
         useRoleMock.mockReturnValue(true);
         useNavigateMock.mockReturnValue(vi.fn());
         useParamsMock.mockReturnValue({});
@@ -108,6 +116,23 @@ describe("ChatPage", () => {
         await waitFor(() => {
             expect(within(document.body).getByText("Meet chat notifications are enabled for this Meet.")).toBeTruthy();
         });
+    });
+
+    it("does not redirect a Meet Chat deep link while Firebase Auth is loading", async () => {
+        const navigate = vi.fn();
+        useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: false, uid: null } }));
+        useAuthStateMock.mockReturnValue([null, true]);
+        useParamsMock.mockReturnValue({ meetId: "meet-42" });
+        useNavigateMock.mockReturnValue(navigate);
+
+        const rendered = render(<ChatPage />);
+        expect(navigate).not.toHaveBeenCalled();
+
+        useAuthStateMock.mockReturnValue([{ uid: "user-1" }, false]);
+        rendered.rerender(<ChatPage />);
+
+        await waitFor(() => expect(chatBoxMock).toHaveBeenCalled());
+        expect(navigate).not.toHaveBeenCalled();
     });
 
     it("hides mute button when push notifications are not enabled", async () => {

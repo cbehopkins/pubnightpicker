@@ -17,7 +17,7 @@ import { DEFAULT_VENUE_TYPE, VENUE_TYPE_OPTIONS, getVenueTypeLabel } from "../..
 import { getUserFacingErrorMessage } from "../../permissions";
 import { notifyError } from "../../utils/notify";
 import NotificationPingStatus from "./NotificationPingStatus";
-import EventChatModal from "../pages/EventChatModal";
+import MeetChatModal from "../pages/MeetChatModal";
 
 /** @typedef {"all" | "pub" | "restaurant" | "event"} VenueType */
 
@@ -289,7 +289,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
             </div>
 
             {isChatOpen && (
-                <EventChatModal pollId={poll_id} onClose={() => setIsChatOpen(false)} />
+                <MeetChatModal meetId={poll_id} onClose={() => setIsChatOpen(false)} />
             )}
         </>
     );

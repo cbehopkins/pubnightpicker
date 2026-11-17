@@ -87,7 +87,7 @@ vi.mock("./NotificationPingStatus", () => ({
     default: () => <div data-testid="notification-ping-status" />,
 }));
 
-vi.mock("../pages/EventChatModal", () => ({
+vi.mock("../pages/MeetChatModal", () => ({
     default: () => <div data-testid="event-chat-modal" />,
 }));
 

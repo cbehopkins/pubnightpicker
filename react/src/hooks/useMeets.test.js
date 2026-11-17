@@ -2,7 +2,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import usePolls, { useActiveMeets, useCurrentMeets, usePastMeets } from "./usePolls";
+import { useActiveMeets, useCurrentMeets, usePastMeets } from "./useMeets";
 
 const { records, completedRecords, whereMock, getDocsMock, getDocMock, limitMock, startAfterMock } = vi.hoisted(() => ({
   records: {
@@ -44,11 +44,10 @@ vi.mock("./useQueryDb", () => ({
 }));
 
 describe("Meet read compatibility", () => {
-  it("exposes an overdue active Meet without changing the legacy Poll or query", () => {
-    const { result } = renderHook(() => ({ legacy: usePolls(), meets: useActiveMeets() }));
+  it("exposes an overdue active Meet without changing the query", () => {
+    const { result } = renderHook(() => ({ meets: useActiveMeets() }));
 
     expect(whereMock).toHaveBeenCalledWith("completed", "==", false);
-    expect(result.current.legacy.polls).toEqual(records);
     expect(result.current.meets.meets).toEqual({
       "meet-1": {
         date: "2020-01-01",
@@ -77,10 +76,12 @@ describe("Meet read compatibility", () => {
       pubs: { "venue-1": { name: "The Maypole" } },
     };
     getDocMock.mockResolvedValue(cursor);
-    getDocsMock.mockResolvedValue({ docs: [
-      { id: "meet-1", data: () => raw },
-      { id: "meet-2", data: () => ({ date: "2021-04-01", completed: true }) },
-    ] });
+    getDocsMock.mockResolvedValue({
+      docs: [
+        { id: "meet-1", data: () => raw },
+        { id: "meet-2", data: () => ({ date: "2021-04-01", completed: true }) },
+      ]
+    });
 
     const { result } = renderHook(() => ({ current: useCurrentMeets(), past: usePastMeets(1, "cursor-id") }));
     await waitFor(() => expect(result.current.past.lastVisibleId).toBe("meet-1"));
@@ -109,6 +110,6 @@ describe("Meet read compatibility", () => {
         venues: { "venue-1": { name: "The Maypole" } },
       },
     });
-    expect(result.current.past.pollData.polls).toEqual({ "meet-1": raw });
+    expect(result.current.past).not.toHaveProperty("pollData");
   });
 });

@@ -66,12 +66,12 @@ Feature: Members organise and chat about a meet
     Then Claire sees the global chat message
     When Claire opens Meet Chat for "Journey Red Lion"
     And Bob opens Meet Chat for "Journey Red Lion"
-    And Claire sends an event chat message
-    Then Bob sees the event chat message
+    And Claire sends a Meet Chat message
+    Then Bob sees the Meet Chat message
     And Bob does not see the global chat message
     When Bob opens Meet Chat for "Journey Red Lion"
-    Then Bob sees the event chat message
+    Then Bob sees the Meet Chat message
     And Bob does not see the global chat message
     When Bob opens Chat Page
     Then Bob sees the global chat message
-    And Bob does not see the event chat message
+    And Bob does not see the Meet Chat message
