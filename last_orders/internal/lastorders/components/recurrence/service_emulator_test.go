@@ -6,26 +6,26 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
 	_ "modernc.org/sqlite"
 )
 
-func emulatorService(t *testing.T, ctx context.Context) (*Service, *firestore.Client) {
+func emulatorService(t *testing.T, ctx context.Context, groups ...groupcache.Group) (*Service, *firestore.Client) {
 	t.Helper()
 
 	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
 		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
 	}
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
-		projectID = "last-orders-emulator"
-	}
+	projectID := fmt.Sprintf("demo-last-orders-recurrence-%d", time.Now().UnixNano())
 
 	client, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
@@ -33,7 +33,32 @@ func emulatorService(t *testing.T, ctx context.Context) (*Service, *firestore.Cl
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	svc, err := NewService(client, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil)
+	groupDB, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "groups.db"))
+	if err != nil {
+		t.Fatalf("open Group cache sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = groupDB.Close() })
+	groupBase, err := basestore.New(groupDB)
+	if err != nil {
+		t.Fatalf("new Group cache base store: %v", err)
+	}
+	groupStore, err := groupcache.NewStore(groupBase)
+	if err != nil {
+		t.Fatalf("new Group cache store: %v", err)
+	}
+	mutations := make([]groupcache.Mutation, 0, len(groups))
+	for index := range groups {
+		mutations = append(mutations, groupcache.Mutation{ID: groups[index].ID, Group: &groups[index]})
+	}
+	if err := groupStore.ApplyBatch(ctx, mutations, true); err != nil {
+		t.Fatalf("seed Group projection: %v", err)
+	}
+	groupService, err := groupcache.NewService(groupStore, groupcachetest.New())
+	if err != nil {
+		t.Fatalf("new Group cache service: %v", err)
+	}
+
+	svc, err := NewService(client, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil, groupService)
 	if err != nil {
 		t.Fatalf("new recurrence service: %v", err)
 	}
@@ -46,7 +71,7 @@ func TestAdvanceStaleEventPicksUpEditedRecurrenceAgainstEmulator(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	svc, client := emulatorService(t, ctx)
+	svc, client := emulatorService(t, ctx, groupcache.Group{ID: "group-other-case", Name: "AmPubNight", Visibility: groupcache.VisibilityPublic})
 	original := beginningOfDay(svc.Today()).AddDate(0, 0, 5).Format("2006-01-02")
 	edited := beginningOfDay(svc.Today()).AddDate(0, 0, 9).Format("2006-01-02")
 
@@ -86,7 +111,7 @@ func TestAdvanceStaleEventFromMissingDateAgainstEmulator(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	svc, client := emulatorService(t, ctx)
+	svc, client := emulatorService(t, ctx, groupcache.Group{ID: "opaque-default-group-id", Name: "ampubnight", Visibility: groupcache.VisibilityPublic})
 	loc := svc.Location()
 	occurrence := beginningOfDay(svc.Today()).AddDate(0, 0, 2).Format("2006-01-02")
 
@@ -176,7 +201,7 @@ func TestCreateMeetForEventOccurrenceUsesFirebaseStateWhenCacheIsStale(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	svc, client := emulatorService(t, ctx)
+	svc, client := emulatorService(t, ctx, groupcache.Group{ID: "opaque-default-group-id", Name: "ampubnight", Visibility: groupcache.VisibilityPublic})
 	current := beginningOfDay(svc.Today()).AddDate(0, 0, 4).Format("2006-01-02")
 	stale := beginningOfDay(svc.Today()).AddDate(0, 0, 2).Format("2006-01-02")
 	eventID := fmt.Sprintf("venue-stale-cache-%d", time.Now().UnixNano())
@@ -247,7 +272,7 @@ func TestCreateMeetForEventOccurrenceAgainstEmulator(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	svc, client := emulatorService(t, ctx)
+	svc, client := emulatorService(t, ctx, groupcache.Group{ID: "opaque-default-group-id", Name: "ampubnight", Visibility: groupcache.VisibilityPublic})
 	occurrence := beginningOfDay(svc.Today()).AddDate(0, 0, 2).Format("2006-01-02")
 	venueName := "The Materialised Arms"
 
@@ -293,8 +318,18 @@ func TestCreateMeetForEventOccurrenceAgainstEmulator(t *testing.T) {
 	if poll.Data()["eventOccurrenceDate"] != occurrence {
 		t.Fatalf("unexpected eventOccurrenceDate: %v", poll.Data()["eventOccurrenceDate"])
 	}
+	if poll.Data()["groupId"] != "opaque-default-group-id" {
+		t.Fatalf("unexpected groupId: %v", poll.Data()["groupId"])
+	}
 	if poll.Data()["completed"] != false {
 		t.Fatalf("unexpected completed: %v", poll.Data()["completed"])
+	}
+	audits, err := client.Collection(auditCollection).Where("pollId", "==", pollID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("query creation audit: %v", err)
+	}
+	if len(audits) != 1 || audits[0].Data()["actionType"] != "create" || audits[0].Data()["actorUid"] != "backend:auto" {
+		t.Fatalf("unexpected creation audit: %+v", audits)
 	}
 
 	if _, err := client.Collection("votes").Doc(pollID).Get(ctx); err != nil {
@@ -322,6 +357,16 @@ func TestCreateMeetForEventOccurrenceAgainstEmulator(t *testing.T) {
 	if len(polls) != 1 {
 		t.Fatalf("replay created a duplicate poll, got %d", len(polls))
 	}
+	if polls[0].Data()["groupId"] != "opaque-default-group-id" {
+		t.Fatalf("replay changed groupId: %v", polls[0].Data()["groupId"])
+	}
+	audits, err = client.Collection(auditCollection).Where("pollId", "==", pollID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("re-query creation audit: %v", err)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("replay changed creation audit count: %d", len(audits))
+	}
 
 	votes, err := client.Collection("votes").Doc(pollID).Get(ctx)
 	if err != nil {
@@ -329,6 +374,36 @@ func TestCreateMeetForEventOccurrenceAgainstEmulator(t *testing.T) {
 	}
 	if anyVotes, ok := votes.Data()["any"].([]any); !ok || len(anyVotes) != 1 {
 		t.Fatalf("replay reset votes state: %v", votes.Data()["any"])
+	}
+}
+
+func TestCreateMeetForEventOccurrenceFailsWithoutExactDefaultGroupAgainstEmulator(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	svc, client := emulatorService(t, ctx, groupcache.Group{ID: "wrong-case-group", Name: "AmPubNight", Visibility: groupcache.VisibilityPublic})
+	occurrence := beginningOfDay(svc.Today()).AddDate(0, 0, 2).Format("2006-01-02")
+	eventID := fmt.Sprintf("venue-no-default-group-%d", time.Now().UnixNano())
+	if _, err := client.Collection("pubs").Doc(eventID).Set(ctx, map[string]any{
+		"venueType":         "event",
+		"name":              "The Unassigned Arms",
+		"recurrence":        map[string]any{"frequency": "once", "date": occurrence},
+		NextOccurrenceField: occurrence,
+	}); err != nil {
+		t.Fatalf("seed venue: %v", err)
+	}
+
+	if err := svc.CreateMeetForEventOccurrence(ctx, eventID, occurrence); err == nil {
+		t.Fatal("expected creation to fail without the exact default Group")
+	}
+	polls, err := client.Collection("polls").Where("eventVenueId", "==", eventID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("query polls: %v", err)
+	}
+	if len(polls) != 0 {
+		t.Fatalf("created an unassigned Meet without the default Group: %d", len(polls))
 	}
 }
 

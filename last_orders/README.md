@@ -28,6 +28,13 @@ for the architecture this codebase follows.
 Event Venue recurrence creates Meets through `CreateMeetForEventOccurrence`.
 Its durable fanout and handler retain the historical `truths.create_event_poll`
 and `recurrence.create_event_poll` names, and their payload fields remain unchanged.
+Recurrence resolves exactly one public `ampubnight` Group from the existing
+Group projection and writes its opaque ID as Firestore `groupId` in the same
+transaction as the Meet and its initial vote and attendance documents. If the
+exact default Group is unavailable, recurrence fails without creating a Meet.
+Ticket 05 explicitly brings these Meet-writer changes into scope after the
+original Group API specification deferred them. Ticket 01 remains only the
+existing-Meet migration, and tickets 01-04 do not include writer changes.
 
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.

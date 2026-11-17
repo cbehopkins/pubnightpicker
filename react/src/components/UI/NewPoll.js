@@ -1,6 +1,7 @@
 // @ts-check
 
 import { useState } from "react";
+import { useSelector } from "react-redux";
 
 import { doc, collection, addDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../firebase";
@@ -13,6 +14,10 @@ import { logPollActionAudit, POLL_ACTION_CREATE } from "../../dbtools/pollAction
  * @param {NewPollProps} params
  */
 function NewPoll(params) {
+  const groupId = useSelector(
+    /** @param {import("../../store").RootState} state */
+    (state) => state.group.groupId,
+  );
   const [enteredDate, setEnteredDate] = useState("");
   const minDate = new Date().toISOString().slice(0, 10);
 
@@ -26,12 +31,14 @@ function NewPoll(params) {
     event.preventDefault();
 
     try {
+      if (!groupId) throw new Error("No resolved Group for poll creation.");
       const createdByUid = auth.currentUser?.uid;
       if (!createdByUid) throw new Error("No authenticated poll creator.");
       const docRef = await addDoc(collection(db, "polls"), {
         date: enteredDate,
         completed: false,
         createdByUid,
+        groupId,
       });
       setEnteredDate("");
       // This is important to do here as the permissions should be set on the database

@@ -149,8 +149,16 @@ kept in memory only, so a fresh load discovers it again.
 
 For local development, use Last Orders with a demo-project emulator and seed the
 default Group before opening the frontend. This preparation does not change
-existing Meet reads, writes, permissions or access to Meets without a `groupId`;
-Meet migration and Group-scoped Meet behaviour remain deferred.
+existing Meet reads, permissions or access to Meets without a `groupId`. New
+Meets created by the frontend and Last Orders Event Venue recurrence receive
+the resolved Group ID in their initial Firestore write; the Group-scoped Meet
+API remains deferred.
+
+For rollout, complete the one-off migration of existing Meets and deploy both
+writer changes before allowing Meet creation to resume. This implementation
+does not authorise production migration or deployment. A gap between migration
+and writer deployment may require a separate catch-up migration, outside this
+work.
 
 ## Firestore Index Drift Check
 

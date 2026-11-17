@@ -466,7 +466,7 @@ func New(cfg Config) (application *App, err error) {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("recurrence service is required: supply Config.RecurrenceService or enable firestore")
 		}
-		concrete, err := recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
+		concrete, err := recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService, groupCacheService)
 		if err != nil || concrete == nil {
 			return nil, fmt.Errorf("init recurrence service: %w", err)
 		}
