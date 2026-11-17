@@ -169,7 +169,7 @@ describe("App routes", () => {
   });
 
   it("blocks the application while the default Group is being resolved", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => { })));
 
     render(<App />);
 

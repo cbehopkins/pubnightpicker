@@ -110,7 +110,7 @@ function App() {
 
           const [group] = payload.groups;
           if (group?.name !== DEFAULT_GROUP_NAME || group?.visibility !== "public" ||
-              typeof group?.id !== "string" || group.id.length === 0) {
+            typeof group?.id !== "string" || group.id.length === 0) {
             throw new Error("Group discovery returned an invalid Group");
           }
 
