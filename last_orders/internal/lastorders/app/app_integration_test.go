@@ -297,6 +297,71 @@ func TestCloseStopsSchedulerBeforeClosingSQLite(t *testing.T) {
 	}
 }
 
+func TestCloseCancelsInFlightSchedulerWork(t *testing.T) {
+	t.Parallel()
+
+	remote := &blockingHasKeyRemote{
+		delegate: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	a := mustNewApp(t, filepath.Join(t.TempDir(), "shutdown-in-flight.db"), remote, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		_ = a.Close()
+	})
+	if err := enqueueNewPoll(t, a, "shutdown-in-flight"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	select {
+	case <-remote.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idempotency check did not start")
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close app: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("run returned error after close: %v", err)
+	}
+}
+
+func TestSchedulerCancellationErrorWithoutShutdownIsReported(t *testing.T) {
+	t.Parallel()
+
+	remote := &ambiguousClaimRemote{
+		createStarted: make(chan struct{}),
+		releaseCreate: make(chan struct{}),
+		lookupCalled:  make(chan struct{}),
+		createErr:     context.Canceled,
+	}
+	close(remote.releaseCreate)
+	a := mustNewApp(t, filepath.Join(t.TempDir(), "scheduler-error.db"), remote, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		_ = a.Close()
+	})
+	if err := enqueueNewPoll(t, a, "scheduler-error"); err != nil {
+		t.Fatalf("enqueue new poll: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not report scheduler error")
+	}
+}
+
 func mustNewApp(
 	t *testing.T,
 	dbPath string,

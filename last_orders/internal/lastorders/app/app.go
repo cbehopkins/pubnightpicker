@@ -1251,6 +1251,9 @@ func (a *App) Run(ctx context.Context) error {
 	case err := <-a.venueCacheListener.Errors():
 		return fmt.Errorf("venue cache projection failed: %w", err)
 	case err := <-cellarErr:
+		if errors.Is(err, context.Canceled) && errors.Is(executionCtx.Err(), context.Canceled) {
+			return nil
+		}
 		// The scheduler stopping ends the whole application, so say so on the way out
 		// rather than only via the process exit code.
 		if err != nil {
