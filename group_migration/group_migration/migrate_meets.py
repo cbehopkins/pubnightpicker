@@ -59,9 +59,9 @@ def main(name: str) -> None:
 
     total_meets = len(meets)
     migrated_count = 0
+    click.echo(f"Group ID: {group_ref.id}")
     click.echo(
-        f"Created public Group {group_ref.id}; "
-        f"migrating {total_meets} Meet(s)."
+        f"Created public Group; migrating {total_meets} Meet(s)."
     )
     for meet in meets:
         try:
