@@ -22,8 +22,8 @@ info:
     settings and Meet discovery. Those authorisation behaviours are not implied
     by the currently implemented discovery endpoint.
 servers:
-  - url: https://api.example.invalid
-    description: Replace with the deployed API origin.
+  - url: https://api.example.invalid/api
+    description: Replace with the deployed API base URL, including `/api`.
 tags:
   - name: Groups
   - name: Group members

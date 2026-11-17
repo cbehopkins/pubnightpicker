@@ -39,7 +39,7 @@ func (e *Endpoint) list(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, err := e.Reader.ListPublic(r.Context(), exactName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to list Groups.")
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to list Groups.")
 		return
 	}
 	response := struct {
@@ -51,20 +51,5 @@ func (e *Endpoint) list(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(response)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	response := struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}{}
-	response.Error.Code = code
-	response.Error.Message = message
 	_ = json.NewEncoder(w).Encode(response)
 }
