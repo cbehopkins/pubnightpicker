@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 from firebase_admin import firestore
 
-from group_migration import migrate_meets
+from firebase_sub.cli import migrate_meets
 
 
 class FakeDocumentReference:

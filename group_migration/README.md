@@ -2,7 +2,9 @@
 
 This standalone Python command creates the initial public Group and assigns its
 Firestore-generated ID to every existing Meet in the historical `polls`
-collection. It does not depend on the retired `firebase_sub` project.
+collection. The command lives with the existing CLI assistance tools at
+`firebase_sub/firebase_sub/cli/migrate_meets.py`; it has an independent test and
+dependency environment and does not import the retired backend's internals.
 
 ## Run
 
@@ -13,10 +15,11 @@ cd group_migration
 poetry install
 ```
 
-Run the command with credentials for the intended Firebase project:
+Run the command with credentials for the intended Firebase project from this
+directory:
 
 ```powershell
-poetry run python -m group_migration.migrate_meets --name ampubnight
+poetry run python ../firebase_sub/firebase_sub/cli/migrate_meets.py --name ampubnight
 ```
 
 Use `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials and set
