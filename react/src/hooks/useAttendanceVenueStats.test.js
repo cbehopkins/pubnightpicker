@@ -1,17 +1,71 @@
 // @vitest-environment jsdom
 
+import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { aggregateVenueAttendance, getVenueIdsForPoll } from "./useAttendanceVenueStats";
+import useAttendanceVenueStats, { aggregateVenueAttendance, getVenueIdsForMeet } from "./useAttendanceVenueStats";
+import useWinningVenueStats from "./useWinningVenueStats";
+
+const { whereMock, docMock, getDocMock } = vi.hoisted(() => ({
+  whereMock: vi.fn((...args) => args),
+  docMock: vi.fn((...args) => args),
+  getDocMock: vi.fn(),
+}));
 
 vi.mock("../firebase", () => ({ db: {} }));
+vi.mock("firebase/firestore", () => ({
+  collection: vi.fn((...args) => args),
+  query: vi.fn((...args) => args),
+  where: whereMock,
+  orderBy: vi.fn((...args) => args),
+  doc: docMock,
+  getDoc: getDocMock,
+  onSnapshot: vi.fn((query, onNext) => {
+    onNext({ forEach: (visit) => visit({ id: "meet-1", data: () => ({
+      completed: true,
+      date: "2026-04-04",
+      selected: "venue-a",
+      restaurant: "venue-r",
+      pubs: { "venue-a": {}, "venue-b": {} },
+    }) }) });
+    return () => {};
+  }),
+}));
+
+describe("completed Meet statistics Firestore boundary", () => {
+  it("translates raw records and retains the completed and date filters for both statistics", async () => {
+    getDocMock.mockResolvedValue({ data: () => ({ any: { canCome: ["user-1"] } }) });
+    const { result } = renderHook(() => ({
+      winning: useWinningVenueStats(1),
+      attendance: useAttendanceVenueStats(1),
+    }));
+
+    await waitFor(() => expect(result.current.attendance.isLoading).toBe(false));
+    expect(result.current.winning.meets["meet-1"]).toMatchObject({
+      votingCompleted: true,
+      selectedVenueId: "venue-a",
+      restaurantId: "venue-r",
+      venues: { "venue-a": {}, "venue-b": {} },
+    });
+    expect(result.current.attendance.countsByVenueId).toEqual({
+      "venue-a": 1,
+      "venue-b": 1,
+      "venue-r": 1,
+    });
+    expect(result.current.attendance.lastDateByVenueId["venue-r"]).toBe("2026-04-04");
+    expect(docMock).toHaveBeenCalledWith(expect.anything(), "attendance", "meet-1");
+    expect(whereMock).toHaveBeenCalledWith("completed", "==", true);
+    expect(whereMock).toHaveBeenCalledWith("date", ">=", result.current.winning.startDate);
+    expect(whereMock).toHaveBeenCalledWith("date", "<=", result.current.winning.endDate);
+  });
+});
 
 describe("useAttendanceVenueStats helpers", () => {
-  it("includes poll shortlist venues and ignores the global any key", () => {
-    const venueIds = getVenueIdsForPoll(
+  it("includes Meet shortlist venues and ignores the global any key", () => {
+    const venueIds = getVenueIdsForMeet(
       {
-        selected: "venue-a",
-        restaurant: "venue-r",
-        pubs: {
+        selectedVenueId: "venue-a",
+        restaurantId: "venue-r",
+        venues: {
           "venue-a": {},
           "venue-b": {},
           any: {},
@@ -31,7 +85,7 @@ describe("useAttendanceVenueStats helpers", () => {
       {
         poll1: {
           date: "2026-05-10",
-          pubs: {
+          venues: {
             "venue-a": {},
             "venue-b": {},
             any: {},
@@ -57,7 +111,7 @@ describe("useAttendanceVenueStats helpers", () => {
       {
         poll1: {
           date: "2026-05-10",
-          pubs: {
+          venues: {
             "venue-a": {},
             "venue-b": {},
             any: {},

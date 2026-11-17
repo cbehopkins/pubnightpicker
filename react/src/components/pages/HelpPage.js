@@ -18,7 +18,7 @@ function HelpPage() {
                 <ul className="mb-0">
                     <li>Create an account or sign in to vote and manage preferences.</li>
                     <li>Open Active Polls to vote for a venue.</li>
-                    <li>Check Current Events for this week&apos;s selected venue and details.</li>
+                    <li>Check Current Meets for this week&apos;s selected venue and details.</li>
                 </ul>
             </section>
 
@@ -50,7 +50,7 @@ function HelpPage() {
                     <li>After a venue is selected, you can confirm whether you will attend.</li>
                     <li>Your attendance status helps organizers plan for group size and table bookings.</li>
                     <li>If the venue is a restaurant, accurate attendance counts are especially important for reserving adequate tables.</li>
-                    <li>Update your attendance status in the Current Events section if your plans change.</li>
+                    <li>Update your attendance status in the Current Meets section if your plans change.</li>
                 </ul>
             </section>
 
@@ -61,7 +61,7 @@ function HelpPage() {
                         <li><strong>Creating a poll:</strong> Users with poll creation permissions can open a new poll to start voting on venues.</li>
                         <li><strong>Poll window:</strong> Polls remain open until someone with appropriate permissions closes/completes them.</li>
                         <li><strong>Completing a poll:</strong> To complete a poll, click on the venue name you wish to choose. A dialog box will appear to confirm your selection.</li>
-                        <li><strong>When a restaurant is needed:</strong> If the selected pub is marked as not serving food, you will be prompted to choose a restaurant. If one is already added to the poll, it will be automatically selected.</li>
+                        <li><strong>When a restaurant is needed:</strong> If the selected venue is marked as not serving food, you will be prompted to choose a restaurant. If one is already added to the poll, it will be automatically selected.</li>
                         <li><strong>Restaurant reservations:</strong> If the venue is a restaurant, please suggest a time to meet there so organizers can make the reservation.</li>
                     </ul>
                 ) : (

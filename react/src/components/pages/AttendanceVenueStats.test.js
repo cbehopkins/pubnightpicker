@@ -6,20 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AttendanceVenueStats, { AttendanceVenueStatsPage } from "./AttendanceVenueStats";
 
 const {
-  usePubsMock,
+  useVenuesMock,
   useAttendanceVenueStatsMock,
   useRoleMock,
 } = vi.hoisted(() => {
   return {
-    usePubsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useAttendanceVenueStatsMock: vi.fn(),
     useRoleMock: vi.fn(),
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -58,15 +58,16 @@ describe("AttendanceVenueStatsPage", () => {
   });
 
   beforeEach(() => {
-    usePubsMock.mockReset();
+    useVenuesMock.mockReset();
     useAttendanceVenueStatsMock.mockReset();
     useRoleMock.mockReset();
     useRoleMock.mockReturnValue(true);
 
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-1": { name: "The Maypole", venueType: "pub" },
       "venue-2": { name: "The Anchor", venueType: "pub" },
       "venue-3": { name: "Bistro 12", venueType: "restaurant" },
+      "venue-4": { name: "Summer Festival", venueType: "event" },
     });
 
     useAttendanceVenueStatsMock.mockReturnValue({
@@ -88,6 +89,7 @@ describe("AttendanceVenueStatsPage", () => {
   it("uses default query values when params are missing", () => {
     renderAttendancePage();
 
+    expect(screen.getByRole("link", { name: "Back to Past Meets" }).getAttribute("href")).toBe("/past_meets");
     expect(screen.getByText(/last year/i)).toBeTruthy();
     expect(screen.getByText(/Showing 5 venues per list/i)).toBeTruthy();
   });
@@ -121,6 +123,14 @@ describe("AttendanceVenueStatsPage", () => {
 
     expect(screen.queryAllByText("Bistro 12").length).toBeGreaterThan(0);
     expect(screen.queryByText("The Maypole")).toBeNull();
+  });
+
+  it("shows event Venues separately from pubs and restaurants", () => {
+    renderAttendancePage();
+    fireEvent.change(screen.getByLabelText(/filter by venue type/i), { target: { value: "event" } });
+    expect(screen.queryAllByText("Summer Festival").length).toBeGreaterThan(0);
+    expect(screen.queryByText("The Maypole")).toBeNull();
+    expect(screen.queryByText("Bistro 12")).toBeNull();
   });
 
   it("applies settings from the modal and updates page text", () => {

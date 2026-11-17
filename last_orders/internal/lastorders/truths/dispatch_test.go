@@ -11,7 +11,7 @@ var allFanoutNames = []string{
 	string(PollOpenedFanout),
 	string(PollCompletedFanout),
 	string(StaleEventFanout),
-	string(CreateEventPollFanout),
+	string(CreateMeetForEventOccurrenceFanout),
 	string(LogMessageFanout),
 }
 

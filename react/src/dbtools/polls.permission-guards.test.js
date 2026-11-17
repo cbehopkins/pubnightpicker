@@ -58,11 +58,11 @@ vi.mock("firebase/firestore", () => {
 });
 
 import {
-    add_new_pub_to_poll,
-    complete_a_poll,
-    deletePoll,
-    deletePubFromPoll,
-    reschedule_a_poll,
+    addVenueToMeet,
+    completeMeetVoting,
+    deleteMeet,
+    removeVenueFromMeet,
+    rescheduleMeet,
 } from "./polls";
 
 describe("poll dbtools permission guards", () => {
@@ -76,8 +76,8 @@ describe("poll dbtools permission guards", () => {
         logPollActionAuditMock.mockClear();
     });
 
-    it("guards deletePoll with canCreatePoll", async () => {
-        await deletePoll("poll-1");
+    it("guards deleteMeet with canCreatePoll", async () => {
+        await deleteMeet("poll-1");
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canCreatePoll",
             "deleting a poll",
@@ -86,8 +86,8 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("guards reschedule and complete with canCompletePoll", async () => {
-        await reschedule_a_poll("poll-1", "pub-1", "pub-2", undefined, undefined);
-        await complete_a_poll("pub-2", "poll-1", "2026-05-17", undefined, undefined);
+        await rescheduleMeet("poll-1", "pub-1", "pub-2", undefined, undefined);
+        await completeMeetVoting("pub-2", "poll-1", "2026-05-17", undefined, undefined);
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canCompletePoll",
@@ -101,7 +101,7 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("writes main venue and restaurant fields when rescheduling with a restaurant", async () => {
-        await reschedule_a_poll("poll-1", "pub-1", "pub-2", "restaurant-1", "18:30");
+        await rescheduleMeet("poll-1", "pub-1", "pub-2", "restaurant-1", "18:30");
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -115,8 +115,46 @@ describe("poll dbtools permission guards", () => {
         );
     });
 
+    it("keeps persisted completion and rescheduling fields for Meet-named actions", async () => {
+        await completeMeetVoting("venue-2", "meet-1", "2026-05-17", "restaurant-1", "18:30");
+        await rescheduleMeet("meet-1", "venue-2", "venue-3", undefined, undefined);
+
+        expect(updateDocMock).toHaveBeenNthCalledWith(1, { id: "doc-ref" }, {
+            completed: true,
+            selected: "venue-2",
+            completedByUid: "actor-user",
+            restaurant: "restaurant-1",
+            restaurant_time: "18:30",
+        });
+        expect(updateDocMock).toHaveBeenNthCalledWith(2, { id: "doc-ref" }, {
+            selected: "venue-3",
+            previous_pubs: "arrayUnion:venue-2",
+            completedByUid: "deleteField",
+            restaurant: "deleteField",
+            restaurant_time: "deleteField",
+        });
+        expect(docMock).toHaveBeenCalledWith({}, "polls", "meet-1");
+    });
+
+    it("keeps venue choice and deletion writes for Meet-named actions", async () => {
+        await addVenueToMeet("venue-1", "meet-1", { "venue-1": { name: "The Anchor" } }, "2026-05-17");
+        await removeVenueFromMeet("meet-1", "venue-1", "2026-05-17", "The Anchor");
+        await deleteMeet("meet-1");
+
+        expect(updateDocMock).toHaveBeenNthCalledWith(1, { id: "doc-ref" }, {
+            "pubs.venue-1": { name: "The Anchor" },
+        });
+        expect(updateDocMock).toHaveBeenNthCalledWith(2, { id: "doc-ref" }, {
+            "pubs.venue-1": "deleteField",
+        });
+        expect(docMock.mock.calls.slice(-4).map((call) => call.slice(1))).toEqual([
+            ["polls", "meet-1"], ["open_actions", "meet-1"],
+            ["votes", "meet-1"], ["attendance", "meet-1"],
+        ]);
+    });
+
     it("removes restaurant fields when rescheduling without a restaurant", async () => {
-        await reschedule_a_poll("poll-1", "pub-1", "pub-1", undefined, undefined);
+        await rescheduleMeet("poll-1", "pub-1", "pub-1", undefined, undefined);
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -130,7 +168,7 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("writes restaurant when poll completion includes one", async () => {
-        await complete_a_poll(
+        await completeMeetVoting(
             "pub-2",
             "poll-1",
             "2026-05-17",
@@ -158,7 +196,7 @@ describe("poll dbtools permission guards", () => {
     });
 
     it("does not write restaurant_time when no restaurant is stored", async () => {
-        await complete_a_poll("pub-2", "poll-1", "2026-05-17", undefined, "18:30");
+        await completeMeetVoting("pub-2", "poll-1", "2026-05-17", undefined, "18:30");
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "doc-ref" },
@@ -175,16 +213,16 @@ describe("poll dbtools permission guards", () => {
             "pub-2": { name: "The Anchor" },
         };
 
-        await add_new_pub_to_poll("pub-2", "poll-1", pubParams, "2026-05-17");
-        await deletePubFromPoll("poll-1", "pub-2", "2026-05-17", "The Anchor");
+        await addVenueToMeet("pub-2", "poll-1", pubParams, "2026-05-17");
+        await removeVenueFromMeet("poll-1", "pub-2", "2026-05-17", "The Anchor");
 
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canAddPubToPoll",
-            "adding a pub to a poll",
+            "adding a venue to a poll",
         );
         expect(assertCurrentUserPermissionMock).toHaveBeenCalledWith(
             "canAddPubToPoll",
-            "deleting a pub from a poll",
+            "deleting a venue from a poll",
         );
         expect(logPollActionAuditMock).toHaveBeenCalledWith("addVenue", {
             pollId: "poll-1",
@@ -200,8 +238,8 @@ describe("poll dbtools permission guards", () => {
         });
     });
 
-    it("does not assert permission when add_new_pub_to_poll is a no-op", async () => {
-        await add_new_pub_to_poll("", "poll-1", {});
+    it("does not assert permission when addVenueToMeet is a no-op", async () => {
+        await addVenueToMeet("", "poll-1", {});
         expect(assertCurrentUserPermissionMock).not.toHaveBeenCalled();
         expect(updateDocMock).not.toHaveBeenCalled();
     });

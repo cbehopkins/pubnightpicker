@@ -11,20 +11,20 @@ When("{word} opens Chat Page", async function (actorName) {
     await page.getByRole("heading", { name: "Chat Page", exact: true }).waitFor();
 });
 
-When("{word} opens Event Chat for {string}", async function (actorName, venueName) {
+When("{word} opens Meet Chat for {string}", async function (actorName, venueName) {
     const page = this.actors.get(actorName);
-    if (!page.url().endsWith("/current_events")) {
-        await page.getByRole("link", { name: "Current Events", exact: true }).click();
-        await page.waitForURL(`${BASE_URL}/current_events`);
+    if (!page.url().endsWith("/current_meets")) {
+        await page.getByRole("link", { name: "Current Meets", exact: true }).click();
+        await page.waitForURL(`${BASE_URL}/current_meets`);
     }
     const displayName = this.journeyVenues.get(venueName);
     const event = page.getByRole("article").filter({
         has: page.getByRole("heading", { name: displayName, exact: true }),
     });
-    await event.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("link", { name: "Event Chat", exact: true }).click();
-    await page.waitForURL(/\/chat\/event\/[^/]+$/);
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await event.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("link", { name: "Meet Chat", exact: true }).click();
+    await page.waitForURL(/\/chat\/meet\/[^/]+$/);
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
 });
 
 async function sendChatMessage(world, actorName, scope) {
@@ -43,8 +43,28 @@ When("{word} sends a {word} chat message", async function (actorName, scope) {
     await sendChatMessage(this, actorName, scope);
 });
 
-When("{word} sends an event chat message", async function (actorName) {
+When("{word} sends a Meet Chat message", async function (actorName) {
     await sendChatMessage(this, actorName, "event");
+});
+
+Then("{word} sees the Meet Chat message", async function (actorName) {
+    const scope = "event";
+    assert.ok(["global", "event"].includes(scope));
+    const message = this.chatMessages?.[scope];
+    assert.ok(message, `No ${scope} chat message has been sent`);
+    await this.actors.get(actorName).getByText(message, { exact: true }).waitFor();
+});
+
+Then("{word} does not see the Meet Chat message", async function (actorName) {
+    const scope = "event";
+    assert.ok(["global", "event"].includes(scope));
+    const message = this.chatMessages?.[scope];
+    assert.ok(message, `No ${scope} chat message has been sent`);
+    assert.equal(
+        await this.actors.get(actorName).getByText(message, { exact: true }).count(),
+        0,
+        `${scope} message must not appear in the other chat scope`
+    );
 });
 
 Then("{word} sees the {word} chat message", async function (actorName, scope) {

@@ -47,7 +47,7 @@ Feature: Last Orders submits eligible chat pushes
       | recipient |
       | Briar     |
 
-  Scenario: Event chat push excludes the author, opted-out and muted users
+  Scenario: Meet Chat push excludes the author, opted-out and muted users
     Given Eli's browser will grant push permission
     And Fay's browser will grant push permission
     And Gus's browser will grant push permission
@@ -74,23 +74,23 @@ Feature: Last Orders submits eligible chat pushes
     And the admin grants Hal the following permissions:
       | permission |
       | Can Chat   |
-    When Eli enables push and saves event chat notifications as "true"
-    And Fay enables push and saves event chat notifications as "true"
-    And Gus enables push and saves event chat notifications as "false"
-    And Hal enables push and saves event chat notifications as "true"
+    When Eli enables push and saves Meet chat notifications as "true"
+    And Fay enables push and saves Meet chat notifications as "true"
+    And Gus enables push and saves Meet chat notifications as "false"
+    And Hal enables push and saves Meet chat notifications as "true"
     Then Last Orders observes these push profiles:
       | actor | global | event |
       | Eli   | false  | true  |
       | Fay   | false  | true  |
       | Gus   | false  | false |
       | Hal   | false  | true  |
-    When Eli creates a poll through the UI for event chat
-    And Hal joins the event chat conversation
-    And Gus joins the event chat conversation
-    And Fay joins the event chat conversation
-    And Hal mutes notifications for the journey event
-    Then Last Orders observes Hal's event-chat mute
-    When Eli sends the final event chat message
-    Then Last Orders processes Eli's event chat push for:
+    When Eli creates a poll through the UI for Meet Chat
+    And Hal joins the Meet Chat conversation
+    And Gus joins the Meet Chat conversation
+    And Fay joins the Meet Chat conversation
+    And Hal mutes notifications for the journey Meet
+    Then Last Orders observes Hal's Meet Chat mute
+    When Eli sends the final Meet Chat message
+    Then Last Orders processes Eli's Meet Chat push for:
       | recipient |
       | Fay       |

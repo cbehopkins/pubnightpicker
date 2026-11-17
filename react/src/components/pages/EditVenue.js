@@ -1,23 +1,22 @@
-import PubForm from "./PubForm";
+import VenueForm from "./VenueForm";
 import { useRouteLoaderData } from "react-router-dom";
-import { usePubsState } from "../../hooks/usePubs";
+import { useVenuesState } from "../../hooks/useVenues";
 import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
 
-// FIXME move this and NewPub and Edit Pub somewhere sensible
 export async function loader({ params }) {
-  const pubId = params.pubId;
+  const venueId = params.venueId;
   return {
-    pub_id: pubId,
+    venue_id: venueId,
   };
 }
 
-function EditPubPage() {
-  const { venues: pub_parameters, isLoading, isStale, errorMessage, retry } = usePubsState();
-  const { pub_id } = useRouteLoaderData("pub_id");
-  const pubObject = pub_parameters[pub_id];
+function EditVenuePage() {
+  const { venues, isLoading, isStale, errorMessage, retry } = useVenuesState();
+  const { venue_id } = useRouteLoaderData("venue_id");
+  const venue = venues[venue_id];
 
-  if (!pubObject) {
+  if (!venue) {
     if (errorMessage) {
       return (
         <div className="alert alert-warning" role="alert">
@@ -36,9 +35,9 @@ function EditPubPage() {
           Showing the last loaded venue details. Updates may be delayed while the connection recovers.
         </p>
       )}
-      <PubForm method="patch" pub_object={pubObject} />
+      <VenueForm method="patch" venueObject={venue} />
     </>
   );
 }
 
-export default ProtectedRoute(EditPubPage, "canManagePubs", "/");
+export default ProtectedRoute(EditVenuePage, "canManagePubs", "/");

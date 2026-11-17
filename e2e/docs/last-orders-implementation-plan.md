@@ -6,7 +6,8 @@ and Last Orders groups sequentially in separate fresh emulator lifetimes. Two
 backend recurrence scenarios cover calculation/editing and due-poll
 materialisation. Three frontend-only push scenarios cover voluntary opt-in,
 saved categories, denied permission and disabling push. Two backend chat-push
-scenarios cover global and event chat recipient selection. Remaining phase 4-9
+scenarios cover global and Meet Chat recipient selection (persisted chat scope
+`event`). Remaining phase 4-9
 work is planned below, including other notification kinds and their explicit
 readiness/correlation gates. The Python notifier worker and its legacy
 E2E scripts are retired; Python is used for bootstrap and orchestration only.
@@ -267,11 +268,12 @@ claiming recipient-specific coverage; no separate test HTTP API is assumed.
 The chat-push portion is implemented in `chat-push.feature`. It creates unique
 users and synthetic subscriptions through the UI, waits for committed private
 preference and endpoint projection evidence, and sends uniquely identified
-global and event messages through the React UI. Each assertion waits for the
+global and Meet Chat messages through the React UI. Each assertion waits for the
 correlated message's processed record before checking dummy sends, so exclusions
 are checked only after recipient delivery work is terminal. Global coverage
-excludes the author and a user with global chat off. Event coverage includes
-participants, event chat opt-out and a per-event mute, excluding the author and
+excludes the author and a user with global chat off. Meet Chat coverage includes
+participants, the legacy `event_chat` preference and a per-Meet mute stored in
+`event_chat_muted_poll_ids`, excluding the author and
 ineligible users. The dummy payload is matched by message ID, event type, body,
 poll ID and destination route; sends are matched to synthetic endpoints.
 `config/diagnostics` is asserted absent or unsilenced in the fresh emulator.
@@ -319,8 +321,8 @@ than the frontend-only missing-backend warning.
   eligible push notification. Exercise personal opt-in and opt-out separately
   from the mailing-list send; include at least one recipient using the login
   email and one using an override address.
-- Reschedule a current event through the UI. Verify its new date in Current
-  Events and a correlated `poll_rescheduled` push submission. Assert that the
+- Reschedule a Current Meet through the UI. Verify its new date in Current
+  Meets and a correlated `poll_rescheduled` push submission. Assert that the
   reschedule is not misclassified as a normal poll completion.
 - For all negative recipient assertions, wait for a positive processing barrier
   before asserting that no dummy send exists. Match poll ID and recipient rather

@@ -9,7 +9,7 @@ vi.mock("./useWinningVenueStats", () => ({
     default: vi.fn(),
 }));
 
-vi.mock("./usePubs", () => ({
+vi.mock("./useVenues", () => ({
     default: vi.fn(),
 }));
 
@@ -19,10 +19,10 @@ vi.mock("../utils/statsRanking", () => ({
 }));
 
 import useWinningVenueStats from "./useWinningVenueStats";
-import usePubs from "./usePubs";
+import useVenues from "./useVenues";
 import { buildWinningVenueRows, splitRankedStatRows } from "../utils/statsRanking";
 
-const MOCK_PUBS = {
+const MOCK_VENUES = {
     v1: { name: "Venue 1", venueType: "pub" },
     v2: { name: "Venue 2", venueType: "pub" },
     v3: { name: "Venue 3", venueType: "pub" },
@@ -37,7 +37,7 @@ describe("useAutopopulateVenueSelector", () => {
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(new Date("2026-05-11T12:00:00Z"));
         vi.clearAllMocks();
-        vi.mocked(usePubs).mockReturnValue(MOCK_PUBS);
+        vi.mocked(useVenues).mockReturnValue(MOCK_VENUES);
     });
 
     afterEach(() => {
@@ -46,7 +46,7 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("returns empty arrays while loading", () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {},
+            meets: {},
             isLoading: true,
             errorMessage: null,
             startDate: "2026-04-13",
@@ -64,8 +64,8 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("filters out venues that are already on the poll", async () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-05-01" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-05-01" },
             },
             isLoading: false,
             errorMessage: null,
@@ -94,7 +94,7 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("surfaces upstream loading errors", () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {},
+            meets: {},
             isLoading: false,
             errorMessage: "Failed to load polls",
             startDate: "2026-04-13",
@@ -111,9 +111,9 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("expands ranking window to find viable most and least categories", async () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-05-01" },
-                "poll-2": { selected: "v2", date: "2026-04-01" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-05-01" },
+                "poll-2": { selectedVenueId: "v2", date: "2026-04-01" },
             },
             isLoading: false,
             errorMessage: null,
@@ -146,8 +146,8 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("keeps expanding ranking sample until top/bottom expose three unique venues", async () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-05-01" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-05-01" },
             },
             isLoading: false,
             errorMessage: null,
@@ -190,8 +190,8 @@ describe("useAutopopulateVenueSelector", () => {
 
     it("excludes recently visited venues from random pool", async () => {
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-05-01" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-05-01" },
             },
             isLoading: false,
             errorMessage: null,
@@ -221,7 +221,7 @@ describe("useAutopopulateVenueSelector", () => {
     });
 
     it("returns pub-only candidates when venue data includes mixed types", async () => {
-        vi.mocked(usePubs).mockReturnValue({
+        vi.mocked(useVenues).mockReturnValue({
             v1: { name: "Venue 1", venueType: "pub" },
             v2: { name: "Venue 2", venueType: "restaurant" },
             v3: { name: "Venue 3", venueType: "event" },
@@ -229,10 +229,10 @@ describe("useAutopopulateVenueSelector", () => {
         });
 
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-04-01" },
-                "poll-2": { selected: "v2", date: "2026-03-01" },
-                "poll-3": { selected: "v3", date: "2026-03-05" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-04-01" },
+                "poll-2": { selectedVenueId: "v2", date: "2026-03-01" },
+                "poll-3": { selectedVenueId: "v3", date: "2026-03-05" },
             },
             isLoading: false,
             errorMessage: null,
@@ -271,7 +271,7 @@ describe("useAutopopulateVenueSelector", () => {
     });
 
     it("excludes venues marked banned from autopopulate categories", async () => {
-        vi.mocked(usePubs).mockReturnValue({
+        vi.mocked(useVenues).mockReturnValue({
             v1: { name: "Venue 1", venueType: "pub", banned: false },
             v2: { name: "Venue 2", venueType: "pub", banned: false },
             v3: { name: "Venue 3", venueType: "pub", banned: false },
@@ -279,9 +279,9 @@ describe("useAutopopulateVenueSelector", () => {
         });
 
         vi.mocked(useWinningVenueStats).mockReturnValue({
-            polls: {
-                "poll-1": { selected: "v1", date: "2026-04-01" },
-                "poll-2": { selected: "v2", date: "2026-03-01" },
+            meets: {
+                "poll-1": { selectedVenueId: "v1", date: "2026-04-01" },
+                "poll-2": { selectedVenueId: "v2", date: "2026-03-01" },
             },
             isLoading: false,
             errorMessage: null,

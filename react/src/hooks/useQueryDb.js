@@ -20,37 +20,35 @@ import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
  */
 export default function useQueryDb(q, error_handler = null, precondition = null, enabled = true) {
     /** @type {[Record<string, TValue | TDoc>, import("react").Dispatch<import("react").SetStateAction<Record<string, TValue | TDoc>>>]} */
-    const [polls, setPolls] = useState({});
-    /** @type {(id: string, poll: TDoc) => void} */
-    const addCallback = useCallback((id, poll) => {
-        setPolls((prevPolls) => {
-            const newValue = precondition ? precondition(poll) : poll
-            return { ...prevPolls, [id]: newValue };
+    const [documents, setDocuments] = useState({});
+    /** @type {(id: string, document: TDoc) => void} */
+    const addCallback = useCallback((id, document) => {
+        setDocuments((previousDocuments) => {
+            const newValue = precondition ? precondition(document) : document
+            return { ...previousDocuments, [id]: newValue };
         });
     }, [precondition]);
-    /** @type {(id: string, poll: TDoc) => void} */
-    const modCallback = useCallback((id, poll) => {
-        setPolls((prevPolls) => {
-            const newValue = precondition ? precondition(poll) : poll
-            const nextPolls = { ...prevPolls, [id]: newValue };
-            // nextPolls[id] = poll;
-            return nextPolls;
+    /** @type {(id: string, document: TDoc) => void} */
+    const modCallback = useCallback((id, document) => {
+        setDocuments((previousDocuments) => {
+            const newValue = precondition ? precondition(document) : document
+            return { ...previousDocuments, [id]: newValue };
         });
     }, [precondition]);
     /** @type {(id: string) => void} */
     const rmCallback = useCallback((id) => {
-        setPolls((prevPolls) => {
-            const nextPolls = { ...prevPolls };
-            delete nextPolls[id];
-            return nextPolls;
+        setDocuments((previousDocuments) => {
+            const nextDocuments = { ...previousDocuments };
+            delete nextDocuments[id];
+            return nextDocuments;
         });
     }, []);
     useEffect(() => {
         if (!enabled) {
-            setPolls({});
+            setDocuments({});
             return;
         }
-        const snapshotErrorHandler = error_handler || createFirestoreSnapshotErrorHandler("Polls data");
+        const snapshotErrorHandler = error_handler || createFirestoreSnapshotErrorHandler("Firestore query");
         const unsubscribe = onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 const docData = /** @type {TDoc} */ (change.doc.data());
@@ -69,5 +67,5 @@ export default function useQueryDb(q, error_handler = null, precondition = null,
             unsubscribe()
         };
     }, [enabled, q, error_handler, addCallback, modCallback, rmCallback]);
-    return polls
+    return documents
 }

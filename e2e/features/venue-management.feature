@@ -24,6 +24,7 @@ Feature: Authorised members create and edit venues
       | Name           | Journey Original Venue                |
       | Address        | 1 Original Street, Cambridge          |
       | Venue Web Site | https://original.example.test         |
+      | Link to Venue Image | https://images.example.test/original.png |
       | Map            | https://maps.example.test/original    |
       | Notes          | Original venue details                |
       | Parking        | false                                 |
@@ -39,6 +40,7 @@ Feature: Authorised members create and edit venues
       | Name           | Journey Updated Venue                |
       | Address        | 2 Corrected Road, Cambridge          |
       | Venue Web Site | https://updated.example.test         |
+      | Link to Venue Image | https://images.example.test/updated.png |
       | Map            | https://maps.example.test/updated    |
       | Notes          | Details corrected by another member |
       | Parking        | true                                 |

@@ -109,14 +109,14 @@ function PushPreferenceChecks({ pushPreferences, heading }) {
         name="push_event_chat"
         checked={formPreferences.eventChat}
         onChange={(event) => setFormPreferences((prev) => ({ ...prev, eventChat: event.target.checked }))}
-        label="A message is sent in an event chat I am attending"
+        label="A message is sent in a Meet chat I am attending"
       />
     </div>
   );
 }
 
 // Admin editing another user: their subscription lives on their own device, so only the
-// per-event choices are editable here.
+// per-Meet choices are editable here.
 export function AdminPushPreferences({ initialEnabled, pushPreferences }) {
   return (
     <Col xs={12}>

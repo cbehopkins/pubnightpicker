@@ -1,28 +1,34 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PollVote from "./PollVote";
+import { removeVenueFromMeet } from "../../dbtools/polls";
 
-const { showAttendanceMock, useSelectorMock, useVotesMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, usePollRowsMock, useBallotActionsMock, useVotableRowMock } = vi.hoisted(() => ({
+const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock } = vi.hoisted(() => ({
     showAttendanceMock: vi.fn(() => <div data-testid="show-attendance" />),
     useSelectorMock: vi.fn(),
-    useVotesMock: vi.fn(),
     useAttendanceMock: vi.fn(),
     useRoleMock: vi.fn(),
     useUserPrivateDataMock: vi.fn(),
     useUsersMock: vi.fn(),
-    usePollRowsMock: vi.fn(),
-    useBallotActionsMock: vi.fn(),
-    useVotableRowMock: vi.fn(),
+    onSnapshotMock: vi.fn(),
+    updateDocMock: vi.fn(async () => undefined),
+    setGlobalAttendanceMock: vi.fn(),
 }));
 
 vi.mock("react-redux", () => ({
     useSelector: useSelectorMock,
 }));
 
-vi.mock("../../hooks/useVotes", () => ({
-    default: useVotesMock,
+vi.mock("../../firebase", () => ({ db: {} }));
+
+vi.mock("firebase/firestore", () => ({
+    doc: (_db, collection, id) => `${collection}/${id}`,
+    onSnapshot: onSnapshotMock,
+    updateDoc: updateDocMock,
+    arrayUnion: (value) => `arrayUnion:${value}`,
+    arrayRemove: (value) => `arrayRemove:${value}`,
 }));
 
 vi.mock("../../hooks/useAttendance", () => ({
@@ -41,16 +47,8 @@ vi.mock("../../hooks/useUsers", () => ({
     default: useUsersMock,
 }));
 
-vi.mock("../../hooks/usePollRows", () => ({
-    usePollRows: usePollRowsMock,
-}));
-
-vi.mock("../../hooks/useBallotActions", () => ({
-    useBallotActions: useBallotActionsMock,
-}));
-
-vi.mock("../../hooks/useVotableRow", () => ({
-    useVotableRow: useVotableRowMock,
+vi.mock("../../dbtools/polls", () => ({
+    removeVenueFromMeet: vi.fn(async () => undefined),
 }));
 
 vi.mock("./ShowAttendance", () => ({
@@ -73,12 +71,12 @@ vi.mock("./Button", () => ({
     default: ({ children, ...props }) => <button {...props}>{children}</button>,
 }));
 
-vi.mock("./PubOptions", () => ({
-    default: () => <div data-testid="pub-options" />,
+vi.mock("./VenueOptions", () => ({
+    default: () => <div data-testid="venue-options" />,
 }));
 
-vi.mock("./PubFilter", () => ({
-    default: () => <div data-testid="pub-filter" />,
+vi.mock("./VenueFilter", () => ({
+    default: () => <div data-testid="venue-filter" />,
 }));
 
 vi.mock("./AutopopulateButton", () => ({
@@ -89,7 +87,7 @@ vi.mock("./NotificationPingStatus", () => ({
     default: () => <div data-testid="notification-ping-status" />,
 }));
 
-vi.mock("../pages/EventChatModal", () => ({
+vi.mock("../pages/MeetChatModal", () => ({
     default: () => <div data-testid="event-chat-modal" />,
 }));
 
@@ -103,7 +101,7 @@ function renderPollVote(mobile) {
             poll_id="poll-1"
             poll_data={{
                 date: "2026-05-11",
-                pubs: {
+                venues: {
                     any: {},
                     "venue-1": { name: "Venue 1" },
                 },
@@ -118,16 +116,16 @@ describe("PollVote attendance display mode", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         useSelectorMock.mockReturnValue("user-1");
-        useVotesMock.mockReturnValue([{
-            any: [],
-            "venue-1": [],
-        }, vi.fn(), vi.fn()]);
+        onSnapshotMock.mockImplementation((_ref, onNext) => {
+            onNext({ data: () => ({ any: [], "venue-1": [] }) });
+            return () => { };
+        });
         useAttendanceMock.mockReturnValue([
             {},
             vi.fn(),
             vi.fn(),
             vi.fn(),
-            vi.fn(),
+            setGlobalAttendanceMock,
             vi.fn(),
             vi.fn(),
         ]);
@@ -136,34 +134,6 @@ describe("PollVote attendance display mode", () => {
         useUsersMock.mockReturnValue({
             "user-1": { uid: "user-1", name: "Alice", votesVisible: true },
             "user-2": { uid: "user-2", name: "Bob", votesVisible: true },
-        });
-        usePollRowsMock.mockReturnValue([
-            ["Global", "any"],
-            ["Venue 1", "venue-1"],
-        ]);
-        useBallotActionsMock.mockReturnValue({
-            pollPubIds: ["venue-1"],
-            setAllAttendanceToCanCome: vi.fn(),
-            setAllAttendanceToCannotCome: vi.fn(),
-        });
-        useVotableRowMock.mockReturnValue({
-            voteCount: 0,
-            votedFor: false,
-            userCanCome: true,
-            userCannotCome: false,
-            canCome: ["user-1"],
-            cannotCome: [],
-            canVote: true,
-            allowAttendanceControls: true,
-            allowGlobalAttendanceControls: false,
-            hasAttendanceData: true,
-            userEta: undefined,
-            voteHandler: vi.fn(),
-            setAttendanceStatusHandler: vi.fn(),
-            clearAttendanceHandler: vi.fn(),
-            setEtaHandler: vi.fn(),
-            clearEtaHandler: vi.fn(),
-            deleteHandler: vi.fn(),
         });
     });
 
@@ -183,9 +153,46 @@ describe("PollVote attendance display mode", () => {
     });
 
     it("keeps the modal trigger on compact screens", () => {
+        onSnapshotMock.mockImplementation((_ref, onNext) => {
+            onNext({ data: () => ({ any: ["user-1"], "venue-1": ["user-1"] }) });
+            return () => { };
+        });
         renderPollVote(true);
 
         expect(screen.getAllByRole("button", { name: /show attendance/i })).toHaveLength(2);
         expect(showAttendanceMock).not.toHaveBeenCalled();
+    });
+
+    it("renders the Meet's venue choices in the voting table", () => {
+        renderPollVote(false);
+
+        expect(screen.getByText("Venue 1")).toBeTruthy();
+        expect(screen.getByText("Global")).toBeTruthy();
+    });
+
+    it("votes for a Meet venue", async () => {
+        renderPollVote(false);
+        const row = screen.getByText("Venue 1").closest("tr");
+        fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
+        fireEvent.click(within(row).getByRole("button", { name: "Vote Up" }));
+        await waitFor(() => expect(updateDocMock).toHaveBeenCalledWith("votes/poll-1", { "venue-1": "arrayUnion:user-1" }));
+    });
+
+    it("removes a Meet venue when permitted", async () => {
+        useRoleMock.mockImplementation((roleName) => roleName === "canAddPubToPoll");
+        renderPollVote(false);
+        const row = screen.getByText("Venue 1").closest("tr");
+
+        fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+
+        await waitFor(() => expect(removeVenueFromMeet).toHaveBeenCalledWith("poll-1", "venue-1", "2026-05-11", "Venue 1"));
+    });
+
+    it("sets attendance for every Meet venue", async () => {
+        renderPollVote(false);
+        const row = screen.getByText("Global").closest("tr");
+        fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
+        fireEvent.click(within(row).getByRole("button", { name: "I'm coming (all venues)" }));
+        await waitFor(() => expect(setGlobalAttendanceMock).toHaveBeenCalledWith(["venue-1"], "user-1", "canCome"));
     });
 });

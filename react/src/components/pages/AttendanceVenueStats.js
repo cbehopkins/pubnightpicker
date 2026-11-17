@@ -5,7 +5,7 @@ import { NavLink, useSearchParams } from "react-router-dom";
 import ProtectedRoute from "../ProtectedRoute";
 import Button from "../UI/Button";
 import StatsWindowModal from "../UI/StatsWindowModal";
-import usePubs from "../../hooks/usePubs";
+import useVenues from "../../hooks/useVenues";
 import useAttendanceVenueStats from "../../hooks/useAttendanceVenueStats";
 import { buildVenueCountRows, splitRankedStatRows } from "../../utils/statsRanking";
 import StatRankingList from "../UI/StatRankingList";
@@ -27,7 +27,7 @@ export function AttendanceVenueStatsPage() {
     const [isWindowModalOpen, setIsWindowModalOpen] = useState(false);
     const [venueTypeFilter, setVenueTypeFilter] = useState(DEFAULT_VENUE_TYPE);
 
-    const pubParameters = usePubs();
+    const venues = useVenues();
     const {
         countsByVenueId,
         lastDateByVenueId,
@@ -41,9 +41,9 @@ export function AttendanceVenueStatsPage() {
         () => buildVenueCountRows({
             countsByVenueId,
             lastDateByVenueId,
-            venues: pubParameters,
+            venues,
         }),
-        [countsByVenueId, lastDateByVenueId, pubParameters]
+        [countsByVenueId, lastDateByVenueId, venues]
     );
     const filteredRankedRows = useMemo(() => {
         if (venueTypeFilter === "all") {
@@ -84,8 +84,8 @@ export function AttendanceVenueStatsPage() {
                         <NavLink className="btn btn-outline-primary" to="/stats/winning_venues">
                             Winning Venue Stats
                         </NavLink>
-                        <NavLink className="btn btn-outline-primary" to="/past_events">
-                            Back to Past Events
+                        <NavLink className="btn btn-outline-primary" to="/past_meets">
+                            Back to Past Meets
                         </NavLink>
                     </div>
                 </div>
@@ -94,7 +94,7 @@ export function AttendanceVenueStatsPage() {
                     Showing {venueLimit} venues per list from {startDate} through {endDate}.
                 </div>
                 <div className="mt-2 small text-body-secondary">
-                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that poll.
+                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that Meet.
                 </div>
 
                 <div className="mt-3 d-flex flex-wrap align-items-center gap-2">
@@ -125,7 +125,7 @@ export function AttendanceVenueStatsPage() {
                     <div className="col-lg-6">
                         <StatRankingList
                             title="Highest attendance confirmations"
-                            subtitle="Total can-come confirmations across polls in the chosen period."
+                            subtitle="Total can-come confirmations across Meets in the chosen period."
                             emptyMessage="No attendance data was found in this time window."
                             items={most}
                         />

@@ -6,7 +6,7 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
 /** @typedef {"canCome" | "cannotCome"} AttendanceStatus */
 
 /**
- * @typedef {Object} EventAttendanceHandlers
+ * @typedef {Object} MeetAttendanceHandlers
  * @property {(status: AttendanceStatus) => Promise<void>} setMainAttendanceStatus
  * @property {() => Promise<void>} clearMainAttendance
  * @property {(status: AttendanceStatus) => Promise<void>} setRestaurantAttendanceStatus
@@ -18,19 +18,19 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
  */
 
 /**
- * Hook that consolidates attendance handlers for a current event
+ * Hook that consolidates attendance handlers for a current Meet
  * Handles attendance for both main venue and restaurant venue
  * Returns: handlers for setting/clearing attendance on both venues
  * @param {string | null | undefined} currUserId
- * @param {(pubId: string, userId: string, status: AttendanceStatus) => Promise<void>} setAttendanceStatus
- * @param {(pubId: string, userId: string) => Promise<void>} clearAttendance
+ * @param {(venueId: string, userId: string, status: AttendanceStatus) => Promise<void>} setAttendanceStatus
+ * @param {(venueId: string, userId: string) => Promise<void>} clearAttendance
  * @param {string} mainVenueId
  * @param {string | null | undefined} restaurantVenueId
- * @param {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
- * @param {(pubId: string, userId: string) => Promise<void>} clearEta
- * @returns {EventAttendanceHandlers}
+ * @param {(venueId: string, userId: string, eta: string) => Promise<void>} setEta
+ * @param {(venueId: string, userId: string) => Promise<void>} clearEta
+ * @returns {MeetAttendanceHandlers}
  */
-export function useEventAttendance(
+export function useMeetAttendance(
   currUserId,
   setAttendanceStatus,
   clearAttendance,

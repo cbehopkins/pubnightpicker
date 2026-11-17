@@ -6,20 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WinningVenueStats, { WinningVenueStatsPage } from "./WinningVenueStats";
 
 const {
-  usePubsMock,
+  useVenuesMock,
   useWinningVenueStatsMock,
   useRoleMock,
 } = vi.hoisted(() => {
   return {
-    usePubsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useWinningVenueStatsMock: vi.fn(),
     useRoleMock: vi.fn(),
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -58,21 +58,22 @@ describe("WinningVenueStatsPage", () => {
   });
 
   beforeEach(() => {
-    usePubsMock.mockReset();
+    useVenuesMock.mockReset();
     useWinningVenueStatsMock.mockReset();
     useRoleMock.mockReset();
     useRoleMock.mockReturnValue(true);
 
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-1": { name: "The Maypole", venueType: "pub" },
       "venue-2": { name: "The Anchor", venueType: "pub" },
       "venue-3": { name: "Bistro 12", venueType: "restaurant" },
+      "venue-4": { name: "Summer Festival", venueType: "event" },
     });
 
     useWinningVenueStatsMock.mockReturnValue({
-      polls: {
-        p1: { selected: "venue-1", date: "2026-04-01" },
-        p2: { selected: "venue-3", date: "2026-04-03" },
+      meets: {
+        p1: { selectedVenueId: "venue-1", date: "2026-04-01" },
+        p2: { selectedVenueId: "venue-3", date: "2026-04-03" },
       },
       isLoading: false,
       errorMessage: null,
@@ -84,6 +85,7 @@ describe("WinningVenueStatsPage", () => {
   it("uses default query values when params are missing", () => {
     renderWinningPage();
 
+    expect(screen.getByRole("link", { name: "Back to Past Meets" }).getAttribute("href")).toBe("/past_meets");
     expect(screen.getByText(/last year/i)).toBeTruthy();
     expect(screen.getByText(/Showing 5 venues per list/i)).toBeTruthy();
   });
@@ -119,6 +121,14 @@ describe("WinningVenueStatsPage", () => {
     expect(screen.queryByText("The Maypole")).toBeNull();
   });
 
+  it("shows event Venues separately from pubs and restaurants", () => {
+    renderWinningPage();
+    fireEvent.change(screen.getByLabelText(/filter by venue type/i), { target: { value: "event" } });
+    expect(screen.queryAllByText("Summer Festival").length).toBeGreaterThan(0);
+    expect(screen.queryByText("The Maypole")).toBeNull();
+    expect(screen.queryByText("Bistro 12")).toBeNull();
+  });
+
   it("applies settings from the modal and updates page text", () => {
     renderWinningPage();
 
@@ -133,7 +143,7 @@ describe("WinningVenueStatsPage", () => {
 
   it("renders an error alert when stats query fails", () => {
     useWinningVenueStatsMock.mockReturnValue({
-      polls: {},
+      meets: {},
       isLoading: false,
       errorMessage: "Unable to load winning venue stats right now.",
       startDate: "2025-05-11",

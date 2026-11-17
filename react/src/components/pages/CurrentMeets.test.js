@@ -3,14 +3,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import CurrentEvents, { PastEvents } from "./CurrentEvents";
+import CurrentMeets, { PastMeets } from "./CurrentMeets";
 
 const {
   reschedulePollMock,
   deletePollMock,
-  useFutureCompletePollsMock,
-  usePastCompletePollsMock,
-  usePubsMock,
+  useCurrentMeetsMock,
+  usePastMeetsMock,
+  useVenuesMock,
   useVotesMock,
   useAttendanceMock,
   useRoleMock,
@@ -23,9 +23,9 @@ const {
   return {
     reschedulePollMock: vi.fn(async () => undefined),
     deletePollMock: vi.fn(async () => undefined),
-    useFutureCompletePollsMock: vi.fn(),
-    usePastCompletePollsMock: vi.fn(),
-    usePubsMock: vi.fn(),
+    useCurrentMeetsMock: vi.fn(),
+    usePastMeetsMock: vi.fn(),
+    useVenuesMock: vi.fn(),
     useVotesMock: vi.fn(),
     useAttendanceMock: vi.fn(),
     useRoleMock: vi.fn(),
@@ -39,21 +39,21 @@ const {
 
 vi.mock("../../dbtools/polls", () => {
   return {
-    deletePoll: deletePollMock,
-    reschedule_a_poll: reschedulePollMock,
+    deleteMeet: deletePollMock,
+    rescheduleMeet: reschedulePollMock,
   };
 });
 
-vi.mock("../../hooks/usePolls", () => {
+vi.mock("../../hooks/useMeets", () => {
   return {
-    useFutureCompletePolls: useFutureCompletePollsMock,
-    usePastCompletePolls: usePastCompletePollsMock,
+    useCurrentMeets: useCurrentMeetsMock,
+    usePastMeets: usePastMeetsMock,
   };
 });
 
-vi.mock("../../hooks/usePubs", () => {
+vi.mock("../../hooks/useVenues", () => {
   return {
-    default: usePubsMock,
+    default: useVenuesMock,
   };
 });
 
@@ -83,10 +83,10 @@ vi.mock("../../hooks/useAdmin", () => {
 
 vi.mock("../../hooks/useUserPrivateData", () => ({ default: () => null }));
 
-vi.mock("./EventChatModal", () => ({ default: () => null }));
+vi.mock("./MeetChatModal", () => ({ default: () => null }));
 
 vi.mock("../../firebase", () => {
-  throw new Error("CurrentEvents unit tests must not initialise Firebase.");
+  throw new Error("CurrentMeets unit tests must not initialise Firebase.");
 });
 
 vi.mock("react-redux", () => {
@@ -149,11 +149,11 @@ function createPastPollData(pollValue) {
   };
 }
 
-describe("CurrentEvents", () => {
+describe("CurrentMeets", () => {
   beforeEach(() => {
-    useFutureCompletePollsMock.mockReset();
-    usePastCompletePollsMock.mockReset();
-    usePubsMock.mockReset();
+    useCurrentMeetsMock.mockReset();
+    usePastMeetsMock.mockReset();
+    useVenuesMock.mockReset();
     useVotesMock.mockReset();
     useAttendanceMock.mockReset();
     useRoleMock.mockReset();
@@ -171,9 +171,9 @@ describe("CurrentEvents", () => {
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
     useAdminMock.mockReturnValue(false);
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({
-        selected: "venue-main",
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({
+        selectedVenueId: "venue-main",
         date: "2026-03-20",
       }),
       hasNextPage: false,
@@ -189,35 +189,85 @@ describe("CurrentEvents", () => {
     cleanup();
   });
 
-  it("shows only the main venue section when restaurant field is absent", () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
+  it("offers Meet Chat for a current Meet when chat is permitted", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+    });
+    useRoleMock.mockImplementation((role) => role === "canChat");
+
+    render(<CurrentMeets />);
+
+    expect(screen.getByRole("button", { name: "Meet Chat" })).toBeTruthy();
+  });
+
+  it("shows only the main venue section when restaurant field is absent", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      date: "2026-03-30",
+    }));
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
+    expect(screen.getByRole("heading", { name: "Current Meets" })).toBeTruthy();
     expect(screen.getByText("The Maypole")).toBeTruthy();
     expect(screen.queryByText(/Restaurant:/)).toBeNull();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
   });
 
-  it("shows a separate restaurant section when restaurant field is present", () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
-      restaurant: "venue-restaurant",
-      restaurant_time: "18:30",
+  it("displays a domain Venue's website and image on a current Meet", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", website: "example.com", image: "https://img.example.com/maypole.png" },
+    });
+
+    render(<CurrentMeets />);
+
+    expect(screen.getByRole("link", { name: "The Maypole" }).getAttribute("href")).toBe("https://example.com");
+    expect(screen.getByAltText("What the venue looks like").getAttribute("src")).toBe("https://img.example.com/maypole.png");
+  });
+
+  it("displays the selected Venue website and image on a current Meet", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      date: "2026-03-30",
+    }));
+    useVenuesMock.mockReturnValue({
+      "venue-main": {
+        name: "The Maypole",
+        website: "https://example.com/maypole",
+        image: "https://img.example.com/maypole.png",
+      },
+    });
+
+    render(<CurrentMeets />);
+
+    expect(screen.getByRole("link", { name: "The Maypole" }).getAttribute("href")).toBe("https://example.com/maypole");
+    expect(screen.getByAltText("What the venue looks like").getAttribute("src")).toBe("https://img.example.com/maypole.png");
+  });
+
+  it("shows a separate restaurant section when restaurant field is present", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      restaurantId: "venue-restaurant",
+      restaurantTime: "18:30",
+      date: "2026-03-30",
+    }));
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
     expect(screen.getByText("The Maypole")).toBeTruthy();
     expect(screen.getByText(/Restaurant:\s*Bistro 12\s*\(18:30\)/)).toBeTruthy();
@@ -225,27 +275,27 @@ describe("CurrentEvents", () => {
   });
 
   it("hides restaurant time when the field is missing", () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
-      restaurant: "venue-restaurant",
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      restaurantId: "venue-restaurant",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
     expect(screen.getByText(/Restaurant:\s*Bistro 12/)).toBeTruthy();
     expect(screen.queryByText(/18:30/)).toBeNull();
   });
 
-  it("shows stats links for admins on the past events page", () => {
+  it("shows stats links for admins on the past meets page", () => {
     useAdminMock.mockReturnValue(true);
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({
-        selected: "venue-main",
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({
+        selectedVenueId: "venue-main",
         date: "2026-03-20",
       }),
       hasNextPage: false,
@@ -255,34 +305,35 @@ describe("CurrentEvents", () => {
       pageIndex: 0,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
     render(
-      <MemoryRouter initialEntries={["/past_events"]}>
+      <MemoryRouter initialEntries={["/past_meets"]}>
         <Routes>
-          <Route path="/past_events" element={<PastEvents />} />
+          <Route path="/past_meets" element={<PastMeets />} />
         </Routes>
       </MemoryRouter>
     );
 
+    expect(screen.getByRole("heading", { name: "Past Meets" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /view winning venue stats/i })).toBeTruthy();
     expect(screen.getByRole("link", { name: /view attendance stats/i })).toBeTruthy();
   });
 
   it("routes attendance actions independently for main venue and restaurant", async () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
-      restaurant: "venue-restaurant",
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      restaurantId: "venue-restaurant",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
     });
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
     const statusButtons = screen.getAllByText("set-status");
     fireEvent.click(statusButtons[0]);
@@ -294,28 +345,28 @@ describe("CurrentEvents", () => {
     });
   });
 
-  it("does not render restaurant section when restaurant id is missing from pubs", () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
-      restaurant: "venue-missing",
+  it("does not render restaurant section when restaurant id is missing from venues", () => {
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      restaurantId: "venue-missing",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
     });
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
     expect(screen.queryByText(/Restaurant:/)).toBeNull();
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
   });
 
   it("reschedules to any main venue and adds a restaurant", async () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-alt": { name: "The Anchor", venueType: "pub" },
       "venue-food": { name: "The Oak", venueType: "pub", food: true },
@@ -324,9 +375,9 @@ describe("CurrentEvents", () => {
     });
     useRoleMock.mockImplementation((roleName) => roleName === "canCompletePoll");
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
-    fireEvent.click(screen.getByText("Reschedule Event"));
+    fireEvent.click(screen.getByText("Reschedule Meet"));
 
     const selects = screen.getAllByRole("combobox");
     fireEvent.change(selects[0], { target: { value: "venue-alt" } });
@@ -345,13 +396,13 @@ describe("CurrentEvents", () => {
   });
 
   it("allows editing only the restaurant while keeping the main venue", async () => {
-    useFutureCompletePollsMock.mockReturnValue(createFuturePollData({
-      selected: "venue-main",
-      restaurant: "venue-restaurant",
-      restaurant_time: "18:30",
+    useCurrentMeetsMock.mockReturnValue(createFuturePollData({
+      selectedVenueId: "venue-main",
+      restaurantId: "venue-restaurant",
+      restaurantTime: "18:30",
       date: "2026-03-30",
     }));
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole", venueType: "pub" },
       "venue-alt": { name: "The Anchor", venueType: "pub" },
       "venue-restaurant": { name: "Bistro 12", venueType: "restaurant" },
@@ -359,9 +410,9 @@ describe("CurrentEvents", () => {
     });
     useRoleMock.mockImplementation((roleName) => roleName === "canCompletePoll");
 
-    render(<CurrentEvents />);
+    render(<CurrentMeets />);
 
-    fireEvent.click(screen.getByText("Reschedule Event"));
+    fireEvent.click(screen.getByText("Reschedule Meet"));
 
     const selects = screen.getAllByRole("combobox");
     fireEvent.change(selects[1], { target: { value: "venue-restaurant-2" } });
@@ -379,95 +430,95 @@ describe("CurrentEvents", () => {
   });
 });
 
-describe("PastEvents", () => {
+describe("PastMeets", () => {
   beforeEach(() => {
-    usePastCompletePollsMock.mockReset();
-    usePubsMock.mockReset();
+    usePastMeetsMock.mockReset();
+    useVenuesMock.mockReset();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  function renderPastEvents(initialEntry = "/events/past") {
+  function renderPastMeets(initialEntry = "/past_meets") {
     return render(
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/events/past" element={<PastEvents />} />
+          <Route path="/past_meets" element={<PastMeets />} />
         </Routes>
       </MemoryRouter>
     );
   }
 
   it("requests page size changes as numbers", () => {
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole" },
     });
 
-    renderPastEvents("/events/past?pastPageSize=5&pastCursorTrail=poll-older");
+    renderPastMeets("/past_meets?pastPageSize=5&pastCursorTrail=poll-older");
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "10" } });
 
-    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(10, null);
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith(10, null);
   });
 
   it("uses URL cursor trail for older/newer navigation", () => {
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: true,
       lastVisibleId: "poll-last-visible",
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
+    useVenuesMock.mockReturnValue({
       "venue-main": { name: "The Maypole" },
     });
 
-    renderPastEvents();
+    renderPastMeets();
 
-    fireEvent.click(screen.getByText("Older Events"));
-    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, "poll-last-visible");
+    fireEvent.click(screen.getByText("Older Meets"));
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith(5, "poll-last-visible");
     expect(screen.getByText("Page 2")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Newer Events"));
-    expect(usePastCompletePollsMock).toHaveBeenLastCalledWith(5, null);
+    fireEvent.click(screen.getByText("Newer Meets"));
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith(5, null);
     expect(screen.getByText("Page 1")).toBeTruthy();
   });
 
-  it("shows placeholder when pub image URL is invalid", () => {
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+  it("shows a placeholder when the Venue image URL is invalid", () => {
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", pubImage: "not-a-valid-image-url" },
+    useVenuesMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", image: "not-a-valid-image-url" },
     });
 
-    renderPastEvents();
+    renderPastMeets();
 
     expect(screen.getByText("No image available")).toBeTruthy();
     expect(screen.queryByAltText("Photo of The Maypole")).toBeNull();
   });
 
   it("falls back to placeholder when image request fails", () => {
-    usePastCompletePollsMock.mockReturnValue({
-      pollData: createPastPollData({ selected: "venue-main", date: "2026-03-20" }),
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,
       lastVisibleId: null,
       isLoading: false,
     });
-    usePubsMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", pubImage: "https://img.example.com/maypole.png" },
+    useVenuesMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", image: "https://img.example.com/maypole.png" },
     });
 
-    renderPastEvents();
+    renderPastMeets();
 
     const image = screen.getByAltText("Photo of The Maypole");
     fireEvent.error(image);

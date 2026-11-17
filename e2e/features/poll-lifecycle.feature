@@ -56,22 +56,22 @@ Feature: Members organise and chat about a meet
     When Claire completes the poll by choosing "Journey Red Lion"
     Then Claire no longer sees the poll on Active Polls
     And Bob no longer sees the poll on Active Polls
-    When Claire opens Current Events
+    When Claire opens Current Meets
     Then Claire sees the meet at "Journey Red Lion"
-    When Bob opens Current Events
+    When Bob opens Current Meets
     Then Bob sees the meet at "Journey Red Lion"
     When Bob opens Chat Page
     And Claire opens Chat Page
     And Bob sends a global chat message
     Then Claire sees the global chat message
-    When Claire opens Event Chat for "Journey Red Lion"
-    And Bob opens Event Chat for "Journey Red Lion"
-    And Claire sends an event chat message
-    Then Bob sees the event chat message
+    When Claire opens Meet Chat for "Journey Red Lion"
+    And Bob opens Meet Chat for "Journey Red Lion"
+    And Claire sends a Meet Chat message
+    Then Bob sees the Meet Chat message
     And Bob does not see the global chat message
-    When Bob opens Event Chat for "Journey Red Lion"
-    Then Bob sees the event chat message
+    When Bob opens Meet Chat for "Journey Red Lion"
+    Then Bob sees the Meet Chat message
     And Bob does not see the global chat message
     When Bob opens Chat Page
     Then Bob sees the global chat message
-    And Bob does not see the event chat message
+    And Bob does not see the Meet Chat message

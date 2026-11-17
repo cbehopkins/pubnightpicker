@@ -1,7 +1,7 @@
 // @ts-check
 
 import { useCallback } from "react";
-import { add_new_pub_to_poll } from "../dbtools/polls";
+import { addVenueToMeet } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError, notifyInfo } from "../utils/notify";
 import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
@@ -10,8 +10,8 @@ import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
  * @param {{
  *  pollId: string,
  *  pollDate?: string,
- *  pollPubs: Record<string, unknown> | undefined,
- *  pubParameters: Record<string, { name?: string, venueType?: string } | undefined>,
+ *  pollVenues: Record<string, unknown> | undefined,
+ *  venueParameters: Record<string, { name?: string, venueType?: string } | undefined>,
  *  mostVisited: { id: string }[],
  *  leastVisited: { id: string }[],
  *  randomVenues: { id: string }[],
@@ -20,8 +20,8 @@ import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
 export default function useAutopopulateAction({
     pollId,
     pollDate,
-    pollPubs,
-    pubParameters,
+    pollVenues,
+    venueParameters,
     mostVisited,
     leastVisited,
     randomVenues,
@@ -32,7 +32,7 @@ export default function useAutopopulateAction({
                 mostVisited,
                 leastVisited,
                 randomVenues,
-                pollPubs
+                pollVenues
             );
 
             if (venuesToAdd.length === 0) {
@@ -43,7 +43,7 @@ export default function useAutopopulateAction({
             let successCount = 0;
             for (const venueId of venuesToAdd) {
                 try {
-                    await add_new_pub_to_poll(venueId, pollId, pubParameters, pollDate);
+                    await addVenueToMeet(venueId, pollId, venueParameters, pollDate);
                     successCount++;
                 } catch (err) {
                     console.error(`Failed to add venue ${venueId}:`, err);
@@ -60,7 +60,7 @@ export default function useAutopopulateAction({
         } catch (error) {
             notifyError(getUserFacingErrorMessage(error, "Unable to autopopulate venues."));
         }
-    }, [leastVisited, mostVisited, pollDate, pollId, pollPubs, pubParameters, randomVenues]);
+    }, [leastVisited, mostVisited, pollDate, pollId, pollVenues, venueParameters, randomVenues]);
 
     return { handleAutopopulate };
 }

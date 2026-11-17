@@ -6,14 +6,14 @@ import { waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 import { readBackendRecords, waitForBackendRecord } from "../support/backend-evidence.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-const PREFERENCE_FIELDS = new Map([["global", "global_chat"], ["event", "event_chat"]]);
+const PREFERENCE_FIELDS = new Map([["global", "global_chat"], ["meet", "event_chat"], ["event", "event_chat"]]);
 
 function categoryTable(category, enabled) {
     return [
         { category: "A poll opens", enabled: "false" },
         { category: "A poll completes", enabled: "false" },
         { category: "A message is sent in global chat", enabled: category === "globalChat" ? enabled : "false" },
-        { category: "A message is sent in an event chat I am attending", enabled: category === "eventChat" ? enabled : "false" },
+        { category: "A message is sent in a Meet chat I am attending", enabled: category === "eventChat" ? enabled : "false" },
     ];
 }
 
@@ -26,14 +26,15 @@ Given("notification suppression is off in the fresh emulator", async function ()
 });
 
 When("{word} enables push and saves {word} chat notifications as {string}", async function (name, scope, enabled) {
-    assert.ok(PREFERENCE_FIELDS.has(scope));
+    const preferenceScope = scope.toLowerCase();
+    assert.ok(PREFERENCE_FIELDS.has(preferenceScope));
     assert.ok(["true", "false"].includes(enabled));
     const page = this.actors.get(name);
     await page.getByRole("link", { name: "My Preferences", exact: true }).click();
     await page.waitForURL(`${BASE_URL}/preferences`);
     await page.getByRole("button", { name: "Enable Push", exact: true }).click();
     await page.getByText("Status: Enabled | Permission: Granted", { exact: true }).waitFor();
-    const category = scope === "global" ? "globalChat" : "eventChat";
+    const category = preferenceScope === "global" ? "globalChat" : "eventChat";
     const rows = categoryTable(category, enabled);
     for (const { category: label, enabled: value } of rows) {
         await page.getByRole("checkbox", { name: label, exact: true }).setChecked(value === "true");
@@ -92,7 +93,7 @@ async function messageSnapshot(world, actor, scopeType, scopeId) {
 async function assertChatPush(world, actor, scopeType, scopeId, recipientNames) {
     const { id: messageId, text } = await messageSnapshot(world, actor, scopeType, scopeId);
     const eventType = scopeType === "global" ? "chat_message_sent_global" : "chat_message_sent_event";
-    const expectedUrl = scopeType === "global" ? `${BASE_URL}/chat` : `${BASE_URL}/chat/event/${scopeId}`;
+    const expectedUrl = scopeType === "global" ? `${BASE_URL}/chat` : `${BASE_URL}/chat/meet/${scopeId}`;
     await waitForBackendRecord((record) =>
         record.msg === "chat push processing completed" && record.message_id === messageId &&
         record.scope_type === scopeType && record.scope_id === scopeId,
@@ -118,6 +119,12 @@ async function assertChatPush(world, actor, scopeType, scopeId, recipientNames) 
         if (scopeType === "event") assert.equal(payload.pollId, scopeId);
         else assert.equal(payload.pollId, null);
     }
+    if (scopeType === "event" && recipientNames.length > 0) {
+        const page = world.actors.get(recipientNames[0]);
+        await page.goto(sends[0].payload.url);
+        await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
+        await page.getByText(text, { exact: true }).waitFor();
+    }
 }
 
 function thisEndpoint(world, name) {
@@ -131,34 +138,34 @@ Then("Last Orders processes Asher's global chat push for:", async function (tabl
     await assertChatPush(this, "Asher", "global", "main", table.hashes().map(({ recipient }) => recipient));
 });
 
-When("{word} creates a poll through the UI for event chat", async function (name) {
+When("{word} creates a poll through the UI for Meet Chat", async function (name) {
     const page = this.actors.get(name);
-    this.eventChatPollDate = await page.evaluate(() => {
+    this.meetChatDate = await page.evaluate(() => {
         const date = new Date();
         date.setDate(date.getDate() + 2);
         return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
     });
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
-    await page.locator('input[type="date"]').fill(this.eventChatPollDate);
+    await page.locator('input[type="date"]').fill(this.meetChatDate);
     await page.getByRole("button", { name: "Add Poll", exact: true }).click();
-    await page.getByRole("heading", { name: this.eventChatPollDate, exact: true }).waitFor();
+    await page.getByRole("heading", { name: this.meetChatDate, exact: true }).waitFor();
     const uid = this.actorUids.get(name);
-    this.eventChatPollId = await withEmulatorAdmin(async (db) => {
+    this.meetChatId = await withEmulatorAdmin(async (db) => {
         const polls = await waitForValue(async () => {
-            const result = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.eventChatPollDate), where("createdByUid", "==", uid)));
+            const result = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.meetChatDate), where("createdByUid", "==", uid)));
             return result.empty ? null : result;
-        }, (result) => result !== null, `UI-created event chat poll for ${name}`);
+        }, (result) => result !== null, `UI-created poll for Meet Chat for ${name}`);
         assert.equal(polls.size, 1);
         return polls.docs[0].id;
     });
 });
 
-When("{word} joins the event chat conversation", async function (name) {
+When("{word} joins the Meet Chat conversation", async function (name) {
     const page = this.actors.get(name);
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
-    await page.getByRole("heading", { name: this.eventChatPollDate, exact: true }).waitFor();
-    await page.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await page.getByRole("heading", { name: this.meetChatDate, exact: true }).waitFor();
+    await page.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
     const text = `event-join-${name}-${randomUUID()}`;
     await page.getByLabel("Chat message", { exact: true }).fill(text);
     await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -167,46 +174,46 @@ When("{word} joins the event chat conversation", async function (name) {
         const messages = await waitForValue(async () => {
             const result = await getDocsFromServer(query(collection(db, "messages"), where("text", "==", text)));
             return result.empty ? null : result;
-        }, (result) => result !== null, `${name} event chat participation`);
+        }, (result) => result !== null, `${name} Meet Chat participation`);
         assert.equal(messages.size, 1);
         assert.equal(messages.docs[0].data().uid, this.actorUids.get(name));
         assert.equal(messages.docs[0].data().scopeType, "event");
-        assert.equal(messages.docs[0].data().scopeId, this.eventChatPollId);
+        assert.equal(messages.docs[0].data().scopeId, this.meetChatId);
         const messageId = messages.docs[0].id;
-        await waitForBackendRecord((record) => record.msg === "chat push processing completed" && record.message_id === messageId, `${name}'s event chat message processed`);
+        await waitForBackendRecord((record) => record.msg === "chat push processing completed" && record.message_id === messageId, `${name}'s Meet Chat message processed`);
     });
 });
 
-When("{word} mutes notifications for the journey event", async function (name) {
+When("{word} mutes notifications for the journey Meet", async function (name) {
     const page = this.actors.get(name);
-    await page.getByRole("button", { name: "Mute event chat notifications", exact: true }).click();
-    await page.getByText("Event chat notifications are muted for this event.", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Mute Meet chat notifications", exact: true }).click();
+    await page.getByText("Meet chat notifications are muted for this Meet.", { exact: true }).waitFor();
 });
 
-Then("Last Orders observes Hal's event-chat mute", async function () {
+Then("Last Orders observes Hal's Meet Chat mute", async function () {
     const userId = this.actorUids.get("Hal");
-    const pollId = this.eventChatPollId;
+    const meetId = this.meetChatId;
     await waitForBackendRecord((record) =>
         record.msg === "notification profile projection applied" &&
         record.contribution === "private_user" && record.user_id === userId &&
-        Array.isArray(record.event_chat_muted_poll_ids) && record.event_chat_muted_poll_ids.includes(pollId),
-        `Hal's mute for event ${pollId}`);
+        Array.isArray(record.event_chat_muted_poll_ids) && record.event_chat_muted_poll_ids.includes(meetId),
+        `Hal's mute for Meet ${meetId}`);
 });
 
-When("{word} sends the final event chat message", async function (name) {
+When("{word} sends the final Meet Chat message", async function (name) {
     const page = this.actors.get(name);
     const text = `event-final-${randomUUID()}`;
     this.chatMessages ??= {};
     this.chatMessages.event = text;
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
-    await page.getByRole("heading", { name: this.eventChatPollDate, exact: true }).waitFor();
-    await page.getByRole("button", { name: "Event Chat", exact: true }).click();
-    await page.getByRole("heading", { name: "Event Chat", exact: true }).waitFor();
+    await page.getByRole("heading", { name: this.meetChatDate, exact: true }).waitFor();
+    await page.getByRole("button", { name: "Meet Chat", exact: true }).click();
+    await page.getByRole("heading", { name: "Meet Chat", exact: true }).waitFor();
     await page.getByLabel("Chat message", { exact: true }).fill(text);
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await page.getByText(text, { exact: true }).waitFor();
 });
 
-Then("Last Orders processes Eli's event chat push for:", async function (table) {
-    await assertChatPush(this, "Eli", "event", this.eventChatPollId, table.hashes().map(({ recipient }) => recipient));
+Then("Last Orders processes Eli's Meet Chat push for:", async function (table) {
+    await assertChatPush(this, "Eli", "event", this.meetChatId, table.hashes().map(({ recipient }) => recipient));
 });

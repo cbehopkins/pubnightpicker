@@ -89,7 +89,7 @@ When("{word} changes the journey Event to the other monthly date", async functio
     await saveVenue(page);
 });
 
-Then("Last Orders materialises the journey Event poll with votes and attendance", { timeout: 60_000 }, async function () {
+Then("Last Orders materialises a Meet for the journey Event Venue with votes and attendance", { timeout: 60_000 }, async function () {
     const id = venueId(this);
     await withEmulatorAdmin(async (db) => {
         const matches = await waitForValue(async () => {

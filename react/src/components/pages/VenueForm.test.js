@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import PubForm from "./PubForm";
+import VenueForm from "./VenueForm";
 
 const { navigateMock, navigationStateMock, actionDataMock } = vi.hoisted(() => {
     return {
@@ -22,17 +22,35 @@ vi.mock("react-router-dom", async () => {
     };
 });
 
-describe("PubForm", () => {
+describe("VenueForm", () => {
     beforeEach(() => {
         navigateMock.mockReset();
         actionDataMock.current = null;
     });
 
+    it("loads domain-named venue details and attributes into the editor", () => {
+        render(<VenueForm method="patch" venueObject={{
+            id: "venue-1",
+            name: "The Maypole",
+            website: "https://venue.example",
+            image: "https://venue.example/image.png",
+            dogFriendly: true,
+            beerGarden: true,
+            outOfTown: true,
+        }} />);
+
+        expect(screen.getByLabelText("Venue Web Site")).toHaveValue("https://venue.example");
+        expect(screen.getByLabelText("Link to Venue Image")).toHaveValue("https://venue.example/image.png");
+        expect(screen.getByRole("checkbox", { name: "Dog Friendly" })).toBeChecked();
+        expect(screen.getByRole("checkbox", { name: "Beer Garden" })).toBeChecked();
+        expect(screen.getByRole("checkbox", { name: "Out Of Town (Cambridge)" })).toBeChecked();
+    });
+
     it("shows recurrence fields for event venues and preloads existing values", () => {
         render(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "Cambridge Beer Festival",
                     venueType: "event",
                     banned: true,
@@ -44,7 +62,7 @@ describe("PubForm", () => {
                         nth: -1,
                         month_day: 27,
                     },
-                    next_occurrence_date: "2026-05-27",
+                    nextOccurrenceDate: "2026-05-27",
                 }}
             />
         );
@@ -71,14 +89,14 @@ describe("PubForm", () => {
 
     it("includes the loaded venue's baseline and signed field tokens in edit submissions", () => {
         render(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     id: "venue-1",
                     name: "The Maypole",
                     venueType: "pub",
                     address: "1 High Street",
-                    edit_tokens: { name: "signed-name-token" },
+                    editTokens: { name: "signed-name-token" },
                 }}
             />
         );
@@ -89,13 +107,13 @@ describe("PubForm", () => {
 
     it("rebases untouched fields and tokens while preserving drafts until they converge", () => {
         const { rerender } = render(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "Original Name",
                     venueType: "pub",
                     address: "Original Road",
-                    edit_tokens: { name: "name-v1", address: "address-v1" },
+                    editTokens: { name: "name-v1", address: "address-v1" },
                 }}
             />
         );
@@ -103,13 +121,13 @@ describe("PubForm", () => {
         fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My Draft" } });
 
         rerender(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "Current Name",
                     venueType: "pub",
                     address: "Current Road",
-                    edit_tokens: { name: "name-v2", address: "address-v2" },
+                    editTokens: { name: "name-v2", address: "address-v2" },
                 }}
             />
         );
@@ -126,13 +144,13 @@ describe("PubForm", () => {
         });
 
         rerender(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "Newest Name",
                     venueType: "pub",
                     address: "Newest Road",
-                    edit_tokens: { name: "name-v3", address: "address-v3" },
+                    editTokens: { name: "name-v3", address: "address-v3" },
                 }}
             />
         );
@@ -156,12 +174,12 @@ describe("PubForm", () => {
 
     it("preserves the original API token when a dirty venue type receives a stream update", () => {
         const { rerender } = render(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "The Maypole",
                     venueType: "pub",
-                    edit_tokens: { venue_type: "venue-type-v1" },
+                    editTokens: { venue_type: "venue-type-v1" },
                 }}
             />
         );
@@ -169,12 +187,12 @@ describe("PubForm", () => {
         fireEvent.change(screen.getByLabelText("Venue Type"), { target: { value: "restaurant" } });
 
         rerender(
-            <PubForm
+            <VenueForm
                 method="patch"
-                pub_object={{
+                venueObject={{
                     name: "The Maypole",
                     venueType: "event",
-                    edit_tokens: { venue_type: "venue-type-v2" },
+                    editTokens: { venue_type: "venue-type-v2" },
                 }}
             />
         );
@@ -182,6 +200,23 @@ describe("PubForm", () => {
         expect(screen.getByLabelText("Venue Type")).toHaveValue("restaurant");
         expect(JSON.parse(document.querySelector('input[name="venue_baseline"]').value).venueType).toBe("pub");
         expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).venue_type).toBe("venue-type-v1");
+    });
+
+    it("rebases a domain website draft using the API field token", () => {
+        const { rerender } = render(
+            <VenueForm method="patch" venueObject={{ id: "venue-1", name: "Venue", website: "https://old.example", editTokens: { website_url: "website-v1" } }} />
+        );
+
+        fireEvent.change(screen.getByLabelText("Venue Web Site"), { target: { value: "https://draft.example" } });
+        rerender(<VenueForm method="patch" venueObject={{ id: "venue-1", name: "Venue", website: "https://new.example", editTokens: { website_url: "website-v2" } }} />);
+
+        expect(screen.getByLabelText("Venue Web Site")).toHaveValue("https://draft.example");
+        expect(JSON.parse(document.querySelector('input[name="venue_baseline"]').value).website).toBe("https://old.example");
+        expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).website_url).toBe("website-v1");
+
+        fireEvent.change(screen.getByLabelText("Venue Web Site"), { target: { value: "https://new.example" } });
+        expect(JSON.parse(document.querySelector('input[name="venue_baseline"]').value).website).toBe("https://new.example");
+        expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).website_url).toBe("website-v2");
     });
 
     it("preserves the form draft until the manager loads the current venue after a conflict", () => {
@@ -192,12 +227,12 @@ describe("PubForm", () => {
                 currentVenue: {
                     id: "venue-1",
                     name: "Current Name",
-                    venue_type: "pub",
-                    edit_tokens: { name: "current-token" },
+                    venueType: "pub",
+                    editTokens: { name: "current-token" },
                 },
             },
         };
-        render(<PubForm method="patch" pub_object={{ id: "venue-1", name: "Draft Name", venueType: "pub" }} />);
+        render(<VenueForm method="patch" venueObject={{ id: "venue-1", name: "Draft Name", venueType: "pub" }} />);
 
         expect(screen.getByRole("alert")).toHaveTextContent("The name changed.");
         expect(screen.getByLabelText("Name")).toHaveValue("Draft Name");
@@ -205,6 +240,21 @@ describe("PubForm", () => {
 
         expect(screen.getByLabelText("Name")).toHaveValue("Current Name");
         expect(document.querySelector('input[name="edit_tokens"]').value).toContain("current-token");
+    });
+
+    it("keeps the reviewed conflict baseline when a draft matches the older stream snapshot", () => {
+        actionDataMock.current = {
+            conflict: {
+                currentVenue: { id: "venue-1", name: "Current Name", editTokens: { name: "current-token" } },
+            },
+        };
+        render(<VenueForm method="patch" venueObject={{ id: "venue-1", name: "Old Name", editTokens: { name: "old-token" } }} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "Load current venue" }));
+        fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Old Name" } });
+
+        expect(JSON.parse(document.querySelector('input[name="venue_baseline"]').value).name).toBe("Current Name");
+        expect(JSON.parse(document.querySelector('input[name="edit_tokens"]').value).name).toBe("current-token");
     });
 
 });

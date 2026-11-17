@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { getTodaysDate } from "../utils/pollSorting";
+import { getTodaysDate, MeetData } from "../utils/meetSorting";
 import { ATTENDANCE_GLOBAL_KEY, getEffectiveAttendanceState } from "../utils/attendanceState";
 
 function getDateYearsAgo(yearCount) {
@@ -14,24 +14,24 @@ function getDateYearsAgo(yearCount) {
 }
 
 /**
- * @param {{ selected?: string, restaurant?: string | null, date?: string, pubs?: Record<string, unknown> }} poll
+ * @param {{ selectedVenueId?: string, restaurantId?: string | null, date?: string, venues?: Record<string, unknown> }} meet
  * @param {Record<string, unknown>} attendanceMap
  * @returns {string[]}
  */
-export function getVenueIdsForPoll(poll, attendanceMap) {
+export function getVenueIdsForMeet(meet, attendanceMap) {
     const venueIdSet = new Set();
 
-    for (const key of Object.keys(poll?.pubs || {})) {
+    for (const key of Object.keys(meet?.venues || {})) {
         if (key !== ATTENDANCE_GLOBAL_KEY) {
             venueIdSet.add(key);
         }
     }
 
-    if (poll?.selected) {
-        venueIdSet.add(poll.selected);
+    if (meet?.selectedVenueId) {
+        venueIdSet.add(meet.selectedVenueId);
     }
-    if (poll?.restaurant) {
-        venueIdSet.add(poll.restaurant);
+    if (meet?.restaurantId) {
+        venueIdSet.add(meet.restaurantId);
     }
 
     for (const key of Object.keys(attendanceMap || {})) {
@@ -44,22 +44,22 @@ export function getVenueIdsForPoll(poll, attendanceMap) {
 }
 
 /**
- * @param {Record<string, { selected?: string, restaurant?: string | null, date?: string, pubs?: Record<string, unknown> }>} polls
- * @param {Record<string, Record<string, unknown>>} attendanceByPoll
+ * @param {Record<string, { selectedVenueId?: string, restaurantId?: string | null, date?: string, venues?: Record<string, unknown> }>} meets
+ * @param {Record<string, Record<string, unknown>>} attendanceByMeet
  * @returns {{ countsByVenueId: Record<string, number>, lastDateByVenueId: Record<string, string | null> }}
  */
-export function aggregateVenueAttendance(polls, attendanceByPoll) {
+export function aggregateVenueAttendance(meets, attendanceByMeet) {
     /** @type {Record<string, number>} */
     const countsByVenueId = {};
     /** @type {Record<string, string | null>} */
     const lastDateByVenueId = {};
 
-    for (const [pollId, poll] of Object.entries(polls || {})) {
-        const attendanceMap = attendanceByPoll[pollId] || {};
-        const venueIds = getVenueIdsForPoll(poll, attendanceMap);
+    for (const [meetId, meet] of Object.entries(meets || {})) {
+        const attendanceMap = attendanceByMeet[meetId] || {};
+        const venueIds = getVenueIdsForMeet(meet, attendanceMap);
         for (const venueId of venueIds) {
             // We intentionally resolve effective attendance per venue so the global "any"
-            // attendance state contributes to each venue in the shortlist for that poll.
+            // attendance state contributes to each venue in the shortlist for that Meet.
             const effectiveAttendance = getEffectiveAttendanceState(attendanceMap, venueId, null);
             const canComeCount = effectiveAttendance.canCome.length;
             if (!countsByVenueId[venueId]) {
@@ -67,8 +67,8 @@ export function aggregateVenueAttendance(polls, attendanceByPoll) {
             }
             countsByVenueId[venueId] += canComeCount;
 
-            if (poll.date && (!lastDateByVenueId[venueId] || poll.date > lastDateByVenueId[venueId])) {
-                lastDateByVenueId[venueId] = poll.date;
+            if (meet.date && (!lastDateByVenueId[venueId] || meet.date > lastDateByVenueId[venueId])) {
+                lastDateByVenueId[venueId] = meet.date;
             }
         }
     }
@@ -116,13 +116,14 @@ export default function useAttendanceVenueStats(yearCount) {
             statsQuery,
             async (snapshot) => {
                 /** @type {Record<string, { selected?: string, restaurant?: string | null, date?: string, pubs?: Record<string, unknown> }>} */
-                const pollsById = {};
+                const meetRecordsById = {};
                 snapshot.forEach((docSnapshot) => {
-                    pollsById[docSnapshot.id] = docSnapshot.data();
+                    meetRecordsById[docSnapshot.id] = docSnapshot.data();
                 });
 
-                const pollIds = Object.keys(pollsById);
-                if (pollIds.length === 0) {
+                const meetsById = new MeetData(meetRecordsById).meets;
+                const meetIds = Object.keys(meetsById);
+                if (meetIds.length === 0) {
                     setCountsByVenueId({});
                     setLastDateByVenueId({});
                     setErrorMessage(null);
@@ -131,16 +132,16 @@ export default function useAttendanceVenueStats(yearCount) {
                 }
 
                 const attendanceEntries = await Promise.all(
-                    pollIds.map(async (pollId) => {
-                        const attendanceSnapshot = await getDoc(doc(db, "attendance", pollId));
-                        return [pollId, /** @type {Record<string, unknown>} */ (attendanceSnapshot.data() || {})];
+                    meetIds.map(async (meetId) => {
+                        const attendanceSnapshot = await getDoc(doc(db, "attendance", meetId));
+                        return [meetId, /** @type {Record<string, unknown>} */ (attendanceSnapshot.data() || {})];
                     })
                 );
 
-                const attendanceByPoll = Object.fromEntries(attendanceEntries);
+                const attendanceByMeet = Object.fromEntries(attendanceEntries);
                 const { countsByVenueId: counts, lastDateByVenueId: lastDates } = aggregateVenueAttendance(
-                    pollsById,
-                    attendanceByPoll
+                    meetsById,
+                    attendanceByMeet
                 );
 
                 setCountsByVenueId(counts);

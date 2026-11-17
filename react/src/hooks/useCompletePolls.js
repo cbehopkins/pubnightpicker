@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { complete_a_poll } from "../dbtools/polls";
+import { completeMeetVoting } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError } from "../utils/notify";
 import {
@@ -13,26 +13,26 @@ import {
  * Handles: initiating completion, collecting restaurant choice, final completion
  * Returns: state for modal display and handlers for user interactions
  */
-export function useCompletePolls(pollData, pubs, canCompletePoll) {
+export function useCompletePolls(meetData, venues, canCompletePoll) {
   const [completingPoll, setCompletingPoll] = useState(null);
 
-  // Handler to initiate poll completion (triggered when user clicks a pub)
+  // Handler to initiate poll completion (triggered when user clicks a venue)
   const completeHandler = useCallback(
-    (key, pubName, poll_id) => {
+    (key, venueName, poll_id) => {
       if (!canCompletePoll) {
         return;
       }
-      const poll = pollData.polls?.[poll_id];
-      setCompletingPoll(createCompletingPollState(key, pubName, poll_id, poll, pubs));
+      const meet = meetData.meets?.[poll_id];
+      setCompletingPoll(createCompletingPollState(key, venueName, poll_id, meet, venues));
     },
-    [canCompletePoll, pollData.polls, pubs]
+    [canCompletePoll, meetData.meets, venues]
   );
 
   // Extract state from completingPoll for easier access
   const key = completingPoll?.key;
-  const pubName = completingPoll?.pubName;
+  const venueName = completingPoll?.venueName;
   const poll_id = completingPoll?.poll_id;
-  const pubHasFood = completingPoll?.pubHasFood ?? false;
+  const venueHasFood = completingPoll?.venueHasFood ?? false;
   const restaurantOptions = completingPoll?.restaurantOptions || [];
   const allRestaurantVenues = completingPoll?.allRestaurantVenues || [];
   const chosenRestaurantId = completingPoll?.restaurantId || "";
@@ -55,10 +55,10 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
 
       const restaurantToPersist = getRestaurantIdForCompletion(completingPoll);
       const restaurantTimeToPersist = restaurantToPersist ? restaurantTime : undefined;
-      const pollDate = pollData.polls?.[poll_id]?.date;
+      const pollDate = meetData.meets?.[poll_id]?.date;
 
       try {
-        await complete_a_poll(
+        await completeMeetVoting(
           key,
           poll_id,
           pollDate,
@@ -76,7 +76,7 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
       canCompletePoll,
       completingPoll,
       restaurantTime,
-      pollData.polls,
+      meetData.meets,
     ]
   );
 
@@ -117,8 +117,8 @@ export function useCompletePolls(pollData, pubs, canCompletePoll) {
     // State for modal display
     completingPoll,
     completingPollId: poll_id,
-    pubName,
-    pubHasFood,
+    venueName,
+    venueHasFood,
     availableRestaurants,
     restaurantSource,
     chosenRestaurantId,

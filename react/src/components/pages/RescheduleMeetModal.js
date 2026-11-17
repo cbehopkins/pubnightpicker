@@ -9,14 +9,14 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
  */
 
 /**
- * @typedef {Object} ReschedulePollModalProps
- * @property {string=} selectedPubId
- * @property {boolean=} pubHasFood
- * @property {VenueOption[]} pubOptions
+ * @typedef {Object} RescheduleMeetModalProps
+ * @property {string=} selectedVenueId
+ * @property {boolean=} selectedVenueHasFood
+ * @property {VenueOption[]} mainVenueOptions
  * @property {VenueOption[]} restaurantOptions
  * @property {string=} chosenRestaurantId
  * @property {string=} restaurantTime
- * @property {(value: string) => void} onPubChange
+ * @property {(value: string) => void} onVenueChange
  * @property {(value: string) => void} onRestaurantChange
  * @property {(value: string) => void} onRestaurantTimeChange
  * @property {() => void | Promise<void>} onConfirm
@@ -24,35 +24,35 @@ import VenueAssignmentModal from "./VenueAssignmentModal";
  */
 
 /**
- * @param {ReschedulePollModalProps} props
+ * @param {RescheduleMeetModalProps} props
  */
-function ReschedulePollModal({
-  selectedPubId,
-  pubHasFood,
-  pubOptions,
+function RescheduleMeetModal({
+  selectedVenueId,
+  selectedVenueHasFood,
+  mainVenueOptions,
   restaurantOptions,
   chosenRestaurantId,
   restaurantTime,
-  onPubChange,
+  onVenueChange,
   onRestaurantChange,
   onRestaurantTimeChange,
   onConfirm,
   onCancel,
 }) {
-  const infoNote = pubHasFood
+  const infoNote = selectedVenueHasFood
     ? "This venue serves food, so a separate restaurant is optional."
     : "Pick the fallback venue and optionally add or change the restaurant.";
 
   return (
     <VenueAssignmentModal
-      title="Reschedule Event"
+      title="Reschedule Meet"
       subtitle="Update the fallback plan by choosing a new main venue and, if needed, a restaurant."
       mainVenueLabel="Main venue"
-      mainVenueOptions={pubOptions}
+      mainVenueOptions={mainVenueOptions}
       mainVenuePlaceholder="Select a main venue"
-      selectedMainVenueId={selectedPubId}
-      onMainVenueChange={onPubChange}
-      mainVenueHelpText="You can move the event to any non-restaurant venue in the system."
+      selectedMainVenueId={selectedVenueId}
+      onMainVenueChange={onVenueChange}
+      mainVenueHelpText="You can move the meet to any non-restaurant venue in the system."
       infoNote={infoNote}
       showRestaurantSection={true}
       restaurantLabel="Restaurant"
@@ -64,11 +64,11 @@ function ReschedulePollModal({
       onRestaurantChange={onRestaurantChange}
       onRestaurantTimeChange={onRestaurantTimeChange}
       confirmText="Save Changes"
-      footerNote="Only the latest main venue and restaurant choices will be kept on the event."
+      footerNote="Only the latest main venue and restaurant choices will be kept on the meet."
       onConfirm={onConfirm}
       onCancel={onCancel}
     />
   );
 }
 
-export default ReschedulePollModal;
+export default RescheduleMeetModal;

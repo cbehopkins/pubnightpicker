@@ -6,6 +6,7 @@ import ChatPage from "./ChatPage";
 
 const {
     useSelectorMock,
+    useAuthStateMock,
     useRoleMock,
     useNavigateMock,
     useParamsMock,
@@ -16,6 +17,7 @@ const {
     setGlobalChatMutedMock,
 } = vi.hoisted(() => ({
     useSelectorMock: vi.fn(),
+    useAuthStateMock: vi.fn(),
     useRoleMock: vi.fn(),
     useNavigateMock: vi.fn(),
     useParamsMock: vi.fn(),
@@ -28,6 +30,10 @@ const {
 
 vi.mock("react-redux", () => ({
     useSelector: useSelectorMock,
+}));
+
+vi.mock("react-firebase-hooks/auth", () => ({
+    useAuthState: useAuthStateMock,
 }));
 
 vi.mock("../../hooks/useRole", () => ({
@@ -55,6 +61,7 @@ vi.mock("firebase/firestore", () => ({
 
 vi.mock("../../firebase", () => ({
     db: {},
+    auth: {},
 }));
 
 vi.mock("../../push/webPush", () => ({
@@ -75,6 +82,7 @@ describe("ChatPage", () => {
         setGlobalChatMutedMock.mockReset();
 
         useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: true, uid: "user-1" } }));
+        useAuthStateMock.mockReturnValue([{ uid: "user-1" }, false]);
         useRoleMock.mockReturnValue(true);
         useNavigateMock.mockReturnValue(vi.fn());
         useParamsMock.mockReturnValue({});
@@ -94,25 +102,42 @@ describe("ChatPage", () => {
         );
     });
 
-    it("renders event-scoped chat when pollId is present", async () => {
-        useParamsMock.mockReturnValue({ pollId: "poll-42" });
+    it("renders Meet Chat with the existing event scope", async () => {
+        useParamsMock.mockReturnValue({ meetId: "poll-42" });
 
         render(<ChatPage />);
 
-        expect(screen.getByText("Event Chat")).toBeTruthy();
-        expect(screen.getByText("Back to current events")).toBeTruthy();
+        expect(screen.getByText("Meet Chat")).toBeTruthy();
+        expect(screen.getByRole("link", { name: "Back to current meets" }).getAttribute("href")).toBe("/current_meets");
         expect(chatBoxMock).toHaveBeenCalledWith(
             { scope: { scopeType: "event", scopeId: "poll-42" } },
             expect.anything(),
         );
         await waitFor(() => {
-            expect(within(document.body).getByText("Event chat notifications are enabled for this event.")).toBeTruthy();
+            expect(within(document.body).getByText("Meet chat notifications are enabled for this Meet.")).toBeTruthy();
         });
+    });
+
+    it("does not redirect a Meet Chat deep link while Firebase Auth is loading", async () => {
+        const navigate = vi.fn();
+        useSelectorMock.mockImplementation((selector) => selector({ auth: { loggedIn: false, uid: null } }));
+        useAuthStateMock.mockReturnValue([null, true]);
+        useParamsMock.mockReturnValue({ meetId: "meet-42" });
+        useNavigateMock.mockReturnValue(navigate);
+
+        const rendered = render(<ChatPage />);
+        expect(navigate).not.toHaveBeenCalled();
+
+        useAuthStateMock.mockReturnValue([{ uid: "user-1" }, false]);
+        rendered.rerender(<ChatPage />);
+
+        await waitFor(() => expect(chatBoxMock).toHaveBeenCalled());
+        expect(navigate).not.toHaveBeenCalled();
     });
 
     it("hides mute button when push notifications are not enabled", async () => {
         getDocMock.mockResolvedValue({ data: () => ({ webPushEnabled: false, pushPreferences: {} }) });
-        useParamsMock.mockReturnValue({ pollId: "poll-42" });
+        useParamsMock.mockReturnValue({ meetId: "poll-42" });
 
         const rendered = render(<ChatPage />);
 
@@ -123,14 +148,26 @@ describe("ChatPage", () => {
         expect(within(rendered.container).queryByRole("button", { name: /mute/i })).toBeNull();
     });
 
-    it("toggles event chat mute for the current poll", async () => {
-        useParamsMock.mockReturnValue({ pollId: "poll-42" });
+    it("recognises an existing mute preference for the Meet", async () => {
+        getDocMock.mockResolvedValue({
+            data: () => ({ webPushEnabled: true, pushPreferences: { eventChatMutedPollIds: ["poll-42"] } }),
+        });
+        useParamsMock.mockReturnValue({ meetId: "poll-42" });
+
+        render(<ChatPage />);
+
+        expect(await screen.findByRole("button", { name: "Unmute Meet chat notifications" })).toBeTruthy();
+        expect(screen.getByText("Meet chat notifications are muted for this Meet.")).toBeTruthy();
+    });
+
+    it("toggles Meet Chat mute for the current Meet", async () => {
+        useParamsMock.mockReturnValue({ meetId: "poll-42" });
 
         const rendered = render(<ChatPage />);
 
         const button = await waitFor(() =>
             within(rendered.container).getByRole("button", {
-                name: "Mute event chat notifications",
+                name: "Mute Meet chat notifications",
             })
         );
         fireEvent.click(button);
@@ -138,7 +175,7 @@ describe("ChatPage", () => {
         await waitFor(() => {
             expect(setEventChatMutedMock).toHaveBeenCalledWith("user-1", "poll-42", true);
         });
-        expect(rendered.getByText("Event chat notifications are muted for this event.")).toBeTruthy();
+        expect(rendered.getByText("Meet chat notifications are muted for this Meet.")).toBeTruthy();
     });
 
     it("toggles global chat mute on the main chat page", async () => {

@@ -1,29 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { buildCurrentEventViewModel, getDedupedVotesForVenue } from "./currentEventViewModel";
+import { buildCurrentMeetViewModel, getDedupedVotesForVenue } from "./currentMeetViewModel";
 
-describe("currentEventViewModel", () => {
+describe("currentMeetViewModel", () => {
   it("returns null when the selected venue is missing", () => {
-    const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
-      restaurant_id: undefined,
-      pub_parameters: {},
+    const result = buildCurrentMeetViewModel({
+      currentVenueId: "venue-1",
+      restaurantId: undefined,
+      venues: {},
       votes: {},
       attendance: {},
       currUserId: "user-1",
-      show_voters: true,
+      showVoters: true,
     });
 
     expect(result).toBeNull();
   });
 
   it("builds the main venue view model with deduped votes and attendance state", () => {
-    const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
-      restaurant_id: undefined,
-      pub_parameters: {
+    const result = buildCurrentMeetViewModel({
+      currentVenueId: "venue-1",
+      restaurantId: undefined,
+      venues: {
         "venue-1": {
           name: "The Maypole",
-          web_site: "https://example.com/maypole",
+          website: "https://example.com/maypole",
           address: "8 Portugal Place",
         },
       },
@@ -38,7 +38,7 @@ describe("currentEventViewModel", () => {
         },
       },
       currUserId: "user-1",
-      show_voters: true,
+      showVoters: true,
     });
 
     expect(result.mainVenue.name).toBe("The Maypole");
@@ -50,11 +50,11 @@ describe("currentEventViewModel", () => {
   });
 
   it("builds a separate restaurant view model when restaurant is present", () => {
-    const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
-      restaurant_id: "venue-2",
-      restaurant_time: "18:30",
-      pub_parameters: {
+    const result = buildCurrentMeetViewModel({
+      currentVenueId: "venue-1",
+      restaurantId: "venue-2",
+      restaurantTime: "18:30",
+      venues: {
         "venue-1": { name: "The Maypole" },
         "venue-2": { name: "Bistro 12", address: "12 Market Street" },
       },
@@ -69,7 +69,7 @@ describe("currentEventViewModel", () => {
         },
       },
       currUserId: "user-1",
-      show_voters: true,
+      showVoters: true,
     });
 
     expect(result.restaurantVenue).toEqual(expect.objectContaining({
@@ -92,10 +92,10 @@ describe("currentEventViewModel", () => {
   });
 
   it("applies global attendance sentinel to the selected venue", () => {
-    const result = buildCurrentEventViewModel({
-      current_pub_id: "venue-1",
-      restaurant_id: undefined,
-      pub_parameters: {
+    const result = buildCurrentMeetViewModel({
+      currentVenueId: "venue-1",
+      restaurantId: undefined,
+      venues: {
         "venue-1": {
           name: "The Maypole",
         },
@@ -108,7 +108,7 @@ describe("currentEventViewModel", () => {
         },
       },
       currUserId: "user-1",
-      show_voters: true,
+      showVoters: true,
     });
 
     expect(result.mainVenue.userCanCome).toBe(true);

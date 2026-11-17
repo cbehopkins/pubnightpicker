@@ -26,10 +26,10 @@ const {
 }));
 
 const {
-    usePollsMock,
+    useActiveMeetsMock,
     useAutopopulateVenueSelectorMock,
 } = vi.hoisted(() => ({
-    usePollsMock: vi.fn(),
+    useActiveMeetsMock: vi.fn(),
     useAutopopulateVenueSelectorMock: vi.fn(),
 }));
 
@@ -63,8 +63,8 @@ vi.mock("../UI/BackendPingPanel", () => ({
     default: () => <section aria-label="Last Orders API">Last Orders API</section>,
 }));
 
-vi.mock("../../hooks/usePolls", () => ({
-    default: usePollsMock,
+vi.mock("../../hooks/useMeets", () => ({
+    useActiveMeets: useActiveMeetsMock,
 }));
 
 vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
@@ -275,14 +275,14 @@ it("keeps the poll action audit on Logs", () => {
 
 describe("AutopopulateCandidateListsPanel", () => {
     beforeEach(() => {
-        usePollsMock.mockReturnValue({
+        useActiveMeetsMock.mockReturnValue({
             sortedByDate: () => [
-                ["poll-1", { date: "2026-06-10", pubs: { "venue-1": true } }],
+                ["meet-1", { date: "2026-06-10", venues: { "venue-1": true } }],
             ],
         });
 
-        useAutopopulateVenueSelectorMock.mockImplementation((pollId) => {
-            if (pollId !== "poll-1") {
+        useAutopopulateVenueSelectorMock.mockImplementation((meetId) => {
+            if (meetId !== "meet-1") {
                 return {
                     mostVisited: [],
                     leastVisited: [],
@@ -332,7 +332,7 @@ describe("AutopopulateCandidateListsPanel", () => {
 
         expect(screen.getByText("Autopopulate Candidate Lists")).toBeTruthy();
         expect(screen.getByRole("button", { name: "Load Candidate Lists" })).toBeTruthy();
-        expect(usePollsMock).not.toHaveBeenCalled();
+        expect(useActiveMeetsMock).not.toHaveBeenCalled();
         expect(useAutopopulateVenueSelectorMock).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole("button", { name: "Load Candidate Lists" }));
@@ -343,6 +343,7 @@ describe("AutopopulateCandidateListsPanel", () => {
         expect(screen.getByText(/The Oak/)).toBeTruthy();
         expect(screen.getByText(/The Crown/)).toBeTruthy();
         expect(screen.getByText(/The Bell/)).toBeTruthy();
+        expect(useAutopopulateVenueSelectorMock).toHaveBeenCalledWith("meet-1", { "venue-1": true });
 
         fireEvent.click(screen.getByRole("button", { name: "Hide Candidate Lists" }));
 
@@ -356,7 +357,7 @@ describe("AutopopulateCandidateListsPanel", () => {
 describe("PollActionAuditPanel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        usePollsMock.mockReturnValue({
+        useActiveMeetsMock.mockReturnValue({
             sortedByDate: () => [],
         });
         useAutopopulateVenueSelectorMock.mockReturnValue({

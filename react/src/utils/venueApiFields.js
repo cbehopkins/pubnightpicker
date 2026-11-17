@@ -1,16 +1,16 @@
-export const venueApiFieldNames = {
+export const domainVenueApiFieldNames = {
     name: "name",
     venueType: "venue_type",
-    web_site: "website_url",
+    website: "website_url",
     map: "map_url",
     address: "address",
     notes: "notes",
-    pubImage: "image_url",
+    image: "image_url",
     recurrence: "recurrence",
     parking: "parking",
     food: "food",
-    dog_friend: "dog_friendly",
-    beer_gerden: "beer_garden",
-    out_of_town: "out_of_town",
+    dogFriendly: "dog_friendly",
+    beerGarden: "beer_garden",
+    outOfTown: "out_of_town",
     banned: "banned",
 };

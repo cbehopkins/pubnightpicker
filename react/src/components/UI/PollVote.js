@@ -22,8 +22,8 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 /** @typedef {Record<string, string[]>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
-/** @typedef {{ name?: string }} PollPubEntry */
-/** @typedef {{ pubs?: Record<string, PollPubEntry>, date?: string }} PollData */
+/** @typedef {{ name?: string }} PollVenueEntry */
+/** @typedef {{ venues?: Record<string, PollVenueEntry>, date?: string }} PollData */
 /** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
 /**
@@ -45,23 +45,23 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  */
 
 /**
- * @typedef {Object} VotablePubProps
- * @property {string} pubId
- * @property {string} pubName
+ * @typedef {Object} VotableVenueProps
+ * @property {string} venueId
+ * @property {string} venueName
  * @property {string | null | undefined} currUserId
  * @property {VotesMap} votes
  * @property {AttendanceMap} attendance
  * @property {boolean} canShowAttendance
- * @property {(pubId: string, userId: string) => Promise<void>} makeVote
- * @property {(pubId: string, userId: string) => Promise<void>} clearVote
- * @property {(pubId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
- * @property {(pubId: string, userId: string) => Promise<void>} clearAttendance
- * @property {(pubId: string, userId: string, eta: string) => Promise<void>} setEta
- * @property {(pubId: string, userId: string) => Promise<void>} clearEta
+ * @property {(venueId: string, userId: string) => Promise<void>} makeVote
+ * @property {(venueId: string, userId: string) => Promise<void>} clearVote
+ * @property {(venueId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
+ * @property {(venueId: string, userId: string) => Promise<void>} clearAttendance
+ * @property {(venueId: string, userId: string, eta: string) => Promise<void>} setEta
+ * @property {(venueId: string, userId: string) => Promise<void>} clearEta
  * @property {string} defaultEta
  * @property {() => Promise<void>} setAllAttendanceToCanCome
  * @property {() => Promise<void>} setAllAttendanceToCannotCome
- * @property {string[]} pollPubIds
+ * @property {string[]} pollVenueIds
  * @property {boolean} showDeleteColumn
  * @property {boolean} allowDelete
  * @property {boolean} allowCompletePoll
@@ -77,7 +77,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @typedef {Object} PollVoteProps
  * @property {string} poll_id
  * @property {PollData} poll_data
- * @property {(pubId: string, pubName: string, pollId: string) => void} on_complete
+ * @property {(venueId: string, venueName: string, pollId: string) => void} on_complete
  * @property {boolean=} mobile
  */
 
@@ -304,9 +304,9 @@ function RespondMenu({
                   await onSetAllCanCome();
                   setShowActions(false);
                 }}
-                title="Set can come for every pub in this poll"
+                title="Set can come for every venue in this poll"
               >
-                I'm coming (all pubs)
+                I'm coming (all venues)
               </Button>
               <Button
                 type="button"
@@ -316,9 +316,9 @@ function RespondMenu({
                   await onSetAllCannotCome();
                   setShowActions(false);
                 }}
-                title="Set cannot come for every pub in this poll"
+                title="Set cannot come for every venue in this poll"
               >
-                I can't come (all pubs)
+                I can't come (all venues)
               </Button>
             </>
           )}
@@ -328,10 +328,10 @@ function RespondMenu({
   );
 }
 
-/** @param {VotablePubProps} props */
-function VotablePub({
-  pubId,
-  pubName,
+/** @param {VotableVenueProps} props */
+function VotableVenue({
+  venueId,
+  venueName,
   currUserId,
   votes,
   attendance,
@@ -345,7 +345,7 @@ function VotablePub({
   defaultEta,
   setAllAttendanceToCanCome,
   setAllAttendanceToCannotCome,
-  pollPubIds,
+  pollVenueIds,
   showDeleteColumn,
   allowDelete,
   allowCompletePoll,
@@ -356,7 +356,7 @@ function VotablePub({
   usersByUid,
 }) {
   const rowData = useVotableRow(
-    pubId,
+    venueId,
     currUserId,
     votes,
     attendance,
@@ -368,20 +368,20 @@ function VotablePub({
     clearEta,
     pollId,
     pollDate,
-    pubName
+    venueName
   );
 
-  // Override allowGlobalAttendanceControls to include pollPubIds length check
-  const allowGlobalAttendanceControls = rowData.canVote && pubId === "any" && pollPubIds.length > 0;
+  // Override allowGlobalAttendanceControls to include pollVenueIds length check
+  const allowGlobalAttendanceControls = rowData.canVote && venueId === "any" && pollVenueIds.length > 0;
   const [votedNames, canComeNames, cannotComeNames, etaNames] = showAttendanceColumns
 
     ? (() => {
 
-      const rowAttendance = attendance[pubId] || {};
+      const rowAttendance = attendance[venueId] || {};
 
       const rowEtaMap = rowAttendance.eta || {};
 
-      const rowVoters = (votes[pubId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
+      const rowVoters = (votes[venueId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
 
       const rowCanCome = rowAttendance.canCome || [];
 
@@ -439,10 +439,10 @@ function VotablePub({
             onClick={completeHandler}
             title="Select this venue as the winner to complete the poll"
           >
-            {pubName}
+            {venueName}
           </Button>
         ) : (
-          <label>{pubName}</label>
+          <label>{venueName}</label>
         )}
       </td>
       <td className={styles.voteCol}>
@@ -450,7 +450,7 @@ function VotablePub({
       </td>
       {rowData.canVote && (
         <td className={`${styles.statusCol} ${styles.attendanceIndicator}`}>
-          {pubId !== "any" && (
+          {venueId !== "any" && (
             rowData.userCanCome ? <span title="You said you can come">✅</span>
               : rowData.userCannotCome ? <span title="You said you cannot come">❌</span>
                 : null
@@ -486,10 +486,10 @@ function VotablePub({
                 </>}
               >
                 <ShowAttendance
-                  voters={votes[pubId] || []}
+                  voters={votes[venueId] || []}
                   canCome={rowData.canCome}
                   cannotCome={rowData.cannotCome}
-                  eta={attendance[pubId]?.eta}
+                  eta={attendance[venueId]?.eta}
                 />
               </QuestionRender>
             )}
@@ -540,7 +540,7 @@ function PollVote(props) {
   const rowEntries = usePollRows(props.poll_data);
 
   // Get ballot actions (batch attendance handlers)
-  const { pollPubIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
+  const { pollVenueIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
     props.poll_data,
     currUserId,
     setGlobalAttendanceStatus
@@ -656,13 +656,13 @@ function PollVote(props) {
             </tr>
           </thead>
           <tbody>
-            {rowEntries.map(([pubName, key]) => {
+            {rowEntries.map(([venueName, key]) => {
               const isGlobal = key === "any";
               return (
-                <VotablePub
+                <VotableVenue
                   key={key}
-                  pubId={key}
-                  pubName={pubName}
+                  venueId={key}
+                  venueName={venueName}
                   currUserId={currUserId}
                   votes={votes}
                   attendance={attendance}
@@ -675,14 +675,14 @@ function PollVote(props) {
                   clearEta={clearEta}
                   setAllAttendanceToCanCome={setAllAttendanceToCanCome}
                   setAllAttendanceToCannotCome={setAllAttendanceToCannotCome}
-                  pollPubIds={pollPubIds}
+                  pollVenueIds={pollVenueIds}
                   showDeleteColumn={allowDelete}
                   allowDelete={!isGlobal && allowDelete}
                   allowCompletePoll={!isGlobal && allowCompletePoll}
                   pollId={props.poll_id}
                   pollDate={props.poll_data?.date}
                   completeHandler={() => {
-                    props.on_complete(key, pubName, props.poll_id);
+                    props.on_complete(key, venueName, props.poll_id);
                   }}
                   mobile={mobile}
                   showAttendanceColumns={showAttendanceColumns}

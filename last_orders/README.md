@@ -25,6 +25,10 @@ for the architecture this codebase follows.
 - `internal/lastorders/plugins`: connectivity between Truths and units of work.
 - `internal/lastorders/basestore`: shared SQLite base store.
 
+Event Venue recurrence creates Meets through `CreateMeetForEventOccurrence`.
+Its durable fanout and handler retain the historical `truths.create_event_poll`
+and `recurrence.create_event_poll` names, and their payload fields remain unchanged.
+
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
@@ -352,7 +356,8 @@ Two optional booleans in the same document default to false:
 
 - `NotifyPollActorWhenSilenced`: permits live poll-opening email/push to the human
   creator and initial completion email/push to the human completer only.
-- `KeepChatNotificationsWhenSilenced`: permits normal global/event-chat pushes.
+- `KeepChatNotificationsWhenSilenced`: permits normal global and Meet Chat pushes
+  (the persisted Meet chat scope remains `event`).
 
 They are ignored when silence is off. Actor delivery respects existing personal
 preferences, addresses and active endpoints; chat preserves membership, mute and

@@ -3,7 +3,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import EventChatModal from "./EventChatModal";
+import MeetChatModal from "./MeetChatModal";
 
 const {
     useSelectorMock,
@@ -60,7 +60,7 @@ vi.mock("../chat/ChatMuteButton", () => ({
     ),
 }));
 
-describe("EventChatModal", () => {
+describe("MeetChatModal", () => {
     beforeEach(() => {
         useSelectorMock.mockReset();
         getDocMock.mockReset();
@@ -75,21 +75,21 @@ describe("EventChatModal", () => {
         setEventChatMutedMock.mockResolvedValue(undefined);
     });
 
-    it("links the modal title to the dedicated event chat page", () => {
+    it("links the modal title to the dedicated Meet Chat page", () => {
         render(
             <MemoryRouter>
-                <EventChatModal pollId="poll-42" onClose={() => undefined} />
+                <MeetChatModal meetId="poll-42" onClose={() => undefined} />
             </MemoryRouter>,
         );
 
-        const link = screen.getByRole("link", { name: "Event Chat" });
-        expect(link.getAttribute("href")).toBe("/chat/event/poll-42");
+        const link = screen.getByRole("link", { name: "Meet Chat" });
+        expect(link.getAttribute("href")).toBe("/chat/meet/poll-42");
     });
 
     it("shows the mute button when push notifications are enabled", async () => {
         const rendered = render(
             <MemoryRouter>
-                <EventChatModal pollId="poll-42" onClose={() => undefined} />
+                <MeetChatModal meetId="poll-42" onClose={() => undefined} />
             </MemoryRouter>,
         );
 
@@ -103,7 +103,7 @@ describe("EventChatModal", () => {
 
         const rendered = render(
             <MemoryRouter>
-                <EventChatModal pollId="poll-42" onClose={() => undefined} />
+                <MeetChatModal meetId="poll-42" onClose={() => undefined} />
             </MemoryRouter>,
         );
 
@@ -113,16 +113,16 @@ describe("EventChatModal", () => {
         expect(within(rendered.container).queryByTestId("mute-button")).toBeNull();
     });
 
-    it("toggles event chat mute via the mute button", async () => {
+    it("toggles Meet Chat mute via the mute button", async () => {
         const rendered = render(
             <MemoryRouter>
-                <EventChatModal pollId="poll-42" onClose={() => undefined} />
+                <MeetChatModal meetId="poll-42" onClose={() => undefined} />
             </MemoryRouter>,
         );
 
         const button = await waitFor(() =>
             within(rendered.container).getByRole("button", {
-                name: "Mute event chat notifications",
+                name: "Mute Meet chat notifications",
             })
         );
         fireEvent.click(button);
