@@ -23,6 +23,7 @@ import (
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/components/groupcache"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/listenerscope"
 	"last_orders/internal/lastorders/components/notificationprofile"
@@ -36,6 +37,7 @@ import (
 	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
 	completedpolllistener "last_orders/internal/lastorders/database/listeners/completedpolls"
 	eventvenuelistener "last_orders/internal/lastorders/database/listeners/eventvenues"
+	groupcachelistener "last_orders/internal/lastorders/database/listeners/groupcache"
 	newpolllistener "last_orders/internal/lastorders/database/listeners/newpolls"
 	notificationmirrorlistener "last_orders/internal/lastorders/database/listeners/notificationmirror"
 	notificationprofilelistener "last_orders/internal/lastorders/database/listeners/notificationprofile"
@@ -43,6 +45,7 @@ import (
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
+	groupsendpoint "last_orders/internal/lastorders/endpoints/groups"
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
@@ -132,6 +135,7 @@ type Config struct {
 	// Firestore client, and construction fails if Firestore is disabled.
 	RecurrenceService         RecurrenceService
 	VenueSource               venuecache.Source
+	GroupSource               groupcache.Source
 	NotificationProfileSource notificationprofile.Source
 	EventVenueSource          eventvenuelistener.Source
 	NewPollSource             newpolllistener.Source
@@ -165,6 +169,8 @@ type App struct {
 	recurrenceService           RecurrenceService
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
+	groupCacheStore             *groupcache.Store
+	groupCacheService           *groupcache.Service
 	notificationProfileStore    *notificationprofile.Store
 	notificationProfileService  *notificationprofile.Service
 	firestoreClient             *firestore.Client
@@ -182,6 +188,9 @@ type App struct {
 	adminDeleteEvaluateOnce     bool
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
+	groupCacheListener          *groupcachelistener.Listener
+	groupCacheStartMu           sync.Mutex
+	groupCacheStarted           bool
 	venueStreamHub              *sse.Hub
 	venueCursorCodec            *sse.CursorCodec
 	notificationProfileListener *notificationprofilelistener.Listener
@@ -362,6 +371,28 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
+	groupCacheStore, err := groupcache.NewStore(baseStore)
+	if err != nil {
+		return nil, fmt.Errorf("init Group cache store: %w", err)
+	}
+	groupSource := cfg.GroupSource
+	if groupSource == nil {
+		if firestoreClient == nil {
+			return nil, fmt.Errorf("Group source is required: supply Config.GroupSource or enable firestore")
+		}
+		groupSource, err = groupcache.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	groupCacheService, err := groupcache.NewService(groupCacheStore, groupSource)
+	if err != nil {
+		return nil, err
+	}
+	groupCacheListener, err := groupcachelistener.New(groupCacheService, groupCacheStore, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
 
 	notificationProfileSource := cfg.NotificationProfileSource
 	if notificationProfileSource == nil {
@@ -389,9 +420,12 @@ func New(cfg Config) (application *App, err error) {
 			firestoreClient:             firestoreClient,
 			venueCacheStore:             venueCacheStore,
 			venueCacheService:           venueCacheService,
+			groupCacheStore:             groupCacheStore,
+			groupCacheService:           groupCacheService,
 			notificationProfileStore:    notificationProfileStore,
 			notificationProfileService:  notificationProfileService,
 			venueCacheListener:          venueCacheListener,
+			groupCacheListener:          groupCacheListener,
 			notificationProfileListener: notificationProfileListener,
 			component:                   cfg.Component,
 		}
@@ -929,6 +963,8 @@ func New(cfg Config) (application *App, err error) {
 		recurrenceService:           recurrenceService,
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
+		groupCacheStore:             groupCacheStore,
+		groupCacheService:           groupCacheService,
 		notificationProfileStore:    notificationProfileStore,
 		notificationProfileService:  notificationProfileService,
 		firestoreClient:             firestoreClient,
@@ -951,6 +987,7 @@ func New(cfg Config) (application *App, err error) {
 		acceptingWork:               true,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
+		groupCacheListener:          groupCacheListener,
 		venueStreamHub:              venueStreamHub,
 		notificationProfileListener: notificationProfileListener,
 	}
@@ -999,6 +1036,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
 	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
+	(&groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}).Register(apiMux)
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
 		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")
@@ -1116,18 +1154,20 @@ func (a *App) Run(ctx context.Context) error {
 	for _, projection := range []interface {
 		Start(context.Context) error
 		Ready() <-chan struct{}
-	}{a.notificationProfileListener, a.venueCacheListener} {
+	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener} {
 		if err := projection.Start(producerCtx); err != nil {
 			return fmt.Errorf("start projection listener: %w", err)
 		}
 	}
-	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
+	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()} {
 		select {
 		case <-ready:
 		case err := <-a.notificationProfileListener.Errors():
 			return fmt.Errorf("notification profile projection failed: %w", err)
 		case err := <-a.venueCacheListener.Errors():
 			return fmt.Errorf("venue cache projection failed: %w", err)
+		case err := <-a.groupCacheListener.Errors():
+			return fmt.Errorf("Group cache projection failed: %w", err)
 		case <-producerCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
@@ -1250,6 +1290,8 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("notification profile projection failed: %w", err)
 	case err := <-a.venueCacheListener.Errors():
 		return fmt.Errorf("venue cache projection failed: %w", err)
+	case err := <-a.groupCacheListener.Errors():
+		return fmt.Errorf("Group cache projection failed: %w", err)
 	case err := <-cellarErr:
 		if errors.Is(err, context.Canceled) && errors.Is(executionCtx.Err(), context.Canceled) {
 			return nil
@@ -1321,18 +1363,20 @@ func (a *App) runHandPump(ctx context.Context) error {
 	for _, projection := range []interface {
 		Start(context.Context) error
 		Ready() <-chan struct{}
-	}{a.notificationProfileListener, a.venueCacheListener} {
+	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener} {
 		if err := projection.Start(runCtx); err != nil {
 			return fmt.Errorf("start HandPump projection: %w", err)
 		}
 	}
-	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready()} {
+	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()} {
 		select {
 		case <-ready:
 		case err := <-a.notificationProfileListener.Errors():
 			return fmt.Errorf("notification profile projection failed: %w", err)
 		case err := <-a.venueCacheListener.Errors():
 			return fmt.Errorf("venue cache projection failed: %w", err)
+		case err := <-a.groupCacheListener.Errors():
+			return fmt.Errorf("Group cache projection failed: %w", err)
 		case <-runCtx.Done():
 			return nil
 		}
@@ -1352,12 +1396,20 @@ func (a *App) runHandPump(ctx context.Context) error {
 		return fmt.Errorf("notification profile projection failed: %w", err)
 	case err := <-a.venueCacheListener.Errors():
 		return fmt.Errorf("venue cache projection failed: %w", err)
+	case err := <-a.groupCacheListener.Errors():
+		return fmt.Errorf("Group cache projection failed: %w", err)
 	}
 }
 
 func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 	if a.baseStore == nil {
 		return fmt.Errorf("app is not initialised")
+	}
+	if err := a.awaitGroupProjection(ctx); err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if a.adminDeleteListener == nil {
 		return fmt.Errorf("admin-delete listener is not configured")
@@ -1398,6 +1450,29 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 		return fmt.Errorf("wait for admin-delete request outcomes: %w", waitErr)
 	}
 	return nil
+}
+
+func (a *App) awaitGroupProjection(ctx context.Context) error {
+	a.groupCacheStartMu.Lock()
+	var startErr error
+	if !a.groupCacheStarted {
+		startErr = a.groupCacheListener.Start(context.Background())
+		if startErr == nil {
+			a.groupCacheStarted = true
+		}
+	}
+	a.groupCacheStartMu.Unlock()
+	if startErr != nil {
+		return fmt.Errorf("start Group projection: %w", startErr)
+	}
+	select {
+	case <-a.groupCacheListener.Ready():
+		return nil
+	case err := <-a.groupCacheListener.Errors():
+		return fmt.Errorf("Group cache projection failed: %w", err)
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func (a *App) Close() error {
@@ -1461,6 +1536,9 @@ func (a *App) closeListeners() error {
 	}
 	if a.venueCacheListener != nil {
 		closeErrs = append(closeErrs, a.venueCacheListener.Close())
+	}
+	if a.groupCacheListener != nil {
+		closeErrs = append(closeErrs, a.groupCacheListener.Close())
 	}
 	if a.notificationProfileListener != nil {
 		closeErrs = append(closeErrs, a.notificationProfileListener.Close())

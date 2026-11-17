@@ -15,11 +15,100 @@ import (
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
 	"last_orders/internal/lastorders/components/venuecache/venuecachetest"
 )
 
 type testAuthVerifier struct{}
+
+func TestGroupsEndpointListsPublicGroupsWithOptionalAuthentication(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "groups.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.GroupSource = groupcachetest.NewWithDocuments(
+		groupcache.Document{ID: "north-id", Data: map[string]any{"name": "North", "visibility": "public"}},
+		groupcache.Document{ID: "lower-id", Data: map[string]any{"name": "north", "visibility": "public"}},
+		groupcache.Document{ID: "private-id", Data: map[string]any{"name": "North private", "visibility": "private"}},
+	)
+	cfg.HTTPAddr = "127.0.0.1:0"
+	application, err := app.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- application.Run(ctx) }()
+	client := &http.Client{Timeout: 5 * time.Second}
+	waitForHealth(t, client, application.HTTPAddr(), done)
+
+	var result struct {
+		Groups []struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			Visibility string `json:"visibility"`
+		} `json:"groups"`
+	}
+	request := func(name, authorization string) {
+		t.Helper()
+		url := "http://" + application.HTTPAddr() + "/api/groups"
+		if name != "" {
+			url += "?name=" + name
+		}
+		httpRequest, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if authorization != "" {
+			httpRequest.Header.Set("Authorization", authorization)
+		}
+		response, err := client.Do(httpRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status=%d, want HTTP 200", url, response.StatusCode)
+		}
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request("", "")
+	if len(result.Groups) != 2 || result.Groups[0].ID != "north-id" || result.Groups[0].Visibility != "public" || result.Groups[1].ID != "lower-id" {
+		t.Fatalf("unfiltered groups=%+v, want both public case variants only", result.Groups)
+	}
+	request("", "Bearer valid-token")
+	if len(result.Groups) != 2 {
+		t.Fatalf("authenticated caller received non-public Groups: %+v", result.Groups)
+	}
+	request("North", "Bearer valid-token")
+	if len(result.Groups) != 1 || result.Groups[0].ID != "north-id" || result.Groups[0].Name != "North" {
+		t.Fatalf("exact North groups=%+v", result.Groups)
+	}
+	request("north", "")
+	if len(result.Groups) != 1 || result.Groups[0].ID != "lower-id" {
+		t.Fatalf("exact north groups=%+v", result.Groups)
+	}
+	request("NORTH", "")
+	if result.Groups == nil || len(result.Groups) != 0 {
+		t.Fatalf("no-match groups=%v, want an empty array", result.Groups)
+	}
+	invalid, err := http.NewRequest(http.MethodGet, "http://"+application.HTTPAddr()+"/api/groups", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid.Header.Set("Authorization", "Bearer expired-token")
+	response, err := client.Do(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("invalid optional token status=%d, want HTTP 401", response.StatusCode)
+	}
+}
 
 func TestVersionEndpointPublic(t *testing.T) {
 	cfg := testConfig(t, t.TempDir()+"/version.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
@@ -282,6 +371,7 @@ func TestSplitLandlordAndHandPumpEmailHistoryEndToEnd(t *testing.T) {
 		LandlordInternalURL:       "http://" + landlord.InternalHTTPAddr(),
 		InternalAPIToken:          internalToken,
 		VenueSource:               venuecachetest.New(),
+		GroupSource:               groupcachetest.New(),
 		NotificationProfileSource: notificationprofiletest.New(),
 		Logger:                    testLogger(),
 	})

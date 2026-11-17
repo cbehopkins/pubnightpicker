@@ -277,6 +277,29 @@ Remove the flag or environment variable immediately after recovery: while enable
 it deletes the database on every process start, including health-check restarts.
 No shell or filesystem access inside the container is required.
 
+### Group discovery
+
+Run the default Group bootstrap before starting Last Orders. Every runtime mode,
+including standalone Landlord and HandPump, reads and validates the authoritative
+Firestore `groups` collection before becoming ready. Startup fails if it is empty,
+if any document has a missing or empty `name`, a missing or unsupported
+`visibility`, or if two documents have the same exact-case name. Supported
+visibility values are `public` and `private`; differently cased names are distinct.
+Cached SQLite Groups cannot satisfy this startup check.
+
+`GET /api/groups` supports anonymous requests and valid optional bearer tokens.
+An invalid or expired supplied token returns `401`. The optional `name` query is
+an exact, case-sensitive filter. Responses contain a `groups` array of `id`,
+`name` and `visibility`; no matches return `200` with an empty array. The live
+projection follows additions, updates and removals. Removing the final Group
+after startup leaves the backend running and discovery returns an empty array.
+
+This is deliberately an interim API: only public Groups are discoverable by any
+caller, including authenticated callers. Private Groups are never returned, even
+to members or administrators. This is narrower than the discovery and
+authorisation design in ADR-011 and ADR-012; Group management, membership,
+permissions, settings, Meet access and Group streaming are not implemented here.
+
 ### Build version
 
 `GET /api/version` is unauthenticated and returns JSON with `tag`, `commit` and
@@ -294,11 +317,12 @@ the plain-text body `ok` and `Cache-Control: no-store`. `HEAD` is also supported
 Successful probes are not logged and do not create application work or query
 Firestore, SQLite, email or push providers.
 
-HTTP serving begins only after the initial notification and venue projections
-are ready and the application listeners have started. A successful probe confirms
-that startup has passed those gates and HTTP is responsive, not that background
-work is progressing or external dependencies are currently available. The route
-is unavailable when HTTP is disabled with an empty `-http-addr`.
+HTTP serving begins only after the initial notification, venue and Group
+projections are ready and the application listeners have started. A successful
+probe confirms that startup has passed those gates and HTTP is responsive, not
+that background work is progressing or external dependencies are currently
+available. The route is unavailable when HTTP is disabled with an empty
+`-http-addr`.
 
 Local projection persistence failures stop the application with an error, both
 during startup and after readiness. They are not retried indefinitely as upstream

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/app"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
 )
@@ -32,6 +33,7 @@ func TestAppWiresUpFirestoreCollaboratorsAgainstEmulator(t *testing.T) {
 		FirestoreProjectID: projectID,
 		EmailClient:        emailplugin.ClientDummy,
 		Push:               pushplugin.Options{Client: pushplugin.ClientDummy},
+		GroupSource:        groupcachetest.New(),
 	})
 	if err != nil {
 		t.Fatalf("new app against emulator: %v", err)
