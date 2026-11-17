@@ -138,6 +138,20 @@ hosting workflows pass it into the build. Allow preview origins individually or
 set `LAST_ORDERS_ALLOWED_PREVIEW_SITES=pubnightpicker` on the backend to allow this
 Hosting site's HTTPS previews. An unset API URL retains the localhost default.
 
+## Default Group Discovery
+
+The frontend requires Last Orders to be running and the Firestore `groups`
+collection to contain exactly one public Group named `ampubnight`. On each
+application load it requests `GET /api/groups?name=ampubnight` before entering
+the existing application. Missing or duplicate results and backend request
+failures block entry and show a retry option. The resolved opaque Group ID is
+kept in memory only, so a fresh load discovers it again.
+
+For local development, use Last Orders with a demo-project emulator and seed the
+default Group before opening the frontend. This preparation does not change
+existing Meet reads, writes, permissions or access to Meets without a `groupId`;
+Meet migration and Group-scoped Meet behaviour remain deferred.
+
 ## Firestore Index Drift Check
 
 To catch index drift before deploys, run:

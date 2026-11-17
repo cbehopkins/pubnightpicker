@@ -204,7 +204,7 @@ describe("CurrentMeets", () => {
     expect(screen.getByRole("button", { name: "Meet Chat" })).toBeTruthy();
   });
 
-  it("shows only the main venue section when restaurant field is absent", () => {
+  it("shows a current Meet without a groupId when the restaurant field is absent", () => {
     useCurrentMeetsMock.mockReturnValue(createFuturePollData({
       selectedVenueId: "venue-main",
       date: "2026-03-30",
