@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "email_clients/**"
+      - "go.work"
       - ".github/workflows/email-clients-ci.yml"
   push:
     branches:
       - main
     paths:
       - "email_clients/**"
+      - "go.work"
       - ".github/workflows/email-clients-ci.yml"
   schedule:
     - cron: "17 6 * * 1"
@@ -37,7 +39,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: email_clients/go.mod
+          go-version-file: go.work
           cache-dependency-path: "*/go.sum"
 
       - name: Check formatting
@@ -71,7 +73,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: email_clients/go.mod
+          go-version-file: go.work
           cache-dependency-path: "*/go.sum"
 
       - name: Install govulncheck

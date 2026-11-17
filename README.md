@@ -31,7 +31,7 @@ delivery only.
 - Firebase CLI (`npm install -g firebase-tools`)
 - Java, required by the Firebase emulators
 - Python 3.12+ and Poetry, for the Python worker and its tests
-- Go 1.27.3+, for the Go modules; `GOTOOLCHAIN=auto` can select the version specified by each module's `go.mod`
+- Go 1.27.4+, for the Go workspace; `GOTOOLCHAIN=auto` can select the version specified by `go.work`. Go race tests also require CGO and a supported C compiler.
 
 ## Local web development
 
@@ -128,7 +128,7 @@ The dummy modes prevent real email and push delivery. See the [worker README](fi
 
 - Keep changes focused in the relevant project; update its README or design docs when behavior or setup changes.
 - Check for a nearer `AGENTS.md` and follow the project's formatting and architecture conventions.
-- Run the narrowest relevant checks for your change. The root [`run-tests.ps1`](run-tests.ps1) provides `-Node`, `-Typecheck`, `-Lint`, `-Unit`, `-Integration`, `-E2E`, and `-Go` options. `-Go` runs `go test ./...` in `cellar`, `durable_email`, `email_clients`, and `last_orders`; `-VerboseOutput` adds `-v`. With no options, the runner runs integration and Go tests; `-All` includes Go tests too. Project READMEs document additional checks.
+- Run the narrowest relevant checks for your change. The root [`run-tests.ps1`](run-tests.ps1) provides `-Node`, `-Typecheck`, `-Lint`, `-Unit`, `-Integration`, `-E2E`, and `-Go` options. `-Go` checks formatting, runs `go vet ./...`, and runs `go test -race ./...` in `cellar`, `durable_email`, `email_clients`, and `last_orders`; `-VerboseOutput` adds `-v`. With no options, the runner runs integration and Go tests; `-All` includes Go tests too. Project READMEs document additional checks.
 - Integration and E2E runners manage emulator lifecycles and seed test data. Check whether emulators are already in use before running them.
 - Never commit `.env` files, credentials, tokens, emulator data exports, or local database files.
 
