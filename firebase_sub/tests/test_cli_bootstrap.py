@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from click.testing import CliRunner
@@ -21,6 +22,7 @@ class _FakeDocRef:
         self._path = (
             path  # e.g. ("users", "uid") or ("users", "uid", "push_endpoints", "ep-id")
         )
+        self.id = path[-1]
 
     def get(self):
         return _FakeSnapshot(self._store.get(self._path))
@@ -42,8 +44,25 @@ class _FakeCollection:
         self._store = backing_store
         self._path = path  # e.g. ("users",) or ("users", "uid", "push_endpoints")
 
-    def document(self, doc_id: str):
+    def document(self, doc_id: str | None = None):
+        if doc_id is None:
+            doc_id = uuid4().hex
         return _FakeDocRef(self._store, (*self._path, doc_id))
+
+    def where(self, field: str, operator: str, value):
+        assert operator == "=="
+        query = MagicMock()
+        matches = [
+            (path, data)
+            for path, data in self._store.items()
+            if path[:-1] == self._path and data.get(field) == value
+        ]
+        query.stream.return_value = []
+        for path, data in matches:
+            snapshot = _FakeSnapshot(data)
+            snapshot.id = path[-1]
+            query.stream.return_value.append(snapshot)
+        return query
 
 
 class _FakeDb:
@@ -190,6 +209,56 @@ def test_create_admin_seeds_user_docs_and_roles(monkeypatch):
     assert fake_db.store[("roles", "admin")]["admin-user"] is True
     assert fake_db.store[("roles", "canChat")]["admin-user"] is True
     assert fake_db.store[("roles", "canCompletePoll")]["admin-user"] is True
+
+
+def test_create_admin_creates_configured_default_group(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    fake_db = MagicMock()
+    group_collection = MagicMock()
+    group_ref = MagicMock()
+    group_ref.id = "generated-group-id"
+    group_collection.where.return_value.stream.return_value = []
+    group_collection.document.return_value = group_ref
+    other_collections = _FakeDb()
+    fake_db.collection.side_effect = lambda name: (
+        group_collection if name == "groups" else other_collections.collection(name)
+    )
+    monkeypatch.setattr(module, "_get_db", lambda: fake_db)
+
+    result = CliRunner().invoke(
+        module.cli,
+        [
+            "create-admin",
+            "--uid",
+            "admin-user",
+            "--group-name",
+            "Custom Group",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    group_collection.where.assert_called_once_with("name", "==", "Custom Group")
+    group_ref.set.assert_called_once_with(
+        {"name": "Custom Group", "visibility": "public"}
+    )
+    assert "groups/generated-group-id" in result.output
+
+
+def test_create_admin_dry_run_does_not_create_default_group(monkeypatch):
+    import firebase_sub.cli.bootstrap as module
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(module, "_get_db", lambda: fake_db)
+
+    result = CliRunner().invoke(
+        module.cli,
+        ["create-admin", "--uid", "admin-user", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not any(path[0] == "groups" for path in fake_db.store)
+    assert "groups: would create public Group 'ampubnight'" in result.output
 
 
 def test_create_admin_keeps_existing_values(monkeypatch):

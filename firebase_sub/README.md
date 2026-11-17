@@ -41,6 +41,13 @@ Create or update a first admin user and grant default admin permissions:
 poetry run python firebase_sub/cli/bootstrap.py create-admin --uid <auth-uid> --name "Admin User" --email admin@example.com
 ```
 
+This command also ensures there is one Group with the exact, case-sensitive
+name `ampubnight`, creating a public Group with a Firestore-generated ID when
+needed. To use another default name, pass `--group-name "My Group"`. A single
+exact-name match is reused without changing any of its fields; differently
+named Groups are allowed. Multiple exact-name matches make bootstrap fail
+before it writes admin data. Bootstrap never changes Meets.
+
 Preview changes without writing:
 
 ```bash
@@ -54,6 +61,13 @@ poetry run python firebase_sub/cli/bootstrap.py grant-role --uid <auth-uid> --ro
 ```
 
 When `FIRESTORE_EMULATOR_HOST` is set, this command targets the emulator and uses `GOOGLE_CLOUD_PROJECT` for the project id.
+
+Bootstrap is repeatable setup, not the one-off migration in
+`group_migration/README.md`. That migration refuses to run when any Group
+already exists, then assigns its newly created Group ID to existing Meets. If
+you need that Meet backfill, run the migration before creating a Group through
+bootstrap in the same target project; a bootstrap-created Group prevents the
+migration from running there.
 
 # Backup and Restore Runbook
 

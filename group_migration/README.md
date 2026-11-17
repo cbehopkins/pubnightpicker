@@ -5,6 +5,9 @@ Firestore-generated ID to every existing Meet in the historical `polls`
 collection. The command lives with the existing CLI assistance tools at
 `firebase_sub/firebase_sub/cli/migrate_meets.py`; it has an independent test and
 dependency environment and does not import the retired backend's internals.
+Unlike routine bootstrap, this command backfills existing Meets. Use it only
+when that backfill is required, and run it before bootstrap creates a Group in
+the same target project.
 
 ## Run
 
