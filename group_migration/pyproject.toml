@@ -1,0 +1,25 @@
+[project]
+name = "group-migration"
+version = "0.1.0"
+description = "Standalone initial Group and Meet migration command"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "click>=8.2.1,<9.0",
+    "firebase-admin>=7.0,<8.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=9.0,<10.0"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "integration: requires a running Firestore emulator",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
