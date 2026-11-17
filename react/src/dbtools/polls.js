@@ -41,13 +41,13 @@ export async function rescheduleMeet(meetId, currentVenueId, nextVenueId, restau
 
     await updateDoc(docRef, payload);
 }
-export async function addVenueToMeet(selectedVenueId, poll_id, venues, pollDate) {
+export async function addVenueToMeet(selectedVenueId, meetId, venues, pollDate) {
     if (!selectedVenueId) {
         return;
     }
     assertCurrentUserPermission(PERMISSIONS.canAddPubToPoll, "adding a venue to a poll");
     try {
-        const docRef = doc(db, "polls", poll_id);
+        const docRef = doc(db, "polls", meetId);
         const venueName = venues[selectedVenueId].name;
         await updateDoc(docRef, {
             [`pubs.${selectedVenueId}`]: {
@@ -56,7 +56,7 @@ export async function addVenueToMeet(selectedVenueId, poll_id, venues, pollDate)
         });
         if (pollDate) {
             await logPollActionAudit(POLL_ACTION_ADD_VENUE, {
-                pollId: poll_id,
+                pollId: meetId,
                 pollDate,
                 selectedVenueId,
                 venueName,
@@ -66,9 +66,9 @@ export async function addVenueToMeet(selectedVenueId, poll_id, venues, pollDate)
         console.error("Error adding document: ", err);
     }
 }
-export async function removeVenueFromMeet(pollId, venueId, pollDate, venueName) {
+export async function removeVenueFromMeet(meetId, venueId, pollDate, venueName) {
     assertCurrentUserPermission(PERMISSIONS.canAddPubToPoll, "deleting a venue from a poll");
-    const docRef = doc(db, "polls", pollId);
+    const docRef = doc(db, "polls", meetId);
     await updateDoc(docRef, {
         [`pubs.${venueId}`]: deleteField(),
     });
@@ -76,7 +76,7 @@ export async function removeVenueFromMeet(pollId, venueId, pollDate, venueName) 
     if (pollDate) {
         try {
             await logPollActionAudit(POLL_ACTION_DELETE_VENUE, {
-                pollId,
+                pollId: meetId,
                 pollDate,
                 selectedVenueId: venueId,
                 venueName,
@@ -86,14 +86,14 @@ export async function removeVenueFromMeet(pollId, venueId, pollDate, venueName) 
         }
     }
 }
-export async function completeMeetVoting(key, poll_id, pollDate, restaurantId, restaurantTime) {
+export async function completeMeetVoting(selectedVenueId, meetId, pollDate, restaurantId, restaurantTime) {
     assertCurrentUserPermission(PERMISSIONS.canCompletePoll, "completing a poll");
     const completedByUid = auth.currentUser?.uid;
     if (!completedByUid) throw new Error("No authenticated poll completer.");
-    const docRef = doc(db, "polls", poll_id);
+    const docRef = doc(db, "polls", meetId);
     const payload = {
         completed: true,
-        selected: key,
+        selected: selectedVenueId,
         completedByUid,
     };
 
@@ -110,9 +110,9 @@ export async function completeMeetVoting(key, poll_id, pollDate, restaurantId, r
 
     try {
         await logPollActionAudit(POLL_ACTION_COMPLETE, {
-            pollId: poll_id,
+            pollId: meetId,
             pollDate,
-            selectedVenueId: key,
+            selectedVenueId,
             restaurantId,
             restaurantTime,
         });

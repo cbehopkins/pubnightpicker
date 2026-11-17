@@ -116,7 +116,7 @@ function PushPreferenceChecks({ pushPreferences, heading }) {
 }
 
 // Admin editing another user: their subscription lives on their own device, so only the
-// per-event choices are editable here.
+// per-Meet choices are editable here.
 export function AdminPushPreferences({ initialEnabled, pushPreferences }) {
   return (
     <Col xs={12}>

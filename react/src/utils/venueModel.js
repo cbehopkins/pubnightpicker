@@ -1,11 +1,12 @@
+import { domainVenueApiFieldNames } from "./venueApiFields";
+
 const apiFieldNames = {
-  venue_type: "venueType",
-  website_url: "website",
-  map_url: "map",
-  image_url: "image",
-  dog_friendly: "dogFriendly",
-  beer_garden: "beerGarden",
-  out_of_town: "outOfTown",
+  ...Object.fromEntries(
+    Object.entries(domainVenueApiFieldNames).map(([domainField, apiField]) => [apiField, domainField])
+  ),
+};
+
+const responseFieldNames = {
   location_id: "locationId",
   next_occurrence_date: "nextOccurrenceDate",
   visible_group_ids: "visibleGroupIds",
@@ -21,7 +22,7 @@ export function normalizeVenue(venue) {
   const result = Object.fromEntries(
     Object.entries(venue)
       .filter(([field]) => field !== "id")
-      .map(([field, value]) => [apiFieldNames[field] || field, value])
+      .map(([field, value]) => [apiFieldNames[field] || responseFieldNames[field] || field, value])
   );
   result.venueType = result.venueType || "pub";
   return result;
