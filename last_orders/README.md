@@ -32,6 +32,15 @@ and `recurrence.create_event_poll` names, and their payload fields remain unchan
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
+## Application time
+
+`app.Config.Clock` optionally supplies the current application instant. The app
+shares it with Cellar scheduling, recurrence, London daily token limits, and
+durable email and notification retry deadlines. When omitted, the app uses
+system time. After advancing an injected clock, call `App.NotifyScheduling()`
+to wake Cellar to recheck due work. Network and authentication timeouts, SSE
+heartbeats, process supervision, and shutdown allowances remain on real time.
+
 ## System model
 
 The public API and background processing have separate runtime roles. In the

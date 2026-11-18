@@ -172,7 +172,8 @@ func TestPollCompletedPushUsesPythonRescheduleAndDedupeRules(t *testing.T) {
 func TestPollCompletedPushRetriesUnknownVenue(t *testing.T) {
 	payload := completedPoll
 	payload.SelectedVenueID = "missing"
-	if _, ok := completedPushHandler(completionactionstest.New(), &recordingPopulator{}).Handle(context.Background(), payload).(cellar.Retry); !ok {
+	retry, ok := completedPushHandler(completionactionstest.New(), &recordingPopulator{}).Handle(context.Background(), payload).(cellar.Retry)
+	if !ok || retry.NotBefore == nil || !retry.NotBefore.Equal(pushNow.Add(missingVenueRetryDelay)) {
 		t.Fatal("unknown venue should retry")
 	}
 }

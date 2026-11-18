@@ -46,6 +46,47 @@ func TestSourceResetsLazilyOnNewLocalDay(t *testing.T) {
 	}
 }
 
+func TestNewWithClockResetsAtLondonMidnightInWinterAndSummer(t *testing.T) {
+	location := mustLondon(t)
+	tests := []struct {
+		name string
+		from time.Time
+		to   time.Time
+	}{
+		{
+			name: "winter",
+			from: time.Date(2026, time.January, 1, 23, 59, 0, 0, location),
+			to:   time.Date(2026, time.January, 2, 0, 0, 0, 0, location),
+		},
+		{
+			name: "summer",
+			from: time.Date(2026, time.July, 1, 23, 59, 0, 0, location),
+			to:   time.Date(2026, time.July, 2, 0, 0, 0, 0, location),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			currentInstant := test.from
+			source, err := NewWithClock("email.send", 1, location, nil, func() time.Time { return currentInstant })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := source.Acquire(); got != 0 {
+				t.Fatalf("initial acquire = %d; want grant", got)
+			}
+			if got := source.Acquire(); got == 0 {
+				t.Fatal("exhausted acquire granted a token")
+			}
+
+			currentInstant = test.to
+			if got := source.Acquire(); got != 0 {
+				t.Fatalf("first acquire after London midnight = %d; want grant", got)
+			}
+		})
+	}
+}
+
 func TestSourceRoundsExhaustedWaitUp(t *testing.T) {
 	location := mustLondon(t)
 	now := time.Date(2026, time.September, 6, 23, 59, 59, 500_000_000, location)

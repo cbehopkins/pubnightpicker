@@ -83,6 +83,7 @@ type RegisterOptions struct {
 	SubmissionGuard  SubmissionGuard
 	SubmissionPolicy SubmissionPolicy
 	Logger           *slog.Logger
+	Now              func() time.Time
 }
 
 // Register binds every durable email handler to runtime; call before Cellar.Start.
@@ -100,7 +101,7 @@ func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, 
 	if err := runtime.Register(HandlerSetup, SetupHandler{Store: store}); err != nil {
 		return err
 	}
-	if err := runtime.Register(HandlerRecovery, RecoveryHandler{Store: store}); err != nil {
+	if err := runtime.Register(HandlerRecovery, RecoveryHandler{Store: store, Now: opts.Now}); err != nil {
 		return err
 	}
 	fanout, err := NewRecoveryFanout(store)
@@ -110,7 +111,7 @@ func Register(runtime *cellar.Cellar, store *Store, client clients.EmailClient, 
 	if err := fanout.Register(runtime); err != nil {
 		return err
 	}
-	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client, Guard: opts.SubmissionGuard, Policy: opts.SubmissionPolicy, Logger: opts.Logger}); err != nil {
+	if err := runtime.Register(HandlerPost, PostHandler{Store: store, Client: client, Guard: opts.SubmissionGuard, Policy: opts.SubmissionPolicy, Logger: opts.Logger, Now: opts.Now}); err != nil {
 		return err
 	}
 	return runtime.Register(HandlerVerify, VerifyHandler{Store: store, Verifier: verifier})
@@ -139,6 +140,7 @@ func (h SetupHandler) Handle(ctx context.Context, request SendRequest) cellar.Re
 // RecoveryHandler waits for independent verification before permitting another Post.
 type RecoveryHandler struct {
 	Store *Store
+	Now   func() time.Time
 }
 
 func (h RecoveryHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
@@ -173,7 +175,7 @@ func (h RecoveryHandler) Handle(ctx context.Context, request operationRequest) c
 		return cellar.ErrorResult{Message: "read waiting recipients", Err: err}
 	}
 	if len(waiting) > 0 {
-		notBefore := time.Now().UTC().Add(time.Second)
+		notBefore := currentTime(h.Now).UTC().Add(time.Second)
 		return cellar.Retry{NotBefore: &notBefore}
 	}
 	return cellar.Complete{}
@@ -210,6 +212,7 @@ type PostHandler struct {
 	Guard  SubmissionGuard
 	Policy SubmissionPolicy
 	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 func (h PostHandler) Handle(ctx context.Context, request operationRequest) cellar.Result {
@@ -248,7 +251,7 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		return cellar.ErrorResult{Message: "email submission policy returned a negative delay"}
 	}
 	if decision.Delay > 0 {
-		notBefore := time.Now().UTC().Add(decision.Delay)
+		notBefore := currentTime(h.Now).UTC().Add(decision.Delay)
 		return cellar.Retry{NotBefore: &notBefore}
 	}
 	if !decision.BestEffort && h.Guard != nil {
@@ -260,7 +263,7 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 			return cellar.ErrorResult{Message: "email submission guard returned a negative delay"}
 		}
 		if delay > 0 {
-			notBefore := time.Now().UTC().Add(delay)
+			notBefore := currentTime(h.Now).UTC().Add(delay)
 			return cellar.Retry{NotBefore: &notBefore}
 		}
 	}
@@ -290,6 +293,13 @@ func (h PostHandler) Handle(ctx context.Context, request operationRequest) cella
 		work = append(work, h.Store.acceptWork(request.IdempotencyToken, recipient.email, result.Recipients[index].PMUID))
 	}
 	return cellar.Complete{ApplicationWork: work}
+}
+
+func currentTime(now func() time.Time) time.Time {
+	if now == nil {
+		return time.Now()
+	}
+	return now()
 }
 
 // bestEffortPost handles the email submission in a best-effort manner, recording acceptance and sending the email without retrying on failure.

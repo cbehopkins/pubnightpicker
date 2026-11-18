@@ -38,7 +38,12 @@ type Source struct {
 
 // New constructs a new in-memory daily token source.
 func New(name string, maximum int, location *time.Location, onExhausted func()) (*Source, error) {
-	return newSource(name, maximum, location, onExhausted, time.Now)
+	return NewWithClock(name, maximum, location, onExhausted, time.Now)
+}
+
+// NewWithClock constructs a daily token source using the supplied current-time reader.
+func NewWithClock(name string, maximum int, location *time.Location, onExhausted func(), now func() time.Time) (*Source, error) {
+	return newSource(name, maximum, location, onExhausted, now)
 }
 
 func newSource(name string, maximum int, location *time.Location, onExhausted func(), now func() time.Time) (*Source, error) {

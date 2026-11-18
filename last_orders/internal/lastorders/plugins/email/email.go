@@ -42,6 +42,7 @@ type Options struct {
 	MailtrapSandboxID       int64
 	Tokens                  ratelimit.TokenSource
 	Logger                  *slog.Logger
+	Now                     func() time.Time
 	MailtrapToken           string
 	MailtrapTimeout         time.Duration
 	MailtrapVerifyTolerance time.Duration
@@ -62,6 +63,7 @@ type Plugin struct {
 	verifier             clients.EmailVerifier
 	tokens               ratelimit.TokenSource
 	logger               *slog.Logger
+	now                  func() time.Time
 }
 
 func New(db *sql.DB, opts Options) (*Plugin, error) {
@@ -169,11 +171,11 @@ func New(db *sql.DB, opts Options) (*Plugin, error) {
 		return nil, fmt.Errorf("init durable email store: %w", err)
 	}
 	logger.Info("email plugin configured", "client", opts.Client, "sandbox_configured", opts.Client == ClientMailtrap && opts.MailtrapSandboxID > 0)
-	return &Plugin{clientKind: opts.Client, store: store, client: client, suppressedClient: suppressedClient, notificationSettings: opts.NotificationSettings, verifier: verifier, tokens: opts.Tokens, logger: logger}, nil
+	return &Plugin{clientKind: opts.Client, store: store, client: client, suppressedClient: suppressedClient, notificationSettings: opts.NotificationSettings, verifier: verifier, tokens: opts.Tokens, logger: logger, now: opts.Now}, nil
 }
 
 func (p *Plugin) Register(runtime *cellar.Cellar) error {
-	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission, SubmissionPolicy: p.submissionPolicy, Logger: p.logger})
+	return durableemail.Register(runtime, p.store, p.client, p.verifier, durableemail.RegisterOptions{SubmissionGuard: p.guardSubmission, SubmissionPolicy: p.submissionPolicy, Logger: p.logger, Now: p.now})
 }
 
 func (p *Plugin) submissionPolicy(_ context.Context, submission durableemail.Submission) (durableemail.SubmissionDecision, error) {
