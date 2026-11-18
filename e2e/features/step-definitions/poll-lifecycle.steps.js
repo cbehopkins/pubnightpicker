@@ -15,20 +15,34 @@ import {
     where,
     writeBatch,
 } from "firebase/firestore";
-import { londonDate, londonInstant } from "../support/calendar.js";
+import { londonDate, londonInstant, shiftDate } from "../support/calendar.js";
+import { waitForBackendRecord } from "../support/backend-evidence.js";
 import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
-function journeyPoll(world, actor) {
+function journeyPoll(world, actor, date = world.pollDate) {
     return world.actors.get(actor)
-        .getByRole("heading", { name: world.pollDate, exact: true })
+        .getByRole("heading", { name: date, exact: true })
         .locator("../..");
 }
 
-function venueRow(world, actor, venue) {
-    return journeyPoll(world, actor).getByRole("row")
+function venueRow(world, actor, venue, date = world.pollDate) {
+    return journeyPoll(world, actor, date).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
+}
+
+function applicationTimeDate(dayOffset) {
+    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
+    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
+    return shiftDate(londonDate(new Date(initialInstant)), dayOffset);
+}
+
+function applicationTimePollID(world, dayOffset) {
+    const date = applicationTimeDate(dayOffset);
+    const pollID = world.applicationTimePolls?.get(date);
+    assert.ok(pollID, `the application-time poll for ${date} must exist`);
+    return pollID;
 }
 
 async function createPoll(world, date) {
@@ -46,7 +60,54 @@ async function createPoll(world, date) {
         `the poll on ${world.pollDate} to be committed`,
     ));
     world.pollId = poll.docs[0].id;
+    world.applicationTimePolls ??= new Map();
+    world.applicationTimePolls.set(date, world.pollId);
 }
+
+async function assertPollRemainsOpen(pollID) {
+    const poll = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "polls", pollID)));
+    assert.equal(poll.data()?.completed, false, "voting must remain open before the scheduled deadline");
+    assert.equal(poll.data()?.selected ?? null, null, "an open poll must not have an automatic winner");
+}
+
+async function selectedVenueID(world, venue) {
+    const venueSnapshot = await withEmulatorAdmin((db) => getDocsFromServer(query(
+        collection(db, "pubs"),
+        where("name", "==", world.journeyVenues.get(venue)),
+    )));
+    assert.equal(venueSnapshot.size, 1, "the selected venue must be uniquely identified");
+    return venueSnapshot.docs[0].id;
+}
+
+async function waitForPollCompletion(world, pollID, venue) {
+    const expectedVenueID = await selectedVenueID(world, venue);
+    const poll = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocFromServer(doc(db, "polls", pollID)),
+        (snapshot) => snapshot.data()?.completed === true,
+        "Last Orders to complete the poll after its London deadline",
+    ));
+    assert.equal(poll.data()?.selected, expectedVenueID);
+}
+
+Given("the application-time processing floor matches the supplied London date", function () {
+    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
+    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
+    assert.equal(
+        process.env.LAST_ORDERS_E2E_POLLS_SINCE,
+        shiftDate(londonDate(new Date(initialInstant)), -1),
+        "the processing floor must include yesterday's catch-up fixture",
+    );
+});
+
+Given("startup autocomplete discovery has settled before fixture creation", async function () {
+    const startupDate = shiftDate(applicationTimeDate(0), -1);
+    await waitForBackendRecord(
+        (record) => record.msg === "auto-completion discovery found eligible polls"
+            && record.observed_on === startupDate
+            && record.count === 0,
+        `startup auto-completion discovery through ${startupDate} to settle`,
+    );
+});
 
 Given("the following journey venues are available:", async function (table) {
     assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
@@ -121,9 +182,12 @@ When("Bob creates a poll on a clear date", async function () {
 });
 
 When("Bob creates a poll for the frozen application date", async function () {
-    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
-    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
-    await createPoll(this, londonDate(new Date(initialInstant)));
+    await createPoll(this, applicationTimeDate(0));
+});
+
+When("Bob creates a poll for application-time day {int}", async function (dayOffset) {
+    assert.ok(dayOffset >= -2 && dayOffset <= 2, "application-time day offset must be between -2 and 2");
+    await createPoll(this, applicationTimeDate(dayOffset));
 });
 
 Then("{word} sees the poll on Active Polls", async function (name) {
@@ -182,23 +246,33 @@ When("the application clock advances to {string} London time", async function (l
 });
 
 Then("the application-time poll remains open", async function () {
-    const poll = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "polls", this.pollId)));
-    assert.equal(poll.data()?.completed, false, "voting must remain open before the scheduled deadline");
+    await assertPollRemainsOpen(this.pollId);
+});
+
+Then("the application-time destination London date is day {int}", function (dayOffset) {
+    assert.equal(this.pollDate, applicationTimeDate(dayOffset));
+});
+
+Then("the application-time poll for day {int} remains open", async function (dayOffset) {
+    await assertPollRemainsOpen(applicationTimePollID(this, dayOffset));
 });
 
 Then("Last Orders completes the application-time poll at {string}", async function (venue) {
-    const venueSnapshot = await withEmulatorAdmin((db) => getDocsFromServer(query(
-        collection(db, "pubs"),
-        where("name", "==", this.journeyVenues.get(venue)),
-    )));
-    assert.equal(venueSnapshot.size, 1, "the selected venue must be uniquely identified");
-    const selectedVenueID = venueSnapshot.docs[0].id;
-    const poll = await withEmulatorAdmin((db) => waitForValue(
-        () => getDocFromServer(doc(db, "polls", this.pollId)),
-        (snapshot) => snapshot.data()?.completed === true,
-        "Last Orders to complete the poll after its London deadline",
-    ));
-    assert.equal(poll.data()?.selected, selectedVenueID);
+    await waitForPollCompletion(this, this.pollId, venue);
+});
+
+Then("Last Orders completes application-time day {int} at {string}", async function (dayOffset, venue) {
+    await waitForPollCompletion(this, applicationTimePollID(this, dayOffset), venue);
+});
+
+Then("Last Orders leaves the application-time poll for manual completion due to a tie", async function () {
+    await waitForBackendRecord(
+        (record) => record.msg === "poll requires manual completion"
+            && record.poll_id === this.pollId
+            && record.reason === "tie",
+        "Last Orders to classify the tied poll for manual completion",
+    );
+    await assertPollRemainsOpen(this.pollId);
 });
 
 When("Claire completes the poll by choosing {string}", async function (venue) {

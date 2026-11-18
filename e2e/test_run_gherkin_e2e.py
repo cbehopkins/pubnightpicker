@@ -173,6 +173,63 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertEqual(run_group.call_args.args[5], selections[0])
         self.assertTrue(run_group.call_args.args[6])
 
+    def test_application_time_processing_floor_uses_london_date_lookback(self) -> None:
+        instant = "2026-06-30T23:30:00Z"
+        self.assertEqual(
+            runner._polls_since(
+                {"LAST_ORDERS_E2E_INITIAL_TIME": instant}, application_time=True
+            ),
+            "2026-06-30",
+        )
+
+    def test_application_time_backend_build_uses_e2e_tag(self) -> None:
+        def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
+            Path(command[command.index("-o") + 1]).touch()
+            return 0
+
+        with patch.object(runner, "_tool", return_value="go"), patch.object(
+            runner, "_run_command", side_effect=build_command
+        ) as build:
+            runner._build_backend(self.root, runner._environment(True), True)
+
+        self.assertIn("-tags=e2e", build.call_args.args[0])
+
+    def test_application_time_startup_must_echo_initial_time_and_processing_floor(
+        self,
+    ) -> None:
+        path = self.root / "backend.jsonl"
+        initial_time = "2026-06-30T23:30:00Z"
+        records = [
+            {
+                "msg": "firestore emulator enabled",
+                "project_id": runner.EMULATOR_PROJECT,
+                "firestore_emulator_host": "127.0.0.1:8080",
+            },
+            {
+                "msg": "dummy email client enabled; no Mailtrap or Sweego requests will be made"
+            },
+            {"msg": "push client selected", "client": "dummy"},
+            {
+                "msg": "e2e application clock enabled",
+                "initial_instant": initial_time,
+                "control_addr": runner.CLOCK_CONTROL_ADDR,
+            },
+            {"msg": "listener scope resolved", "polls_since": "2026-06-30"},
+        ]
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        runner._verify_backend_startup(path, True, initial_time, "2026-06-30")
+
+        records[3]["initial_instant"] = "2026-06-30T12:00:00Z"
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "safety evidence"):
+            runner._verify_backend_startup(path, True, initial_time, "2026-06-30")
+
     def test_scenario_lifecycle_runs_each_selected_scenario_with_fresh_state(self) -> None:
         selections = ("features/first.feature:5", "features/second.feature:9")
         scratch_paths: list[Path] = []

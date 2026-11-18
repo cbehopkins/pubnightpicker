@@ -337,7 +337,54 @@ def _build_backend(
     return binary
 
 
-def _verify_backend_startup(path: Path, application_time: bool = False) -> None:
+def _polls_since(env: dict[str, str], application_time: bool = False) -> str:
+    if not application_time:
+        return datetime.now(UTC).date().isoformat()
+
+    initial_time = env.get("LAST_ORDERS_E2E_INITIAL_TIME")
+    if not initial_time:
+        raise RuntimeError("Application-time journeys require an initial instant")
+    try:
+        parsed_initial_time = datetime.fromisoformat(
+            initial_time.replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise RuntimeError("Application-time initial instant is invalid") from error
+    if parsed_initial_time.tzinfo is None:
+        raise RuntimeError("Application-time initial instant requires an offset")
+
+    script = (
+        'import { londonDate, shiftDate } from "./features/support/calendar.js"; '
+        'console.log(shiftDate(londonDate(new Date(process.argv[1])), -1));'
+    )
+    result = subprocess.run(
+        [
+            _tool("node"),
+            "--input-type=module",
+            "-e",
+            script,
+            initial_time,
+        ],
+        cwd=E2E_DIR,
+        env=env,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    polls_since = result.stdout.strip()
+    try:
+        datetime.strptime(polls_since, "%Y-%m-%d")
+    except ValueError as error:
+        raise RuntimeError("London processing floor is not a valid date") from error
+    return polls_since
+
+
+def _verify_backend_startup(
+    path: Path,
+    application_time: bool = False,
+    initial_time: str | None = None,
+    polls_since: str | None = None,
+) -> None:
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     records = [
         json.loads(line) for line in lines if line.endswith("\n") and line.strip()
@@ -357,8 +404,10 @@ def _verify_backend_startup(path: Path, application_time: bool = False) -> None:
         expected += (
             {
                 "msg": "e2e application clock enabled",
+                "initial_instant": initial_time,
                 "control_addr": CLOCK_CONTROL_ADDR,
             },
+            {"msg": "listener scope resolved", "polls_since": polls_since},
         )
     for evidence in expected:
         if not any(
@@ -439,6 +488,7 @@ def _run_group(
     _remove_stale_hub_locator()
     env = _environment(application_time)
     _validate_environment(env, application_time)
+    polls_since = _polls_since(env, application_time)
     services: dict[str, ProcessTree] = {}
     print(f"[Journey] Starting fresh {group} group ({EMULATOR_PROJECT})", flush=True)
     with ExitStack() as stack:
@@ -498,7 +548,7 @@ def _run_group(
                     "-http-addr=127.0.0.1:8081",
                     "-push-client=dummy",
                     "-allow-auth-emulator",
-                    f"-polls-since={datetime.fromisoformat(env['LAST_ORDERS_E2E_INITIAL_TIME'].replace('Z', '+00:00')).date().isoformat() if application_time else datetime.now(UTC).date().isoformat()}",
+                    f"-polls-since={polls_since}",
                 ],
                 cwd=LAST_ORDERS_DIR,
                 env=backend_env,
@@ -508,7 +558,12 @@ def _run_group(
             _wait_for_url(f"{BACKEND_URL}/healthz", services)
             if application_time:
                 _wait_for_url(f"{CLOCK_CONTROL_URL}/clock", services)
-            _verify_backend_startup(stdout_path, application_time)
+            _verify_backend_startup(
+                stdout_path,
+                application_time,
+                env.get("LAST_ORDERS_E2E_INITIAL_TIME"),
+                polls_since,
+            )
             print(
                 "[Journey] Verified demo emulator and dummy delivery selection",
                 flush=True,
@@ -534,6 +589,11 @@ def _run_group(
             cucumber_env = {
                 **env,
                 "E2E_BACKEND_LOG_PATH": str(artifacts / "last-orders.jsonl"),
+                **(
+                    {"LAST_ORDERS_E2E_POLLS_SINCE": polls_since}
+                    if application_time
+                    else {}
+                ),
             }
         return _run_command(
             [

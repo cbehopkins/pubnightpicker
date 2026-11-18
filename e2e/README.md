@@ -113,7 +113,15 @@ Time-controlled backend scenarios are separately tagged `@application_time`.
 Run them with `--group last-orders --application-time`; this selects only those
 scenarios, builds with the Go `e2e` tag, and forces the fresh per-scenario
 lifecycle. Each process receives a frozen initial instant and a loopback clock
-endpoint on port 8082. In a Cucumber step, call
+endpoint on port 8082. The initial poll-processing floor is the supplied
+instant's London date minus one calendar day, so catch-up fixtures remain in
+scope; startup evidence verifies both the exact initial instant and floor.
+Time-driven journeys wait for the startup autocomplete discovery record before
+creating fixtures, then use correlated backend evidence and authenticated
+emulator reads for outcomes. `waitForValue` and backend-evidence waits use
+real-time 20-second bounds; advancing the application clock only acknowledges
+scheduler notification and never substitutes for waiting on business results.
+In a Cucumber step, call
 `this.advanceApplicationTime("2026-07-04T16:00:00+01:00")` to advance that
 process's clock. Its acknowledgement confirms scheduler notification only;
 assert business outcomes through their normal observable interfaces. The

@@ -84,3 +84,21 @@ test("application clock helper sends advances only to its loopback endpoint", as
         await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
 });
+
+test("application clock helper reports control endpoint failures", async () => {
+    const server = createServer((_request, response) => {
+        response.statusCode = 409;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ error: "application time cannot move backwards" }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const address = server.address();
+        await assert.rejects(
+            advanceApplicationTime("2026-07-04T16:00:00+01:00", `http://127.0.0.1:${address.port}`),
+            /application time cannot move backwards/,
+        );
+    } finally {
+        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+});
