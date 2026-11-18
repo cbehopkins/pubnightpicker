@@ -73,12 +73,13 @@ mandatory groups sequentially:
 | Backend-dependent | `@last_orders` | Different fresh emulators, Vite and Last Orders |
 
 Both groups must discover scenarios. A build, startup, scenario or cleanup
-failure fails the command rather than skipping the backend group. Last Orders
-is built before services start and runs once for its group, using a temporary
-SQLite database. No emulator data is imported, exported or reset between
-scenarios. The initial poll-history floor is UTC today; expected recurrence
-dates use Europe/London. A London midnight crossing explicitly fails the
-recurrence scenario so it can be rerun with fresh data.
+failure fails the command rather than skipping the backend group. In the default
+`group` lifecycle, Last Orders is built before services start and runs once for
+the backend-dependent group, using a temporary SQLite database. Emulator data
+is not imported, exported or reset between scenarios in this shared lifecycle.
+The initial poll-history floor is UTC today; expected recurrence dates use
+Europe/London. A London midnight crossing explicitly fails the recurrence
+scenario so it can be rerun with fresh data.
 
 Focused developer commands, from `e2e/`:
 
@@ -102,9 +103,11 @@ The Last Orders binary is built once and reused; running processes, emulator
 data, scheduling state and idempotency records are not reused. This lifecycle
 uses the ordinary system-time backend and does not require the clock-control
 endpoint. Services and temporary state are cleaned up after each scenario,
-including startup errors, failures and interruption; a failed scenario stops
-the remaining selections. Per-scenario logs and Cucumber results are written
-under `e2e/artifacts/<run>/last-orders/scenario-NNN/`.
+including startup errors, failures and interruption. Scenario scratch data is
+deleted before the next selection starts. Cucumber test failures are recorded
+while later selections run in fresh lifecycles; startup errors and interruption
+stop the remaining selections. Per-scenario logs and Cucumber results are
+written under `e2e/artifacts/<run>/last-orders/scenario-NNN/`.
 
 The harness checks use standard-library Python `unittest`; support checks use
 Node's built-in test runner. Discovery runs before services start. CI runs both
