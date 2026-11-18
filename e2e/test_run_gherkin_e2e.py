@@ -24,6 +24,8 @@ class JourneyRunnerTests(unittest.TestCase):
 
     def test_environment_discards_inherited_delivery_and_credentials(self) -> None:
         unsafe = {
+            "GOFLAGS": "-tags=e2e",
+            "GOENV": "synthetic-go-env",
             "MAILTRAP_TOKEN": "synthetic",
             "MAILTRAP_SANDBOX_TOKEN": "synthetic",
             "SWEEGO_PROVIDER": "synthetic",
@@ -37,8 +39,17 @@ class JourneyRunnerTests(unittest.TestCase):
         }
         with patch.dict(os.environ, unsafe):
             env = runner._environment()
-        self.assertTrue(set(unsafe).isdisjoint(env))
+            clock_env = runner._environment(application_time=True)
+        self.assertTrue((set(unsafe) - {"GOFLAGS", "GOENV"}).isdisjoint(env))
+        self.assertEqual(env["GOFLAGS"], "")
+        self.assertEqual(env["GOENV"], "off")
+        self.assertNotIn("LAST_ORDERS_E2E_INITIAL_TIME", env)
+        self.assertEqual(
+            clock_env["LAST_ORDERS_E2E_CLOCK_ADDR"], runner.CLOCK_CONTROL_ADDR
+        )
+        self.assertEqual(clock_env["E2E_CLOCK_URL"], runner.CLOCK_CONTROL_URL)
         runner._validate_environment(env)
+        runner._validate_environment(clock_env, application_time=True)
 
     def test_unsafe_effective_configuration_is_rejected(self) -> None:
         for key, value in (
@@ -112,7 +123,8 @@ class JourneyRunnerTests(unittest.TestCase):
 
     def test_default_runs_both_groups_with_different_state_paths(self) -> None:
         def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
-            Path(command[3]).touch()
+            output_index = command.index("-o") + 1
+            Path(command[output_index]).touch()
             return 0
 
         with patch.object(runner, "E2E_DIR", self.root), patch.object(
@@ -126,6 +138,9 @@ class JourneyRunnerTests(unittest.TestCase):
         ) as group:
             self.assertEqual(runner.main([]), 2)
         build.assert_called_once()
+        self.assertNotIn("-tags=e2e", build.call_args.args[0])
+        self.assertEqual(build.call_args.args[2]["GOFLAGS"], "")
+        self.assertEqual(build.call_args.args[2]["GOENV"], "off")
         self.assertEqual(
             [call.args[0] for call in group.call_args_list], ["frontend", "last-orders"]
         )
@@ -133,6 +148,30 @@ class JourneyRunnerTests(unittest.TestCase):
             group.call_args_list[0].args[2], group.call_args_list[1].args[2]
         )
         self.assertEqual(discovery.call_count, 2)
+
+    def test_application_time_mode_selects_tagged_scenarios_with_fresh_state(
+        self,
+    ) -> None:
+        selections = ("features/application-time.feature:5",)
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ) as preflight, patch.object(
+            runner, "_discover", return_value=selections
+        ) as discovery, patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ) as build, patch.object(
+            runner, "_run_group", return_value=0
+        ) as run_group:
+            self.assertEqual(
+                runner.main(["--group", "last-orders", "--application-time"]), 0
+            )
+
+        self.assertTrue(preflight.call_args.args[1].get("LAST_ORDERS_E2E_INITIAL_TIME"))
+        build.assert_called_once()
+        self.assertTrue(build.call_args.args[2])
+        self.assertTrue(discovery.call_args.args[4])
+        self.assertEqual(run_group.call_args.args[5], selections[0])
+        self.assertTrue(run_group.call_args.args[6])
 
     def test_scenario_lifecycle_runs_each_selected_scenario_with_fresh_state(self) -> None:
         selections = ("features/first.feature:5", "features/second.feature:9")
@@ -195,8 +234,20 @@ class JourneyRunnerTests(unittest.TestCase):
             runner, "_run_command", return_value=0
         ) as command, self.assertRaisesRegex(RuntimeError, "No scenarios"):
             runner._discover("last-orders", runner._environment(), self.root)
-        self.assertIn("@last_orders", command.call_args.args[0])
-        self.assertIn("--dry-run", command.call_args.args[0])
+        arguments = command.call_args.args[0]
+        self.assertIn("@last_orders", arguments[arguments.index("--tags") + 1])
+        self.assertIn("not @application_time", arguments[arguments.index("--tags") + 1])
+        self.assertIn("--dry-run", arguments)
+
+    def test_application_time_tag_is_excluded_from_ordinary_backend_runs(self) -> None:
+        self.assertEqual(
+            runner._scenario_tags("last-orders", False),
+            "(@last_orders) and not @application_time",
+        )
+        self.assertEqual(
+            runner._scenario_tags("last-orders", True),
+            "(@last_orders) and @application_time",
+        )
 
     def test_discovery_returns_location_for_each_selected_scenario(self) -> None:
         (self.root / "discovery.json").write_text(

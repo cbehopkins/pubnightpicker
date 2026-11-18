@@ -13,10 +13,24 @@ import (
 	"syscall"
 	"time"
 
+	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/app"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
 )
+
+type clockControlSetup interface {
+	Clock() cellar.Clock
+	Start(*app.App, *slog.Logger) error
+	Close() error
+	Addr() string
+}
+
+type clockControlSafety struct {
+	AllowAuthEmulator    bool
+	PushClient           string
+	EnableRealAuthDelete bool
+}
 
 func main() {
 	dbPathDefault := os.Getenv("LAST_ORDERS_DB_PATH")
@@ -50,6 +64,18 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	clockControl, err := configureClockControl(os.LookupEnv, clockControlSafety{
+		AllowAuthEmulator:    *allowAuthEmulator,
+		PushClient:           *pushClient,
+		EnableRealAuthDelete: *enableRealAuthDelete,
+	})
+	if err != nil {
+		fatalf("configure E2E application clock: %v", err)
+	}
+	var applicationClock cellar.Clock
+	if clockControl != nil {
+		applicationClock = clockControl.Clock()
+	}
 	firestoreForceIPv4, err := boolFromEnv("LAST_ORDERS_FIRESTORE_FORCE_IPV4", true, os.LookupEnv)
 	if err != nil {
 		fatalf("configure Firestore transport: %v", err)
@@ -141,6 +167,7 @@ func main() {
 		PollDelay:               *pollDelay,
 		ShutdownDrainTimeout:    *shutdownDrainTimeout,
 		Logger:                  logger,
+		Clock:                   applicationClock,
 		EnableFirestore:         true,
 		PollsSince:              *pollsSince,
 		FirestoreProjectID:      firestoreProjectID,
@@ -173,6 +200,17 @@ func main() {
 		fatalf("initialise app: %v", err)
 	}
 	defer application.Close()
+	if clockControl != nil {
+		if err := clockControl.Start(application, logger); err != nil {
+			fatalf("start E2E clock control: %v", err)
+		}
+		defer func() {
+			if err := clockControl.Close(); err != nil {
+				logger.Error("close E2E clock control", "err", err)
+			}
+		}()
+		logger.Info("e2e application clock enabled", "initial_instant", applicationClock.Now().Format(time.RFC3339Nano), "control_addr", clockControl.Addr())
+	}
 
 	logger.Info("last-orders starting", "db_path", *dbPath)
 	logger.Info("last-orders component selected", "component", component)

@@ -15,6 +15,7 @@ import {
     where,
     writeBatch,
 } from "firebase/firestore";
+import { londonDate, londonInstant } from "../support/calendar.js";
 import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
@@ -28,6 +29,23 @@ function journeyPoll(world, actor) {
 function venueRow(world, actor, venue) {
     return journeyPoll(world, actor).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
+}
+
+async function createPoll(world, date) {
+    const bob = world.actors.get("Bob");
+    world.pollDate = date;
+    assert.notEqual(bob.context(), world.actors.get("Claire")?.context());
+    await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
+    await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
+    await bob.locator('input[type="date"]').fill(world.pollDate);
+    await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
+    await bob.getByRole("heading", { name: world.pollDate, exact: true }).waitFor();
+    const poll = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocsFromServer(query(collection(db, "polls"), where("date", "==", world.pollDate))),
+        (polls) => polls.size === 1,
+        `the poll on ${world.pollDate} to be committed`,
+    ));
+    world.pollId = poll.docs[0].id;
 }
 
 Given("the following journey venues are available:", async function (table) {
@@ -98,20 +116,14 @@ When("{word} opens Active Polls", async function (name) {
 });
 
 When("Bob creates a poll on a clear date", async function () {
-    const bob = this.actors.get("Bob");
-    assert.notEqual(bob.context(), this.actors.get("Claire").context());
-    this.pollDate = await withEmulatorAdmin(nextAvailablePollDate);
-    await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
-    await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
-    await bob.locator('input[type="date"]').fill(this.pollDate);
-    await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
-    await bob.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
-    const poll = await withEmulatorAdmin(async (db) => waitForValue(
-        () => getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.pollDate))),
-        (polls) => polls.size === 1,
-        `the poll on ${this.pollDate} to be committed`,
-    ));
-    this.pollId = poll.docs[0].id;
+    const date = await withEmulatorAdmin(nextAvailablePollDate);
+    await createPoll(this, date);
+});
+
+When("Bob creates a poll for the frozen application date", async function () {
+    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
+    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
+    await createPoll(this, londonDate(new Date(initialInstant)));
 });
 
 Then("{word} sees the poll on Active Polls", async function (name) {
@@ -160,6 +172,33 @@ Then("{word} sees the following vote totals:", async function (name, table) {
     for (const { venue, votes } of table.hashes()) {
         await venueRow(this, name, venue).getByRole("cell", { name: votes, exact: true }).waitFor();
     }
+});
+
+When("the application clock advances to {string} London time", async function (localTime) {
+    const instant = londonInstant(this.pollDate, localTime);
+    const acknowledgement = await this.advanceApplicationTime(instant);
+    assert.equal(Date.parse(acknowledgement.instant), Date.parse(instant));
+    assert.equal(acknowledgement.scheduling_notified, true);
+});
+
+Then("the application-time poll remains open", async function () {
+    const poll = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "polls", this.pollId)));
+    assert.equal(poll.data()?.completed, false, "voting must remain open before the scheduled deadline");
+});
+
+Then("Last Orders completes the application-time poll at {string}", async function (venue) {
+    const venueSnapshot = await withEmulatorAdmin((db) => getDocsFromServer(query(
+        collection(db, "pubs"),
+        where("name", "==", this.journeyVenues.get(venue)),
+    )));
+    assert.equal(venueSnapshot.size, 1, "the selected venue must be uniquely identified");
+    const selectedVenueID = venueSnapshot.docs[0].id;
+    const poll = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocFromServer(doc(db, "polls", this.pollId)),
+        (snapshot) => snapshot.data()?.completed === true,
+        "Last Orders to complete the poll after its London deadline",
+    ));
+    assert.equal(poll.data()?.selected, selectedVenueID);
 });
 
 When("Claire completes the poll by choosing {string}", async function (venue) {

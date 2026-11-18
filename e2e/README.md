@@ -109,6 +109,16 @@ while later selections run in fresh lifecycles; startup errors and interruption
 stop the remaining selections. Per-scenario logs and Cucumber results are
 written under `e2e/artifacts/<run>/last-orders/scenario-NNN/`.
 
+Time-controlled backend scenarios are separately tagged `@application_time`.
+Run them with `--group last-orders --application-time`; this selects only those
+scenarios, builds with the Go `e2e` tag, and forces the fresh per-scenario
+lifecycle. Each process receives a frozen initial instant and a loopback clock
+endpoint on port 8082. In a Cucumber step, call
+`this.advanceApplicationTime("2026-07-04T16:00:00+01:00")` to advance that
+process's clock. Its acknowledgement confirms scheduler notification only;
+assert business outcomes through their normal observable interfaces. The
+ordinary journey path stays untagged and ignores E2E clock settings.
+
 The harness checks use standard-library Python `unittest`; support checks use
 Node's built-in test runner. Discovery runs before services start. CI runs both
 checks and the default browser command, not just one tag group.
