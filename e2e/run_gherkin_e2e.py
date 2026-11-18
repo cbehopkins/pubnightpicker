@@ -44,7 +44,24 @@ CUCUMBER_ENTRY = (
 
 
 def _environment(application_time: bool = False) -> dict[str, str]:
-    initial_time = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    env = _base_environment()
+    if application_time:
+        initial_time = datetime.now(UTC).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        env.update(
+            {
+                "LAST_ORDERS_E2E_INITIAL_TIME": initial_time.isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z"),
+                "LAST_ORDERS_E2E_CLOCK_ADDR": CLOCK_CONTROL_ADDR,
+                "E2E_CLOCK_URL": CLOCK_CONTROL_URL,
+            }
+        )
+    return env
+
+
+def _base_environment() -> dict[str, str]:
     retained = {
         "PATH",
         "PATHEXT",
@@ -99,25 +116,42 @@ def _environment(application_time: bool = False) -> dict[str, str]:
             "FIREBASE_CLI_DISABLE_UPDATE_CHECK": "true",
         }
     )
-    if application_time:
-        env.update(
-            {
-                "LAST_ORDERS_E2E_INITIAL_TIME": initial_time.isoformat(
-                    timespec="seconds"
-                ).replace("+00:00", "Z"),
-                "LAST_ORDERS_E2E_CLOCK_ADDR": CLOCK_CONTROL_ADDR,
-                "E2E_CLOCK_URL": CLOCK_CONTROL_URL,
-            }
-        )
     return env
 
 
 def _validate_environment(env: dict[str, str], application_time: bool = False) -> None:
-    expected = _environment(application_time)
+    expected = _base_environment()
+    if application_time:
+        expected.update(
+            {
+                "LAST_ORDERS_E2E_CLOCK_ADDR": CLOCK_CONTROL_ADDR,
+                "E2E_CLOCK_URL": CLOCK_CONTROL_URL,
+            }
+        )
     for key, value in expected.items():
         if env.get(key) != value:
             raise RuntimeError(f"Unsafe journey configuration: {key}")
+    if application_time:
+        initial_time = env.get("LAST_ORDERS_E2E_INITIAL_TIME")
+        if not initial_time:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            )
+        try:
+            parsed_initial_time = datetime.fromisoformat(
+                initial_time.replace("Z", "+00:00")
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            ) from error
+        if parsed_initial_time.tzinfo is None or parsed_initial_time.utcoffset() is None:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            )
     unexpected = set(env) - set(expected) - {"LAST_ORDERS_CURSOR_HMAC_KEY"}
+    if application_time:
+        unexpected.discard("LAST_ORDERS_E2E_INITIAL_TIME")
     if unexpected:
         raise RuntimeError(
             "Unexpected child configuration keys: " + ", ".join(sorted(unexpected))

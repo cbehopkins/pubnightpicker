@@ -51,6 +51,25 @@ class JourneyRunnerTests(unittest.TestCase):
         runner._validate_environment(env)
         runner._validate_environment(clock_env, application_time=True)
 
+    def test_application_time_validation_does_not_regenerate_environment(self) -> None:
+        env = runner._environment(application_time=True)
+        with patch.object(
+            runner,
+            "_environment",
+            side_effect=AssertionError("validation must not regenerate initial time"),
+        ):
+            runner._validate_environment(env, application_time=True)
+
+    def test_application_time_validation_requires_an_offset_instant(self) -> None:
+        env = runner._environment(application_time=True)
+        for initial_time in ("invalid", "2026-11-18T12:00:00"):
+            with self.subTest(initial_time=initial_time):
+                candidate = {**env, "LAST_ORDERS_E2E_INITIAL_TIME": initial_time}
+                with self.assertRaisesRegex(
+                    RuntimeError, "LAST_ORDERS_E2E_INITIAL_TIME"
+                ):
+                    runner._validate_environment(candidate, application_time=True)
+
     def test_unsafe_effective_configuration_is_rejected(self) -> None:
         for key, value in (
             ("GOOGLE_CLOUD_PROJECT", "not-demo"),
