@@ -67,6 +67,289 @@ func TestDatabaseOwnershipSingleSQLiteForAppAndCellar(t *testing.T) {
 	}
 }
 
+type recordingAutocompleteSource struct {
+	*autocompletetest.Source
+	observed chan string
+}
+
+func (source *recordingAutocompleteSource) ListOpenPollsThrough(ctx context.Context, observedOn string) ([]autocomplete.Document, error) {
+	source.observed <- observedOn
+	return source.Source.ListOpenPollsThrough(ctx, observedOn)
+}
+
+func TestAutocompleteStartupAndDeadlineDiscoveryUseLatestDueLondonOccurrence(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := "2026-07-04"
+	clock := &applicationTestClock{now: time.Date(2026, time.July, 4, 15, 59, 0, 0, location)}
+	source := &recordingAutocompleteSource{
+		Source:   autocompletetest.New(),
+		observed: make(chan string, 4),
+	}
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "autocomplete-deadline.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Clock = clock
+	cfg.AutocompleteSource = source
+	application := newApp(t, cfg)
+	defer application.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- application.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("run app: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("app did not stop after cancellation")
+		}
+	}()
+
+	select {
+	case observedOn := <-source.observed:
+		if observedOn != "2026-07-03" {
+			t.Fatalf("startup discovery date = %q, want 2026-07-03 before today's 16:00 deadline", observedOn)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup discovery did not run")
+	}
+
+	source.SeedPoll("after-startup", map[string]any{
+		"date":      today,
+		"completed": false,
+		"pubs":      map[string]any{"venue-1": map[string]any{}},
+	})
+	poll, err := source.GetPoll(context.Background(), "after-startup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed, _ := poll.Data["completed"].(bool); completed {
+		t.Fatal("poll created after startup completed before today's deadline")
+	}
+	clock.Set(time.Date(2026, time.July, 4, 16, 0, 0, 0, location))
+	application.NotifyScheduling()
+
+	select {
+	case observedOn := <-source.observed:
+		if observedOn != today {
+			t.Fatalf("scheduled discovery date = %q, want %s", observedOn, today)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled discovery did not run after today's deadline")
+	}
+
+	deadline := time.After(5 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		poll, err := source.GetPoll(ctx, "after-startup")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed, _ := poll.Data["completed"].(bool); completed {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("poll created after startup was not completed after today's deadline")
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestAutocompleteStartupRecoversAfterDeadlineWithRetainedDatabase(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "autocomplete-restart.db")
+	clock := &applicationTestClock{now: time.Date(2026, time.July, 4, 15, 59, 0, 0, location)}
+	source := &recordingAutocompleteSource{Source: autocompletetest.New(), observed: make(chan string, 4)}
+	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Clock = clock
+	cfg.AutocompleteSource = source
+	first := newApp(t, cfg)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- first.Run(firstCtx) }()
+	select {
+	case observedOn := <-source.observed:
+		if observedOn != "2026-07-03" {
+			cancelFirst()
+			_ = first.Close()
+			t.Fatalf("pre-deadline startup date = %q, want 2026-07-03", observedOn)
+		}
+	case <-time.After(5 * time.Second):
+		cancelFirst()
+		_ = first.Close()
+		t.Fatal("pre-deadline startup discovery did not run")
+	}
+	cancelFirst()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first app run: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	source.SeedPoll("created-during-downtime", map[string]any{
+		"date":      "2026-07-04",
+		"completed": false,
+		"pubs":      map[string]any{"venue-1": map[string]any{}},
+	})
+	clock.Set(time.Date(2026, time.July, 4, 16, 1, 0, 0, location))
+	second := newApp(t, cfg)
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- second.Run(secondCtx) }()
+	defer func() {
+		cancelSecond()
+		select {
+		case err := <-secondDone:
+			if err != nil {
+				t.Errorf("second app run: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("second app did not stop after cancellation")
+		}
+		if err := second.Close(); err != nil {
+			t.Errorf("close second app: %v", err)
+		}
+	}()
+	select {
+	case observedOn := <-source.observed:
+		if observedOn != "2026-07-04" {
+			t.Fatalf("post-deadline startup date = %q, want 2026-07-04", observedOn)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("post-deadline startup discovery did not run")
+	}
+
+	deadline := time.After(5 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		poll, err := source.GetPoll(secondCtx, "created-during-downtime")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed, _ := poll.Data["completed"].(bool); completed {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("retained-database restart did not discover voting created during downtime")
+		case <-ticker.C:
+		}
+	}
+
+	nextOccurrence := time.Date(2026, time.July, 5, 16, 0, 0, 0, location)
+	deadline = time.After(5 * time.Second)
+	for {
+		active, err := second.CellarStore().ListActive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cell := range active {
+			if cell.ID == cellar.CellID("timer:autocomplete.daily") && cell.NotBefore != nil && cell.NotBefore.Equal(nextOccurrence) {
+				select {
+				case observedOn := <-source.observed:
+					t.Fatalf("startup and timer duplicated discovery for %s", observedOn)
+				default:
+					return
+				}
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("overdue calendar timer did not reschedule after recovery")
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestAutocompleteCatchupUsesMondayOccurrenceUntilTuesdayDeadline(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &applicationTestClock{now: time.Date(2026, time.July, 6, 15, 59, 0, 0, location)}
+	source := &recordingAutocompleteSource{Source: autocompletetest.New(), observed: make(chan string, 4)}
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "autocomplete-catchup.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Clock = clock
+	cfg.AutocompleteSource = source
+	application := newApp(t, cfg)
+	defer application.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- application.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("run app: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("app did not stop after cancellation")
+		}
+	}()
+
+	expectObserved := func(want string) {
+		t.Helper()
+		select {
+		case observedOn := <-source.observed:
+			if observedOn != want {
+				t.Fatalf("discovery date = %q, want %s", observedOn, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("discovery for %s did not run", want)
+		}
+	}
+	expectObserved("2026-07-05")
+	source.SeedPoll("tuesday-voting", map[string]any{
+		"date":      "2026-07-07",
+		"completed": false,
+		"pubs":      map[string]any{"venue-1": map[string]any{}},
+	})
+
+	clock.Set(time.Date(2026, time.July, 7, 15, 59, 0, 0, location))
+	application.NotifyScheduling()
+	expectObserved("2026-07-06")
+	poll, err := source.GetPoll(ctx, "tuesday-voting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed, _ := poll.Data["completed"].(bool); completed {
+		t.Fatal("Tuesday voting completed from Monday's coalesced occurrence")
+	}
+
+	clock.Set(time.Date(2026, time.July, 7, 16, 0, 0, 0, location))
+	application.NotifyScheduling()
+	expectObserved("2026-07-07")
+	deadline := time.After(5 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		poll, err := source.GetPoll(ctx, "tuesday-voting")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed, _ := poll.Data["completed"].(bool); completed {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("Tuesday voting was not discovered at Tuesday's deadline")
+		case <-ticker.C:
+		}
+	}
+}
+
 func TestApplicationWorkAtomicWithCellCompletionRollbackOnFailure(t *testing.T) {
 	t.Parallel()
 

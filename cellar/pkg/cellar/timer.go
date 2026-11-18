@@ -189,7 +189,7 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 	}
 	if payload.Mode == TimerDailyCalendar {
 		var err error
-		occurrence, err = latestCalendarOccurrence(now, TimerConfig(payload))
+		occurrence, err = LatestCalendarOccurrence(now, TimerConfig(payload))
 		if err != nil {
 			return ErrorResult{Message: "calculate calendar timer occurrence", Err: err}
 		}
@@ -291,7 +291,9 @@ func nextCalendarDeadline(now time.Time, config TimerConfig) (time.Time, error) 
 	return deadline, nil
 }
 
-func latestCalendarOccurrence(now time.Time, config TimerConfig) (time.Time, error) {
+// LatestCalendarOccurrence returns the latest daily calendar occurrence at or
+// before now, using the timer's configured local wall-clock time and location.
+func LatestCalendarOccurrence(now time.Time, config TimerConfig) (time.Time, error) {
 	hour, minute, err := parseDailyAt(config.DailyAt)
 	if err != nil {
 		return time.Time{}, err

@@ -153,6 +153,82 @@ func TestDailyCalendarTimerPreservesLondonWallClockAcrossDST(t *testing.T) {
 	}
 }
 
+func TestLatestCalendarOccurrenceUsesLondonDatesAcrossDeadlinesAndDST(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatalf("load London location: %v", err)
+	}
+	config := TimerConfig{Mode: TimerDailyCalendar, DailyAt: "16:00", Location: location.String()}
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "winter before deadline",
+			now:  time.Date(2026, time.January, 15, 15, 59, 0, 0, location),
+			want: time.Date(2026, time.January, 14, 16, 0, 0, 0, location),
+		},
+		{
+			name: "winter at deadline",
+			now:  time.Date(2026, time.January, 15, 16, 0, 0, 0, location),
+			want: time.Date(2026, time.January, 15, 16, 0, 0, 0, location),
+		},
+		{
+			name: "summer before deadline",
+			now:  time.Date(2026, time.July, 15, 15, 59, 0, 0, location),
+			want: time.Date(2026, time.July, 14, 16, 0, 0, 0, location),
+		},
+		{
+			name: "summer at deadline",
+			now:  time.Date(2026, time.July, 15, 16, 0, 0, 0, location),
+			want: time.Date(2026, time.July, 15, 16, 0, 0, 0, location),
+		},
+		{
+			name: "spring DST transition before deadline",
+			now:  time.Date(2026, time.March, 29, 15, 59, 0, 0, location),
+			want: time.Date(2026, time.March, 28, 16, 0, 0, 0, location),
+		},
+		{
+			name: "spring DST transition at deadline",
+			now:  time.Date(2026, time.March, 29, 16, 0, 0, 0, location),
+			want: time.Date(2026, time.March, 29, 16, 0, 0, 0, location),
+		},
+		{
+			name: "autumn DST transition before deadline",
+			now:  time.Date(2026, time.October, 25, 15, 59, 0, 0, location),
+			want: time.Date(2026, time.October, 24, 16, 0, 0, 0, location),
+		},
+		{
+			name: "autumn DST transition at deadline",
+			now:  time.Date(2026, time.October, 25, 16, 0, 0, 0, location),
+			want: time.Date(2026, time.October, 25, 16, 0, 0, 0, location),
+		},
+		{
+			name: "coalesce missed occurrences to latest due",
+			now:  time.Date(2026, time.July, 7, 15, 59, 0, 0, location),
+			want: time.Date(2026, time.July, 6, 16, 0, 0, 0, location),
+		},
+		{
+			name: "next occurrence becomes due at deadline",
+			now:  time.Date(2026, time.July, 7, 16, 0, 0, 0, location),
+			want: time.Date(2026, time.July, 7, 16, 0, 0, 0, location),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := LatestCalendarOccurrence(test.now, config)
+			if err != nil {
+				t.Fatalf("LatestCalendarOccurrence() error = %v", err)
+			}
+			if !got.Equal(test.want) {
+				t.Fatalf("LatestCalendarOccurrence() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTimerCallbackErrorDeletesTimer(t *testing.T) {
 	want := errors.New("application handled failure")
 	registration := newTestTimerRegistration(t, TimerFixedDelay, time.Minute, want)

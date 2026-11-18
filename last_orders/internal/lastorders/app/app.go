@@ -176,6 +176,7 @@ const (
 
 type App struct {
 	logger                      *slog.Logger
+	clock                       cellar.Clock
 	baseStore                   *basestore.Store
 	cellarStore                 cellar.Store
 	idempotencyStore            *firebaseidempotency.Store
@@ -197,6 +198,7 @@ type App struct {
 	testEmailListener           *testemaillistener.Listener
 	adminDeleteListener         *admindeletelistener.Listener
 	adminDeleteEvaluateOnce     bool
+	autoCompleteTimerConfig     cellar.TimerConfig
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	venueStreamHub              *sse.Hub
@@ -847,8 +849,9 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, func(ctx context.Context) error {
-		return autoCompleteListener.RunOnce(ctx)
+	autoCompleteTimerConfig := cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}
+	autoCompleteTimer, err := cellar.NewCalendarTimer(autocompletelistener.TimerName, autoCompleteTimerConfig, func(ctx context.Context, occurrence time.Time) error {
+		return autoCompleteListener.RunOnce(ctx, occurrence)
 	})
 	if err != nil {
 		return nil, err
@@ -949,6 +952,7 @@ func New(cfg Config) (application *App, err error) {
 
 	application = &App{
 		logger:                      cfg.Logger,
+		clock:                       cfg.Clock,
 		baseStore:                   baseStore,
 		cellarStore:                 cellarStore,
 		idempotencyStore:            idempotencyStore,
@@ -962,6 +966,7 @@ func New(cfg Config) (application *App, err error) {
 		emailPlugin:                 emailPlugin,
 		diagnosticsConfiguration:    diagnosticsConfiguration,
 		autoCompleteListener:        autoCompleteListener,
+		autoCompleteTimerConfig:     autoCompleteTimerConfig,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
@@ -1161,10 +1166,14 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Treat each process start as an opportunity to discover overdue polls. The
-	// source bounds this scan by the persisted PollsSince floor and today's
-	// London date; the observation identity converges with the scheduled scan.
+	// source bounds this scan by the persisted PollsSince floor and the latest due
+	// London occurrence, preserving today's scheduled identity before 16:00.
 	if a.autoCompleteListener != nil {
-		if err := a.autoCompleteListener.RunOnce(producerCtx); err != nil {
+		occurrence, err := cellar.LatestCalendarOccurrence(a.clock.Now(), a.autoCompleteTimerConfig)
+		if err != nil {
+			return fmt.Errorf("calculate startup auto-completion occurrence: %w", err)
+		}
+		if err := a.autoCompleteListener.RunOnce(producerCtx, occurrence); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
