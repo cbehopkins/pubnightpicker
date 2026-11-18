@@ -72,6 +72,12 @@ mandatory groups sequentially:
 | Frontend-only | `not @last_orders` | Fresh emulators and Vite; no backend |
 | Backend-dependent | `@last_orders` | Different fresh emulators, Vite and Last Orders |
 
+Frontend-only scenarios fulfil the default Group discovery request at the
+browser boundary with a synthetic public `ampubnight` Group. This fixture is
+installed for every actor context and does not intercept other API requests.
+Backend-dependent scenarios use the real Group API and the Group created by
+the emulator bootstrap; their discovery requests are never intercepted.
+
 Both groups must discover scenarios. A build, startup, scenario or cleanup
 failure fails the command rather than skipping the backend group. Last Orders
 is built before services start and runs once for its group, using a temporary

@@ -378,7 +378,7 @@ func New(cfg Config) (application *App, err error) {
 	groupSource := cfg.GroupSource
 	if groupSource == nil {
 		if firestoreClient == nil {
-			return nil, fmt.Errorf("Group source is required: supply Config.GroupSource or enable firestore")
+			return nil, fmt.Errorf("group source is required: supply Config.GroupSource or enable firestore")
 		}
 		groupSource, err = groupcache.NewFirestoreSource(firestoreClient)
 		if err != nil {
@@ -1167,7 +1167,7 @@ func (a *App) Run(ctx context.Context) error {
 		case err := <-a.venueCacheListener.Errors():
 			return fmt.Errorf("venue cache projection failed: %w", err)
 		case err := <-a.groupCacheListener.Errors():
-			return fmt.Errorf("Group cache projection failed: %w", err)
+			return fmt.Errorf("group cache projection failed: %w", err)
 		case <-producerCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
@@ -1291,7 +1291,7 @@ func (a *App) Run(ctx context.Context) error {
 	case err := <-a.venueCacheListener.Errors():
 		return fmt.Errorf("venue cache projection failed: %w", err)
 	case err := <-a.groupCacheListener.Errors():
-		return fmt.Errorf("Group cache projection failed: %w", err)
+		return fmt.Errorf("group cache projection failed: %w", err)
 	case err := <-cellarErr:
 		if errors.Is(err, context.Canceled) && errors.Is(executionCtx.Err(), context.Canceled) {
 			return nil
@@ -1376,7 +1376,7 @@ func (a *App) runHandPump(ctx context.Context) error {
 		case err := <-a.venueCacheListener.Errors():
 			return fmt.Errorf("venue cache projection failed: %w", err)
 		case err := <-a.groupCacheListener.Errors():
-			return fmt.Errorf("Group cache projection failed: %w", err)
+			return fmt.Errorf("group cache projection failed: %w", err)
 		case <-runCtx.Done():
 			return nil
 		}
@@ -1397,7 +1397,7 @@ func (a *App) runHandPump(ctx context.Context) error {
 	case err := <-a.venueCacheListener.Errors():
 		return fmt.Errorf("venue cache projection failed: %w", err)
 	case err := <-a.groupCacheListener.Errors():
-		return fmt.Errorf("Group cache projection failed: %w", err)
+		return fmt.Errorf("group cache projection failed: %w", err)
 	}
 }
 
@@ -1469,7 +1469,7 @@ func (a *App) awaitGroupProjection(ctx context.Context) error {
 	case <-a.groupCacheListener.Ready():
 		return nil
 	case err := <-a.groupCacheListener.Errors():
-		return fmt.Errorf("Group cache projection failed: %w", err)
+		return fmt.Errorf("group cache projection failed: %w", err)
 	case <-ctx.Done():
 		return nil
 	}

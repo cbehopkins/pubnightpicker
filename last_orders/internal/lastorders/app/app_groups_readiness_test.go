@@ -48,7 +48,7 @@ func TestRunValidatesInitialGroupsForEveryComponent(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
 				err = application.Run(ctx)
-				if err == nil || !strings.Contains(err.Error(), "Group cache projection failed") || !strings.Contains(err.Error(), snapshot.want) {
+				if err == nil || !strings.Contains(err.Error(), "group cache projection failed") || !strings.Contains(err.Error(), snapshot.want) {
 					t.Fatalf("Run error = %v, want Group baseline failure containing %q", err, snapshot.want)
 				}
 			})

@@ -34,7 +34,7 @@ func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache
 		return nil, fmt.Errorf("firestore client is nil")
 	}
 	if groups == nil {
-		return nil, fmt.Errorf("Group cache service is required")
+		return nil, fmt.Errorf("group cache service is required")
 	}
 	if logger == nil {
 		logger = slog.Default()

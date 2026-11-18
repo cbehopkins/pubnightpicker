@@ -30,10 +30,10 @@ type Listener struct {
 
 func New(service *component.Service, store *component.Store, logger *slog.Logger) (*Listener, error) {
 	if service == nil {
-		return nil, errors.New("Group cache service is required")
+		return nil, errors.New("group cache service is required")
 	}
 	if store == nil {
-		return nil, errors.New("Group cache store is required")
+		return nil, errors.New("group cache store is required")
 	}
 	if logger == nil {
 		logger = slog.Default()
