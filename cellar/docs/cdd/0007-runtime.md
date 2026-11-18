@@ -84,8 +84,8 @@ claimed; consumers do not capture separate startup instants.
 
 After advancing application time, callers may notify the Runtime to wake an idle
 Scheduler. Polling, cancellation, drain allowances, and shutdown remain bounded by
-real time. Relative sequence retry delays are converted to absolute application
-deadlines before their atomic store transition.
+real time. Clock-aware result stores resolve relative sequence retry delays against
+the supplied instant as part of their atomic result transition.
 
 The configured worker count bounds concurrent Handler execution. Values less than one
 default to a single worker, preserving serial execution unless the application opts in

@@ -128,6 +128,11 @@ func (s *MemoryStore) RetireReadyCell(cellID CellID, applicationWork ...Applicat
 
 // ApplyResult atomically applies a result to a claimed cell.
 func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
+	return s.ApplyResultAt(claimed, result, time.Now())
+}
+
+// ApplyResultAt atomically applies a claimed result using the supplied application instant.
+func (s *MemoryStore) ApplyResultAt(claimed Cell, result Result, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -185,12 +190,8 @@ func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
 		}
 		cell.CurrentStep = 0
 		cell.State = CellStateReady
-		notBefore := typed.NotBefore
-		if notBefore == nil {
-			deadline := time.Now().Add(typed.Delay)
-			notBefore = &deadline
-		}
-		cell.NotBefore = cloneTimePtr(notBefore)
+		deadline := now.Add(typed.Delay)
+		cell.NotBefore = &deadline
 		for _, newCell := range newCells {
 			s.cells[newCell.ID] = newCell
 			s.order = append(s.order, newCell.ID)

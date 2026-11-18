@@ -62,9 +62,7 @@ func (Retry) isResult() {}
 // RetrySequence restarts a Cell from its first step after Delay.
 // NewCells and ApplicationWork are applied atomically before requeueing.
 type RetrySequence struct {
-	Delay time.Duration
-	// NotBefore is the absolute application deadline resolved by a clock-aware applier.
-	NotBefore       *time.Time
+	Delay           time.Duration
 	NewCells        []CellRequest
 	ApplicationWork []ApplicationWork
 }
@@ -111,29 +109,30 @@ func (a MultiResultApplier) ApplyResult(ctx context.Context, cell Cell, result R
 
 // StoreResultApplier translates handler results into store lifecycle operations.
 type StoreResultApplier struct {
-	store Store
-	clock Clock
+	store         Store
+	clock         Clock
+	clockRequired bool
 }
 
 // NewStoreResultApplier creates a result applier backed by the supplied store.
 func NewStoreResultApplier(store Store) *StoreResultApplier {
-	return NewStoreResultApplierWithClock(store, nil)
+	return newStoreResultApplier(store, systemClock{}, false)
 }
 
 // NewStoreResultApplierWithClock creates a result applier using the supplied application clock.
+// Sequence retries require a store that implements ClockedResultStore.
 func NewStoreResultApplierWithClock(store Store, clock Clock) *StoreResultApplier {
-	return &StoreResultApplier{store: store, clock: clockOrSystem(clock)}
+	return newStoreResultApplier(store, clockOrSystem(clock), clock != nil)
+}
+
+func newStoreResultApplier(store Store, clock Clock, clockRequired bool) *StoreResultApplier {
+	return &StoreResultApplier{store: store, clock: clockOrSystem(clock), clockRequired: clockRequired}
 }
 
 // ApplyResult translates the handler outcome into the corresponding store transition.
 func (a *StoreResultApplier) ApplyResult(ctx context.Context, cell Cell, result Result) error {
 	if a == nil {
 		return nil
-	}
-	if sequence, ok := result.(RetrySequence); ok && sequence.NotBefore == nil {
-		notBefore := a.clock.Now().Add(sequence.Delay)
-		sequence.NotBefore = &notBefore
-		result = sequence
 	}
 	if retry, ok := result.(Retry); ok && retry.timerLease != nil {
 		return retry.timerLease.applyRetry(a, ctx, cell, retry)
@@ -146,17 +145,25 @@ func (a *StoreResultApplier) applyResult(ctx context.Context, cell Cell, result 
 	if a == nil || a.store == nil {
 		return nil
 	}
+	switch result.(type) {
+	case Complete, Retry, RetrySequence, Kill:
+	default:
+		return nil
+	}
+	if resultStore, ok := a.store.(ClockedResultStore); ok {
+		return resultStore.ApplyResultAt(cell, result, a.clock.Now())
+	}
+	if resultStore, ok := a.store.(ResultStore); ok {
+		if _, isSequenceRetry := result.(RetrySequence); isSequenceRetry && a.clockRequired {
+			return ErrClockedResultStoreRequired
+		}
+		return resultStore.ApplyResult(cell, result)
+	}
 
 	switch result := result.(type) {
 	case Complete:
-		if resultStore, ok := a.store.(ResultStore); ok {
-			return resultStore.ApplyResult(cell, result)
-		}
 		return a.store.Complete(cell.ID, result.NewCells, result.ApplicationWork...)
 	case Retry:
-		if resultStore, ok := a.store.(ResultStore); ok {
-			return resultStore.ApplyResult(cell, result)
-		}
 		if len(result.NewCells) > 0 || len(result.ApplicationWork) > 0 {
 			return errors.New("store does not support atomic retry side effects")
 		}
@@ -165,22 +172,12 @@ func (a *StoreResultApplier) applyResult(ctx context.Context, cell Cell, result 
 		if result.Delay < 0 {
 			return errors.New("retry sequence delay must not be negative")
 		}
-		if resultStore, ok := a.store.(ResultStore); ok {
-			return resultStore.ApplyResult(cell, result)
-		}
 		if len(result.NewCells) > 0 || len(result.ApplicationWork) > 0 {
 			return errors.New("store does not support atomic sequence retry side effects")
 		}
-		notBefore := result.NotBefore
-		if notBefore == nil {
-			deadline := a.clock.Now().Add(result.Delay)
-			notBefore = &deadline
-		}
-		return a.store.Retry(cell.ID, notBefore)
+		notBefore := a.clock.Now().Add(result.Delay)
+		return a.store.Retry(cell.ID, &notBefore)
 	case Kill:
-		if resultStore, ok := a.store.(ResultStore); ok {
-			return resultStore.ApplyResult(cell, result)
-		}
 		return a.store.Complete(cell.ID, result.NewCells, result.ApplicationWork...)
 	default:
 		return nil

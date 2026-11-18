@@ -228,6 +228,11 @@ func (s *Store) RetireReadyCell(cellID cellar.CellID, applicationWork ...cellar.
 
 // ApplyResult atomically applies a result to a claimed cell and its children.
 func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
+	return s.ApplyResultAt(claimed, result, time.Now())
+}
+
+// ApplyResultAt atomically applies a claimed result using the supplied application instant.
+func (s *Store) ApplyResultAt(claimed cellar.Cell, result cellar.Result, now time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -278,12 +283,8 @@ func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
 			return err
 		}
-		notBefore := typed.NotBefore
-		if notBefore == nil {
-			deadline := time.Now().Add(typed.Delay)
-			notBefore = &deadline
-		}
-		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
+		notBefore := now.Add(typed.Delay)
+		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(&notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
 	case cellar.Kill:
 		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
 			return err

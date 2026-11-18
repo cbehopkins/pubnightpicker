@@ -73,7 +73,7 @@ the callback and remains unchanged if application time advances while it runs.
 
 After a clock advance, `Cellar.NotifyScheduling` wakes an idle Scheduler to recheck
 eligibility. It does not invoke timer callbacks directly. Sequence retry delays are
-resolved against the same application clock before the store atomically applies them.
+resolved against the same application clock during atomic result application.
 
 Successful callbacks return the same Cell to `READY` with its next deadline. The Cell
 therefore keeps the same durable identity across executions.

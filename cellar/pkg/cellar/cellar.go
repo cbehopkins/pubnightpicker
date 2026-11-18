@@ -12,7 +12,8 @@ import (
 type Config struct {
 	PollDelay time.Duration
 	Workers   int
-	Clock     Clock
+	// Clock overrides the system-time default for application scheduling.
+	Clock Clock
 }
 
 // Cellar owns handler registration and the complete cell execution runtime.
@@ -32,7 +33,7 @@ type Cellar struct {
 func New(store Store, config Config) *Cellar {
 	clock := clockOrSystem(config.Clock)
 	registry := NewMemoryRegistry()
-	worker := NewWorker(registry, NewStoreResultApplierWithClock(store, clock))
+	worker := NewWorker(registry, newStoreResultApplier(store, clock, config.Clock != nil))
 	scheduler := NewSchedulerWithClock(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay, clock)
 	return &Cellar{
 		store:     store,
@@ -248,6 +249,8 @@ var (
 	ErrCellarNotStarted     = errors.New("cellar has not started")
 	ErrStoreNil             = errors.New("store is nil")
 	ErrHandlerNotRegistered = errors.New("handler not registered")
+	// ErrClockedResultStoreRequired means a supplied application clock cannot be preserved by this store.
+	ErrClockedResultStoreRequired = errors.New("clock-aware result store is required for application-time sequence retries")
 )
 
 type typedJSONRegistration[T any] struct {
