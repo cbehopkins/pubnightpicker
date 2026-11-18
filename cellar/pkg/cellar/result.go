@@ -145,6 +145,8 @@ func (a *StoreResultApplier) applyResult(ctx context.Context, cell Cell, result 
 	if a == nil || a.store == nil {
 		return nil
 	}
+	// FIXME: The handling of result types here may need to be revisited
+	// It's a bit of a code smell to have all this type checking and branching here
 	switch result.(type) {
 	case Complete, Retry, RetrySequence, Kill:
 	default:
