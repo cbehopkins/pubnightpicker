@@ -252,7 +252,7 @@ def _preflight(groups: tuple[str, ...], env: dict[str, str]) -> None:
 
 def _discover(
     group: str, env: dict[str, str], artifacts: Path, name: str | None = None
-) -> None:
+) -> tuple[str, ...]:
     report = artifacts / "discovery.json"
     result = _run_command(
         [
@@ -272,10 +272,18 @@ def _discover(
     if result:
         raise RuntimeError(f"Cucumber discovery failed for {group}")
     features = json.loads(report.read_text(encoding="utf-8"))
-    count = sum(len(feature.get("elements", [])) for feature in features)
-    if not count:
+    scenarios = []
+    for feature in features:
+        feature_path = feature["uri"].replace("\\", "/")
+        scenarios.extend(
+            f"{feature_path}:{element['line']}"
+            for element in feature.get("elements", [])
+            if element.get("keyword") in ("Scenario", "Scenario Outline")
+        )
+    if not scenarios:
         raise RuntimeError(f"No scenarios selected for mandatory group {group}")
-    print(f"[Journey] {group}: discovered {count} scenarios", flush=True)
+    print(f"[Journey] {group}: discovered {len(scenarios)} scenarios", flush=True)
+    return tuple(scenarios)
 
 
 def _build_backend(scratch: Path, env: dict[str, str]) -> Path:
@@ -378,6 +386,7 @@ def _run_group(
     scratch: Path,
     artifacts: Path,
     name: str | None = None,
+    scenario: str | None = None,
 ) -> int:
     ports = (*EMULATOR_PORTS, 3000, *((8081,) if group == "last-orders" else ()))
     _require_free_ports(ports)
@@ -479,7 +488,7 @@ def _run_group(
             [
                 _tool("node"),
                 str(CUCUMBER_ENTRY),
-                "features/**/*.feature",
+                scenario or "features/**/*.feature",
                 "--tags",
                 GROUP_TAGS[group],
                 "--format",
@@ -499,7 +508,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--name", help="Run only Cucumber scenarios matching this name expression"
     )
+    parser.add_argument(
+        "--lifecycle",
+        choices=("group", "scenario"),
+        default="group",
+        help="Use shared group services or fresh services for each selected backend scenario",
+    )
     args = parser.parse_args(argv)
+    if args.lifecycle == "scenario" and args.group != "last-orders":
+        parser.error("--lifecycle scenario requires --group last-orders")
     groups = tuple(GROUP_TAGS) if args.group == "all" else (args.group,)
     env = _environment()
     _validate_environment(env)
@@ -510,24 +527,49 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[Journey] Artifacts: {artifacts}", flush=True)
     with _scratch_directory() as scratch:
         binary = _build_backend(scratch, env) if "last-orders" in groups else None
+        discovered = {}
         for group in groups:
             group_artifacts = artifacts / group
             group_artifacts.mkdir()
-            _discover(group, env, group_artifacts, args.name)
+            discovered[group] = _discover(group, env, group_artifacts, args.name)
         result = 0
         for group in groups:
             group_scratch = scratch / group
             group_scratch.mkdir()
-            try:
-                group_result = _run_group(
-                    group, binary, group_scratch, artifacts / group, args.name
-                )
-            except BaseException:
-                _print_backend_diagnostics(artifacts / group)
-                raise
-            if group_result:
-                _print_backend_diagnostics(artifacts / group)
-            result = result or group_result
+            if args.lifecycle == "scenario":
+                for index, scenario in enumerate(discovered[group], start=1):
+                    scenario_scratch = group_scratch / f"scenario-{index:03d}"
+                    scenario_scratch.mkdir()
+                    scenario_artifacts = artifacts / group / f"scenario-{index:03d}"
+                    scenario_artifacts.mkdir()
+                    try:
+                        scenario_result = _run_group(
+                            group,
+                            binary,
+                            scenario_scratch,
+                            scenario_artifacts,
+                            args.name,
+                            scenario,
+                        )
+                    except BaseException:
+                        _print_backend_diagnostics(scenario_artifacts)
+                        raise
+                    finally:
+                        _remove_scratch(scenario_scratch)
+                    if scenario_result:
+                        _print_backend_diagnostics(scenario_artifacts)
+                    result = result or scenario_result
+            else:
+                try:
+                    group_result = _run_group(
+                        group, binary, group_scratch, artifacts / group, args.name
+                    )
+                except BaseException:
+                    _print_backend_diagnostics(artifacts / group)
+                    raise
+                if group_result:
+                    _print_backend_diagnostics(artifacts / group)
+                result = result or group_result
         return result
 
 

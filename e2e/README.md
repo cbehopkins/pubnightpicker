@@ -86,9 +86,25 @@ Focused developer commands, from `e2e/`:
 npm run test:journey:frontend
 npm run test:journey:last-orders
 npm run test:journey:last-orders -- --name "monthly Event"
+npm run test:journey:last-orders -- --lifecycle scenario --name "monthly Event"
 npm run test:harness
 npm run test:support
 ```
+
+The default `group` lifecycle keeps the shared frontend-only and backend-dependent
+groups above unchanged. Use `--lifecycle scenario` with `--group last-orders` to
+run each selected backend-dependent scenario in its own lifecycle. The optional
+`--name` expression selects scenarios as in the shared command; if omitted, every
+backend-dependent scenario is run separately. Each scenario starts fresh Auth
+and Firestore emulators, bootstraps the demo admin, and starts a new Last Orders
+process with its own temporary SQLite database before running Vite and Cucumber.
+The Last Orders binary is built once and reused; running processes, emulator
+data, scheduling state and idempotency records are not reused. This lifecycle
+uses the ordinary system-time backend and does not require the clock-control
+endpoint. Services and temporary state are cleaned up after each scenario,
+including startup errors, failures and interruption; a failed scenario stops
+the remaining selections. Per-scenario logs and Cucumber results are written
+under `e2e/artifacts/<run>/last-orders/scenario-NNN/`.
 
 The harness checks use standard-library Python `unittest`; support checks use
 Node's built-in test runner. Discovery runs before services start. CI runs both

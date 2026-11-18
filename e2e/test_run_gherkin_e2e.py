@@ -134,6 +134,42 @@ class JourneyRunnerTests(unittest.TestCase):
         )
         self.assertEqual(discovery.call_count, 2)
 
+    def test_scenario_lifecycle_runs_each_selected_scenario_with_fresh_state(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        scratch_paths: list[Path] = []
+
+        def run_scenario(*args: object) -> int:
+            scratch_path = args[2]
+            if scratch_paths:
+                self.assertFalse(scratch_paths[-1].exists())
+            scratch_paths.append(scratch_path)
+            return 0
+
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(runner, "_run_group", side_effect=run_scenario) as run_group:
+            self.assertEqual(
+                runner.main(
+                    [
+                        "--group",
+                        "last-orders",
+                        "--lifecycle",
+                        "scenario",
+                        "--name",
+                        "selected journeys",
+                    ]
+                ),
+                0,
+            )
+
+        self.assertEqual(
+            [call.args[5] for call in run_group.call_args_list], list(selections)
+        )
+        self.assertEqual(len({call.args[2] for call in run_group.call_args_list}), 2)
+        self.assertEqual(len({call.args[3] for call in run_group.call_args_list}), 2)
+
     def test_failed_backend_build_fails_before_services(self) -> None:
         with patch.object(runner, "_tool", return_value="go"), patch.object(
             runner, "_run_command", return_value=1
@@ -161,6 +197,68 @@ class JourneyRunnerTests(unittest.TestCase):
             runner._discover("last-orders", runner._environment(), self.root)
         self.assertIn("@last_orders", command.call_args.args[0])
         self.assertIn("--dry-run", command.call_args.args[0])
+
+    def test_discovery_returns_location_for_each_selected_scenario(self) -> None:
+        (self.root / "discovery.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "uri": r"features\first.feature",
+                        "elements": [
+                            {"keyword": "Background", "line": 2},
+                            {"keyword": "Scenario", "line": 5},
+                            {"keyword": "Scenario Outline", "line": 9},
+                        ],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        with patch.object(runner, "_tool", return_value="node"), patch.object(
+            runner, "_run_command", return_value=0
+        ):
+            scenarios = runner._discover(
+                "last-orders", runner._environment(), self.root
+            )
+
+        self.assertEqual(
+            scenarios,
+            ("features/first.feature:5", "features/first.feature:9"),
+        )
+
+    def test_scenario_lifecycle_continues_after_a_cucumber_failure(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(runner, "_run_group", side_effect=[1, 0]) as run_group:
+            self.assertEqual(
+                runner.main(["--group", "last-orders", "--lifecycle", "scenario"]),
+                1,
+            )
+
+        self.assertEqual(run_group.call_count, 2)
+        self.assertNotEqual(
+            run_group.call_args_list[0].args[2], run_group.call_args_list[1].args[2]
+        )
+
+    def test_scenario_lifecycle_stops_after_a_startup_error(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(
+            runner, "_run_group", side_effect=RuntimeError("scenario failure")
+        ) as run_group:
+            with self.assertRaisesRegex(RuntimeError, "scenario failure"):
+                runner.main(
+                    ["--group", "last-orders", "--lifecycle", "scenario"]
+                )
+
+        run_group.assert_called_once()
+        self.assertEqual(run_group.call_args.args[5], selections[0])
 
     def test_startup_evidence_rejects_provider_or_missing_record(self) -> None:
         path = self.root / "backend.jsonl"
