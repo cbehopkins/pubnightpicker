@@ -113,7 +113,7 @@ func TestStoreResultApplierUsesInjectedClockForSequenceRetry(t *testing.T) {
 	store := mustOpenStore(t, dbPath)
 	defer func() { _ = store.Close() }()
 	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
-	clock := cellarClock{now: initial}
+	clock := &cellarClock{now: initial}
 	ids, err := store.Add([]cellar.CellRequest{{
 		Steps: []cellar.CellStep{
 			{HandlerName: "example.first", Payload: []byte(`{}`)},
@@ -148,10 +148,12 @@ func TestStoreResultApplierUsesInjectedClockForSequenceRetry(t *testing.T) {
 	if cell.CurrentStep != 0 {
 		t.Fatalf("sequence current step = %d, want 0", cell.CurrentStep)
 	}
-	if _, ok, err := store.ClaimNext(initial.Add(delay - time.Second)); err != nil || ok {
+	clock.Set(initial.Add(delay - time.Second))
+	if _, ok, err := store.ClaimNext(clock.Now()); err != nil || ok {
 		t.Fatalf("ClaimNext() before retry deadline = (%t, %v), want no claim", ok, err)
 	}
-	if _, ok, err := store.ClaimNext(wantDue); err != nil || !ok {
+	clock.Set(wantDue)
+	if _, ok, err := store.ClaimNext(clock.Now()); err != nil || !ok {
 		t.Fatalf("ClaimNext() at retry deadline = (%t, %v), want a claim", ok, err)
 	}
 }
@@ -160,8 +162,12 @@ type cellarClock struct {
 	now time.Time
 }
 
-func (c cellarClock) Now() time.Time {
+func (c *cellarClock) Now() time.Time {
 	return c.now
+}
+
+func (c *cellarClock) Set(now time.Time) {
+	c.now = now
 }
 
 func TestStoreCompleteWithChildrenIsAtomic(t *testing.T) {

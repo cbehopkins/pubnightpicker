@@ -109,9 +109,9 @@ func (a MultiResultApplier) ApplyResult(ctx context.Context, cell Cell, result R
 
 // StoreResultApplier translates handler results into store lifecycle operations.
 type StoreResultApplier struct {
-	store         Store
-	clock         Clock
-	clockRequired bool
+	store                      Store
+	clock                      Clock
+	requiresClockedResultStore bool
 }
 
 // NewStoreResultApplier creates a result applier backed by the supplied store.
@@ -126,7 +126,7 @@ func NewStoreResultApplierWithClock(store Store, clock Clock) *StoreResultApplie
 }
 
 func newStoreResultApplier(store Store, clock Clock, clockRequired bool) *StoreResultApplier {
-	return &StoreResultApplier{store: store, clock: clockOrSystem(clock), clockRequired: clockRequired}
+	return &StoreResultApplier{store: store, clock: clockOrSystem(clock), requiresClockedResultStore: clockRequired}
 }
 
 // ApplyResult translates the handler outcome into the corresponding store transition.
@@ -154,7 +154,7 @@ func (a *StoreResultApplier) applyResult(ctx context.Context, cell Cell, result 
 		return resultStore.ApplyResultAt(cell, result, a.clock.Now())
 	}
 	if resultStore, ok := a.store.(ResultStore); ok {
-		if _, isSequenceRetry := result.(RetrySequence); isSequenceRetry && a.clockRequired {
+		if _, isSequenceRetry := result.(RetrySequence); isSequenceRetry && a.requiresClockedResultStore {
 			return ErrClockedResultStoreRequired
 		}
 		return resultStore.ApplyResult(cell, result)
