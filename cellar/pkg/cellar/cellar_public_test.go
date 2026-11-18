@@ -221,6 +221,33 @@ func TestCellarUsesInjectedClockAndNotifiesScheduler(t *testing.T) {
 	stopRuntime(t, runtime, startDone)
 }
 
+func TestCellarDefaultsToSystemTimeForScheduledWork(t *testing.T) {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: 5 * time.Millisecond})
+	received := make(chan string, 1)
+	if err := runtime.Register("example.scheduled", routedHandler{name: "scheduled", received: received}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	due := time.Now().Add(20 * time.Millisecond)
+	if _, err := store.Add([]cellar.CellRequest{{
+		Steps:     []cellar.CellStep{{HandlerName: "example.scheduled", Payload: []byte(`{"source":"ready"}`)}},
+		NotBefore: &due,
+	}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	startDone := startRuntime(runtime)
+	select {
+	case got := <-received:
+		if got != "scheduled:ready" {
+			t.Fatalf("handler result = %q, want scheduled:ready", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("system-time scheduler did not run work when its deadline arrived")
+	}
+	stopRuntime(t, runtime, startDone)
+}
+
 func TestSequenceRetryStaysDeferredUntilApplicationTimeAdvances(t *testing.T) {
 	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	clock := &schedulingTestClock{now: initial}
