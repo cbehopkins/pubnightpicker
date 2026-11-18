@@ -185,7 +185,12 @@ func (s *MemoryStore) ApplyResult(claimed Cell, result Result) error {
 		}
 		cell.CurrentStep = 0
 		cell.State = CellStateReady
-		cell.NotBefore = timePtr(time.Now().Add(typed.Delay))
+		notBefore := typed.NotBefore
+		if notBefore == nil {
+			deadline := time.Now().Add(typed.Delay)
+			notBefore = &deadline
+		}
+		cell.NotBefore = cloneTimePtr(notBefore)
 		for _, newCell := range newCells {
 			s.cells[newCell.ID] = newCell
 			s.order = append(s.order, newCell.ID)

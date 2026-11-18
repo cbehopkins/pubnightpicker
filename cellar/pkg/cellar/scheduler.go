@@ -20,18 +20,25 @@ type Dispatcher interface {
 
 // Scheduler repeatedly claims runnable cells and dispatches them.
 type Scheduler struct {
-	store      SchedulerStore
-	dispatcher Dispatcher
-	pollDelay  time.Duration
-	workers    int
-	drainMu    sync.RWMutex
-	draining   bool
-	drainReady bool
-	drainWake  chan struct{}
+	store        SchedulerStore
+	dispatcher   Dispatcher
+	pollDelay    time.Duration
+	workers      int
+	clock        Clock
+	scheduleWake chan struct{}
+	drainMu      sync.RWMutex
+	draining     bool
+	drainReady   bool
+	drainWake    chan struct{}
 }
 
 // NewScheduler creates a scheduler engine with the supplied dependencies.
 func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, pollDelay time.Duration) *Scheduler {
+	return NewSchedulerWithClock(store, dispatcher, workers, pollDelay, nil)
+}
+
+// NewSchedulerWithClock creates a scheduler using the supplied application clock.
+func NewSchedulerWithClock(store SchedulerStore, dispatcher Dispatcher, workers int, pollDelay time.Duration, clock Clock) *Scheduler {
 	if pollDelay <= 0 {
 		pollDelay = time.Second
 	}
@@ -39,11 +46,20 @@ func NewScheduler(store SchedulerStore, dispatcher Dispatcher, workers int, poll
 		workers = 1
 	}
 	return &Scheduler{
-		store:      store,
-		dispatcher: dispatcher,
-		pollDelay:  pollDelay,
-		workers:    workers,
-		drainWake:  make(chan struct{}, 1),
+		store:        store,
+		dispatcher:   dispatcher,
+		pollDelay:    pollDelay,
+		workers:      workers,
+		clock:        clockOrSystem(clock),
+		scheduleWake: make(chan struct{}, 1),
+		drainWake:    make(chan struct{}, 1),
+	}
+}
+
+func (s *Scheduler) notifyScheduling() {
+	select {
+	case s.scheduleWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -133,7 +149,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		var cell Cell
 		var ok bool
 		var err error
-		cell, ok, err = s.store.ClaimNext(time.Now())
+		cell, ok, err = s.store.ClaimNext(s.clock.Now())
 		if err != nil {
 			capacity <- struct{}{}
 			return stop(fmt.Errorf("claim next cell: %w", err))
@@ -152,6 +168,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 				timer.Stop()
 				return stop(err)
 			case <-s.drainWake:
+				timer.Stop()
+			case <-s.scheduleWake:
 				timer.Stop()
 			case <-timer.C:
 			}

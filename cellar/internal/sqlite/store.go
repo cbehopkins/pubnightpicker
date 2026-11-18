@@ -278,8 +278,12 @@ func (s *Store) ApplyResult(claimed cellar.Cell, result cellar.Result) error {
 		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
 			return err
 		}
-		notBefore := time.Now().Add(typed.Delay)
-		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(&notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
+		notBefore := typed.NotBefore
+		if notBefore == nil {
+			deadline := time.Now().Add(typed.Delay)
+			notBefore = &deadline
+		}
+		_, err = tx.Exec(`UPDATE cells SET current_step = 0, state = ?, not_before = ? WHERE id = ? AND state = ?`, string(cellar.CellStateReady), timeOrNil(notBefore), string(claimed.ID), string(cellar.CellStateClaimed))
 	case cellar.Kill:
 		if err := s.applyResultWorkTx(tx, typed.NewCells, typed.ApplicationWork); err != nil {
 			return err

@@ -32,16 +32,32 @@ type TimerConfig struct {
 // Returning an error cancels and deletes the timer.
 type TimerCallback func(context.Context) error
 
+// CalendarTimerCallback receives the latest due scheduled calendar occurrence.
+type CalendarTimerCallback func(context.Context, time.Time) error
+
 // Timer defines one uniquely named durable recurring timer.
 type Timer struct {
-	name     HandlerName
-	config   TimerConfig
-	callback TimerCallback
-	producer *timerProducer
+	name             HandlerName
+	config           TimerConfig
+	callback         TimerCallback
+	calendarCallback CalendarTimerCallback
+	producer         *timerProducer
 }
 
 // NewTimer constructs a durable timer definition.
 func NewTimer(name HandlerName, config TimerConfig, callback TimerCallback) (*Timer, error) {
+	return newTimer(name, config, callback, nil)
+}
+
+// NewCalendarTimer constructs a daily calendar timer whose callback receives the latest due occurrence.
+func NewCalendarTimer(name HandlerName, config TimerConfig, callback CalendarTimerCallback) (*Timer, error) {
+	if config.Mode != TimerDailyCalendar {
+		return nil, ErrTimerNotCalendar
+	}
+	return newTimer(name, config, nil, callback)
+}
+
+func newTimer(name HandlerName, config TimerConfig, callback TimerCallback, calendarCallback CalendarTimerCallback) (*Timer, error) {
 	if name == "" {
 		return nil, ErrHandlerNameRequired
 	}
@@ -58,10 +74,10 @@ func NewTimer(name HandlerName, config TimerConfig, callback TimerCallback) (*Ti
 	} else if config.Interval <= 0 {
 		return nil, ErrTimerIntervalInvalid
 	}
-	if callback == nil {
+	if callback == nil && calendarCallback == nil {
 		return nil, ErrTimerCallbackNil
 	}
-	return &Timer{name: name, config: config, callback: callback, producer: &timerProducer{}}, nil
+	return &Timer{name: name, config: config, callback: callback, calendarCallback: calendarCallback, producer: &timerProducer{}}, nil
 }
 
 // StopProduction closes callback admission and prevents subsequent occurrences
@@ -91,7 +107,12 @@ func (t *Timer) Register(c *Cellar) error {
 	if c.started {
 		return ErrCellarStarted
 	}
-	err := c.registry.Register(t.name, timerRegistration{callback: t.callback, producer: t.producer})
+	err := c.registry.Register(t.name, timerRegistration{
+		callback:         t.callback,
+		calendarCallback: t.calendarCallback,
+		producer:         t.producer,
+		clock:            c.clock,
+	})
 	if errors.Is(err, ErrHandlerAlreadyRegistered) {
 		return fmt.Errorf("%w: %s", ErrTimerAlreadyExists, t.name)
 	}
@@ -121,9 +142,10 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 		return "", fmt.Errorf("encode timer payload: %w", err)
 	}
 	id := timerCellID(t.name)
-	due := time.Now().Add(t.config.Interval)
+	now := c.clock.Now()
+	due := now.Add(t.config.Interval)
 	if t.config.Mode == TimerDailyCalendar {
-		due, err = nextCalendarDeadline(time.Now(), t.config)
+		due, err = nextCalendarDeadline(now, t.config)
 		if err != nil {
 			return "", fmt.Errorf("calculate calendar timer deadline: %w", err)
 		}
@@ -145,8 +167,10 @@ func (t *Timer) Schedule(c *Cellar) (CellID, error) {
 type timerPayload TimerConfig
 
 type timerRegistration struct {
-	callback TimerCallback
-	producer *timerProducer
+	callback         TimerCallback
+	calendarCallback CalendarTimerCallback
+	producer         *timerProducer
+	clock            Clock
 }
 
 func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
@@ -154,18 +178,37 @@ func (r timerRegistration) Execute(ctx context.Context, cell Cell) Result {
 	if err := unmarshalJSON(currentStepPayload(cell), &payload); err != nil {
 		return ErrorResult{Message: "decode timer payload", Err: err}
 	}
-	if r.callback == nil {
+	if r.callback == nil && r.calendarCallback == nil {
 		return ErrorResult{Message: "execute timer callback", Err: ErrTimerCallbackNil}
+	}
+	clock := clockOrSystem(r.clock)
+	now := clock.Now()
+	occurrence := time.Time{}
+	if cell.NotBefore != nil {
+		occurrence = *cell.NotBefore
+	}
+	if payload.Mode == TimerDailyCalendar {
+		var err error
+		occurrence, err = latestCalendarOccurrence(now, TimerConfig(payload))
+		if err != nil {
+			return ErrorResult{Message: "calculate calendar timer occurrence", Err: err}
+		}
 	}
 	lease, admitted := r.producer.admit()
 	if !admitted {
 		return Complete{}
 	}
-	if err := r.callback(ctx); err != nil {
+	var callbackErr error
+	if r.calendarCallback != nil {
+		callbackErr = r.calendarCallback(ctx, occurrence)
+	} else {
+		callbackErr = r.callback(ctx)
+	}
+	if callbackErr != nil {
 		return Complete{}
 	}
 
-	now := time.Now()
+	now = clock.Now()
 	next := now.Add(payload.Interval)
 	if payload.Mode == TimerDailyCalendar {
 		calendarNext, err := nextCalendarDeadline(now, TimerConfig(payload))
@@ -248,6 +291,23 @@ func nextCalendarDeadline(now time.Time, config TimerConfig) (time.Time, error) 
 	return deadline, nil
 }
 
+func latestCalendarOccurrence(now time.Time, config TimerConfig) (time.Time, error) {
+	hour, minute, err := parseDailyAt(config.DailyAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	location, err := time.LoadLocation(config.Location)
+	if err != nil {
+		return time.Time{}, err
+	}
+	localNow := now.In(location)
+	occurrence := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, location)
+	if occurrence.After(localNow) {
+		occurrence = time.Date(localNow.Year(), localNow.Month(), localNow.Day()-1, hour, minute, 0, 0, location)
+	}
+	return occurrence, nil
+}
+
 func parseDailyAt(value string) (int, int, error) {
 	parsed, err := time.Parse("15:04", value)
 	if err != nil {
@@ -268,6 +328,7 @@ var (
 	ErrTimerDailyAtInvalid    = errors.New("timer daily time must use HH:MM")
 	ErrTimerLocationInvalid   = errors.New("timer location is invalid")
 	ErrTimerCallbackNil       = errors.New("timer callback is nil")
+	ErrTimerNotCalendar       = errors.New("calendar timer requires daily-calendar mode")
 	ErrTimerAlreadyExists     = errors.New("timer already exists")
 	ErrTimerProductionStopped = errors.New("timer production is stopped")
 )

@@ -108,6 +108,62 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStoreResultApplierUsesInjectedClockForSequenceRetry(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cells.db")
+	store := mustOpenStore(t, dbPath)
+	defer func() { _ = store.Close() }()
+	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	clock := cellarClock{now: initial}
+	ids, err := store.Add([]cellar.CellRequest{{
+		Steps: []cellar.CellStep{
+			{HandlerName: "example.first", Payload: []byte(`{}`)},
+			{HandlerName: "example.second", Payload: []byte(`{}`)},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	claimed, ok, err := store.ClaimNext(initial)
+	if err != nil || !ok {
+		t.Fatalf("ClaimNext() = (%t, %v), want a claimed sequence", ok, err)
+	}
+
+	const delay = 5 * time.Minute
+	applier := cellar.NewStoreResultApplierWithClock(store, clock)
+	if err := applier.ApplyResult(context.Background(), claimed, cellar.RetrySequence{Delay: delay}); err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	store = mustOpenStore(t, dbPath)
+	cell, err := store.Get(ids[0])
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	wantDue := initial.Add(delay)
+	if cell.NotBefore == nil || !cell.NotBefore.Equal(wantDue) {
+		t.Fatalf("sequence retry deadline = %v, want %s", cell.NotBefore, wantDue)
+	}
+	if cell.CurrentStep != 0 {
+		t.Fatalf("sequence current step = %d, want 0", cell.CurrentStep)
+	}
+	if _, ok, err := store.ClaimNext(initial.Add(delay - time.Second)); err != nil || ok {
+		t.Fatalf("ClaimNext() before retry deadline = (%t, %v), want no claim", ok, err)
+	}
+	if _, ok, err := store.ClaimNext(wantDue); err != nil || !ok {
+		t.Fatalf("ClaimNext() at retry deadline = (%t, %v), want a claim", ok, err)
+	}
+}
+
+type cellarClock struct {
+	now time.Time
+}
+
+func (c cellarClock) Now() time.Time {
+	return c.now
+}
+
 func TestStoreCompleteWithChildrenIsAtomic(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cells.db")
 	store := mustOpenStore(t, dbPath)

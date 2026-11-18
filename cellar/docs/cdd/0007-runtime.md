@@ -75,6 +75,18 @@ The high-level architecture is:
 
 The Runtime owns the connections between components.
 
+## Application Time
+
+Runtime construction resolves one current-time reader and shares it with the
+Scheduler, durable timers, and result application. The default reader uses system
+time. A supplied reader remains shared and is sampled when work is scheduled or
+claimed; consumers do not capture separate startup instants.
+
+After advancing application time, callers may notify the Runtime to wake an idle
+Scheduler. Polling, cancellation, drain allowances, and shutdown remain bounded by
+real time. Relative sequence retry delays are converted to absolute application
+deadlines before their atomic store transition.
+
 The configured worker count bounds concurrent Handler execution. Values less than one
 default to a single worker, preserving serial execution unless the application opts in
 to concurrency.

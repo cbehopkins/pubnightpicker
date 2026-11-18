@@ -12,12 +12,14 @@ import (
 type Config struct {
 	PollDelay time.Duration
 	Workers   int
+	Clock     Clock
 }
 
 // Cellar owns handler registration and the complete cell execution runtime.
 type Cellar struct {
 	mu        sync.Mutex
 	store     Store
+	clock     Clock
 	registry  *MemoryRegistry
 	scheduler *Scheduler
 	cancel    context.CancelFunc
@@ -28,14 +30,21 @@ type Cellar struct {
 
 // New creates a Cellar runtime backed by store.
 func New(store Store, config Config) *Cellar {
+	clock := clockOrSystem(config.Clock)
 	registry := NewMemoryRegistry()
-	worker := NewWorker(registry, NewStoreResultApplier(store))
-	scheduler := NewScheduler(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay)
+	worker := NewWorker(registry, NewStoreResultApplierWithClock(store, clock))
+	scheduler := NewSchedulerWithClock(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay, clock)
 	return &Cellar{
 		store:     store,
+		clock:     clock,
 		registry:  registry,
 		scheduler: scheduler,
 	}
+}
+
+// NotifyScheduling asks the running scheduler to recheck work eligibility.
+func (c *Cellar) NotifyScheduling() {
+	c.scheduler.notifyScheduling()
 }
 
 // Register binds a typed handler to a stable handler name using JSON payloads.

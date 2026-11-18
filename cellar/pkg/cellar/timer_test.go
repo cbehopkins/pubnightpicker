@@ -22,10 +22,12 @@ func TestTimerSchedulePersistsOneNamedTimer(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 
+	beforeSchedule := time.Now()
 	firstID, err := timer.Schedule(runtime)
 	if err != nil {
 		t.Fatalf("first Schedule() error = %v", err)
 	}
+	afterSchedule := time.Now()
 	secondID, err := timer.Schedule(runtime)
 	if !errors.Is(err, ErrTimerAlreadyExists) {
 		t.Fatalf("second Schedule() error = %v, want ErrTimerAlreadyExists", err)
@@ -47,8 +49,10 @@ func TestTimerSchedulePersistsOneNamedTimer(t *testing.T) {
 	if cells[0].Steps[0].HandlerName != "reports.refresh" {
 		t.Fatalf("persisted handler name = %q, want reports.refresh", cells[0].Steps[0].HandlerName)
 	}
-	if cells[0].NotBefore == nil || !cells[0].NotBefore.After(time.Now()) {
-		t.Fatalf("persisted not-before = %v, want future time", cells[0].NotBefore)
+	wantEarliest := beforeSchedule.Add(5 * time.Minute)
+	wantLatest := afterSchedule.Add(5 * time.Minute)
+	if cells[0].NotBefore == nil || cells[0].NotBefore.Before(wantEarliest) || cells[0].NotBefore.After(wantLatest) {
+		t.Fatalf("persisted not-before = %v, want system time plus five minutes", cells[0].NotBefore)
 	}
 }
 

@@ -162,6 +162,12 @@ if err := c.Start(ctx); err != nil {
 cancelled or `Stop` is called. Applications do not construct or freeze a registry and
 do not construct workers, dispatchers, result appliers, or schedulers.
 
+Cellar shares one application clock across scheduling, timers, and sequence retry
+deadlines. The default reads system time; supply `Config.Clock` when application
+time must be controlled. After advancing a supplied clock, call
+`Cellar.NotifyScheduling` to wake an idle scheduler and recheck eligibility.
+Polling, cancellation, and shutdown continue to use real-time bounds.
+
 ### Fanout
 
 A Fanout expands one durable Cell into zero or more child Cells. Each target has a key
@@ -231,6 +237,10 @@ only when creating it initially; scheduling an active name returns
 `ErrTimerAlreadyExists`. `TimerFixedDelay` schedules from callback completion, while
 `TimerFixedRate` maintains cadence and coalesces missed ticks. A callback that returns
 an error cancels and deletes the timer.
+
+For `TimerDailyCalendar`, `NewCalendarTimer` provides the latest due scheduled
+occurrence to its callback. Missed daily occurrences coalesce, and the next run is
+scheduled strictly after the sampled application instant.
 
 `Timer.StopProduction` closes callback admission for the current runtime. Already
 admitted callbacks may finish, but cannot reschedule after closure; queued occurrences
