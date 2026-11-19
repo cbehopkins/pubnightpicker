@@ -58,7 +58,11 @@ func (s *Source) GetPoll(_ context.Context, pollID string) (autocomplete.Documen
 	if !ok {
 		return autocomplete.Document{}, fmt.Errorf("autocompletetest: poll %q not seeded", pollID)
 	}
-	return autocomplete.Document{ID: pollID, Data: data}, nil
+	snapshot := make(map[string]any, len(data))
+	for key, value := range data {
+		snapshot[key] = value
+	}
+	return autocomplete.Document{ID: pollID, Data: snapshot}, nil
 }
 
 func (s *Source) GetVotes(_ context.Context, pollID string) (autocomplete.Document, bool, error) {

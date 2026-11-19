@@ -33,6 +33,8 @@ ADMIN_EMAIL = "journey-admin@test.local"
 ADMIN_PASSWORD = "journey-only-password-2026"
 BASE_URL = "http://127.0.0.1:3000"
 BACKEND_URL = "http://127.0.0.1:8081"
+CLOCK_CONTROL_ADDR = "127.0.0.1:8082"
+CLOCK_CONTROL_URL = f"http://{CLOCK_CONTROL_ADDR}"
 EMULATOR_PORTS = (8080, 9099, 4400, 4500, 9150)
 GROUP_TAGS = {"frontend": "not @last_orders", "last-orders": "@last_orders"}
 VITE_ENTRY = REACT_DIR / "node_modules" / "vite" / "bin" / "vite.js"
@@ -41,7 +43,25 @@ CUCUMBER_ENTRY = (
 )
 
 
-def _environment() -> dict[str, str]:
+def _environment(application_time: bool = False) -> dict[str, str]:
+    env = _base_environment()
+    if application_time:
+        initial_time = datetime.now(UTC).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        env.update(
+            {
+                "LAST_ORDERS_E2E_INITIAL_TIME": initial_time.isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z"),
+                "LAST_ORDERS_E2E_CLOCK_ADDR": CLOCK_CONTROL_ADDR,
+                "E2E_CLOCK_URL": CLOCK_CONTROL_URL,
+            }
+        )
+    return env
+
+
+def _base_environment() -> dict[str, str]:
     retained = {
         "PATH",
         "PATHEXT",
@@ -74,6 +94,8 @@ def _environment() -> dict[str, str]:
             "FIREBASE_AUTH_PROJECT_ID": EMULATOR_PROJECT,
             "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
             "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+            "GOFLAGS": "",
+            "GOENV": "off",
             "E2E_ADMIN_EMAIL": ADMIN_EMAIL,
             "E2E_ADMIN_PASSWORD": ADMIN_PASSWORD,
             "E2E_BASE_URL": BASE_URL,
@@ -97,12 +119,39 @@ def _environment() -> dict[str, str]:
     return env
 
 
-def _validate_environment(env: dict[str, str]) -> None:
-    expected = _environment()
+def _validate_environment(env: dict[str, str], application_time: bool = False) -> None:
+    expected = _base_environment()
+    if application_time:
+        expected.update(
+            {
+                "LAST_ORDERS_E2E_CLOCK_ADDR": CLOCK_CONTROL_ADDR,
+                "E2E_CLOCK_URL": CLOCK_CONTROL_URL,
+            }
+        )
     for key, value in expected.items():
         if env.get(key) != value:
             raise RuntimeError(f"Unsafe journey configuration: {key}")
+    if application_time:
+        initial_time = env.get("LAST_ORDERS_E2E_INITIAL_TIME")
+        if not initial_time:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            )
+        try:
+            parsed_initial_time = datetime.fromisoformat(
+                initial_time.replace("Z", "+00:00")
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            ) from error
+        if parsed_initial_time.tzinfo is None or parsed_initial_time.utcoffset() is None:
+            raise RuntimeError(
+                "Unsafe journey configuration: LAST_ORDERS_E2E_INITIAL_TIME"
+            )
     unexpected = set(env) - set(expected) - {"LAST_ORDERS_CURSOR_HMAC_KEY"}
+    if application_time:
+        unexpected.discard("LAST_ORDERS_E2E_INITIAL_TIME")
     if unexpected:
         raise RuntimeError(
             "Unexpected child configuration keys: " + ", ".join(sorted(unexpected))
@@ -251,8 +300,12 @@ def _preflight(groups: tuple[str, ...], env: dict[str, str]) -> None:
 
 
 def _discover(
-    group: str, env: dict[str, str], artifacts: Path, name: str | None = None
-) -> None:
+    group: str,
+    env: dict[str, str],
+    artifacts: Path,
+    name: str | None = None,
+    application_time: bool = False,
+) -> tuple[str, ...]:
     report = artifacts / "discovery.json"
     result = _run_command(
         [
@@ -260,7 +313,7 @@ def _discover(
             str(CUCUMBER_ENTRY),
             "features/**/*.feature",
             "--tags",
-            GROUP_TAGS[group],
+            _scenario_tags(group, application_time),
             "--dry-run",
             "--format",
             f'"json":"{report.as_posix()}"',
@@ -272,19 +325,45 @@ def _discover(
     if result:
         raise RuntimeError(f"Cucumber discovery failed for {group}")
     features = json.loads(report.read_text(encoding="utf-8"))
-    count = sum(len(feature.get("elements", [])) for feature in features)
-    if not count:
+    scenarios = []
+    for feature in features:
+        feature_path = feature["uri"].replace("\\", "/")
+        scenarios.extend(
+            f"{feature_path}:{element['line']}"
+            for element in feature.get("elements", [])
+            if element.get("keyword") in ("Scenario", "Scenario Outline")
+        )
+    if not scenarios:
         raise RuntimeError(f"No scenarios selected for mandatory group {group}")
-    print(f"[Journey] {group}: discovered {count} scenarios", flush=True)
+    print(f"[Journey] {group}: discovered {len(scenarios)} scenarios", flush=True)
+    return tuple(scenarios)
 
 
-def _build_backend(scratch: Path, env: dict[str, str]) -> Path:
+def _scenario_tags(group: str, application_time: bool) -> str:
+    tags = GROUP_TAGS[group]
+    if application_time:
+        return f"({tags}) and @application_time"
+    if group == "last-orders":
+        return f"({tags}) and not @application_time"
+    return tags
+
+
+def _build_backend(
+    scratch: Path, env: dict[str, str], application_time: bool = False
+) -> Path:
     build_dir = scratch / "bin"
     build_dir.mkdir()
     binary = build_dir / ("last-orders.exe" if os.name == "nt" else "last-orders")
     print("[Journey] Building Last Orders", flush=True)
     if _run_command(
-        [_tool("go"), "build", "-o", str(binary), "./cmd/last-orders"],
+        [
+            _tool("go"),
+            "build",
+            *(["-tags=e2e"] if application_time else []),
+            "-o",
+            str(binary),
+            "./cmd/last-orders",
+        ],
         LAST_ORDERS_DIR,
         env,
     ):
@@ -292,7 +371,54 @@ def _build_backend(scratch: Path, env: dict[str, str]) -> Path:
     return binary
 
 
-def _verify_backend_startup(path: Path) -> None:
+def _polls_since(env: dict[str, str], application_time: bool = False) -> str:
+    if not application_time:
+        return datetime.now(UTC).date().isoformat()
+
+    initial_time = env.get("LAST_ORDERS_E2E_INITIAL_TIME")
+    if not initial_time:
+        raise RuntimeError("Application-time journeys require an initial instant")
+    try:
+        parsed_initial_time = datetime.fromisoformat(
+            initial_time.replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise RuntimeError("Application-time initial instant is invalid") from error
+    if parsed_initial_time.tzinfo is None:
+        raise RuntimeError("Application-time initial instant requires an offset")
+
+    script = (
+        'import { londonDate, shiftDate } from "./features/support/calendar.js"; '
+        'console.log(shiftDate(londonDate(new Date(process.argv[1])), -1));'
+    )
+    result = subprocess.run(
+        [
+            _tool("node"),
+            "--input-type=module",
+            "-e",
+            script,
+            initial_time,
+        ],
+        cwd=E2E_DIR,
+        env=env,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    polls_since = result.stdout.strip()
+    try:
+        datetime.strptime(polls_since, "%Y-%m-%d")
+    except ValueError as error:
+        raise RuntimeError("London processing floor is not a valid date") from error
+    return polls_since
+
+
+def _verify_backend_startup(
+    path: Path,
+    application_time: bool = False,
+    initial_time: str | None = None,
+    polls_since: str | None = None,
+) -> None:
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     records = [
         json.loads(line) for line in lines if line.endswith("\n") and line.strip()
@@ -308,6 +434,15 @@ def _verify_backend_startup(path: Path) -> None:
         },
         {"msg": "push client selected", "client": "dummy"},
     )
+    if application_time:
+        expected += (
+            {
+                "msg": "e2e application clock enabled",
+                "initial_instant": initial_time,
+                "control_addr": CLOCK_CONTROL_ADDR,
+            },
+            {"msg": "listener scope resolved", "polls_since": polls_since},
+        )
     for evidence in expected:
         if not any(
             all(record.get(key) == value for key, value in evidence.items())
@@ -378,12 +513,16 @@ def _run_group(
     scratch: Path,
     artifacts: Path,
     name: str | None = None,
+    scenario: str | None = None,
+    application_time: bool = False,
 ) -> int:
-    ports = (*EMULATOR_PORTS, 3000, *((8081,) if group == "last-orders" else ()))
+    backend_ports = (8081, 8082) if application_time else (8081,)
+    ports = (*EMULATOR_PORTS, 3000, *(backend_ports if group == "last-orders" else ()))
     _require_free_ports(ports)
     _remove_stale_hub_locator()
-    env = _environment()
-    _validate_environment(env)
+    env = _environment(application_time)
+    _validate_environment(env, application_time)
+    polls_since = _polls_since(env, application_time)
     services: dict[str, ProcessTree] = {}
     print(f"[Journey] Starting fresh {group} group ({EMULATOR_PROJECT})", flush=True)
     with ExitStack() as stack:
@@ -429,7 +568,7 @@ def _run_group(
             if binary is None:
                 raise RuntimeError("Backend group requires a built Last Orders binary")
             backend_env = {**env, "LAST_ORDERS_CURSOR_HMAC_KEY": secrets.token_hex(32)}
-            _validate_environment(backend_env)
+            _validate_environment(backend_env, application_time)
             stdout_path = artifacts / "last-orders.jsonl"
             stdout = files.enter_context(stdout_path.open("w", encoding="utf-8"))
             stderr = files.enter_context(
@@ -443,7 +582,7 @@ def _run_group(
                     "-http-addr=127.0.0.1:8081",
                     "-push-client=dummy",
                     "-allow-auth-emulator",
-                    f"-polls-since={datetime.now(UTC).date().isoformat()}",
+                    f"-polls-since={polls_since}",
                 ],
                 cwd=LAST_ORDERS_DIR,
                 env=backend_env,
@@ -451,7 +590,14 @@ def _run_group(
                 stderr=stderr,
             )
             _wait_for_url(f"{BACKEND_URL}/healthz", services)
-            _verify_backend_startup(stdout_path)
+            if application_time:
+                _wait_for_url(f"{CLOCK_CONTROL_URL}/clock", services)
+            _verify_backend_startup(
+                stdout_path,
+                application_time,
+                env.get("LAST_ORDERS_E2E_INITIAL_TIME"),
+                polls_since,
+            )
             print(
                 "[Journey] Verified demo emulator and dummy delivery selection",
                 flush=True,
@@ -474,14 +620,22 @@ def _run_group(
         _wait_for_url(BASE_URL, services)
         cucumber_env = env
         if group == "last-orders":
-            cucumber_env = {**env, "E2E_BACKEND_LOG_PATH": str(artifacts / "last-orders.jsonl")}
+            cucumber_env = {
+                **env,
+                "E2E_BACKEND_LOG_PATH": str(artifacts / "last-orders.jsonl"),
+                **(
+                    {"LAST_ORDERS_E2E_POLLS_SINCE": polls_since}
+                    if application_time
+                    else {}
+                ),
+            }
         return _run_command(
             [
                 _tool("node"),
                 str(CUCUMBER_ENTRY),
-                "features/**/*.feature",
+                scenario or "features/**/*.feature",
                 "--tags",
-                GROUP_TAGS[group],
+                _scenario_tags(group, application_time),
                 "--format",
                 f'"json":"{(artifacts / "cucumber.json").as_posix()}"',
                 *(["--name", name] if name else []),
@@ -499,35 +653,90 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--name", help="Run only Cucumber scenarios matching this name expression"
     )
+    parser.add_argument(
+        "--lifecycle",
+        choices=("group", "scenario"),
+        default=None,
+        help="Use shared group services or fresh services for each selected backend scenario",
+    )
+    parser.add_argument(
+        "--application-time",
+        action="store_true",
+        help="Run only @application_time Last Orders scenarios with a tagged backend and fresh state per scenario",
+    )
     args = parser.parse_args(argv)
+    if args.lifecycle == "scenario" and args.group != "last-orders":
+        parser.error("--lifecycle scenario requires --group last-orders")
+    if args.application_time and args.group != "last-orders":
+        parser.error("--application-time requires --group last-orders")
+    lifecycle = args.lifecycle or ("scenario" if args.application_time else "group")
+    if args.application_time and lifecycle != "scenario":
+        parser.error("--application-time requires the scenario lifecycle")
     groups = tuple(GROUP_TAGS) if args.group == "all" else (args.group,)
-    env = _environment()
-    _validate_environment(env)
+    env = _environment(args.application_time)
+    _validate_environment(env, args.application_time)
     _preflight(groups, env)
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(3)
     artifacts = E2E_DIR / "artifacts" / run_id
     artifacts.mkdir(parents=True)
     print(f"[Journey] Artifacts: {artifacts}", flush=True)
     with _scratch_directory() as scratch:
-        binary = _build_backend(scratch, env) if "last-orders" in groups else None
+        binary = (
+            _build_backend(scratch, env, args.application_time)
+            if "last-orders" in groups
+            else None
+        )
+        discovered = {}
         for group in groups:
             group_artifacts = artifacts / group
             group_artifacts.mkdir()
-            _discover(group, env, group_artifacts, args.name)
+            discovered[group] = _discover(
+                group, env, group_artifacts, args.name, args.application_time
+            )
         result = 0
         for group in groups:
             group_scratch = scratch / group
             group_scratch.mkdir()
-            try:
-                group_result = _run_group(
-                    group, binary, group_scratch, artifacts / group, args.name
-                )
-            except BaseException:
-                _print_backend_diagnostics(artifacts / group)
-                raise
-            if group_result:
-                _print_backend_diagnostics(artifacts / group)
-            result = result or group_result
+            if lifecycle == "scenario":
+                for index, scenario in enumerate(discovered[group], start=1):
+                    scenario_scratch = group_scratch / f"scenario-{index:03d}"
+                    scenario_scratch.mkdir()
+                    scenario_artifacts = artifacts / group / f"scenario-{index:03d}"
+                    scenario_artifacts.mkdir()
+                    try:
+                        scenario_result = _run_group(
+                            group,
+                            binary,
+                            scenario_scratch,
+                            scenario_artifacts,
+                            args.name,
+                            scenario,
+                            args.application_time,
+                        )
+                    except BaseException:
+                        _print_backend_diagnostics(scenario_artifacts)
+                        raise
+                    finally:
+                        _remove_scratch(scenario_scratch)
+                    if scenario_result:
+                        _print_backend_diagnostics(scenario_artifacts)
+                    result = result or scenario_result
+            else:
+                try:
+                    group_result = _run_group(
+                        group,
+                        binary,
+                        group_scratch,
+                        artifacts / group,
+                        args.name,
+                        application_time=args.application_time,
+                    )
+                except BaseException:
+                    _print_backend_diagnostics(artifacts / group)
+                    raise
+                if group_result:
+                    _print_backend_diagnostics(artifacts / group)
+                result = result or group_result
         return result
 
 

@@ -79,6 +79,21 @@ type RecurrenceService interface {
 	CreateMeetForEventOccurrence(ctx context.Context, eventID, occurrenceDate string) error
 }
 
+type systemApplicationClock struct{}
+
+func (systemApplicationClock) Now() time.Time {
+	return time.Now()
+}
+
+type applicationDateClock struct {
+	clock    cellar.Clock
+	location *time.Location
+}
+
+func (clock applicationDateClock) Today() time.Time {
+	return clock.clock.Now().In(clock.location)
+}
+
 type Config struct {
 	// Component selects all, landlord, or handpump. Empty is the combined mode.
 	Component            string
@@ -86,10 +101,12 @@ type Config struct {
 	PollDelay            time.Duration
 	ShutdownDrainTimeout time.Duration
 	Logger               *slog.Logger
-	FirestoreProjectID   string
-	FirestoreForceIPv4   bool
-	FirebaseCredentials  *google.Credentials
-	EnableFirestore      bool
+	// Clock supplies application time; nil defaults to system time.
+	Clock               cellar.Clock
+	FirestoreProjectID  string
+	FirestoreForceIPv4  bool
+	FirebaseCredentials *google.Credentials
+	EnableFirestore     bool
 	// PollsSince (YYYY-MM-DD) is persisted in Firestore and may only move forward.
 	// If empty on first startup, the oldest poll date is used, or today's app date when no polls exist.
 	PollsSince        string
@@ -159,6 +176,7 @@ const (
 
 type App struct {
 	logger                      *slog.Logger
+	clock                       cellar.Clock
 	baseStore                   *basestore.Store
 	cellarStore                 cellar.Store
 	idempotencyStore            *firebaseidempotency.Store
@@ -180,6 +198,7 @@ type App struct {
 	testEmailListener           *testemaillistener.Listener
 	adminDeleteListener         *admindeletelistener.Listener
 	adminDeleteEvaluateOnce     bool
+	autoCompleteTimerConfig     cellar.TimerConfig
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	venueStreamHub              *sse.Hub
@@ -252,6 +271,9 @@ func New(cfg Config) (application *App, err error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = systemApplicationClock{}
 	}
 	if cfg.EmailDailyLimit < 0 || cfg.PushDailyLimit < 0 {
 		return nil, fmt.Errorf("daily send limits must be positive")
@@ -420,10 +442,12 @@ func New(cfg Config) (application *App, err error) {
 		diagnosticsConfiguration = diagnosticsconfig.New(diagnosticsSource, cfg.Logger)
 		emailOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
 	}
+	emailOptions.Now = cfg.Clock.Now
 	pushOptions := cfg.Push
 	if pushOptions.Logger == nil {
 		pushOptions.Logger = cfg.Logger
 	}
+	pushOptions.Now = cfg.Clock.Now
 	if diagnosticsConfiguration != nil {
 		pushOptions.NotificationSettings = diagnosticsConfiguration.Snapshot
 	}
@@ -432,7 +456,7 @@ func New(cfg Config) (application *App, err error) {
 		if firestoreClient == nil {
 			return nil, fmt.Errorf("recurrence service is required: supply Config.RecurrenceService or enable firestore")
 		}
-		concrete, err := recurrence.NewService(firestoreClient, cfg.Logger, venueCacheService)
+		concrete, err := recurrence.NewServiceWithClock(firestoreClient, cfg.Logger, venueCacheService, cfg.Clock)
 		if err != nil || concrete == nil {
 			return nil, fmt.Errorf("init recurrence service: %w", err)
 		}
@@ -440,17 +464,17 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	if emailOptions.Tokens == nil {
-		emailOptions.Tokens, err = ratelimit.New("email.send", cfg.EmailDailyLimit, recurrenceService.Location(), func() {
+		emailOptions.Tokens, err = ratelimit.NewWithClock("email.send", cfg.EmailDailyLimit, recurrenceService.Location(), func() {
 			cfg.Logger.Warn("rate limit exhausted", "source", "email.send", "maximum", cfg.EmailDailyLimit)
-		})
+		}, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if pushOptions.Tokens == nil {
-		pushOptions.Tokens, err = ratelimit.New("push.send", cfg.PushDailyLimit, recurrenceService.Location(), func() {
+		pushOptions.Tokens, err = ratelimit.NewWithClock("push.send", cfg.PushDailyLimit, recurrenceService.Location(), func() {
 			cfg.Logger.Warn("rate limit exhausted", "source", "push.send", "maximum", cfg.PushDailyLimit)
-		})
+		}, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}
@@ -487,7 +511,7 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		resolveCtx, cancelResolve := context.WithTimeout(context.Background(), 30*time.Second)
-		fallbackDate := time.Now().In(recurrenceService.Location()).Format(time.DateOnly)
+		fallbackDate := cfg.Clock.Now().In(recurrenceService.Location()).Format(time.DateOnly)
 		pollsSince, err = scope.ResolvePollsSince(resolveCtx, cfg.PollsSince, fallbackDate)
 		cancelResolve()
 		if err != nil {
@@ -624,9 +648,9 @@ func New(cfg Config) (application *App, err error) {
 	testEmailTokens := cfg.TestEmailTokens
 	if testEmailTokens == nil {
 		logger := cfg.Logger
-		testEmailTokens, err = ratelimit.New("email.test", TestEmailDailyLimit, recurrenceService.Location(), func() {
+		testEmailTokens, err = ratelimit.NewWithClock("email.test", TestEmailDailyLimit, recurrenceService.Location(), func() {
 			logger.Warn("test email daily limit exhausted", "source", "email.test", "limit", TestEmailDailyLimit)
-		})
+		}, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}
@@ -688,7 +712,7 @@ func New(cfg Config) (application *App, err error) {
 	autocompleteplugin.Register()
 	admindeleteplugin.Register()
 
-	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay})
+	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay, Clock: cfg.Clock})
 	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
 	}
@@ -721,6 +745,7 @@ func New(cfg Config) (application *App, err error) {
 		Endpoints: notificationProfileService,
 		Push:      pushPlugin,
 		Logger:    cfg.Logger,
+		Now:       cfg.Clock.Now,
 	}); err != nil {
 		return nil, err
 	}
@@ -733,6 +758,7 @@ func New(cfg Config) (application *App, err error) {
 		Recipients: notificationProfileService,
 		BaseURL:    pushPlugin.BaseURL(),
 		Logger:     cfg.Logger,
+		Now:        cfg.Clock.Now,
 	}); err != nil {
 		return nil, err
 	}
@@ -745,6 +771,7 @@ func New(cfg Config) (application *App, err error) {
 		Endpoints: notificationProfileService,
 		Push:      pushPlugin,
 		Logger:    cfg.Logger,
+		Now:       cfg.Clock.Now,
 	}); err != nil {
 		return nil, err
 	}
@@ -752,16 +779,17 @@ func New(cfg Config) (application *App, err error) {
 		Completers: pushSources,
 		Endpoints:  notificationProfileService,
 		Push:       pushPlugin,
+		Now:        cfg.Clock.Now,
 	}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(pushevents.HandlerChatPush, pushevents.ChatPushHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
+	if err := cellarRuntime.Register(pushevents.HandlerChatPush, pushevents.ChatPushHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin, Now: cfg.Clock.Now}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(pushevents.HandlerChatProcessed, pushevents.ChatProcessedHandler{Source: pushSources, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(pushevents.HandlerPushTest, pushevents.PushTestHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin}); err != nil {
+	if err := cellarRuntime.Register(pushevents.HandlerPushTest, pushevents.PushTestHandler{Source: pushSources, Profiles: notificationProfileService, Push: pushPlugin, Now: cfg.Clock.Now}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(pushevents.HandlerPushTestCompleted, pushevents.PushTestCompletedHandler{Source: pushSources, Push: pushPlugin}); err != nil {
@@ -821,8 +849,9 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	autoCompleteTimer, err := cellar.NewTimer(autocompletelistener.TimerName, cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}, func(ctx context.Context) error {
-		return autoCompleteListener.RunOnce(ctx)
+	autoCompleteTimerConfig := cellar.TimerConfig{Mode: cellar.TimerDailyCalendar, DailyAt: "16:00", Location: "Europe/London"}
+	autoCompleteTimer, err := cellar.NewCalendarTimer(autocompletelistener.TimerName, autoCompleteTimerConfig, func(ctx context.Context, occurrence time.Time) error {
+		return autoCompleteListener.RunOnce(ctx, occurrence)
 	})
 	if err != nil {
 		return nil, err
@@ -838,7 +867,7 @@ func New(cfg Config) (application *App, err error) {
 
 	eventVenueListener, err := eventvenuelistener.New(eventvenuelistener.Config{
 		Store:              cellarStore,
-		Clock:              recurrenceService,
+		Clock:              applicationDateClock{clock: cfg.Clock, location: recurrenceService.Location()},
 		Source:             eventVenueSource,
 		VenueCache:         venueCacheService,
 		ReevaluateInterval: cfg.EventReevaluateEvery,
@@ -923,6 +952,7 @@ func New(cfg Config) (application *App, err error) {
 
 	application = &App{
 		logger:                      cfg.Logger,
+		clock:                       cfg.Clock,
 		baseStore:                   baseStore,
 		cellarStore:                 cellarStore,
 		idempotencyStore:            idempotencyStore,
@@ -936,6 +966,7 @@ func New(cfg Config) (application *App, err error) {
 		emailPlugin:                 emailPlugin,
 		diagnosticsConfiguration:    diagnosticsConfiguration,
 		autoCompleteListener:        autoCompleteListener,
+		autoCompleteTimerConfig:     autoCompleteTimerConfig,
 		eventVenueListener:          eventVenueListener,
 		newPollListener:             newPollListener,
 		completedPollListener:       completedPollListener,
@@ -1135,10 +1166,14 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Treat each process start as an opportunity to discover overdue polls. The
-	// source bounds this scan by the persisted PollsSince floor and today's
-	// London date; the observation identity converges with the scheduled scan.
+	// source bounds this scan by the persisted PollsSince floor and the latest due
+	// London occurrence, preserving today's scheduled identity before 16:00.
 	if a.autoCompleteListener != nil {
-		if err := a.autoCompleteListener.RunOnce(producerCtx); err != nil {
+		occurrence, err := cellar.LatestCalendarOccurrence(a.clock.Now(), a.autoCompleteTimerConfig)
+		if err != nil {
+			return fmt.Errorf("calculate startup auto-completion occurrence: %w", err)
+		}
+		if err := a.autoCompleteListener.RunOnce(producerCtx, occurrence); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
@@ -1533,6 +1568,11 @@ func (a *App) IdempotencyClaimed(ctx context.Context, listener, eventKey string)
 
 func (a *App) CellarStore() cellar.Store {
 	return a.cellarStore
+}
+
+// NotifyScheduling asks Cellar to recheck work after application time advances.
+func (a *App) NotifyScheduling() {
+	a.cellarRuntime.NotifyScheduling()
 }
 
 // NotificationProfile returns the projection service, or nil when Firestore is disabled.

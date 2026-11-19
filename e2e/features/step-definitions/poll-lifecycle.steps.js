@@ -15,20 +15,99 @@ import {
     where,
     writeBatch,
 } from "firebase/firestore";
+import { londonDate, londonInstant, shiftDate } from "../support/calendar.js";
+import { waitForBackendRecord } from "../support/backend-evidence.js";
 import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
-function journeyPoll(world, actor) {
+function journeyPoll(world, actor, date = world.pollDate) {
     return world.actors.get(actor)
-        .getByRole("heading", { name: world.pollDate, exact: true })
+        .getByRole("heading", { name: date, exact: true })
         .locator("../..");
 }
 
-function venueRow(world, actor, venue) {
-    return journeyPoll(world, actor).getByRole("row")
+function venueRow(world, actor, venue, date = world.pollDate) {
+    return journeyPoll(world, actor, date).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
 }
+
+function applicationTimeDate(dayOffset) {
+    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
+    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
+    return shiftDate(londonDate(new Date(initialInstant)), dayOffset);
+}
+
+function applicationTimePollID(world, dayOffset) {
+    const date = applicationTimeDate(dayOffset);
+    const pollID = world.applicationTimePolls?.get(date);
+    assert.ok(pollID, `the application-time poll for ${date} must exist`);
+    return pollID;
+}
+
+async function createPoll(world, date) {
+    const bob = world.actors.get("Bob");
+    world.pollDate = date;
+    assert.notEqual(bob.context(), world.actors.get("Claire")?.context());
+    await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
+    await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
+    await bob.locator('input[type="date"]').fill(world.pollDate);
+    await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
+    await bob.getByRole("heading", { name: world.pollDate, exact: true }).waitFor();
+    const poll = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocsFromServer(query(collection(db, "polls"), where("date", "==", world.pollDate))),
+        (polls) => polls.size === 1,
+        `the poll on ${world.pollDate} to be committed`,
+    ));
+    world.pollId = poll.docs[0].id;
+    world.applicationTimePolls ??= new Map();
+    world.applicationTimePolls.set(date, world.pollId);
+}
+
+async function assertPollRemainsOpen(pollID) {
+    const poll = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "polls", pollID)));
+    assert.equal(poll.data()?.completed, false, "voting must remain open before the scheduled deadline");
+    assert.equal(poll.data()?.selected ?? null, null, "an open poll must not have an automatic winner");
+}
+
+async function selectedVenueID(world, venue) {
+    const venueSnapshot = await withEmulatorAdmin((db) => getDocsFromServer(query(
+        collection(db, "pubs"),
+        where("name", "==", world.journeyVenues.get(venue)),
+    )));
+    assert.equal(venueSnapshot.size, 1, "the selected venue must be uniquely identified");
+    return venueSnapshot.docs[0].id;
+}
+
+async function waitForPollCompletion(world, pollID, venue) {
+    const expectedVenueID = await selectedVenueID(world, venue);
+    const poll = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocFromServer(doc(db, "polls", pollID)),
+        (snapshot) => snapshot.data()?.completed === true,
+        "Last Orders to complete the poll after its London deadline",
+    ));
+    assert.equal(poll.data()?.selected, expectedVenueID);
+}
+
+Given("the application-time processing floor matches the supplied London date", function () {
+    const initialInstant = process.env.LAST_ORDERS_E2E_INITIAL_TIME;
+    assert.ok(initialInstant, "the E2E application clock must have an initial instant");
+    assert.equal(
+        process.env.LAST_ORDERS_E2E_POLLS_SINCE,
+        shiftDate(londonDate(new Date(initialInstant)), -1),
+        "the processing floor must include yesterday's catch-up fixture",
+    );
+});
+
+Given("startup autocomplete discovery has settled before fixture creation", async function () {
+    const startupDate = shiftDate(applicationTimeDate(0), -1);
+    await waitForBackendRecord(
+        (record) => record.msg === "auto-completion discovery found eligible polls"
+            && record.observed_on === startupDate
+            && record.count === 0,
+        `startup auto-completion discovery through ${startupDate} to settle`,
+    );
+});
 
 Given("the following journey venues are available:", async function (table) {
     assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
@@ -98,20 +177,17 @@ When("{word} opens Active Polls", async function (name) {
 });
 
 When("Bob creates a poll on a clear date", async function () {
-    const bob = this.actors.get("Bob");
-    assert.notEqual(bob.context(), this.actors.get("Claire").context());
-    this.pollDate = await withEmulatorAdmin(nextAvailablePollDate);
-    await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
-    await bob.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
-    await bob.locator('input[type="date"]').fill(this.pollDate);
-    await bob.getByRole("button", { name: "Add Poll", exact: true }).click();
-    await bob.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
-    const poll = await withEmulatorAdmin(async (db) => waitForValue(
-        () => getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.pollDate))),
-        (polls) => polls.size === 1,
-        `the poll on ${this.pollDate} to be committed`,
-    ));
-    this.pollId = poll.docs[0].id;
+    const date = await withEmulatorAdmin(nextAvailablePollDate);
+    await createPoll(this, date);
+});
+
+When("Bob creates a poll for the frozen application date", async function () {
+    await createPoll(this, applicationTimeDate(0));
+});
+
+When("Bob creates a poll for application-time day {int}", async function (dayOffset) {
+    assert.ok(dayOffset >= -2 && dayOffset <= 2, "application-time day offset must be between -2 and 2");
+    await createPoll(this, applicationTimeDate(dayOffset));
 });
 
 Then("{word} sees the poll on Active Polls", async function (name) {
@@ -160,6 +236,43 @@ Then("{word} sees the following vote totals:", async function (name, table) {
     for (const { venue, votes } of table.hashes()) {
         await venueRow(this, name, venue).getByRole("cell", { name: votes, exact: true }).waitFor();
     }
+});
+
+When("the application clock advances to {string} London time", async function (localTime) {
+    const instant = londonInstant(this.pollDate, localTime);
+    const acknowledgement = await this.advanceApplicationTime(instant);
+    assert.equal(Date.parse(acknowledgement.instant), Date.parse(instant));
+    assert.equal(acknowledgement.scheduling_notified, true);
+});
+
+Then("the application-time poll remains open", async function () {
+    await assertPollRemainsOpen(this.pollId);
+});
+
+Then("the application-time destination London date is day {int}", function (dayOffset) {
+    assert.equal(this.pollDate, applicationTimeDate(dayOffset));
+});
+
+Then("the application-time poll for day {int} remains open", async function (dayOffset) {
+    await assertPollRemainsOpen(applicationTimePollID(this, dayOffset));
+});
+
+Then("Last Orders completes the application-time poll at {string}", async function (venue) {
+    await waitForPollCompletion(this, this.pollId, venue);
+});
+
+Then("Last Orders completes application-time day {int} at {string}", async function (dayOffset, venue) {
+    await waitForPollCompletion(this, applicationTimePollID(this, dayOffset), venue);
+});
+
+Then("Last Orders leaves the application-time poll for manual completion due to a tie", async function () {
+    await waitForBackendRecord(
+        (record) => record.msg === "poll requires manual completion"
+            && record.poll_id === this.pollId
+            && record.reason === "tie",
+        "Last Orders to classify the tied poll for manual completion",
+    );
+    await assertPollRemainsOpen(this.pollId);
 });
 
 When("Claire completes the poll by choosing {string}", async function (venue) {

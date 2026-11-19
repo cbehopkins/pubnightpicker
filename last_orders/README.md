@@ -32,6 +32,40 @@ and `recurrence.create_event_poll` names, and their payload fields remain unchan
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
+## Application time
+
+`app.Config.Clock` optionally supplies the current application instant. The app
+shares it with Cellar scheduling, recurrence, London daily token limits, and
+durable email and notification retry deadlines. When omitted, the app uses
+system time. After advancing an injected clock, call `App.NotifyScheduling()`
+to wake Cellar to recheck due work. Network and authentication timeouts, SSE
+heartbeats, process supervision, and shutdown allowances remain on real time.
+
+### E2E clock control
+
+The mutable clock and its control server are compiled only into a binary built
+with `-tags=e2e`. Such a binary requires `LAST_ORDERS_E2E_INITIAL_TIME` as an
+RFC3339 instant with an explicit offset, plus
+`LAST_ORDERS_E2E_CLOCK_ADDR` set to an explicit loopback IP and port. Startup
+fails before database reset or app initialisation unless Firestore and Auth use
+loopback emulators in the same `demo-` project, credentials are absent, Auth
+emulator tokens are explicitly allowed, and email, push, and Auth deletion
+remain non-live. The clock is frozen at the supplied instant until advanced.
+
+The harness control server is separate from the application API and binds only
+to the configured loopback address. `GET /clock` returns the current instant.
+`POST /clock` accepts `{"instant":"2026-07-04T16:00:00+01:00"}`. Invalid
+instants return 400, backwards advances return 409, and an equal instant is an
+acknowledged no-op. A successful response includes the accepted `instant` and
+`scheduling_notified`; notification means Cellar was asked to recheck deadlines,
+not that business work completed. Harnesses must await their own observable
+outcomes. Each backend process owns its clock; cross-process atomic advances and
+clock resets within a scenario are unsupported.
+
+Ordinary binaries omit the mutable clock and control server and reject the E2E
+clock environment settings. The release image build disables Go environment
+configuration and checks that tagged source files are absent.
+
 ## System model
 
 The public API and background processing have separate runtime roles. In the

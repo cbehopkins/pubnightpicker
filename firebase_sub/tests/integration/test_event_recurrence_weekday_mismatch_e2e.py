@@ -19,12 +19,12 @@ from google.cloud.firestore_v1.client import Client
 from firebase_sub.database.housekeeping_tasks import maintain_event_recurrence_polls
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PUB_FORM_PATH = REPO_ROOT / "react" / "src" / "components" / "pages" / "PubForm.js"
+VENUE_FORM_PATH = REPO_ROOT / "react" / "src" / "components" / "pages" / "VenueForm.js"
 
 
 def _frontend_weekday_value_for_wednesday() -> int:
-    """Read frontend weekday option mapping directly from PubForm source."""
-    source = PUB_FORM_PATH.read_text(encoding="utf-8")
+    """Read frontend weekday option mapping directly from VenueForm source."""
+    source = VENUE_FORM_PATH.read_text(encoding="utf-8")
     marker = '["2", "Wednesday"]'
     if marker not in source:
         raise AssertionError(

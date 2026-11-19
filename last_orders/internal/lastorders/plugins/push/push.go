@@ -60,6 +60,7 @@ type Options struct {
 	Client               ClientKind
 	Tokens               ratelimit.TokenSource
 	NotificationSettings func() (diagnosticsconfig.Settings, bool)
+	Now                  func() time.Time
 	// VAPIDPrivateKey is the base64url P-256 private key from `npx web-push generate-vapid-keys`.
 	VAPIDPrivateKey string
 	// VAPIDSubject is an email address, mailto: URI, or https URL.
@@ -92,6 +93,7 @@ type Plugin struct {
 	logger               *slog.Logger
 	tokens               ratelimit.TokenSource
 	notificationSettings func() (diagnosticsconfig.Settings, bool)
+	now                  func() time.Time
 }
 
 func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, error) {
@@ -107,6 +109,10 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
 	}
 
 	var sender Sender
@@ -142,7 +148,7 @@ func New(db *sql.DB, invalidator EndpointInvalidator, opts Options) (*Plugin, er
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens, notificationSettings: opts.NotificationSettings}, nil
+	return &Plugin{db: db, sender: sender, invalidator: invalidator, baseURL: baseURL, logger: logger, tokens: opts.Tokens, notificationSettings: opts.NotificationSettings, now: now}, nil
 }
 
 // BaseURL is the web application origin used for notification click targets.
@@ -308,7 +314,7 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 		return cellar.Complete{}
 	}
 
-	remaining := time.Until(request.ExpiresAt)
+	remaining := request.ExpiresAt.Sub(h.plugin.now())
 	if remaining <= 0 {
 		h.plugin.logger.Warn("push expired before delivery", "notification_id", request.NotificationID, "user_id", request.UserID)
 		return cellar.Complete{ApplicationWork: []cellar.ApplicationWork{finishWork(request, StateExpired)}}
@@ -317,7 +323,7 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 	if h.plugin.notificationSettings != nil {
 		settings, known := h.plugin.notificationSettings()
 		if !known {
-			notBefore := time.Now().UTC().Add(time.Second)
+			notBefore := h.plugin.now().UTC().Add(time.Second)
 			if notBefore.After(request.ExpiresAt) {
 				notBefore = request.ExpiresAt
 			}
@@ -333,7 +339,7 @@ func (h deliverHandler) Handle(ctx context.Context, request deliveryRequest) cel
 		if wait < 0 {
 			return cellar.ErrorResult{Message: "push send token source returned a negative wait"}
 		}
-		notBefore := time.Now().UTC().Add(time.Duration(wait) * time.Second)
+		notBefore := h.plugin.now().UTC().Add(time.Duration(wait) * time.Second)
 		if notBefore.After(request.ExpiresAt) {
 			notBefore = request.ExpiresAt
 		}
@@ -363,7 +369,7 @@ func (h deliverHandler) retry(request deliveryRequest, attempts int) cellar.Resu
 	if attempts < 7 {
 		delay = min(minRetryDelay<<attempts, maxRetryDelay)
 	}
-	notBefore := time.Now().UTC().Add(delay)
+	notBefore := h.plugin.now().UTC().Add(delay)
 	if notBefore.After(request.ExpiresAt) {
 		notBefore = request.ExpiresAt
 	}
@@ -392,7 +398,7 @@ func (h waitHandler) Handle(ctx context.Context, request waitRequest) cellar.Res
 		return cellar.ErrorResult{Message: "read pending push deliveries", Err: err}
 	}
 	if pending > 0 {
-		notBefore := time.Now().UTC().Add(waitDelay)
+		notBefore := h.plugin.now().UTC().Add(waitDelay)
 		return cellar.Retry{NotBefore: &notBefore}
 	}
 	return cellar.Complete{}

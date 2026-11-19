@@ -11,6 +11,11 @@ READY -> CLAIMED
 
 The Scheduler owns the decision to claim work. The Store performs the atomic state transition.
 
+Each claim receives the current application instant from Cellar's shared clock.
+The clock defaults to system time and can be supplied through runtime construction.
+An application that advances its clock may notify the Scheduler to recheck work
+immediately; notification does not execute a Handler or change persisted state.
+
 The Scheduler does not:
 
 - execute handlers;
@@ -137,7 +142,6 @@ configurable and defaults to one.
 Future versions may introduce:
 
 - adaptive queueing;
-- scheduler wake-up signals;
 - smarter NotBefore handling;
 - priority queues;
 - direct worker capacity scheduling.

@@ -12,12 +12,15 @@ import (
 type Config struct {
 	PollDelay time.Duration
 	Workers   int
+	// Clock overrides the system-time default for application scheduling.
+	Clock Clock
 }
 
 // Cellar owns handler registration and the complete cell execution runtime.
 type Cellar struct {
 	mu        sync.Mutex
 	store     Store
+	clock     Clock
 	registry  *MemoryRegistry
 	scheduler *Scheduler
 	cancel    context.CancelFunc
@@ -28,14 +31,21 @@ type Cellar struct {
 
 // New creates a Cellar runtime backed by store.
 func New(store Store, config Config) *Cellar {
+	clock := clockOrSystem(config.Clock)
 	registry := NewMemoryRegistry()
-	worker := NewWorker(registry, NewStoreResultApplier(store))
-	scheduler := NewScheduler(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay)
+	worker := NewWorker(registry, newStoreResultApplier(store, clock, config.Clock != nil))
+	scheduler := NewSchedulerWithClock(store, workerDispatcher{worker: worker}, config.Workers, config.PollDelay, clock)
 	return &Cellar{
 		store:     store,
+		clock:     clock,
 		registry:  registry,
 		scheduler: scheduler,
 	}
+}
+
+// NotifyScheduling asks the running scheduler to recheck work eligibility.
+func (c *Cellar) NotifyScheduling() {
+	c.scheduler.notifyScheduling()
 }
 
 // Register binds a typed handler to a stable handler name using JSON payloads.
@@ -239,6 +249,8 @@ var (
 	ErrCellarNotStarted     = errors.New("cellar has not started")
 	ErrStoreNil             = errors.New("store is nil")
 	ErrHandlerNotRegistered = errors.New("handler not registered")
+	// ErrClockedResultStoreRequired means a supplied application clock cannot be preserved by this store.
+	ErrClockedResultStoreRequired = errors.New("clock-aware result store is required for application-time sequence retries")
 )
 
 type typedJSONRegistration[T any] struct {

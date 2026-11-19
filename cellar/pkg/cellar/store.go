@@ -31,6 +31,12 @@ type ResultStore interface {
 	ApplyResult(cell Cell, result Result) error
 }
 
+// ClockedResultStore applies results atomically using the supplied application instant.
+type ClockedResultStore interface {
+	Store
+	ApplyResultAt(cell Cell, result Result, now time.Time) error
+}
+
 // DebuggableStore extends Store with privileged offline administrative overrides.
 type DebuggableStore interface {
 	Store

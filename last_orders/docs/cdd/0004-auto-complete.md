@@ -191,13 +191,24 @@ configured completion time. The operational schedule is:
 16:00 Europe/London
 ```
 
-The callback constructs `DailyPollAutoCompleteDue` and submits it through the
-idempotency sequence. The Discovery service handles that Truth and queries for
-polls satisfying:
+The callback receives the latest scheduled occurrence at or before application
+time, coalescing missed daily occurrences. It constructs
+`DailyPollAutoCompleteDue` with that occurrence's London date and submits it
+through the idempotency sequence. The date remains in the serialized Truth even
+if application time advances before Discovery executes. Startup recovery, after
+the required projections are ready, uses the same calendar calculation. Before
+today's 16:00 deadline the latest due date is yesterday; at or after the
+deadline it is today. Startup and the scheduled callback therefore converge on
+the same date-based Truth identity without consuming today's identity early.
+
+The Discovery service handles that Truth and queries for open polls whose date
+falls within the persisted processing floor and through the Truth's
+`ObservedOn` date:
 
 ```text
 completed == false
-date == today in Europe/London
+date >= PollsSince
+date <= DailyPollAutoCompleteDue.ObservedOn
 ```
 
 For every matching poll, Discovery constructs `PollAutoCompletionDue` and

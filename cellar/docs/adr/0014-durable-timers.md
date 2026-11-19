@@ -12,7 +12,8 @@ be represented by a Cell.
 ## Decision
 
 Cellar provides a `Timer` component with a stable `HandlerName`, recurrence
-configuration, and process-local callback.
+configuration, and process-local callback. Timer creation and recurrence use the
+application clock shared by the Cellar runtime; it defaults to system time.
 
 Applications create a timer definition and register it on every startup:
 
@@ -63,6 +64,16 @@ definition later schedules a new timer.
 `TimerFixedRate` schedules against the previous deadline. If one or more deadlines were
 missed, Cellar coalesces them and schedules the first cadence boundary strictly after
 the current time. It does not execute every missed tick.
+
+`TimerDailyCalendar` uses its configured location and wall-clock time. A timer created
+with `NewCalendarTimer` receives the latest scheduled occurrence at or before the
+sampled application instant. Missed daily occurrences are coalesced, and the next
+deadline is strictly after the sampled instant. The occurrence is passed by value to
+the callback and remains unchanged if application time advances while it runs.
+
+After a clock advance, `Cellar.NotifyScheduling` wakes an idle Scheduler to recheck
+eligibility. It does not invoke timer callbacks directly. Sequence retry delays are
+resolved against the same application clock during atomic result application.
 
 Successful callbacks return the same Cell to `READY` with its next deadline. The Cell
 therefore keeps the same durable identity across executions.

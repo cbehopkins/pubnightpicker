@@ -35,6 +35,7 @@ type PollCompletedEmailHandler struct {
 	Recipients EmailRecipientSource
 	BaseURL    string
 	Logger     *slog.Logger
+	Now        func() time.Time
 }
 
 type completionMark struct {
@@ -62,7 +63,7 @@ func (h PollCompletedEmailHandler) Handle(ctx context.Context, payload truths.Po
 	venue, err := h.Venues.Get(ctx, payload.SelectedVenueID)
 	if errors.Is(err, venuecache.ErrNotFound) {
 		h.warn("completed poll venue not found yet", "poll_id", payload.PollID, "venue_id", payload.SelectedVenueID)
-		notBefore := time.Now().UTC().Add(missingVenueRetryDelay)
+		notBefore := clock(h.Now).UTC().Add(missingVenueRetryDelay)
 		return cellar.Retry{NotBefore: &notBefore}
 	}
 	if err != nil {

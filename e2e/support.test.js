@@ -1,13 +1,20 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { displayDate, londonDate, recurrenceDates, shiftDate } from "./features/support/calendar.js";
+import { displayDate, londonDate, londonInstant, recurrenceDates, shiftDate } from "./features/support/calendar.js";
+import { advanceApplicationTime } from "./features/support/application-clock.js";
 import { waitForValue } from "./features/support/emulator.js";
 import { createPushIdentity } from "./features/support/push-fixture.js";
 import { parseCompleteBackendRecords } from "./features/support/backend-evidence.js";
+import { createServer } from "node:http";
 
 test("London dates distinguish summer midnight from UTC midnight", () => {
     assert.equal(londonDate(new Date("2026-06-30T23:30:00Z")), "2026-07-01");
     assert.equal(londonDate(new Date("2026-12-31T23:30:00Z")), "2026-12-31");
+});
+
+test("London local instants use the date's daylight-saving offset", () => {
+    assert.equal(londonInstant("2026-07-04", "16:00"), "2026-07-04T16:00:00+01:00");
+    assert.equal(londonInstant("2026-12-04", "16:00"), "2026-12-04T16:00:00+00:00");
 });
 
 test("recurrence targets cross month, leap-day and year boundaries", () => {
@@ -52,4 +59,46 @@ test("backend JSONL parsing ignores only a partial final record", () => {
     assert.equal(records[0].msg, "ready");
     assert.throws(() => parseCompleteBackendRecords('{"msg":"ready"}\nnot-json\n'), /Malformed complete backend JSONL record at line 2/);
     assert.throws(() => parseCompleteBackendRecords('[]\n'), /is not an object/);
+});
+
+test("application clock helper sends advances only to its loopback endpoint", async () => {
+    const server = createServer((request, response) => {
+        assert.equal(request.method, "POST");
+        assert.equal(request.url, "/clock");
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk) => { body += chunk; });
+        request.on("end", () => {
+            assert.deepEqual(JSON.parse(body), { instant: "2026-07-04T16:00:00+01:00" });
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ instant: "2026-07-04T16:00:00+01:00", scheduling_notified: true }));
+        });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const address = server.address();
+        const result = await advanceApplicationTime("2026-07-04T16:00:00+01:00", `http://127.0.0.1:${address.port}`);
+        assert.equal(result.scheduling_notified, true);
+        await assert.rejects(advanceApplicationTime("2026-07-04T16:00:00Z", "https://clock.example.test"), /loopback/);
+    } finally {
+        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+});
+
+test("application clock helper reports control endpoint failures", async () => {
+    const server = createServer((_request, response) => {
+        response.statusCode = 409;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ error: "application time cannot move backwards" }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const address = server.address();
+        await assert.rejects(
+            advanceApplicationTime("2026-07-04T16:00:00+01:00", `http://127.0.0.1:${address.port}`),
+            /application time cannot move backwards/,
+        );
+    } finally {
+        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
 });

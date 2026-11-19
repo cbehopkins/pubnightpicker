@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +69,47 @@ type blockingContinuationHandler struct {
 	child   cellar.CellRequest
 }
 
+type schedulingTestClock struct {
+	mu  sync.RWMutex
+	now time.Time
+}
+
+func (c *schedulingTestClock) Now() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.now
+}
+
+func (c *schedulingTestClock) Set(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+}
+
+type claimObservingStore struct {
+	cellar.Store
+	claimTimes chan time.Time
+}
+
+type sequenceRetryHandler struct {
+	attempts atomic.Int32
+	calls    chan int32
+}
+
+func (h *sequenceRetryHandler) Handle(context.Context, incrementPayload) cellar.Result {
+	attempt := h.attempts.Add(1)
+	h.calls <- attempt
+	if attempt == 1 {
+		return cellar.RetrySequence{Delay: 5 * time.Minute}
+	}
+	return cellar.Complete{}
+}
+
+func (s *claimObservingStore) ClaimNext(now time.Time) (cellar.Cell, bool, error) {
+	s.claimTimes <- now
+	return s.Store.ClaimNext(now)
+}
+
 func (h blockingContinuationHandler) Handle(ctx context.Context, payload string) cellar.Result {
 	h.started <- struct{}{}
 	<-h.release
@@ -113,6 +156,296 @@ func TestCellarRegistersAndExecutesTypedJSONHandler(t *testing.T) {
 	}
 	if len(active) != 0 {
 		t.Fatalf("active cells = %d, want 0", len(active))
+	}
+}
+
+func TestCellarUsesInjectedClockAndNotifiesScheduler(t *testing.T) {
+	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	clock := &schedulingTestClock{now: initial}
+	baseStore := cellar.NewMemoryStore(nil)
+	store := &claimObservingStore{Store: baseStore, claimTimes: make(chan time.Time, 4)}
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Hour, Clock: clock})
+	received := make(chan string, 1)
+	if err := runtime.Register("example.scheduled", routedHandler{name: "scheduled", received: received}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	due := initial.Add(time.Minute)
+	if _, err := store.Add([]cellar.CellRequest{{
+		Steps:     []cellar.CellStep{{HandlerName: "example.scheduled", Payload: []byte(`{"source":"ready"}`)}},
+		NotBefore: &due,
+	}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	startDone := startRuntime(runtime)
+	select {
+	case got := <-store.claimTimes:
+		if !got.Equal(initial) {
+			t.Fatalf("initial claim time = %s, want frozen time %s", got, initial)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not make its initial claim")
+	}
+	runtime.NotifyScheduling()
+	select {
+	case got := <-store.claimTimes:
+		if !got.Equal(initial) {
+			t.Fatalf("notification claim time = %s, want frozen time %s", got, initial)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not recheck after notification")
+	}
+	select {
+	case got := <-received:
+		t.Fatalf("handler ran before application time advanced: %q", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := clock.Now(); !got.Equal(initial) {
+		t.Fatalf("frozen clock advanced with real time: got %s, want %s", got, initial)
+	}
+
+	advanced := due
+	clock.Set(advanced)
+	runtime.NotifyScheduling()
+	select {
+	case got := <-received:
+		if got != "scheduled:ready" {
+			t.Fatalf("handler result = %q, want scheduled:ready", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not dispatch work after application time advanced")
+	}
+	if got := clock.Now(); !got.Equal(advanced) {
+		t.Fatalf("application clock changed after advancement: got %s, want %s", got, advanced)
+	}
+	stopRuntime(t, runtime, startDone)
+}
+
+func TestCellarDefaultsToSystemTimeForScheduledWork(t *testing.T) {
+	store := cellar.NewMemoryStore(nil)
+	runtime := cellar.New(store, cellar.Config{PollDelay: 5 * time.Millisecond})
+	received := make(chan string, 1)
+	if err := runtime.Register("example.scheduled", routedHandler{name: "scheduled", received: received}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	due := time.Now().Add(20 * time.Millisecond)
+	if _, err := store.Add([]cellar.CellRequest{{
+		Steps:     []cellar.CellStep{{HandlerName: "example.scheduled", Payload: []byte(`{"source":"ready"}`)}},
+		NotBefore: &due,
+	}}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	startDone := startRuntime(runtime)
+	select {
+	case got := <-received:
+		if got != "scheduled:ready" {
+			t.Fatalf("handler result = %q, want scheduled:ready", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("system-time scheduler did not run work when its deadline arrived")
+	}
+	stopRuntime(t, runtime, startDone)
+}
+
+func TestSequenceRetryStaysDeferredUntilApplicationTimeAdvances(t *testing.T) {
+	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	clock := &schedulingTestClock{now: initial}
+	baseStore := cellar.NewMemoryStore(nil)
+	store := &claimObservingStore{Store: baseStore, claimTimes: make(chan time.Time, 8)}
+	runtime := cellar.New(store, cellar.Config{PollDelay: time.Hour, Clock: clock})
+	handler := &sequenceRetryHandler{calls: make(chan int32, 2)}
+	if err := runtime.Register("example.retry", handler); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if _, err := runtime.Add("example.retry", incrementPayload{Value: 1}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	startDone := startRuntime(runtime)
+	select {
+	case <-store.claimTimes:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not make its initial claim")
+	}
+	select {
+	case attempt := <-handler.calls:
+		if attempt != 1 {
+			t.Fatalf("first handler attempt = %d, want 1", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first handler attempt did not occur")
+	}
+	select {
+	case <-store.claimTimes:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not check eligibility after sequence retry")
+	}
+	select {
+	case attempt := <-handler.calls:
+		t.Fatalf("handler retried while application time was frozen: attempt %d", attempt)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := clock.Now(); !got.Equal(initial) {
+		t.Fatalf("frozen clock advanced with real time: got %s, want %s", got, initial)
+	}
+
+	advanced := initial.Add(5 * time.Minute)
+	clock.Set(advanced)
+	runtime.NotifyScheduling()
+	select {
+	case attempt := <-handler.calls:
+		if attempt != 2 {
+			t.Fatalf("handler attempt after advancement = %d, want 2", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler did not retry after application time advanced")
+	}
+	if got := clock.Now(); !got.Equal(advanced) {
+		t.Fatalf("application clock changed after advancement: got %s, want %s", got, advanced)
+	}
+	stopRuntime(t, runtime, startDone)
+}
+
+func TestStoreResultApplierUsesInjectedClockForSequenceRetry(t *testing.T) {
+	initial := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	clock := &schedulingTestClock{now: initial}
+	store := cellar.NewMemoryStore(nil)
+	ids, err := store.Add([]cellar.CellRequest{{
+		Steps: []cellar.CellStep{
+			{HandlerName: "example.first", Payload: []byte(`{}`)},
+			{HandlerName: "example.second", Payload: []byte(`{}`)},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	claimed, ok, err := store.ClaimNext(initial)
+	if err != nil {
+		t.Fatalf("ClaimNext() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ClaimNext() did not return the sequence")
+	}
+
+	const delay = 5 * time.Minute
+	applier := cellar.NewStoreResultApplierWithClock(store, clock)
+	if err := applier.ApplyResult(context.Background(), claimed, cellar.RetrySequence{Delay: delay}); err != nil {
+		t.Fatalf("ApplyResult() error = %v", err)
+	}
+	cell, err := store.Get(ids[0])
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	wantDue := initial.Add(delay)
+	if cell.NotBefore == nil || !cell.NotBefore.Equal(wantDue) {
+		t.Fatalf("sequence retry deadline = %v, want %s", cell.NotBefore, wantDue)
+	}
+	if cell.CurrentStep != 0 {
+		t.Fatalf("sequence current step = %d, want 0", cell.CurrentStep)
+	}
+	if _, ok, err := store.ClaimNext(initial.Add(delay - time.Second)); err != nil || ok {
+		t.Fatalf("ClaimNext() before retry deadline = (%t, %v), want no claim", ok, err)
+	}
+	if _, ok, err := store.ClaimNext(wantDue); err != nil || !ok {
+		t.Fatalf("ClaimNext() at retry deadline = (%t, %v), want a claim", ok, err)
+	}
+}
+
+func TestCalendarTimerCoalescesToLatestDueOccurrence(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	tests := []struct {
+		name             string
+		initial          time.Time
+		advanced         time.Time
+		wantOccurrence   time.Time
+		wantNextDeadline time.Time
+	}{
+		{
+			name:             "multi-day jump across British Summer Time start",
+			initial:          time.Date(2026, time.March, 27, 15, 59, 0, 0, location),
+			advanced:         time.Date(2026, time.March, 30, 15, 59, 0, 0, location),
+			wantOccurrence:   time.Date(2026, time.March, 29, 16, 0, 0, 0, location),
+			wantNextDeadline: time.Date(2026, time.March, 30, 16, 0, 0, 0, location),
+		},
+		{
+			name:             "multi-day jump across Greenwich Mean Time start",
+			initial:          time.Date(2026, time.October, 23, 15, 59, 0, 0, location),
+			advanced:         time.Date(2026, time.October, 26, 15, 59, 0, 0, location),
+			wantOccurrence:   time.Date(2026, time.October, 25, 16, 0, 0, 0, location),
+			wantNextDeadline: time.Date(2026, time.October, 26, 16, 0, 0, 0, location),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clock := &schedulingTestClock{now: test.initial}
+			baseStore := cellar.NewMemoryStore(nil)
+			store := &claimObservingStore{Store: baseStore, claimTimes: make(chan time.Time, 4)}
+			runtime := cellar.New(store, cellar.Config{PollDelay: time.Hour, Clock: clock})
+			occurrences := make(chan time.Time, 1)
+			timer, err := cellar.NewCalendarTimer("reports.daily", cellar.TimerConfig{
+				Mode:     cellar.TimerDailyCalendar,
+				DailyAt:  "16:00",
+				Location: location.String(),
+			}, func(_ context.Context, occurrence time.Time) error {
+				occurrences <- occurrence
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("NewCalendarTimer() error = %v", err)
+			}
+			if err := timer.Register(runtime); err != nil {
+				t.Fatalf("Register() error = %v", err)
+			}
+			id, err := timer.Schedule(runtime)
+			if err != nil {
+				t.Fatalf("Schedule() error = %v", err)
+			}
+			initialCell, err := baseStore.Get(id)
+			if err != nil {
+				t.Fatalf("Get() scheduled cell error = %v", err)
+			}
+			wantInitialDeadline := time.Date(test.initial.Year(), test.initial.Month(), test.initial.Day(), 16, 0, 0, 0, location)
+			if initialCell.NotBefore == nil || !initialCell.NotBefore.Equal(wantInitialDeadline) {
+				t.Fatalf("initial timer deadline = %v, want %s", initialCell.NotBefore, wantInitialDeadline)
+			}
+
+			startDone := startRuntime(runtime)
+			select {
+			case <-store.claimTimes:
+			case <-time.After(time.Second):
+				t.Fatal("scheduler did not make its initial claim")
+			}
+			clock.Set(test.advanced)
+			runtime.NotifyScheduling()
+			select {
+			case got := <-occurrences:
+				if !got.Equal(test.wantOccurrence) {
+					t.Fatalf("scheduled occurrence = %s, want %s", got, test.wantOccurrence)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("calendar callback did not run after time advanced")
+			}
+			for range 2 {
+				select {
+				case <-store.claimTimes:
+				case <-time.After(time.Second):
+					t.Fatal("scheduler did not check eligibility after timer rescheduling")
+				}
+			}
+			rescheduled, err := baseStore.Get(id)
+			if err != nil {
+				t.Fatalf("Get() rescheduled cell error = %v", err)
+			}
+			if rescheduled.NotBefore == nil || !rescheduled.NotBefore.Equal(test.wantNextDeadline) || !rescheduled.NotBefore.After(test.advanced) {
+				t.Fatalf("next timer deadline = %v, want %s after %s", rescheduled.NotBefore, test.wantNextDeadline, test.advanced)
+			}
+			stopRuntime(t, runtime, startDone)
+		})
 	}
 }
 
