@@ -2,6 +2,9 @@
 
 ## Language
 
+**Group**:
+A community to which Meets belong, forming a boundary for membership and administration.
+
 **Meet**:
 A gathering scheduled for a date, from its voting phase through to its completion and beyond.
 _Avoid_: Event, poll as a name for the gathering

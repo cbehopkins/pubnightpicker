@@ -8,17 +8,22 @@ info:
     contract. IDs are opaque strings. Authentication uses Firebase-issued bearer
     tokens verified by the API.
 
+    The implemented Group API is currently limited to GET /groups. Other Group
+    operations in this draft are not implemented. Discovery deliberately departs
+    from ADR-011 and ADR-012 for this phase: only public Groups are returned to
+    every caller, including authenticated callers; membership-based private
+    discovery is not implemented.
+
     Authentication may be omitted for public group discovery and public resource
     reads. If an Authorization bearer token is supplied, it must be valid; invalid
     or expired credentials produce 401 rather than anonymous fallback.
 
-    A group is the boundary for membership, permissions, settings and Meet
-    discovery. Visibility and membership are distinct. Public groups can be
-    discovered by non-members; private groups are discoverable only by callers
-    authorised to see them. Read visibility does not grant write permission.
+    The broader design uses Groups as the boundary for membership, permissions,
+    settings and Meet discovery. Those authorisation behaviours are not implied
+    by the currently implemented discovery endpoint.
 servers:
-  - url: https://api.example.invalid
-    description: Replace with the deployed API origin.
+  - url: https://api.example.invalid/api
+    description: Replace with the deployed API base URL, including `/api`.
 tags:
   - name: Groups
   - name: Group members
@@ -36,12 +41,23 @@ paths:
     get:
       tags: [Groups]
       operationId: listGroups
-      summary: List groups available to the caller
+      summary: List public groups
       description: |
-        Authentication is optional. Anonymous callers receive public groups.
-        Authenticated callers receive public groups and private groups they are
-        authorised to discover. `name` is an exact-match filter. An empty result
-        is represented by 200 with an empty array.
+        This is the only implemented Group operation in this phase. Authentication
+        is optional; anonymous and authenticated callers receive public Groups
+        only. Private Groups are never disclosed, including to members or global
+        administrators. This interim rule deliberately differs from ADR-011 and
+        ADR-012; membership-aware discovery is not implemented.
+
+        `name`, when supplied, is an exact, case-sensitive match. Startup requires
+        a non-empty authoritative Firestore Groups collection whose documents all
+        have a non-empty name and a supported `public` or `private` visibility,
+        with no duplicate exact-case names. The local projection follows live
+        changes. If the collection later becomes empty, discovery returns an empty
+        array and the backend remains running.
+
+        Invalid or expired supplied bearer tokens return 401; they are not treated
+        as anonymous requests. No matches are represented by 200 with an empty array.
       security:
         - bearerAuth: []
         - {}
@@ -49,13 +65,12 @@ paths:
         - name: name
           in: query
           required: false
-          description: Exact group-name match.
+          description: Exact, case-sensitive Group-name match.
           schema:
             type: string
-            minLength: 1
       responses:
         '200':
-          description: Groups available to the caller.
+          description: Public Groups available to any caller.
           content:
             application/json:
               schema:
@@ -72,7 +87,7 @@ paths:
                     groups:
                       - id: opaque-group-id
                         name: ampubnight
-                        visibility: private
+                        visibility: public
                 noMatches:
                   value:
                     groups: []

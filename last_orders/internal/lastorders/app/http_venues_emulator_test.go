@@ -35,6 +35,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = firestoreClient.Close() })
 	venueCollection := firestoreClient.Collection("pubs")
+	groupCollection := firestoreClient.Collection("groups")
 	roleCollection := firestoreClient.Collection("roles")
 	for id, data := range map[string]map[string]any{
 		"seed-venue": {"name": "Seed Pub", "venueType": "pub", "address": "Seed Street", "location_id": "north", "food": true, "visible_group_ids": []string{"group-a"}, "previous_venue_ids": []string{"old-pub"}},
@@ -43,6 +44,9 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := groupCollection.Doc("seed-group").Set(ctx, map[string]any{"name": "Seed Group", "visibility": "public"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := roleCollection.Doc("canManagePubs").Set(ctx, map[string]any{"verified-user": true}); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +54,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 		cleanupCtx, finish := context.WithTimeout(context.Background(), 5*time.Second)
 		defer finish()
 		_, _ = venueCollection.Doc("seed-venue").Delete(cleanupCtx)
+		_, _ = groupCollection.Doc("seed-group").Delete(cleanupCtx)
 		_, _ = roleCollection.Doc("canManagePubs").Delete(cleanupCtx)
 	})
 
@@ -57,6 +62,7 @@ func TestVenueCollectionHTTPAgainstFirestoreEmulator(t *testing.T) {
 	config.EnableFirestore = true
 	config.FirestoreProjectID = projectID
 	config.VenueSource = nil // Use the Firestore-backed source selected by app.New.
+	config.GroupSource = nil // Use the authoritative Firestore Groups collection.
 	config.HTTPAddr = "127.0.0.1:0"
 	config.AllowAuthEmulator = true
 	application, err := app.New(config)

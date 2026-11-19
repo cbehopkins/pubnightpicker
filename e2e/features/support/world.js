@@ -26,6 +26,11 @@ class BrowserWorld extends World {
       return this.actors.get(name);
     }
     const context = await this.browser.newContext({ locale: "en-GB", timezoneId: "Europe/London" });
+    if (this.defaultGroups) {
+      await context.route("http://127.0.0.1:8081/api/groups?name=ampubnight", (route) => route.fulfill({
+        json: { groups: this.defaultGroups },
+      }));
+    }
     this.pushIdentities ??= new Map();
     this.pushIdentities.set(name, await installPushBoundary(context, this.pushPermissionResponses?.get(name) ?? "denied"));
     const page = await context.newPage();
@@ -53,7 +58,10 @@ class BrowserWorld extends World {
 
 setWorldConstructor(BrowserWorld);
 
-Before(async function () {
+Before(async function ({ pickle }) {
+  if (!pickle.tags.some((tag) => tag.name === "@last_orders")) {
+    this.defaultGroups = [{ id: "frontend-journey-group", name: "ampubnight", visibility: "public" }];
+  }
   await this.openBrowser();
 });
 

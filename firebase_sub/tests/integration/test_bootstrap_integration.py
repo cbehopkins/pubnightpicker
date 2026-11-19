@@ -10,7 +10,9 @@ Run requirements:
 """
 
 import pytest
+from click.testing import CliRunner
 
+from firebase_sub.cli import bootstrap
 from firebase_sub.cli.bootstrap import (
     ADMIN_DEFAULT_ROLES,
     SMOKE_ADMIN_UID,
@@ -21,6 +23,158 @@ from firebase_sub.cli.bootstrap import (
     _set_doc_if_missing,
     seed_smoke_data,
 )
+
+
+def _run_create_admin(firestore_client, monkeypatch, *arguments: str):
+    monkeypatch.setattr(bootstrap, "_get_db", lambda: firestore_client)
+    return CliRunner().invoke(
+        bootstrap.cli,
+        ["create-admin", "--uid", "bootstrap-admin", *arguments],
+    )
+
+
+@pytest.mark.integration
+def test_create_admin_creates_default_group_without_changing_meets(
+    firestore_client, monkeypatch
+):
+    meet_data = {"date": "2026-11-20", "completed": False, "selected": None}
+    firestore_client.collection("polls").document("meet-1").set(meet_data)
+
+    result = _run_create_admin(firestore_client, monkeypatch)
+
+    groups = list(firestore_client.collection("groups").stream())
+    assert result.exit_code == 0, result.output
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.id != "ampubnight"
+    assert group.to_dict() == {"name": "ampubnight", "visibility": "public"}
+    assert f"groups/{group.id}: created public Group 'ampubnight'" in result.output
+    assert (
+        firestore_client.collection("polls").document("meet-1").get().to_dict()
+        == meet_data
+    )
+
+
+@pytest.mark.integration
+def test_create_admin_accepts_custom_name_with_other_groups_present(
+    firestore_client, monkeypatch
+):
+    firestore_client.collection("groups").document("unrelated").set(
+        {"name": "unrelated", "visibility": "private"}
+    )
+
+    result = _run_create_admin(
+        firestore_client, monkeypatch, "--group-name", "Custom Group"
+    )
+
+    groups = list(firestore_client.collection("groups").stream())
+    groups_by_id = {group.id: group.to_dict() for group in groups}
+    assert result.exit_code == 0, result.output
+    assert len(groups_by_id) == 2
+    assert groups_by_id["unrelated"] == {
+        "name": "unrelated",
+        "visibility": "private",
+    }
+    custom_groups = [
+        (group_id, data)
+        for group_id, data in groups_by_id.items()
+        if data.get("name") == "Custom Group"
+    ]
+    assert len(custom_groups) == 1
+    custom_group_id, custom_group = custom_groups[0]
+    assert custom_group_id != "Custom Group"
+    assert custom_group == {"name": "Custom Group", "visibility": "public"}
+    assert (
+        f"groups/{custom_group_id}: created public Group 'Custom Group'"
+        in result.output
+    )
+
+
+@pytest.mark.integration
+def test_create_admin_treats_group_name_case_variants_as_distinct(
+    firestore_client, monkeypatch
+):
+    lower_result = _run_create_admin(firestore_client, monkeypatch)
+    upper_result = _run_create_admin(
+        firestore_client, monkeypatch, "--group-name", "AmPubNight"
+    )
+
+    groups = list(firestore_client.collection("groups").stream())
+    names = {group.to_dict()["name"] for group in groups}
+    assert lower_result.exit_code == 0, lower_result.output
+    assert upper_result.exit_code == 0, upper_result.output
+    assert len(groups) == 2
+    assert names == {"ampubnight", "AmPubNight"}
+
+
+@pytest.mark.integration
+def test_create_admin_reuses_matching_group_unchanged_and_preserves_meets(
+    firestore_client, monkeypatch
+):
+    original_group = {
+        "name": "ampubnight",
+        "visibility": "private",
+        "customField": {"retain": True},
+    }
+    firestore_client.collection("groups").document("existing-group").set(original_group)
+    firestore_client.collection("groups").document("different-group").set(
+        {"name": "another-group", "visibility": "public"}
+    )
+    meet_data = {"date": "2026-11-20", "groupId": "legacy-value", "custom": 7}
+    firestore_client.collection("polls").document("meet-1").set(meet_data)
+
+    first_result = _run_create_admin(firestore_client, monkeypatch)
+    second_result = _run_create_admin(firestore_client, monkeypatch)
+
+    assert first_result.exit_code == 0, first_result.output
+    assert second_result.exit_code == 0, second_result.output
+    assert "groups/existing-group: reused existing Group 'ampubnight' unchanged" in (
+        second_result.output
+    )
+    assert (
+        firestore_client.collection("groups").document("existing-group").get().to_dict()
+        == original_group
+    )
+    assert firestore_client.collection("groups").document(
+        "different-group"
+    ).get().to_dict() == {"name": "another-group", "visibility": "public"}
+    assert len(list(firestore_client.collection("groups").stream())) == 2
+    assert (
+        firestore_client.collection("polls").document("meet-1").get().to_dict()
+        == meet_data
+    )
+
+
+@pytest.mark.integration
+def test_create_admin_refuses_duplicate_exact_name_groups_without_writes(
+    firestore_client, monkeypatch
+):
+    first_group = {"name": "ampubnight", "visibility": "public"}
+    second_group = {"name": "ampubnight", "visibility": "private"}
+    firestore_client.collection("groups").document("first-group").set(first_group)
+    firestore_client.collection("groups").document("second-group").set(second_group)
+    firestore_client.collection("polls").document("meet-1").set({"custom": True})
+
+    result = _run_create_admin(firestore_client, monkeypatch)
+
+    assert result.exit_code != 0
+    assert "found 2 Groups named 'ampubnight'" in result.output
+    assert len(list(firestore_client.collection("groups").stream())) == 2
+    assert (
+        firestore_client.collection("groups").document("first-group").get().to_dict()
+        == first_group
+    )
+    assert (
+        firestore_client.collection("groups").document("second-group").get().to_dict()
+        == second_group
+    )
+    assert firestore_client.collection("polls").document("meet-1").get().to_dict() == {
+        "custom": True
+    }
+    assert (
+        firestore_client.collection("users").document("bootstrap-admin").get().exists
+        is False
+    )
 
 
 @pytest.mark.integration

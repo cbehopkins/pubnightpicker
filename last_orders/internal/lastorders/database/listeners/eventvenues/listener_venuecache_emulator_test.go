@@ -10,6 +10,8 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/components/venuecache"
 
@@ -54,7 +56,15 @@ func TestListEventVenuesReadsProjectionThroughVenueCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new venue cache service: %v", err)
 	}
-	service, err := recurrence.NewService(client, slog.Default(), cache)
+	groupStore, err := groupcache.NewStore(base)
+	if err != nil {
+		t.Fatalf("new Group cache store: %v", err)
+	}
+	groupService, err := groupcache.NewService(groupStore, groupcachetest.New())
+	if err != nil {
+		t.Fatalf("new Group cache service: %v", err)
+	}
+	service, err := recurrence.NewService(client, slog.Default(), cache, groupService)
 	if err != nil {
 		t.Fatalf("new recurrence service: %v", err)
 	}

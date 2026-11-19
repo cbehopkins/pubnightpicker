@@ -2,11 +2,18 @@ package recurrence
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"last_orders/internal/lastorders/basestore"
+	"last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
+
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/option"
+	_ "modernc.org/sqlite"
 )
 
 type fixedClock struct {
@@ -15,6 +22,30 @@ type fixedClock struct {
 
 func (clock *fixedClock) Now() time.Time {
 	return clock.instant
+}
+
+func newClockTestGroupService(t *testing.T) *groupcache.Service {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "groups.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := groupcache.NewStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := groupcache.NewService(store, groupcachetest.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }
 
 func TestServiceTodayTracksInjectedClockAcrossLondonDateTransitions(t *testing.T) {
@@ -27,6 +58,7 @@ func TestServiceTodayTracksInjectedClockAcrossLondonDateTransitions(t *testing.T
 		t.Fatal(err)
 	}
 	defer client.Close()
+	groups := newClockTestGroupService(t)
 
 	tests := []struct {
 		name       string
@@ -54,7 +86,7 @@ func TestServiceTodayTracksInjectedClockAcrossLondonDateTransitions(t *testing.T
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			clock := &fixedClock{instant: test.before}
-			service, err := NewServiceWithClock(client, nil, nil, clock)
+			service, err := NewServiceWithClock(client, nil, nil, groups, clock)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -72,6 +72,12 @@ class RoleGrantResult:
 
 
 @dataclass(frozen=True)
+class DefaultGroupResult:
+    group_id: str | None
+    needs_creation: bool
+
+
+@dataclass(frozen=True)
 class SeedResult:
     wrote_docs: list[str]
     skipped_docs: list[str]
@@ -153,6 +159,28 @@ def _grant_role(db, role: str, uid: str, dry_run: bool) -> RoleGrantResult:
     if not already_granted and not dry_run:
         role_ref.set({uid: True}, merge=True)
     return RoleGrantResult(role=role, already_granted=already_granted)
+
+
+def _ensure_default_group(db: Client, name: str, dry_run: bool) -> DefaultGroupResult:
+    if not name.strip():
+        raise click.BadParameter("must not be empty", param_hint="--group-name")
+
+    matches = list(db.collection("groups").where("name", "==", name).stream())
+    if len(matches) > 1:
+        raise click.ClickException(
+            f"Bootstrap refused: found {len(matches)} Groups named {name!r}; "
+            "exact-name matches must be unique."
+        )
+    if matches:
+        return DefaultGroupResult(group_id=matches[0].id, needs_creation=False)
+
+    group_ref = db.collection("groups").document()
+    if not dry_run:
+        group_ref.set({"name": name, "visibility": "public"})
+    return DefaultGroupResult(
+        group_id=None if dry_run else group_ref.id,
+        needs_creation=True,
+    )
 
 
 def _generate_admin_uid() -> str:
@@ -378,6 +406,12 @@ def cli() -> None:
     "--email", default="", show_default=False, help="Optional notification email"
 )
 @click.option(
+    "--group-name",
+    default="ampubnight",
+    show_default=True,
+    help="Default public Group name to create or reuse",
+)
+@click.option(
     "--password",
     default="",
     show_default=False,
@@ -394,6 +428,7 @@ def create_admin(
     uid: str | None,
     name: str,
     email: str,
+    group_name: str,
     password: str,
     dry_run: bool,
     loglevel: int,
@@ -414,6 +449,19 @@ def create_admin(
         )
     if password and not email.strip():
         raise click.UsageError("--email is required when using --password")
+
+    group_result = _ensure_default_group(db, group_name, dry_run)
+    if group_result.needs_creation:
+        action = "would create" if dry_run else "created"
+        group_path = (
+            f"groups/{group_result.group_id}" if group_result.group_id else "groups"
+        )
+        click.echo(f"{group_path}: {action} public Group {group_name!r}")
+    else:
+        click.echo(
+            f"groups/{group_result.group_id}: reused existing Group "
+            f"{group_name!r} unchanged"
+        )
 
     if password:
         if dry_run:

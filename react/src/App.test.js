@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import authReducer, { authAdded } from "./store/authSlice";
+import { setGroupId } from "./store/groupSlice";
 import { useLocation, useParams } from "react-router-dom";
 
 const {
@@ -124,6 +125,7 @@ vi.mock("./components/pages/ChatPage", () => ({ default: () => null }));
 
 describe("App routes", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     createBrowserRouterMock.mockClear();
     useDispatchMock.mockReset();
     useSelectorMock.mockReset();
@@ -137,9 +139,17 @@ describe("App routes", () => {
     useSelectorMock.mockReturnValue(null);
     useAuthStateMock.mockReturnValue([null, false]);
     useRolesMock.mockReturnValue({});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ groups: [{ id: "group-1", name: "ampubnight", visibility: "public" }] }),
+    }));
   });
 
-  it("applies roles when Redux identity arrives after the roles snapshot", () => {
+  async function waitForApplication() {
+    await waitFor(() => expect(createBrowserRouterMock).toHaveBeenCalled());
+  }
+
+  it("applies roles when Redux identity arrives after the roles snapshot", async () => {
     let state = { auth: authReducer(undefined, { type: "init" }) };
     const dispatch = vi.fn((action) => {
       state = { auth: authReducer(state.auth, action) };
@@ -151,14 +161,100 @@ describe("App routes", () => {
     useRolesMock.mockReturnValue(roles);
 
     const { rerender } = render(<App />);
+    await waitForApplication();
     dispatch(authAdded({ uid: "admin-user" }));
     rerender(<App />);
 
     expect(state.auth.roles).toEqual(roles);
   });
 
-  it("keeps legacy /pubs routes redirecting to /venues equivalents", () => {
+  it("blocks the application while the default Group is being resolved", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => { })));
+
     render(<App />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Resolving the default Group...");
+    expect(createBrowserRouterMock).not.toHaveBeenCalled();
+  });
+
+  it("discovers the exact default Group before entering the application", async () => {
+    const dispatch = vi.fn();
+    useDispatchMock.mockReturnValue(dispatch);
+    render(<App />);
+
+    await waitForApplication();
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8081/api/groups?name=ampubnight",
+      expect.objectContaining({ method: "GET" }),
+    );
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith(setGroupId("group-1")));
+    expect(screen.getByTestId("router-provider")).toBeTruthy();
+  });
+
+  it.each([
+    ["missing", [], 'The default Group "ampubnight" could not be found.'],
+    ["ambiguous", [
+      { id: "group-1", name: "ampubnight", visibility: "public" },
+      { id: "group-2", name: "ampubnight", visibility: "public" },
+    ], 'More than one Group named "ampubnight" was returned.'],
+  ])("blocks entry when the default Group is %s", async (_state, groups, message) => {
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ groups }) });
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(createBrowserRouterMock).not.toHaveBeenCalled();
+  });
+
+  it("shows request failures and permits an explicit successful retry", async () => {
+    fetch.mockRejectedValueOnce(new Error("offline"));
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to resolve the default Group.");
+    expect(createBrowserRouterMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitForApplication();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not use a persisted Group ID when fresh discovery fails", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => "stale-group-id"),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+    fetch.mockRejectedValueOnce(new Error("offline"));
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to resolve the default Group.");
+    expect(createBrowserRouterMock).not.toHaveBeenCalled();
+  });
+
+  it("rediscovers the Group after remount", async () => {
+    fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ groups: [{ id: "first-id", name: "ampubnight", visibility: "public" }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ groups: [{ id: "second-id", name: "ampubnight", visibility: "public" }] }) });
+
+    const firstMount = render(<App />);
+    await waitForApplication();
+    firstMount.unmount();
+    createBrowserRouterMock.mockClear();
+
+    render(<App />);
+    await waitForApplication();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toBe("http://localhost:8081/api/groups?name=ampubnight");
+  });
+
+  it("keeps legacy /pubs routes redirecting to /venues equivalents", async () => {
+    render(<App />);
+    await waitForApplication();
 
     const routeConfig = createBrowserRouterMock.mock.calls[0][0];
     const rootRoute = routeConfig[0];
@@ -172,8 +268,9 @@ describe("App routes", () => {
     expect(indexChild.element.props.to).toBe("/venues");
   });
 
-  it("registers admin sections and redirects the old diagnostics URL", () => {
+  it("registers admin sections and redirects the old diagnostics URL", async () => {
     render(<App />);
+    await waitForApplication();
 
     const children = createBrowserRouterMock.mock.calls[0][0][0].children;
     const admin = children.find((child) => child.path === "admin");
@@ -196,8 +293,9 @@ describe("App routes", () => {
     vi.mocked(useLocation).mockReturnValue({ state: null });
   });
 
-  it("registers the dedicated Meet Chat route", () => {
+  it("registers the dedicated Meet Chat route", async () => {
     render(<App />);
+    await waitForApplication();
 
     const routeConfig = createBrowserRouterMock.mock.calls[0][0];
     const rootRoute = routeConfig[0];
@@ -206,8 +304,18 @@ describe("App routes", () => {
     expect(eventChatRoute).toBeTruthy();
   });
 
-  it("registers the winning venue stats route", () => {
+  it("keeps current and past Meet routes available after discovery", async () => {
     render(<App />);
+    await waitForApplication();
+
+    const routePaths = createBrowserRouterMock.mock.calls[0][0][0].children.map((route) => route.path);
+    expect(routePaths).toContain("current_meets");
+    expect(routePaths).toContain("past_meets");
+  });
+
+  it("registers the winning venue stats route", async () => {
+    render(<App />);
+    await waitForApplication();
 
     const routeConfig = createBrowserRouterMock.mock.calls[0][0];
     const rootRoute = routeConfig[0];
@@ -218,11 +326,12 @@ describe("App routes", () => {
     expect(statsRoute.children.find((child) => child.path === "attendance")).toBeTruthy();
   });
 
-  it("starts web push lifecycle with the current user uid", () => {
+  it("starts web push lifecycle with the current user uid", async () => {
     useAuthStateMock.mockReturnValue([{ uid: "user-123" }, false]);
 
     render(<App />);
 
+    await waitForApplication();
     expect(useWebPushLifecycleMock).toHaveBeenCalledWith("user-123");
   });
 });

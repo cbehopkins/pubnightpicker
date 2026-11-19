@@ -18,6 +18,7 @@ import (
 	"last_orders/internal/lastorders/components/completionactions/completionactionstest"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	"last_orders/internal/lastorders/components/notificationprofile/notificationprofiletest"
 	"last_orders/internal/lastorders/components/pushsources/pushsourcestest"
 	"last_orders/internal/lastorders/components/recurrence/recurrencetest"
@@ -478,6 +479,7 @@ func TestNewRequiresIdempotencyRemoteWhenFirestoreDisabled(t *testing.T) {
 		DBPath:      dbPath,
 		PollDelay:   5 * time.Millisecond,
 		Logger:      testLogger(),
+		GroupSource: groupcachetest.New(),
 		EmailClient: emailplugin.ClientDummy,
 	})
 	if err == nil {
@@ -493,6 +495,7 @@ func TestStartupFailureBlocksListeners(t *testing.T) {
 		PollDelay:         5 * time.Millisecond,
 		Logger:            testLogger(),
 		IdempotencyRemote: firebaseidempotencytest.NewInMemoryRemoteStandIn(true),
+		GroupSource:       groupcachetest.New(),
 		CompletionActions: completionactionstest.New(),
 		EmailClient:       emailplugin.ClientDummy,
 		Push:              pushplugin.Options{Client: pushplugin.ClientDummy},
@@ -674,6 +677,7 @@ func testConfig(t *testing.T, dbPath string, remote firebaseidempotency.Remote) 
 		IdempotencyRemote:         remote,
 		RecurrenceService:         recurrenceService,
 		VenueSource:               venuecachetest.New(),
+		GroupSource:               groupcachetest.New(),
 		NotificationProfileSource: notificationprofiletest.New(),
 		EventVenueSource:          eventvenuestest.New(),
 		NewPollSource:             newpollstest.New(),

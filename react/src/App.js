@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate, RouterProvider, useLocation, useParams }
 import { useDispatch, useSelector } from "react-redux";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "./firebase";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import useRoles from "./hooks/useRoles";
 import Login from "./components/login/Login";
 import Register from "./components/login/Register";
@@ -27,6 +27,9 @@ import HelpPage from "./components/pages/HelpPage";
 import useSelf from "./hooks/useSelf";
 import useWebPushLifecycle from "./hooks/useWebPushLifecycle";
 import { setRoles } from "./store/authSlice";
+import { setGroupId } from "./store/groupSlice";
+import { DEFAULT_GROUP_NAME } from "./constants/groups";
+import { lastOrdersApiURL } from "./utils/lastOrdersApiURL";
 
 const ManageVenues = lazy(() => import("./components/pages/ManageVenues"));
 const ManageUsers = lazy(() => import("./components/pages/ManageUsers"));
@@ -73,6 +76,95 @@ function LegacyUserRouteRedirect() {
 }
 
 function App() {
+  const dispatch = useDispatch();
+  const [attempt, setAttempt] = useState(0);
+  const [discovery, setDiscovery] = useState({ status: "loading" });
+  const discoveryRequest = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    dispatch(setGroupId(null));
+
+    if (!discoveryRequest.current) {
+      discoveryRequest.current = (async () => {
+        try {
+          const response = await fetch(lastOrdersApiURL("api/groups", { name: DEFAULT_GROUP_NAME }), {
+            method: "GET",
+            headers: { Accept: "application/json" },
+          });
+          if (!response.ok) {
+            throw new Error("Group discovery request failed");
+          }
+
+          const payload = await response.json();
+          if (!payload || !Array.isArray(payload.groups)) {
+            throw new Error("Group discovery returned an invalid response");
+          }
+
+          if (payload.groups.length === 0) {
+            return { status: "missing" };
+          }
+          if (payload.groups.length > 1) {
+            return { status: "ambiguous" };
+          }
+
+          const [group] = payload.groups;
+          if (group?.name !== DEFAULT_GROUP_NAME || group?.visibility !== "public" ||
+            typeof group?.id !== "string" || group.id.length === 0) {
+            throw new Error("Group discovery returned an invalid Group");
+          }
+
+          return { status: "ready", groupId: group.id };
+        } catch {
+          return { status: "error" };
+        }
+      })();
+    }
+
+    discoveryRequest.current.then((result) => {
+      if (!active) return;
+      if (result.status === "ready") dispatch(setGroupId(result.groupId));
+      setDiscovery(result);
+    });
+    return () => {
+      active = false;
+    };
+  }, [attempt, dispatch]);
+
+  if (discovery.status !== "ready") {
+    const message = {
+      missing: `The default Group "${DEFAULT_GROUP_NAME}" could not be found.`,
+      ambiguous: `More than one Group named "${DEFAULT_GROUP_NAME}" was returned.`,
+      error: "Unable to resolve the default Group. Check the backend connection and try again.",
+    }[discovery.status];
+
+    return (
+      <main className="container min-vh-100 d-flex flex-column align-items-center justify-content-center py-4">
+        {discovery.status === "loading" ? (
+          <p role="status" aria-live="polite" className="mb-0">
+            <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+            Resolving the default Group...
+          </p>
+        ) : (
+          <div className="alert alert-danger mb-0" role="alert">
+            <p className="mb-3">{message}</p>
+            <button type="button" className="btn btn-secondary" onClick={() => {
+              discoveryRequest.current = null;
+              setDiscovery({ status: "loading" });
+              setAttempt((value) => value + 1);
+            }}>
+              Retry
+            </button>
+          </div>
+        )}
+      </main>
+    );
+  }
+
+  return <ResolvedApplication />;
+}
+
+function ResolvedApplication() {
   const dispatch = useDispatch();
   const [user, loading] = useAuthState(auth);
   const uid = useSelector((state) => state.auth.uid);

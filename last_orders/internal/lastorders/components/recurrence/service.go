@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"last_orders/internal/lastorders/components/groupcache"
 	"last_orders/internal/lastorders/components/venuecache"
 
 	"cloud.google.com/go/firestore"
@@ -17,6 +18,7 @@ const (
 	voteCollection       = "votes"
 	attendanceCollection = "attendance"
 	auditCollection      = "poll_action_audit"
+	defaultGroupName     = "ampubnight"
 )
 
 type Service struct {
@@ -24,6 +26,7 @@ type Service struct {
 	loc    *time.Location
 	logger *slog.Logger
 	cache  *venuecache.Service
+	groups *groupcache.Service
 	clock  Clock
 }
 
@@ -37,14 +40,17 @@ func (systemClock) Now() time.Time {
 	return time.Now()
 }
 
-func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service) (*Service, error) {
-	return NewServiceWithClock(client, logger, cache, systemClock{})
+func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service, groups *groupcache.Service) (*Service, error) {
+	return NewServiceWithClock(client, logger, cache, groups, systemClock{})
 }
 
 // NewServiceWithClock constructs a recurrence service using application time.
-func NewServiceWithClock(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service, clock Clock) (*Service, error) {
+func NewServiceWithClock(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service, groups *groupcache.Service, clock Clock) (*Service, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is nil")
+	}
+	if groups == nil {
+		return nil, fmt.Errorf("group cache service is required")
 	}
 	if clock == nil {
 		return nil, fmt.Errorf("application clock is nil")
@@ -56,7 +62,7 @@ func NewServiceWithClock(client *firestore.Client, logger *slog.Logger, cache *v
 	if err != nil {
 		return nil, err
 	}
-	return &Service{client: client, loc: loc, logger: logger, cache: cache, clock: clock}, nil
+	return &Service{client: client, loc: loc, logger: logger, cache: cache, groups: groups, clock: clock}, nil
 }
 
 func (s *Service) Location() *time.Location {
@@ -162,10 +168,19 @@ func (s *Service) CreateMeetForEventOccurrence(ctx context.Context, eventID, occ
 		if len(matches) > 0 {
 			return nil
 		}
+		groupName := defaultGroupName
+		defaultGroups, err := s.groups.ListPublic(ctx, &groupName)
+		if err != nil {
+			return fmt.Errorf("resolve default Group %q: %w", defaultGroupName, err)
+		}
+		if len(defaultGroups) != 1 || defaultGroups[0].Name != defaultGroupName {
+			return fmt.Errorf("resolve default Group %q: expected exactly one public match, found %d", defaultGroupName, len(defaultGroups))
+		}
 
 		if err := tx.Create(pollRef, map[string]any{
 			"date":                occurrenceDate,
 			"completed":           false,
+			"groupId":             string(defaultGroups[0].ID),
 			"pubs":                map[string]any{eventID: map[string]any{"name": venueName}},
 			"eventVenueId":        eventID,
 			"eventOccurrenceDate": occurrenceDate,
