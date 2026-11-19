@@ -62,12 +62,7 @@ poetry run python firebase_sub/cli/bootstrap.py grant-role --uid <auth-uid> --ro
 
 When `FIRESTORE_EMULATOR_HOST` is set, this command targets the emulator and uses `GOOGLE_CLOUD_PROJECT` for the project id.
 
-Bootstrap is repeatable setup, not the one-off migration in
-`group_migration/README.md`. That migration refuses to run when any Group
-already exists, then assigns its newly created Group ID to existing Meets. If
-you need that Meet backfill, run the migration before creating a Group through
-bootstrap in the same target project; a bootstrap-created Group prevents the
-migration from running there.
+Bootstrap is repeatable setup and never changes Meets.
 
 # Backup and Restore Runbook
 
