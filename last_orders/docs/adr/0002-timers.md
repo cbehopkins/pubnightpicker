@@ -148,16 +148,27 @@ The timer infrastructure should therefore not require Firebase-specific idempote
 
 For automatic poll completion, the daily timer is a discovery opportunity, not
 the durable business obligation itself. The backend also enqueues that
-discovery after its required projections are ready on each process start. Each
-discovery scans open polls whose date is between the persisted `PollsSince`
-cutoff and the current `Europe/London` date, inclusive. This catches eligible
-polls after downtime without replaying every missed daily timer occurrence.
+discovery after its required projections are ready on each process start. Both
+startup and scheduled discovery use the latest due 16:00 `Europe/London`
+occurrence date. Before today's deadline this is yesterday; at or after the
+deadline it is today. Each discovery scans open polls whose date is between the
+persisted `PollsSince` cutoff and that latest due date, inclusive. This catches
+eligible polls after downtime without replaying every missed daily timer
+occurrence or completing today's voting early.
+
+The calendar timer passes its coalesced scheduled occurrence to the callback.
+The callback carries that occurrence date in the daily discovery Truth and its
+date-based identity, so a later application-clock advance cannot change the
+date being processed. Startup uses the same calendar calculation after required
+projections are ready. A pre-deadline startup therefore cannot consume today's
+identity and suppress today's later scheduled discovery.
 
 On first startup, an explicit `-polls-since` value initializes the persisted
 cutoff when supplied. Otherwise, the backend initializes it from the oldest
 existing poll date; if there are no polls, it uses the current
 `Europe/London` date. Subsequent startups use the persisted cutoff, and explicit
-updates may only move it forward.
+updates may only move it forward. The cutoff is independent of the latest due
+discovery date and is never expanded to replay missed occurrences.
 
 Each discovered poll occurrence is identified by poll ID and poll date. Repeated
 startup and scheduled scans therefore converge through the existing local

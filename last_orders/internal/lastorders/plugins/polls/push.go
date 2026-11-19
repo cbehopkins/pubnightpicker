@@ -166,7 +166,7 @@ func (h PollCompletedPushHandler) Handle(ctx context.Context, payload truths.Pol
 
 	venue, err := h.Venues.Get(ctx, payload.SelectedVenueID)
 	if errors.Is(err, venuecache.ErrNotFound) {
-		notBefore := time.Now().UTC().Add(missingVenueRetryDelay)
+		notBefore := clock(h.Now).UTC().Add(missingVenueRetryDelay)
 		return cellar.Retry{NotBefore: &notBefore}
 	}
 	if err != nil {

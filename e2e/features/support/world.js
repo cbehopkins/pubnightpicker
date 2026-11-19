@@ -1,10 +1,15 @@
 import { After, Before, setDefaultTimeout, setWorldConstructor, Status, World } from "@cucumber/cucumber";
 import { chromium } from "playwright";
+import { advanceApplicationTime as advanceClock } from "./application-clock.js";
 import { installPushBoundary } from "./push-fixture.js";
 
 setDefaultTimeout(30_000);
 
 class BrowserWorld extends World {
+  async advanceApplicationTime(instant) {
+    return advanceClock(instant);
+  }
+
   async openBrowser() {
     this.browser = await chromium.launch({
       headless: true,

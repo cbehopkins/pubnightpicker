@@ -5,6 +5,16 @@ export function londonDate(now = new Date()) {
     return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+export function londonInstant(isoDate, localTime) {
+    const reference = new Date(`${isoDate}T12:00:00Z`);
+    const zone = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/London",
+        timeZoneName: "longOffset",
+    }).formatToParts(reference).find(({ type }) => type === "timeZoneName").value;
+    const offset = zone === "GMT" ? "+00:00" : zone.slice(3);
+    return `${isoDate}T${localTime}:00${offset}`;
+}
+
 export function shiftDate(isoDate, days) {
     const date = new Date(`${isoDate}T00:00:00Z`);
     date.setUTCDate(date.getUTCDate() + days);

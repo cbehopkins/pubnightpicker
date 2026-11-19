@@ -27,14 +27,33 @@ type Service struct {
 	logger *slog.Logger
 	cache  *venuecache.Service
 	groups *groupcache.Service
+	clock  Clock
+}
+
+type Clock interface {
+	Now() time.Time
+}
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time {
+	return time.Now()
 }
 
 func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service, groups *groupcache.Service) (*Service, error) {
+	return NewServiceWithClock(client, logger, cache, groups, systemClock{})
+}
+
+// NewServiceWithClock constructs a recurrence service using application time.
+func NewServiceWithClock(client *firestore.Client, logger *slog.Logger, cache *venuecache.Service, groups *groupcache.Service, clock Clock) (*Service, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is nil")
 	}
 	if groups == nil {
 		return nil, fmt.Errorf("group cache service is required")
+	}
+	if clock == nil {
+		return nil, fmt.Errorf("application clock is nil")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -43,7 +62,7 @@ func NewService(client *firestore.Client, logger *slog.Logger, cache *venuecache
 	if err != nil {
 		return nil, err
 	}
-	return &Service{client: client, loc: loc, logger: logger, cache: cache, groups: groups}, nil
+	return &Service{client: client, loc: loc, logger: logger, cache: cache, groups: groups, clock: clock}, nil
 }
 
 func (s *Service) Location() *time.Location {
@@ -51,7 +70,7 @@ func (s *Service) Location() *time.Location {
 }
 
 func (s *Service) Today() time.Time {
-	return time.Now().In(s.loc)
+	return s.clock.Now().In(s.loc)
 }
 
 func EventVenueFrom(doc *firestore.DocumentSnapshot) EventVenue {

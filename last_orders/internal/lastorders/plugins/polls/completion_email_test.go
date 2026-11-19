@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"cellar/pkg/cellar"
 	durableemail "durable_email"
@@ -196,9 +197,12 @@ func TestPollCompletedEmailMarksPersonalActionWithoutRecipients(t *testing.T) {
 
 func TestPollCompletedEmailRetriesUnknownVenue(t *testing.T) {
 	handler := completedHandler(completionactionstest.New(), nil)
+	currentInstant := time.Date(2026, time.January, 2, 10, 0, 0, 0, time.UTC)
+	handler.Now = func() time.Time { return currentInstant }
 	payload := completedPoll
 	payload.SelectedVenueID = "missing"
-	if _, ok := handler.Handle(context.Background(), payload).(cellar.Retry); !ok {
+	retry, ok := handler.Handle(context.Background(), payload).(cellar.Retry)
+	if !ok || retry.NotBefore == nil || !retry.NotBefore.Equal(currentInstant.Add(missingVenueRetryDelay)) {
 		t.Fatal("unknown venue should retry")
 	}
 }

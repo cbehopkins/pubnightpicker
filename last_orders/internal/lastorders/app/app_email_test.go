@@ -403,6 +403,23 @@ func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
 	}
 }
 
+type applicationTestClock struct {
+	mu  sync.RWMutex
+	now time.Time
+}
+
+func (clock *applicationTestClock) Now() time.Time {
+	clock.mu.RLock()
+	defer clock.mu.RUnlock()
+	return clock.now
+}
+
+func (clock *applicationTestClock) Set(now time.Time) {
+	clock.mu.Lock()
+	clock.now = now
+	clock.mu.Unlock()
+}
+
 func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "email-budget.db")
@@ -499,6 +516,108 @@ func TestPollEmailBudgetIsSharedAndDiagnosticsRemainIndependent(t *testing.T) {
 	if len(active) != 1 || active[0].Steps[active[0].CurrentStep].HandlerName != durableemail.HandlerPost || active[0].NotBefore == nil || !active[0].NotBefore.After(time.Now()) {
 		t.Fatalf("future email retry was not recoverable after restart: %+v", active)
 	}
+}
+
+func TestApplicationEmailRetryUsesAndWaitsForAdvancedClock(t *testing.T) {
+	location, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := time.Date(2026, time.January, 1, 23, 59, 0, 0, location)
+	nextMidnight := time.Date(2026, time.January, 2, 0, 0, 0, 0, location)
+	applicationClock := &applicationTestClock{now: initial}
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "application-clock-email.db"), firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	cfg.Clock = applicationClock
+	cfg.EmailDailyLimit = 1
+	cfg.PollDelay = 5 * time.Millisecond
+	application := newApp(t, cfg)
+	defer application.Close()
+
+	for _, token := range []string{"poll-opened:application-clock-one", "poll-opened:application-clock-two"} {
+		request := durableemail.SendRequest{
+			IdempotencyToken: token,
+			SenderEmail:      "sender@example.com",
+			Subject:          "Clock test",
+			Text:             "Clock test",
+			Recipients:       []durableemail.SendRecipient{{Email: "alice@example.com"}},
+		}
+		sequence, err := cellar.NewSequence(durableemail.NewSendSequence(request)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cell, err := sequence.CellRequest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := application.AddCell(cell); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db := openSQLite(t, cfg.DBPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runDone := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = application.Run(ctx)
+		close(runDone)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-runDone:
+			if runErr != nil {
+				t.Errorf("run app: %v", runErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("app did not stop after cancellation")
+		}
+	}()
+
+	waitFor := func(ready func() bool) {
+		t.Helper()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for !ready() {
+			select {
+			case <-runDone:
+				t.Fatalf("app stopped before expected state: %v", runErr)
+			case <-timer.C:
+				t.Fatal("timed out waiting for expected app state")
+			case <-ticker.C:
+			}
+		}
+	}
+	acceptedCount := func() int {
+		t.Helper()
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-opened:application-clock-%' AND state = 'Accepted'`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	waitFor(func() bool {
+		if acceptedCount() != 1 {
+			return false
+		}
+		for _, cell := range activeWorkCells(t, application.CellarStore()) {
+			if cell.Steps[cell.CurrentStep].HandlerName == durableemail.HandlerPost && cell.NotBefore != nil {
+				return cell.NotBefore.Equal(nextMidnight)
+			}
+		}
+		return false
+	})
+
+	application.NotifyScheduling()
+	if got := acceptedCount(); got != 1 {
+		t.Fatalf("accepted emails while application time was frozen = %d; want 1", got)
+	}
+	applicationClock.Set(nextMidnight)
+	application.NotifyScheduling()
+	waitFor(func() bool { return acceptedCount() == 2 })
 }
 
 func TestApplicationRejectsNegativeDailyLimits(t *testing.T) {

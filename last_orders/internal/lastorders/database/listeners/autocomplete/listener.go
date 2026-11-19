@@ -35,11 +35,11 @@ func New(store cellar.Store, logger *slog.Logger) (*Listener, error) {
 	return &Listener{store: store, logger: logger, location: location}, nil
 }
 
-func (listener *Listener) RunOnce(ctx context.Context) error {
+func (listener *Listener) RunOnce(ctx context.Context, occurrence time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	truth := truths.DailyPollAutoCompleteDue{ObservedOn: time.Now().In(listener.location).Format(time.DateOnly)}
+	truth := truths.DailyPollAutoCompleteDue{ObservedOn: occurrence.In(listener.location).Format(time.DateOnly)}
 	envelope, err := truths.NewEnvelope(truths.DailyPollAutoCompleteDueFanout, truth)
 	if err != nil {
 		return fmt.Errorf("marshal daily auto-completion truth: %w", err)

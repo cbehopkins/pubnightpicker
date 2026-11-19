@@ -79,12 +79,13 @@ Backend-dependent scenarios use the real Group API and the Group created by
 the emulator bootstrap; their discovery requests are never intercepted.
 
 Both groups must discover scenarios. A build, startup, scenario or cleanup
-failure fails the command rather than skipping the backend group. Last Orders
-is built before services start and runs once for its group, using a temporary
-SQLite database. No emulator data is imported, exported or reset between
-scenarios. The initial poll-history floor is UTC today; expected recurrence
-dates use Europe/London. A London midnight crossing explicitly fails the
-recurrence scenario so it can be rerun with fresh data.
+failure fails the command rather than skipping the backend group. In the default
+`group` lifecycle, Last Orders is built before services start and runs once for
+the backend-dependent group, using a temporary SQLite database. Emulator data
+is not imported, exported or reset between scenarios in this shared lifecycle.
+The initial poll-history floor is UTC today; expected recurrence dates use
+Europe/London. A London midnight crossing explicitly fails the recurrence
+scenario so it can be rerun with fresh data.
 
 Focused developer commands, from `e2e/`:
 
@@ -92,9 +93,45 @@ Focused developer commands, from `e2e/`:
 npm run test:journey:frontend
 npm run test:journey:last-orders
 npm run test:journey:last-orders -- --name "monthly Event"
+npm run test:journey:last-orders -- --lifecycle scenario --name "monthly Event"
 npm run test:harness
 npm run test:support
 ```
+
+The default `group` lifecycle keeps the shared frontend-only and backend-dependent
+groups above unchanged. Use `--lifecycle scenario` with `--group last-orders` to
+run each selected backend-dependent scenario in its own lifecycle. The optional
+`--name` expression selects scenarios as in the shared command; if omitted, every
+backend-dependent scenario is run separately. Each scenario starts fresh Auth
+and Firestore emulators, bootstraps the demo admin, and starts a new Last Orders
+process with its own temporary SQLite database before running Vite and Cucumber.
+The Last Orders binary is built once and reused; running processes, emulator
+data, scheduling state and idempotency records are not reused. This lifecycle
+uses the ordinary system-time backend and does not require the clock-control
+endpoint. Services and temporary state are cleaned up after each scenario,
+including startup errors, failures and interruption. Scenario scratch data is
+deleted before the next selection starts. Cucumber test failures are recorded
+while later selections run in fresh lifecycles; startup errors and interruption
+stop the remaining selections. Per-scenario logs and Cucumber results are
+written under `e2e/artifacts/<run>/last-orders/scenario-NNN/`.
+
+Time-controlled backend scenarios are separately tagged `@application_time`.
+Run them with `--group last-orders --application-time`; this selects only those
+scenarios, builds with the Go `e2e` tag, and forces the fresh per-scenario
+lifecycle. Each process receives a frozen initial instant and a loopback clock
+endpoint on port 8082. The initial poll-processing floor is the supplied
+instant's London date minus one calendar day, so catch-up fixtures remain in
+scope; startup evidence verifies both the exact initial instant and floor.
+Time-driven journeys wait for the startup autocomplete discovery record before
+creating fixtures, then use correlated backend evidence and authenticated
+emulator reads for outcomes. `waitForValue` and backend-evidence waits use
+real-time 20-second bounds; advancing the application clock only acknowledges
+scheduler notification and never substitutes for waiting on business results.
+In a Cucumber step, call
+`this.advanceApplicationTime("2026-07-04T16:00:00+01:00")` to advance that
+process's clock. Its acknowledgement confirms scheduler notification only;
+assert business outcomes through their normal observable interfaces. The
+ordinary journey path stays untagged and ignores E2E clock settings.
 
 The harness checks use standard-library Python `unittest`; support checks use
 Node's built-in test runner. Discovery runs before services start. CI runs both

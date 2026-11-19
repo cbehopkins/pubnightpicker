@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cellar/pkg/cellar"
+	cellarsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/ratelimit"
@@ -318,6 +321,153 @@ func TestLiveActorPushFailureRetainsRetry(t *testing.T) {
 	request.Purpose, request.ActorUID = diagnosticsconfig.PurposePollCompleted, request.UserID
 	if _, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry); !ok || sender.sent != 1 {
 		t.Fatal("live exception failure was swallowed")
+	}
+}
+
+func TestDeliverRetryDeadlineUsesInjectedClock(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "push-clock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tokens, err := ratelimit.New("push.send", 10, time.UTC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentInstant := time.Date(2026, time.January, 2, 10, 0, 0, 0, time.UTC)
+	plugin, err := New(db, &fakeInvalidator{}, Options{
+		Client: ClientDummy,
+		Tokens: tokens,
+		Now:    func() time.Time { return currentInstant },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin.sender = &fakeSender{err: errors.New("provider unavailable")}
+	request := firstDelivery(t, populate(t, plugin))
+	request.ExpiresAt = currentInstant.Add(time.Hour)
+
+	retry, ok := (deliverHandler{plugin: plugin}).Handle(context.Background(), request).(cellar.Retry)
+	want := currentInstant.Add(minRetryDelay)
+	if !ok || retry.NotBefore == nil || !retry.NotBefore.Equal(want) {
+		t.Fatalf("retry deadline = %#v; want %s", retry.NotBefore, want)
+	}
+}
+
+type pushApplicationClock struct {
+	mu      sync.RWMutex
+	instant time.Time
+}
+
+func (clock *pushApplicationClock) Now() time.Time {
+	clock.mu.RLock()
+	defer clock.mu.RUnlock()
+	return clock.instant
+}
+
+func (clock *pushApplicationClock) Set(instant time.Time) {
+	clock.mu.Lock()
+	clock.instant = instant
+	clock.mu.Unlock()
+}
+
+type retryOnceSender struct {
+	calls   atomic.Int32
+	failed  chan struct{}
+	retried chan struct{}
+}
+
+func (sender *retryOnceSender) Send(context.Context, Subscription, []byte, time.Duration, string) (int, error) {
+	if sender.calls.Add(1) == 1 {
+		close(sender.failed)
+		return 0, errors.New("temporary provider failure")
+	}
+	close(sender.retried)
+	return http.StatusCreated, nil
+}
+
+func TestFailedPushAttemptWaitsForAdvancedApplicationTime(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "push-retry-clock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cellarStore, err := cellarsqlite.NewStore(db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := ratelimit.New("push.send", 10, time.UTC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := time.Date(2026, time.January, 2, 10, 0, 0, 0, time.UTC)
+	clock := &pushApplicationClock{instant: initial}
+	sender := &retryOnceSender{failed: make(chan struct{}), retried: make(chan struct{})}
+	plugin, err := New(db, &fakeInvalidator{}, Options{
+		Client: ClientDummy,
+		Tokens: tokens,
+		Now:    clock.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin.sender = sender
+	request := firstDelivery(t, populate(t, plugin))
+	runtime := cellar.New(cellarStore, cellar.Config{PollDelay: time.Hour, Clock: clock})
+	if err := plugin.Register(runtime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Add(HandlerDeliver, request); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Start(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("run Cellar: %v", err)
+		}
+	}()
+
+	select {
+	case <-sender.failed:
+	case <-time.After(time.Second):
+		t.Fatal("first provider attempt did not occur")
+	}
+	wantRetry := initial.Add(minRetryDelay)
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
+		active, err := cellarStore.ListActive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) == 1 && active[0].NotBefore != nil {
+			if !active[0].NotBefore.Equal(wantRetry) {
+				t.Fatalf("retry deadline = %s; want %s", active[0].NotBefore, wantRetry)
+			}
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("failed attempt did not persist its retry")
+		case <-ticker.C:
+		}
+	}
+	select {
+	case <-sender.retried:
+		t.Fatal("failed push retried while application time was frozen")
+	case <-time.After(25 * time.Millisecond):
+	}
+	clock.Set(wantRetry)
+	runtime.NotifyScheduling()
+	select {
+	case <-sender.retried:
+	case <-time.After(time.Second):
+		t.Fatal("failed push did not retry after application time advanced")
 	}
 }
 

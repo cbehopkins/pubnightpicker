@@ -24,6 +24,8 @@ class JourneyRunnerTests(unittest.TestCase):
 
     def test_environment_discards_inherited_delivery_and_credentials(self) -> None:
         unsafe = {
+            "GOFLAGS": "-tags=e2e",
+            "GOENV": "synthetic-go-env",
             "MAILTRAP_TOKEN": "synthetic",
             "MAILTRAP_SANDBOX_TOKEN": "synthetic",
             "SWEEGO_PROVIDER": "synthetic",
@@ -37,8 +39,36 @@ class JourneyRunnerTests(unittest.TestCase):
         }
         with patch.dict(os.environ, unsafe):
             env = runner._environment()
-        self.assertTrue(set(unsafe).isdisjoint(env))
+            clock_env = runner._environment(application_time=True)
+        self.assertTrue((set(unsafe) - {"GOFLAGS", "GOENV"}).isdisjoint(env))
+        self.assertEqual(env["GOFLAGS"], "")
+        self.assertEqual(env["GOENV"], "off")
+        self.assertNotIn("LAST_ORDERS_E2E_INITIAL_TIME", env)
+        self.assertEqual(
+            clock_env["LAST_ORDERS_E2E_CLOCK_ADDR"], runner.CLOCK_CONTROL_ADDR
+        )
+        self.assertEqual(clock_env["E2E_CLOCK_URL"], runner.CLOCK_CONTROL_URL)
         runner._validate_environment(env)
+        runner._validate_environment(clock_env, application_time=True)
+
+    def test_application_time_validation_does_not_regenerate_environment(self) -> None:
+        env = runner._environment(application_time=True)
+        with patch.object(
+            runner,
+            "_environment",
+            side_effect=AssertionError("validation must not regenerate initial time"),
+        ):
+            runner._validate_environment(env, application_time=True)
+
+    def test_application_time_validation_requires_an_offset_instant(self) -> None:
+        env = runner._environment(application_time=True)
+        for initial_time in ("invalid", "2026-11-18T12:00:00"):
+            with self.subTest(initial_time=initial_time):
+                candidate = {**env, "LAST_ORDERS_E2E_INITIAL_TIME": initial_time}
+                with self.assertRaisesRegex(
+                    RuntimeError, "LAST_ORDERS_E2E_INITIAL_TIME"
+                ):
+                    runner._validate_environment(candidate, application_time=True)
 
     def test_unsafe_effective_configuration_is_rejected(self) -> None:
         for key, value in (
@@ -112,7 +142,8 @@ class JourneyRunnerTests(unittest.TestCase):
 
     def test_default_runs_both_groups_with_different_state_paths(self) -> None:
         def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
-            Path(command[3]).touch()
+            output_index = command.index("-o") + 1
+            Path(command[output_index]).touch()
             return 0
 
         with patch.object(runner, "E2E_DIR", self.root), patch.object(
@@ -126,6 +157,9 @@ class JourneyRunnerTests(unittest.TestCase):
         ) as group:
             self.assertEqual(runner.main([]), 2)
         build.assert_called_once()
+        self.assertNotIn("-tags=e2e", build.call_args.args[0])
+        self.assertEqual(build.call_args.args[2]["GOFLAGS"], "")
+        self.assertEqual(build.call_args.args[2]["GOENV"], "off")
         self.assertEqual(
             [call.args[0] for call in group.call_args_list], ["frontend", "last-orders"]
         )
@@ -133,6 +167,123 @@ class JourneyRunnerTests(unittest.TestCase):
             group.call_args_list[0].args[2], group.call_args_list[1].args[2]
         )
         self.assertEqual(discovery.call_count, 2)
+
+    def test_application_time_mode_selects_tagged_scenarios_with_fresh_state(
+        self,
+    ) -> None:
+        selections = ("features/application-time.feature:5",)
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ) as preflight, patch.object(
+            runner, "_discover", return_value=selections
+        ) as discovery, patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ) as build, patch.object(
+            runner, "_run_group", return_value=0
+        ) as run_group:
+            self.assertEqual(
+                runner.main(["--group", "last-orders", "--application-time"]), 0
+            )
+
+        self.assertTrue(preflight.call_args.args[1].get("LAST_ORDERS_E2E_INITIAL_TIME"))
+        build.assert_called_once()
+        self.assertTrue(build.call_args.args[2])
+        self.assertTrue(discovery.call_args.args[4])
+        self.assertEqual(run_group.call_args.args[5], selections[0])
+        self.assertTrue(run_group.call_args.args[6])
+
+    def test_application_time_processing_floor_uses_london_date_lookback(self) -> None:
+        instant = "2026-06-30T23:30:00Z"
+        self.assertEqual(
+            runner._polls_since(
+                {"LAST_ORDERS_E2E_INITIAL_TIME": instant}, application_time=True
+            ),
+            "2026-06-30",
+        )
+
+    def test_application_time_backend_build_uses_e2e_tag(self) -> None:
+        def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
+            Path(command[command.index("-o") + 1]).touch()
+            return 0
+
+        with patch.object(runner, "_tool", return_value="go"), patch.object(
+            runner, "_run_command", side_effect=build_command
+        ) as build:
+            runner._build_backend(self.root, runner._environment(True), True)
+
+        self.assertIn("-tags=e2e", build.call_args.args[0])
+
+    def test_application_time_startup_must_echo_initial_time_and_processing_floor(
+        self,
+    ) -> None:
+        path = self.root / "backend.jsonl"
+        initial_time = "2026-06-30T23:30:00Z"
+        records = [
+            {
+                "msg": "firestore emulator enabled",
+                "project_id": runner.EMULATOR_PROJECT,
+                "firestore_emulator_host": "127.0.0.1:8080",
+            },
+            {
+                "msg": "dummy email client enabled; no Mailtrap or Sweego requests will be made"
+            },
+            {"msg": "push client selected", "client": "dummy"},
+            {
+                "msg": "e2e application clock enabled",
+                "initial_instant": initial_time,
+                "control_addr": runner.CLOCK_CONTROL_ADDR,
+            },
+            {"msg": "listener scope resolved", "polls_since": "2026-06-30"},
+        ]
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        runner._verify_backend_startup(path, True, initial_time, "2026-06-30")
+
+        records[3]["initial_instant"] = "2026-06-30T12:00:00Z"
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "safety evidence"):
+            runner._verify_backend_startup(path, True, initial_time, "2026-06-30")
+
+    def test_scenario_lifecycle_runs_each_selected_scenario_with_fresh_state(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        scratch_paths: list[Path] = []
+
+        def run_scenario(*args: object) -> int:
+            scratch_path = args[2]
+            if scratch_paths:
+                self.assertFalse(scratch_paths[-1].exists())
+            scratch_paths.append(scratch_path)
+            return 0
+
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(runner, "_run_group", side_effect=run_scenario) as run_group:
+            self.assertEqual(
+                runner.main(
+                    [
+                        "--group",
+                        "last-orders",
+                        "--lifecycle",
+                        "scenario",
+                        "--name",
+                        "selected journeys",
+                    ]
+                ),
+                0,
+            )
+
+        self.assertEqual(
+            [call.args[5] for call in run_group.call_args_list], list(selections)
+        )
+        self.assertEqual(len({call.args[2] for call in run_group.call_args_list}), 2)
+        self.assertEqual(len({call.args[3] for call in run_group.call_args_list}), 2)
 
     def test_failed_backend_build_fails_before_services(self) -> None:
         with patch.object(runner, "_tool", return_value="go"), patch.object(
@@ -159,8 +310,82 @@ class JourneyRunnerTests(unittest.TestCase):
             runner, "_run_command", return_value=0
         ) as command, self.assertRaisesRegex(RuntimeError, "No scenarios"):
             runner._discover("last-orders", runner._environment(), self.root)
-        self.assertIn("@last_orders", command.call_args.args[0])
-        self.assertIn("--dry-run", command.call_args.args[0])
+        arguments = command.call_args.args[0]
+        self.assertIn("@last_orders", arguments[arguments.index("--tags") + 1])
+        self.assertIn("not @application_time", arguments[arguments.index("--tags") + 1])
+        self.assertIn("--dry-run", arguments)
+
+    def test_application_time_tag_is_excluded_from_ordinary_backend_runs(self) -> None:
+        self.assertEqual(
+            runner._scenario_tags("last-orders", False),
+            "(@last_orders) and not @application_time",
+        )
+        self.assertEqual(
+            runner._scenario_tags("last-orders", True),
+            "(@last_orders) and @application_time",
+        )
+
+    def test_discovery_returns_location_for_each_selected_scenario(self) -> None:
+        (self.root / "discovery.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "uri": r"features\first.feature",
+                        "elements": [
+                            {"keyword": "Background", "line": 2},
+                            {"keyword": "Scenario", "line": 5},
+                            {"keyword": "Scenario Outline", "line": 9},
+                        ],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        with patch.object(runner, "_tool", return_value="node"), patch.object(
+            runner, "_run_command", return_value=0
+        ):
+            scenarios = runner._discover(
+                "last-orders", runner._environment(), self.root
+            )
+
+        self.assertEqual(
+            scenarios,
+            ("features/first.feature:5", "features/first.feature:9"),
+        )
+
+    def test_scenario_lifecycle_continues_after_a_cucumber_failure(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(runner, "_run_group", side_effect=[1, 0]) as run_group:
+            self.assertEqual(
+                runner.main(["--group", "last-orders", "--lifecycle", "scenario"]),
+                1,
+            )
+
+        self.assertEqual(run_group.call_count, 2)
+        self.assertNotEqual(
+            run_group.call_args_list[0].args[2], run_group.call_args_list[1].args[2]
+        )
+
+    def test_scenario_lifecycle_stops_after_a_startup_error(self) -> None:
+        selections = ("features/first.feature:5", "features/second.feature:9")
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover", return_value=selections), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(
+            runner, "_run_group", side_effect=RuntimeError("scenario failure")
+        ) as run_group:
+            with self.assertRaisesRegex(RuntimeError, "scenario failure"):
+                runner.main(
+                    ["--group", "last-orders", "--lifecycle", "scenario"]
+                )
+
+        run_group.assert_called_once()
+        self.assertEqual(run_group.call_args.args[5], selections[0])
 
     def test_startup_evidence_rejects_provider_or_missing_record(self) -> None:
         path = self.root / "backend.jsonl"

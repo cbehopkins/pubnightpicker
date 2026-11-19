@@ -19,6 +19,10 @@ startup, while no email workers are running. This marks interrupted submissions
 for verification before any recipient can be submitted again. The normative
 design is in `docs/overview.md`.
 
+`RegisterOptions.Now` supplies the application's current-time reader for retry
+deadlines. When omitted, handlers use system time. Submission timestamps remain
+wall-clock values because provider verification compares them with external logs.
+
 ## Best-effort submissions
 
 `SendRequest.Metadata` is immutable, application-owned `map[string]string`

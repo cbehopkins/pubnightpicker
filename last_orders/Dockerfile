@@ -24,7 +24,11 @@ COPY email_clients ./email_clients
 COPY last_orders ./last_orders
 
 WORKDIR /src/last_orders
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+
+# Release images always use the ordinary build, regardless of Go environment settings.
+RUN ordinary_files="$(GOENV=off GOFLAGS= go list -f '{{.GoFiles}}' ./cmd/last-orders ./internal/lastorders/app)" \
+	&& ! printf '%s\n' "$ordinary_files" | grep -Eq '(^|[[:space:]])(e2e_clock\.go|e2e_clock_control\.go)([[:space:]]|$)' \
+	&& CGO_ENABLED=0 GOENV=off GOFLAGS= GOOS=$TARGETOS GOARCH=$TARGETARCH \
 	go build -trimpath -ldflags="-s -w -X last_orders/internal/lastorders/endpoints/version.Tag=${BUILD_TAG} -X last_orders/internal/lastorders/endpoints/version.Commit=${BUILD_COMMIT} -X last_orders/internal/lastorders/endpoints/version.Build=${BUILD_KIND}" -o /out/last-orders ./cmd/last-orders \
 	&& mkdir -p /out/data
 
