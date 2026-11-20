@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { useActiveMeets, useCurrentMeets, usePastMeets } from "./useMeets";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useActiveMeets, useCurrentMeets, useOpenMeets, usePastMeets } from "./useMeets";
 
-const { records, whereMock, requestLastOrdersMock } = vi.hoisted(() => ({
+const { records, whereMock, requestLastOrdersMock, streamLastOrdersMock } = vi.hoisted(() => ({
   records: {
     "meet-1": {
       date: "2020-01-01",
@@ -15,26 +15,10 @@ const { records, whereMock, requestLastOrdersMock } = vi.hoisted(() => ({
   },
   whereMock: vi.fn((...args) => args),
   requestLastOrdersMock: vi.fn(),
+  streamLastOrdersMock: vi.fn(),
 }));
 
-const eventSources = [];
-
-class FakeEventSource {
-  constructor(url) {
-    this.url = url;
-    this.listeners = new Map();
-    this.close = vi.fn();
-    eventSources.push(this);
-  }
-
-  addEventListener(name, listener) {
-    this.listeners.set(name, listener);
-  }
-
-  dispatch(name, data) {
-    this.listeners.get(name)?.({ data: JSON.stringify(data) });
-  }
-}
+const streamConnections = [];
 
 vi.mock("../firebase", () => ({ db: {} }));
 vi.mock("firebase/firestore", () => ({
@@ -45,13 +29,25 @@ vi.mock("firebase/firestore", () => ({
 vi.mock("./useQueryDb", () => ({
   default: () => records,
 }));
-vi.mock("../utils/lastOrdersApi", () => ({ requestLastOrders: requestLastOrdersMock }));
+vi.mock("../utils/lastOrdersApi", () => ({
+  requestLastOrders: requestLastOrdersMock,
+  streamLastOrders: streamLastOrdersMock,
+}));
+
+beforeEach(() => {
+  streamLastOrdersMock.mockImplementation((path, options) => {
+    streamConnections.push({ path, options });
+    return new Promise((resolve) => {
+      options.signal.addEventListener("abort", resolve, { once: true });
+    });
+  });
+});
 
 afterEach(() => {
   vi.useRealTimers();
   requestLastOrdersMock.mockReset();
-  vi.unstubAllGlobals();
-  eventSources.length = 0;
+  streamLastOrdersMock.mockReset();
+  streamConnections.length = 0;
 });
 
 describe("Meet read compatibility", () => {
@@ -87,11 +83,11 @@ describe("Meet read compatibility", () => {
       next_cursor: "opaque-next-cursor",
     });
 
-    vi.stubGlobal("EventSource", FakeEventSource);
     const { result } = renderHook(() => ({ current: useCurrentMeets("group-a"), past: usePastMeets("group-a", 1, "opaque-before-cursor") }));
     await waitFor(() => expect(result.current.past.nextCursor).toBe("opaque-next-cursor"));
-    await waitFor(() => expect(eventSources).toHaveLength(1));
-    act(() => eventSources[0].dispatch("current_meets", {
+    await waitFor(() => expect(streamConnections).toHaveLength(1));
+    expect(streamConnections[0].path).toBe("api/meets/group-a/current/stream");
+    act(() => streamConnections[0].options.onmessage({ event: "current_meets", data: JSON.stringify({
       cursor: "cursor-1",
       meets: [{
         id: "meet-2",
@@ -104,7 +100,7 @@ describe("Meet read compatibility", () => {
         restaurant_id: null,
         restaurant_time: null,
       }],
-    }));
+    }) }));
 
     expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meets/group-a/past", expect.objectContaining({
       method: "GET",
@@ -174,31 +170,77 @@ describe("Meet read compatibility", () => {
   });
 
   it("resets retired current-Meets state and reconnects without the old cursor", async () => {
-    vi.stubGlobal("EventSource", FakeEventSource);
     const { result } = renderHook(() => useCurrentMeets("group-a"));
-    await waitFor(() => expect(eventSources).toHaveLength(1));
-    act(() => eventSources[0].dispatch("current_meets", {
+    await waitFor(() => expect(streamConnections).toHaveLength(1));
+    act(() => streamConnections[0].options.onmessage({ event: "current_meets", data: JSON.stringify({
       cursor: "old-cursor",
       meets: [{
         id: "old-meet", group_id: "group-a", date: "2026-11-20", voting_complete: true,
         venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
       }],
-    }));
+    }) }));
     expect(result.current.meetData.meets).toHaveProperty("old-meet");
 
-    act(() => eventSources[0].dispatch("view_reset", {}));
-    await waitFor(() => expect(eventSources).toHaveLength(2));
-    expect(eventSources[0].close).toHaveBeenCalledOnce();
+    act(() => streamConnections[0].options.onmessage({ event: "view_reset", data: "{}" }));
+    await waitFor(() => expect(streamConnections).toHaveLength(2));
+    expect(streamConnections[0].options.signal.aborted).toBe(true);
     expect(result.current.isLoading).toBe(true);
     expect(result.current.meetData.meets).toEqual({});
 
-    act(() => eventSources[1].dispatch("current_meets", {
+    act(() => streamConnections[1].options.onmessage({ event: "current_meets", data: JSON.stringify({
       cursor: "new-cursor",
       meets: [{
         id: "new-meet", group_id: "group-a", date: "2026-11-21", voting_complete: true,
         venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
       }],
-    }));
+    }) }));
     expect(result.current.meetData.meets).toHaveProperty("new-meet");
+  });
+
+  it("streams Group-scoped open Meets without a date cutoff and recovers after reset", async () => {
+    whereMock.mockClear();
+    const { result } = renderHook(() => useOpenMeets("group-a", "user-1"));
+    await waitFor(() => expect(streamConnections).toHaveLength(1));
+    expect(streamConnections[0].path).toBe("api/meets/group-a/open/stream");
+    act(() => streamConnections[0].options.onmessage({ event: "open_meets", data: JSON.stringify({
+      cursor: "open-cursor",
+      meets: [{
+        id: "overdue-open",
+        group_id: "group-a",
+        date: "2020-01-01",
+        voting_complete: false,
+        venue: null,
+        candidate_venue_ids: ["venue-1"],
+        previous_venue_ids: [],
+        restaurant_id: null,
+        restaurant_time: null,
+      }],
+    }) }));
+
+    expect(result.current.meetData.meets["overdue-open"]).toMatchObject({
+      date: "2020-01-01",
+      votingCompleted: false,
+      venues: { "venue-1": true },
+    });
+    expect(whereMock).not.toHaveBeenCalled();
+
+    act(() => streamConnections[0].options.onmessage({ event: "view_reset", data: "{}" }));
+    await waitFor(() => expect(streamConnections).toHaveLength(2));
+    expect(result.current.meetData.meets).toEqual({});
+    act(() => streamConnections[1].options.onmessage({ event: "open_meets", data: JSON.stringify({
+      cursor: "fresh-open-cursor",
+      meets: [{
+        id: "still-open",
+        group_id: "group-a",
+        date: "2019-12-31",
+        voting_complete: false,
+        venue: null,
+        candidate_venue_ids: [],
+        previous_venue_ids: [],
+        restaurant_id: null,
+        restaurant_time: null,
+      }],
+    }) }));
+    expect(result.current.meetData.meets).toHaveProperty("still-open");
   });
 });

@@ -37,6 +37,11 @@ type currentReader interface {
 	CurrentDate() string
 }
 
+type openMeetsReader interface {
+	GetOpen(context.Context, string) (currentmeetcache.Snapshot, error)
+	RenewOpen(context.Context, string) error
+}
+
 type pastMeetsReader interface {
 	Today() string
 	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
@@ -48,6 +53,7 @@ type Endpoint struct {
 	Groups       GroupAuthorizer
 	Auth         firebaseauth.Verifier
 	Current      currentReader
+	Open         openMeetsReader
 	CurrentReady <-chan struct{}
 	CurrentHub   *sse.Hub
 	Cursors      *sse.CursorCodec
@@ -108,6 +114,8 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
 	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.currentStream)))
+	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
+	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.past)))
 }
 
@@ -282,6 +290,82 @@ func (e *Endpoint) current(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+func (e *Endpoint) open(w http.ResponseWriter, r *http.Request) {
+	if e.Open == nil || e.Groups == nil || e.Cursors == nil {
+		writeOpenUnavailable(w)
+		return
+	}
+	groupID := r.PathValue("group_id")
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	snapshot, err := e.Open.GetOpen(r.Context(), groupID)
+	if err != nil {
+		writeOpenUnavailable(w)
+		return
+	}
+	response, err := e.openResponse(groupID, snapshot)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to encode the open-Meets snapshot.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (e *Endpoint) openStream(w http.ResponseWriter, r *http.Request) {
+	if e.Open == nil || e.Groups == nil || e.Cursors == nil || e.CurrentHub == nil || e.CurrentReady == nil {
+		w.Header().Set("Retry-After", "1")
+		writeOpenUnavailable(w)
+		return
+	}
+	groupID := r.PathValue("group_id")
+	stream := &sse.Handler{
+		Hub: e.CurrentHub, Ready: e.CurrentReady,
+		ViewKey:            "open-meets:" + groupID,
+		AuthorizationScope: "open-meets-group:" + groupID,
+		UID:                currentUID(r.Context()), EventName: "open_meets",
+		SnapshotFailureStatus: http.StatusServiceUnavailable,
+		Authorize: func(ctx context.Context) (bool, int) {
+			allowed, err := e.Groups.CanRead(ctx, currentUID(ctx), groupID)
+			if err != nil {
+				return false, http.StatusServiceUnavailable
+			}
+			if !allowed {
+				return false, http.StatusNotFound
+			}
+			return true, http.StatusNotFound
+		},
+		Snapshot: func(ctx context.Context, cursor sse.CursorInput) (sse.ViewSnapshot, error) {
+			snapshot, err := e.Open.GetOpen(ctx, groupID)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			if cursor.Supplied {
+				_, _ = e.Cursors.Validate(cursor.Value, sse.CursorExpectation{
+					Stream: "open-meets-v1", Resource: groupID, Generation: snapshot.Generation,
+					HighWater: snapshot.Sequence,
+				})
+			}
+			response, err := e.openResponse(groupID, snapshot)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			return sse.ViewSnapshot{Data: encoded, Cursor: response.Cursor, Sequence: snapshot.Sequence}, nil
+		},
+		Accepted: func(ctx context.Context) error {
+			return e.Open.RenewOpen(ctx, groupID)
+		},
+	}
+	stream.ServeHTTP(w, r)
+}
+
 func (e *Endpoint) currentStream(w http.ResponseWriter, r *http.Request) {
 	if e.Current == nil || e.Groups == nil || e.Cursors == nil || e.CurrentHub == nil || e.CurrentReady == nil {
 		w.Header().Set("Retry-After", "1")
@@ -366,6 +450,21 @@ func (e *Endpoint) currentResponse(groupID string, snapshot currentmeetcache.Sna
 	if err != nil {
 		return currentMeetsResponse{}, err
 	}
+	return e.meetsResponse(snapshot, cursor)
+}
+
+func (e *Endpoint) openResponse(groupID string, snapshot currentmeetcache.Snapshot) (currentMeetsResponse, error) {
+	cursor, err := e.Cursors.Encode(sse.CursorClaims{
+		Stream: "open-meets-v1", Resource: groupID, Generation: snapshot.Generation,
+		Sequence: snapshot.Sequence,
+	})
+	if err != nil {
+		return currentMeetsResponse{}, err
+	}
+	return e.meetsResponse(snapshot, cursor)
+}
+
+func (e *Endpoint) meetsResponse(snapshot currentmeetcache.Snapshot, cursor string) (currentMeetsResponse, error) {
 	response := currentMeetsResponse{Cursor: cursor, Meets: make([]meetResponse, 0, len(snapshot.Meets))}
 	for _, item := range snapshot.Meets {
 		var selectedVenue any
@@ -399,6 +498,10 @@ func currentUID(ctx context.Context) string {
 
 func writeCurrentUnavailable(w http.ResponseWriter) {
 	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Current Meets are temporarily unavailable.")
+}
+
+func writeOpenUnavailable(w http.ResponseWriter) {
+	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Open Meets are temporarily unavailable.")
 }
 
 func writePastUnavailable(w http.ResponseWriter) {

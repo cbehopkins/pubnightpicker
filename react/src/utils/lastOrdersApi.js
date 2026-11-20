@@ -1,7 +1,58 @@
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { auth } from "../firebase";
 import { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
 
 export { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
+
+/**
+ * @param {string} path
+ * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit} [options]
+ * @returns {Promise<void>}
+ */
+export function streamLastOrders(path, options = {}) {
+    const user = auth.currentUser;
+    if (!user) {
+        throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");
+    }
+    const userID = user.uid;
+    const authenticatedFetch = async (input, init = {}) => {
+        init.signal?.throwIfAborted();
+        if (auth.currentUser?.uid !== userID) {
+            throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
+        }
+        let token;
+        try {
+            token = await user.getIdToken();
+        } catch {
+            if (auth.currentUser?.uid !== userID) {
+                throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
+            }
+            throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
+        }
+        init.signal?.throwIfAborted();
+        if (auth.currentUser?.uid !== userID) {
+            throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
+        }
+        const headers = new Headers(init.headers);
+        headers.set("Authorization", `Bearer ${token}`);
+        return fetch(input, {
+            ...init,
+            headers,
+            credentials: "omit",
+            cache: "no-store",
+            redirect: "error",
+        });
+    };
+    return fetchEventSource(lastOrdersApiURL(path), {
+        ...options,
+        headers: { Accept: "text/event-stream", ...options.headers },
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        openWhenHidden: true,
+        fetch: authenticatedFetch,
+    });
+}
 
 export async function requestLastOrders(path, {
     method = "POST",

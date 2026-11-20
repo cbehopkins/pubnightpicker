@@ -1210,6 +1210,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
+		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)

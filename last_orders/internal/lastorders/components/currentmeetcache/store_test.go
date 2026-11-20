@@ -30,10 +30,10 @@ func TestNewStoreDiscardsPreviousProcessViewsWithoutResettingSequence(t *testing
 	}
 	ctx := context.Background()
 	validUntil := time.Date(2026, 11, 20, 18, 0, 0, 0, time.UTC)
-	if err := store.Admit(ctx, "group-a", "2026-11-20", "owner-a", validUntil); err != nil {
+	if err := store.Admit(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", validUntil); err != nil {
 		t.Fatal(err)
 	}
-	_, changed, err := store.Apply(ctx, "group-a", "2026-11-20", "owner-a", []meetcache.Projection{
+	_, changed, err := store.Apply(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", []meetcache.Projection{
 		{ID: "meet-a", GroupID: "group-a", Date: "2026-11-20", VotingComplete: true},
 	}, time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
 	if err != nil || !changed {
@@ -49,7 +49,7 @@ func TestNewStoreDiscardsPreviousProcessViewsWithoutResettingSequence(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restartedStore.Snapshot(ctx, "group-a", "owner-a", venues); !errors.Is(err, ErrRetired) {
+	if _, err := restartedStore.Snapshot(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", venues); !errors.Is(err, ErrRetired) {
 		t.Fatalf("snapshot after restart error=%v, want ErrRetired", err)
 	}
 	stateAfter := readCurrentSyncState(t, base)

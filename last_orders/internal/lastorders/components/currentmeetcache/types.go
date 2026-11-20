@@ -15,13 +15,25 @@ type QuerySnapshot struct {
 	ReadTime  time.Time
 }
 
+type ViewKind string
+
+const (
+	CurrentView ViewKind = "current"
+	OpenView    ViewKind = "open"
+)
+
+type ViewQuery struct {
+	Kind ViewKind
+	Date string
+}
+
 type Stream interface {
 	Next() (QuerySnapshot, error)
 	Stop()
 }
 
 type Source interface {
-	Watch(context.Context, string, string) (Stream, error)
+	Watch(context.Context, string, ViewQuery) (Stream, error)
 }
 
 type VenueSummary struct {
@@ -47,7 +59,11 @@ type Snapshot struct {
 	Meets      []MeetView
 }
 
-func validateSnapshot(groupID, date string, source QuerySnapshot) ([]meetcache.Projection, error) {
+func validateSnapshot(groupID string, query ViewQuery, source QuerySnapshot) ([]meetcache.Projection, error) {
+	if groupID == "" || (query.Kind == CurrentView && query.Date == "") ||
+		(query.Kind == OpenView && query.Date != "") || (query.Kind != CurrentView && query.Kind != OpenView) {
+		return nil, fmt.Errorf("invalid Group Meet view query")
+	}
 	meets := make([]meetcache.Projection, 0, len(source.Documents))
 	seen := make(map[string]struct{}, len(source.Documents))
 	for _, document := range source.Documents {
@@ -55,8 +71,14 @@ func validateSnapshot(groupID, date string, source QuerySnapshot) ([]meetcache.P
 		if err != nil {
 			return nil, fmt.Errorf("validate current Meet %q: %w", document.ID, err)
 		}
-		if projection.GroupID != groupID || !projection.VotingComplete || projection.Date < date {
-			return nil, fmt.Errorf("current Meet %q does not match the watched Group and date", projection.ID)
+		if projection.GroupID != groupID {
+			return nil, fmt.Errorf("Meet %q does not belong to the watched Group", projection.ID)
+		}
+		if query.Kind == CurrentView && (!projection.VotingComplete || projection.Date < query.Date) {
+			return nil, fmt.Errorf("current Meet %q does not match the watched date", projection.ID)
+		}
+		if query.Kind == OpenView && projection.VotingComplete {
+			return nil, fmt.Errorf("open Meet %q is voting-complete", projection.ID)
 		}
 		if _, exists := seen[projection.ID]; exists {
 			return nil, fmt.Errorf("duplicate current Meet %q", projection.ID)

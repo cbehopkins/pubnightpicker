@@ -7,10 +7,12 @@ import {
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
 import { MeetData } from "../utils/meetSorting";
-import { requestLastOrders } from "../utils/lastOrdersApi";
-import { lastOrdersApiURL } from "../utils/lastOrdersApiURL";
+import { LastOrdersApiError, requestLastOrders, streamLastOrders } from "../utils/lastOrdersApi";
 
-const currentMeetStreams = new Map();
+const meetStreams = {
+  current: new Map(),
+  open: new Map(),
+};
 const noCurrentGroup = {
   meetData: new MeetData({}),
   isLoading: false,
@@ -43,10 +45,11 @@ function useLondonDate() {
   return date;
 }
 
-function createCurrentMeetStream(groupId) {
+function createMeetStream(kind, groupId) {
   return {
+    kind,
     groupId,
-    source: null,
+    controller: null,
     subscribers: new Set(),
     hasSnapshot: false,
     hasLoggedError: false,
@@ -64,21 +67,22 @@ function publishCurrentMeetState(stream, state) {
   stream.subscribers.forEach((subscriber) => subscriber());
 }
 
-function currentMeetData(payload) {
+function meetCollectionData(payload, kind) {
   if (!payload || !Array.isArray(payload.meets)) {
-    throw new Error("Last Orders returned an invalid current-Meets snapshot.");
+    throw new Error(`Last Orders returned an invalid ${meetCollectionName(kind)} snapshot.`);
   }
   const records = {};
   for (const meet of payload.meets) {
     if (!meet || typeof meet.id !== "string" || typeof meet.date !== "string" ||
-      typeof meet.voting_complete !== "boolean" || !Array.isArray(meet.candidate_venue_ids) ||
+      typeof meet.voting_complete !== "boolean" || meet.voting_complete !== (kind === "current") ||
+      !Array.isArray(meet.candidate_venue_ids) ||
       !Array.isArray(meet.previous_venue_ids)) {
-      throw new Error("Last Orders returned an invalid current-Meet record.");
+      throw new Error(`Last Orders returned an invalid ${meetCollectionName(kind)} record.`);
     }
     const candidateIds = meet.candidate_venue_ids;
     const previousIds = meet.previous_venue_ids;
     if (!candidateIds.every((id) => typeof id === "string") || !previousIds.every((id) => typeof id === "string")) {
-      throw new Error("Last Orders returned invalid current-Meet Venue references.");
+      throw new Error(`Last Orders returned invalid ${meetCollectionName(kind)} Venue references.`);
     }
     const selectedVenueSummary = meet.venue;
     if (selectedVenueSummary !== null && (!selectedVenueSummary || typeof selectedVenueSummary.id !== "string" ||
@@ -99,10 +103,14 @@ function currentMeetData(payload) {
   return new MeetData(records);
 }
 
-function markCurrentMeetStreamError(stream, message, source) {
-  if (source && stream.source !== source) return;
+function meetCollectionName(kind) {
+  return kind === "open" ? "open-Meets" : "current-Meets";
+}
+
+function markMeetStreamError(stream, message, controller) {
+  if (controller && stream.controller !== controller) return;
   if (!stream.hasLoggedError) {
-    console.error("Current-Meets stream failed", { groupId: stream.groupId, message });
+    console.error(`${meetCollectionName(stream.kind)} stream failed`, { groupId: stream.groupId, message });
     stream.hasLoggedError = true;
   }
   publishCurrentMeetState(stream, {
@@ -113,83 +121,105 @@ function markCurrentMeetStreamError(stream, message, source) {
   });
 }
 
-function startCurrentMeetStream(stream) {
+function startMeetStream(stream) {
+  const collectionPath = stream.kind === "open" ? "open" : "current";
+  const eventName = stream.kind === "open" ? "open_meets" : "current_meets";
+  const collectionName = stream.kind === "open" ? "Open Meets" : "Current Meets";
+  const controller = new AbortController();
+  stream.controller = controller;
   try {
-    const url = lastOrdersApiURL(`api/meets/${encodeURIComponent(stream.groupId)}/current/stream`);
-    const source = new EventSource(url);
-    stream.source = source;
-    source.addEventListener("current_meets", (event) => {
-      let payload;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        markCurrentMeetStreamError(stream, "Last Orders returned an invalid current-Meets snapshot.", source);
-        return;
-      }
-      if (!payload || typeof payload.cursor !== "string" || payload.cursor.length === 0) {
-        markCurrentMeetStreamError(stream, "Last Orders returned an invalid current-Meets snapshot.", source);
-        return;
-      }
-      let meetData;
-      try {
-        meetData = currentMeetData(payload);
-      } catch (error) {
-        markCurrentMeetStreamError(stream, error.message, source);
-        return;
-      }
-      if (stream.source !== source) return;
-      stream.hasSnapshot = true;
-      stream.hasLoggedError = false;
-      publishCurrentMeetState(stream, { meetData, isLoading: false, isStale: false, errorMessage: null });
+    streamLastOrders(`api/meets/${encodeURIComponent(stream.groupId)}/${collectionPath}/stream`, {
+      signal: controller.signal,
+      onopen: async (response) => {
+        const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+        if (response.ok && contentType === "text/event-stream") return;
+        const code = response.status === 401 ? "unauthenticated" :
+          response.status === 403 ? "forbidden" : response.status === 404 ? "not_found" : "stream_unavailable";
+        throw new LastOrdersApiError(code, `${collectionName} are temporarily unavailable.`, { status: response.status });
+      },
+      onmessage: (event) => {
+        if (controller.signal.aborted || stream.controller !== controller) return;
+        if (event.event === "view_reset") {
+          stream.controller = null;
+          controller.abort();
+          stream.hasSnapshot = false;
+          publishCurrentMeetState(stream, {
+            meetData: new MeetData({}), isLoading: true, isStale: false, errorMessage: null,
+          });
+          queueMicrotask(() => {
+            if (stream.subscribers.size > 0 && stream.controller === null) startMeetStream(stream);
+          });
+          return;
+        }
+        if (event.event !== eventName) return;
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          markMeetStreamError(stream, `Last Orders returned an invalid ${meetCollectionName(stream.kind)} snapshot.`, controller);
+          return;
+        }
+        if (!payload || typeof payload.cursor !== "string" || payload.cursor.length === 0) {
+          markMeetStreamError(stream, `Last Orders returned an invalid ${meetCollectionName(stream.kind)} snapshot.`, controller);
+          return;
+        }
+        let meetData;
+        try {
+          meetData = meetCollectionData(payload, stream.kind);
+        } catch (error) {
+          markMeetStreamError(stream, error.message, controller);
+          return;
+        }
+        stream.hasSnapshot = true;
+        stream.hasLoggedError = false;
+        publishCurrentMeetState(stream, { meetData, isLoading: false, isStale: false, errorMessage: null });
+      },
+      onclose: () => {
+        if (!controller.signal.aborted) throw new Error(`${collectionName} stream closed unexpectedly.`);
+      },
+      onerror: (error) => {
+        if (controller.signal.aborted || stream.controller !== controller) return;
+        markMeetStreamError(stream, error?.message || `${collectionName} are temporarily unavailable.`, controller);
+        if (error instanceof LastOrdersApiError && ["signed_out", "unauthenticated", "forbidden", "not_found"].includes(error.code)) {
+          throw error;
+        }
+        return 5000;
+      },
+    }).catch((error) => {
+      if (controller.signal.aborted || stream.controller !== controller) return;
+      stream.controller = null;
+      markMeetStreamError(stream, error?.message || `Unable to connect to the ${meetCollectionName(stream.kind)} stream.`);
     });
-    source.addEventListener("view_reset", () => {
-      if (stream.source !== source) return;
-      source.close();
-      stream.source = null;
-      stream.hasSnapshot = false;
-      publishCurrentMeetState(stream, {
-        meetData: new MeetData({}), isLoading: true, isStale: false, errorMessage: null,
-      });
-      queueMicrotask(() => {
-        if (stream.subscribers.size > 0 && stream.source === null) startCurrentMeetStream(stream);
-      });
-    });
-    source.onerror = () => {
-      markCurrentMeetStreamError(stream, "Current Meets are temporarily unavailable. Try again to reconnect.", source);
-      if (source.readyState === EventSource.CLOSED && stream.source === source) {
-        source.close();
-        stream.source = null;
-      }
-    };
-  } catch {
-    stream.source = null;
-    markCurrentMeetStreamError(stream, "Unable to connect to the current-Meets stream.");
+  } catch (error) {
+    if (stream.controller === controller) stream.controller = null;
+    markMeetStreamError(stream, error?.message || `Unable to connect to the ${meetCollectionName(stream.kind)} stream.`);
   }
 }
 
-function subscribeCurrentMeets(groupId, streamKey, subscriber) {
-  let stream = currentMeetStreams.get(streamKey);
+function subscribeMeetCollection(kind, groupId, streamKey, subscriber) {
+  const collectionStreams = meetStreams[kind];
+  let stream = collectionStreams.get(streamKey);
   if (!stream) {
-    stream = createCurrentMeetStream(groupId);
-    currentMeetStreams.set(streamKey, stream);
+    stream = createMeetStream(kind, groupId);
+    collectionStreams.set(streamKey, stream);
   }
   stream.subscribers.add(subscriber);
-  if (stream.subscribers.size === 1) startCurrentMeetStream(stream);
+  if (stream.subscribers.size === 1) startMeetStream(stream);
   return () => {
     stream.subscribers.delete(subscriber);
     if (stream.subscribers.size === 0) {
-      stream.source?.close();
-      stream.source = null;
-      currentMeetStreams.delete(streamKey);
+      stream.controller?.abort();
+      stream.controller = null;
+      collectionStreams.delete(streamKey);
     }
   };
 }
 
-function retryCurrentMeets(streamKey) {
-  const stream = currentMeetStreams.get(streamKey);
+function retryMeetCollection(kind, streamKey) {
+  const stream = meetStreams[kind].get(streamKey);
   if (!stream) return;
-  stream.source?.close();
-  stream.source = null;
+  stream.controller?.abort();
+  stream.controller = null;
   stream.hasLoggedError = false;
   publishCurrentMeetState(stream, {
     ...stream.state,
@@ -197,25 +227,33 @@ function retryCurrentMeets(streamKey) {
     isStale: stream.hasSnapshot,
     errorMessage: null,
   });
-  if (stream.subscribers.size > 0) startCurrentMeetStream(stream);
+  if (stream.subscribers.size > 0) startMeetStream(stream);
 }
 
-export function useCurrentMeets(groupId, userId = "") {
+function useMeetCollection(kind, groupId, userId = "") {
   const streamKey = groupId ? `${groupId}\u0000${userId ?? ""}` : null;
   const subscribe = useCallback(
-    (subscriber) => groupId ? subscribeCurrentMeets(groupId, streamKey, subscriber) : () => { },
-    [groupId, streamKey],
+    (subscriber) => groupId ? subscribeMeetCollection(kind, groupId, streamKey, subscriber) : () => { },
+    [kind, groupId, streamKey],
   );
   const getSnapshot = useCallback(
-    () => (streamKey ? currentMeetStreams.get(streamKey)?.state : null) ?? noCurrentGroup,
-    [streamKey],
+    () => (streamKey ? meetStreams[kind].get(streamKey)?.state : null) ?? noCurrentGroup,
+    [kind, streamKey],
   );
   const state = useSyncExternalStore(
     subscribe,
     getSnapshot,
     () => noCurrentGroup,
   );
-  return groupId ? { ...state, retry: () => retryCurrentMeets(streamKey) } : noCurrentGroup;
+  return groupId ? { ...state, retry: () => retryMeetCollection(kind, streamKey) } : noCurrentGroup;
+}
+
+export function useCurrentMeets(groupId, userId = "") {
+  return useMeetCollection("current", groupId, userId);
+}
+
+export function useOpenMeets(groupId, userId = "") {
+  return useMeetCollection("open", groupId, userId);
 }
 
 function pastMeetData(payload) {

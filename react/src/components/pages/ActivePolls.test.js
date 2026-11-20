@@ -7,6 +7,8 @@ import ActivePolls from "./ActivePolls";
 const {
   completePollMock,
   useActiveMeetsMock,
+  useOpenMeetsMock,
+  useSelectorMock,
   useVenuesMock,
   useRoleMock,
   activePollPropsMock,
@@ -14,6 +16,8 @@ const {
   return {
     completePollMock: vi.fn(async () => undefined),
     useActiveMeetsMock: vi.fn(),
+    useOpenMeetsMock: vi.fn(),
+    useSelectorMock: vi.fn(),
     useVenuesMock: vi.fn(),
     useRoleMock: vi.fn(),
     activePollPropsMock: vi.fn(),
@@ -29,8 +33,13 @@ vi.mock("../../dbtools/polls", () => {
 vi.mock("../../hooks/useMeets", () => {
   return {
     useActiveMeets: useActiveMeetsMock,
+    useOpenMeets: useOpenMeetsMock,
   };
 });
+
+vi.mock("react-redux", () => ({
+  useSelector: useSelectorMock,
+}));
 
 vi.mock("../../hooks/useVenues", () => {
   return {
@@ -101,6 +110,8 @@ describe("ActivePolls", () => {
     completePollMock.mockReset();
     completePollMock.mockResolvedValue(undefined);
     useActiveMeetsMock.mockReset();
+    useOpenMeetsMock.mockReset();
+    useSelectorMock.mockReset();
     useVenuesMock.mockReset();
     useRoleMock.mockReset();
     activePollPropsMock.mockReset();
@@ -110,6 +121,17 @@ describe("ActivePolls", () => {
       }
       return false;
     });
+    useSelectorMock.mockImplementation((select) => select({
+      auth: { uid: "user-1" },
+      group: { groupId: "group-a" },
+    }));
+    useOpenMeetsMock.mockImplementation((groupId, userId) => ({
+      meetData: groupId && userId ? useActiveMeetsMock() : createPollData({}),
+      isLoading: false,
+      isStale: false,
+      errorMessage: null,
+      retry: vi.fn(),
+    }));
   });
 
   afterEach(() => {
@@ -124,6 +146,25 @@ describe("ActivePolls", () => {
 
     expect(screen.getByRole("heading", { name: "Active Polls" })).toBeTruthy();
     expect(screen.getByText("2020-01-01")).toBeTruthy();
+    expect(useOpenMeetsMock).toHaveBeenCalledWith("group-a", "user-1");
+  });
+
+  it("shows a retryable open-Meets stream error without hiding Meet creation", () => {
+    const retry = vi.fn();
+    useActiveMeetsMock.mockReturnValue(createPollData({}));
+    useOpenMeetsMock.mockReturnValue({
+      meetData: createPollData({}), isLoading: false, isStale: false,
+      errorMessage: "Open Meets are temporarily unavailable.", retry,
+    });
+    useRoleMock.mockImplementation((roleName) => roleName === "canCreatePoll");
+    useVenuesMock.mockReturnValue({});
+
+    render(<ActivePolls />);
+
+    expect(screen.getByRole("alert").textContent).toContain("Open Meets are temporarily unavailable.");
+    expect(screen.getByTestId("new-poll")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it("passes the Meet and Venue models to each active poll", () => {

@@ -26,6 +26,23 @@ type currentReaderStub struct {
 	readErr    error
 }
 
+type openMeetsReaderStub struct {
+	snapshot   currentmeetcache.Snapshot
+	groupID    string
+	renewCalls int
+	readErr    error
+}
+
+func (r *openMeetsReaderStub) GetOpen(_ context.Context, groupID string) (currentmeetcache.Snapshot, error) {
+	r.groupID = groupID
+	return r.snapshot, r.readErr
+}
+
+func (r *openMeetsReaderStub) RenewOpen(context.Context, string) error {
+	r.renewCalls++
+	return nil
+}
+
 func (r *currentReaderStub) Get(context.Context, string) (currentmeetcache.Snapshot, error) {
 	return r.snapshot, r.readErr
 }
@@ -248,7 +265,7 @@ func TestPastMeetsRejectsInvalidCursorBeforeQuery(t *testing.T) {
 				return nil, false, nil
 			},
 		},
-		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Groups:  groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
 		Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
@@ -282,7 +299,7 @@ func TestPastMeetsRejectsCursorPositionOutsideLondonDate(t *testing.T) {
 				return nil, false, nil
 			},
 		},
-		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Groups:  groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
 		Cursors: codec, Auth: pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
@@ -304,7 +321,7 @@ func TestPastMeetsDoesNotQueryUnauthorizedGroup(t *testing.T) {
 				return nil, false, nil
 			},
 		},
-		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return false, nil }),
+		Groups:  groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return false, nil }),
 		Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
@@ -319,8 +336,8 @@ func TestPastMeetsDoesNotQueryUnauthorizedGroup(t *testing.T) {
 func TestPastMeetsDoesNotTreatTransientSourceFailuresAsMissing(t *testing.T) {
 	transientErr := errors.New("temporary source failure")
 	for _, test := range []struct {
-		name string
-		past pastMeetsReader
+		name   string
+		past   pastMeetsReader
 		venues venueReader
 	}{
 		{
@@ -342,7 +359,7 @@ func TestPastMeetsDoesNotTreatTransientSourceFailuresAsMissing(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			endpoint := &Endpoint{
 				Past: test.past, Venues: test.venues,
-				Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+				Groups:  groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
 				Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
 			}
 			mux := http.NewServeMux()
@@ -398,6 +415,94 @@ func TestCurrentMeetsGetReturnsCompletePublicSnapshot(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "attendance") || strings.Contains(response.Body.String(), "votes") {
 		t.Fatalf("response contains voting or attendance data: %s", response.Body)
+	}
+}
+
+func TestOpenMeetsGetReturnsCompleteGroupSnapshotIncludingPastOpenMeets(t *testing.T) {
+	reader := &openMeetsReaderStub{snapshot: currentmeetcache.Snapshot{
+		Generation: "generation-1", Sequence: 9,
+		Meets: []currentmeetcache.MeetView{{
+			Meet: meetcache.Projection{
+				ID: "meet-overdue", GroupID: "group-a", Date: "2020-01-01",
+				CandidateVenueIDs: []string{"venue-1"},
+			},
+		}},
+	}}
+	endpoint := &Endpoint{
+		Open: reader, Cursors: testCurrentCursorCodec(t),
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "" && groupID == "group-a", nil
+		}),
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/meets/group-a/open", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("open-Meets GET status=%d body=%s", response.Code, response.Body)
+	}
+	var payload struct {
+		Cursor string `json:"cursor"`
+		Meets  []struct {
+			ID                string   `json:"id"`
+			Date              string   `json:"date"`
+			VotingComplete    bool     `json:"voting_complete"`
+			CandidateVenueIDs []string `json:"candidate_venue_ids"`
+		} `json:"meets"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if reader.groupID != "group-a" || payload.Cursor == "" || len(payload.Meets) != 1 ||
+		payload.Meets[0].ID != "meet-overdue" || payload.Meets[0].Date != "2020-01-01" ||
+		payload.Meets[0].VotingComplete || len(payload.Meets[0].CandidateVenueIDs) != 1 ||
+		payload.Meets[0].CandidateVenueIDs[0] != "venue-1" {
+		t.Fatalf("open-Meets response group=%q payload=%+v", reader.groupID, payload)
+	}
+	if strings.Contains(response.Body.String(), "attendance") || strings.Contains(response.Body.String(), "votes") {
+		t.Fatalf("response contains voting or attendance data: %s", response.Body)
+	}
+}
+
+func TestOpenMeetsStreamSendsCompleteSnapshotAndRenews(t *testing.T) {
+	ready := make(chan struct{})
+	close(ready)
+	reader := &openMeetsReaderStub{snapshot: currentmeetcache.Snapshot{
+		Generation: "generation-1", Sequence: 9,
+		Meets: []currentmeetcache.MeetView{{
+			Meet: meetcache.Projection{ID: "overdue-open", GroupID: "group-a", Date: "2020-01-01"},
+		}},
+	}}
+	endpoint := &Endpoint{
+		Open: reader, CurrentReady: ready, CurrentHub: sse.NewHub(), Cursors: testCurrentCursorCodec(t),
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/meets/group-a/open/stream?after=invalid", nil).WithContext(ctx)
+	response := &flushableRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(response, request)
+		close(done)
+	}()
+	select {
+	case <-response.flushed:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("open-Meets stream did not flush its initial snapshot")
+	}
+	cancel()
+	<-done
+	body := response.Body.String()
+	if !strings.Contains(body, "event: open_meets") || !strings.Contains(body, `"id":"overdue-open"`) || !strings.Contains(body, "id: v1.") {
+		t.Fatalf("open-Meets stream did not send a complete snapshot and cursor: %s", body)
+	}
+	if reader.renewCalls != 1 {
+		t.Fatalf("successful open-Meets stream renewed %d times, want once", reader.renewCalls)
 	}
 }
 

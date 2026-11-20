@@ -915,6 +915,105 @@ paths:
               schema:
                 type: integer
                 minimum: 1
+  /meets/{group_id}/open:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: listOpenMeets
+      summary: List voting-open Meets for a group
+      description: |
+        Returns voting-open Meets belonging to the requested Group, regardless
+        of scheduled date, ordered by date then Meet ID. The response includes
+        candidate Venue IDs but no votes or attendance data. The opaque cursor
+        corresponds to the same consistent local snapshot used by the stream.
+        Time passing at London midnight does not change open-Meet membership.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Open Meets snapshot.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenMeetsSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection is temporarily unavailable.
+  /meets/{group_id}/open/stream:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: streamOpenMeets
+      summary: Stream changes to voting-open Meets
+      description: |
+        Server-Sent Events. Every authorised connection receives a complete
+        open-Meets replacement snapshot and a fresh opaque cursor, then another
+        replacement when open-Meet membership or displayed data changes. Voting
+        and attendance changes do not trigger this stream. Open membership is
+        independent of scheduled date and does not change at London midnight.
+        Invalid cursors recover with a complete replacement. The subscriber is
+        registered before the consistent snapshot read. Successful authorised
+        connections renew the shared Group view's six-hour deadline.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of open-Meets collection changes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: 'no'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  `event: open_meets` carries a complete replacement snapshot
+                  with an opaque cursor. `event: view_reset` has no ID and
+                  carries `data: {}` before a retired, failed or newly
+                  unauthorised stream closes.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Backend readiness or the requested projection is temporarily unavailable.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
   /meets/{group_id}/past:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -1830,6 +1929,17 @@ components:
         cursor:
           type: string
           description: Opaque stream cursor corresponding to this consistent snapshot.
+        meets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meet'
+    OpenMeetsSnapshot:
+      type: object
+      required: [cursor, meets]
+      properties:
+        cursor:
+          type: string
+          description: Opaque stream cursor corresponding to this consistent open-Meets snapshot.
         meets:
           type: array
           items:

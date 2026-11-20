@@ -63,8 +63,10 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		"meet-b":             {"date": "2026-03-29", "completed": true, "groupId": "group-a", "selected": "missing-venue", "pubs": map[string]any{"missing-venue": true}},
 		"meet-z":             {"date": "2026-03-30", "completed": true, "groupId": "group-a", "selected": "deleted-venue", "pubs": map[string]any{"deleted-venue": true}},
 		"incomplete":         {"date": "2026-03-29", "completed": false, "groupId": "group-a"},
+		"overdue-open":       {"date": "2020-01-01", "completed": false, "groupId": "group-a", "pubs": map[string]any{"deleted-venue": true}},
 		"past":               {"date": "2026-03-28", "completed": true, "groupId": "group-a"},
 		"other-group-meet":   {"date": "2026-03-29", "completed": true, "groupId": "group-b"},
+		"other-group-open":   {"date": "2020-01-01", "completed": false, "groupId": "group-b"},
 		"private-group-meet": {"date": "2026-03-29", "completed": true, "groupId": "private-group"},
 	}
 	for meetID, data := range meets {
@@ -87,12 +89,14 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		for meetID := range meets {
 			_, _ = firestoreClient.Collection("polls").Doc(meetID).Delete(cleanupCtx)
 		}
+		_, _ = firestoreClient.Collection("polls").Doc("late-open-meet").Delete(cleanupCtx)
 		_, _ = firestoreClient.Collection("votes").Doc("meet-a").Delete(cleanupCtx)
 		_, _ = firestoreClient.Collection("attendance").Doc("meet-a").Delete(cleanupCtx)
 		_, _ = deletedVenue.Delete(cleanupCtx)
 	})
 
 	t.Setenv("LAST_ORDERS_CURRENT_MEET_DIAGNOSTICS", "true")
+	t.Setenv("LAST_ORDERS_OPEN_MEET_DIAGNOSTICS", "true")
 	logs := &syncBuffer{}
 	config := testConfig(t, t.TempDir()+"/current-meets.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
 	config.Logger = slog.New(slog.NewJSONHandler(logs, nil))
@@ -229,6 +233,55 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if other := getSnapshot("group-b"); len(other.Meets) != 1 || other.Meets[0].ID != "other-group-meet" {
 		t.Fatalf("Group B snapshot leaked or omitted Meets: %+v", other)
 	}
+	getOpenSnapshot := func(groupID string) struct {
+		Cursor string `json:"cursor"`
+		Meets  []struct {
+			ID                string   `json:"id"`
+			GroupID           string   `json:"group_id"`
+			Date              string   `json:"date"`
+			VotingComplete    bool     `json:"voting_complete"`
+			CandidateVenueIDs []string `json:"candidate_venue_ids"`
+		} `json:"meets"`
+	} {
+		t.Helper()
+		response := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/"+groupID+"/open", "", "")
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("open-Meets GET for %q status=%d body=%s", groupID, response.StatusCode, readVenueResponseBody(t, response))
+		}
+		var snapshot struct {
+			Cursor string `json:"cursor"`
+			Meets  []struct {
+				ID                string   `json:"id"`
+				GroupID           string   `json:"group_id"`
+				Date              string   `json:"date"`
+				VotingComplete    bool     `json:"voting_complete"`
+				CandidateVenueIDs []string `json:"candidate_venue_ids"`
+			} `json:"meets"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	open := getOpenSnapshot("group-a")
+	if open.Cursor == "" || len(open.Meets) != 2 || open.Meets[0].ID != "overdue-open" || open.Meets[0].Date != "2020-01-01" || open.Meets[0].VotingComplete || open.Meets[0].GroupID != "group-a" {
+		t.Fatalf("open-Meets snapshot omitted the past-dated voting-open Meet or included the wrong Group: %+v", open)
+	}
+	if len(open.Meets[0].CandidateVenueIDs) != 1 || open.Meets[0].CandidateVenueIDs[0] != "deleted-venue" {
+		t.Fatalf("open Meet candidate Venue IDs=%v", open.Meets[0].CandidateVenueIDs)
+	}
+	if other := getOpenSnapshot("group-b"); len(other.Meets) != 1 || other.Meets[0].ID != "other-group-open" {
+		t.Fatalf("Group B open-Meets snapshot leaked or omitted Meets: %+v", other)
+	}
+	if repeated := getOpenSnapshot("group-a"); len(repeated.Meets) != 2 {
+		t.Fatalf("repeated open-Meets snapshot=%+v", repeated)
+	}
+	privateOpenDenied := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/private-group/open", "", "")
+	privateOpenDenied.Body.Close()
+	if privateOpenDenied.StatusCode != http.StatusNotFound {
+		t.Fatalf("anonymous private open-Meets GET status=%d, want HTTP 404", privateOpenDenied.StatusCode)
+	}
 	if empty := getSnapshot("empty-group"); empty.Meets == nil || len(empty.Meets) != 0 {
 		t.Fatalf("empty Group snapshot=%+v", empty)
 	}
@@ -256,6 +309,20 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if _, err := readCurrentMeetsFrame(privateStreamReader); err != nil {
 		t.Fatal(err)
 	}
+	privateOpenStreamCtx, stopPrivateOpenStream := context.WithCancel(ctx)
+	privateOpenStreamRequest, err := http.NewRequestWithContext(privateOpenStreamCtx, http.MethodGet, baseURL+"/api/meets/private-group/open/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateOpenStreamRequest.Header.Set("Authorization", "Bearer valid-token")
+	privateOpenStreamResponse, err := client.Do(privateOpenStreamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateOpenStreamReader := bufio.NewReader(privateOpenStreamResponse.Body)
+	if _, err := readCurrentMeetsFrame(privateOpenStreamReader); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := privateGroup.Set(ctx, map[string]any{
 		"name": "private-group", "visibility": "private", "members": map[string]any{"another-user": true},
 	}); err != nil {
@@ -281,11 +348,36 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("private-Group stream was not reset after membership changed")
 	}
+	privateOpenReset := make(chan string, 1)
+	privateOpenResetError := make(chan error, 1)
+	go func() {
+		frame, err := readCurrentMeetsFrame(privateOpenStreamReader)
+		if err != nil {
+			privateOpenResetError <- err
+			return
+		}
+		privateOpenReset <- frame
+	}()
+	select {
+	case frame := <-privateOpenReset:
+		if !strings.Contains(frame, "event: view_reset") || !strings.Contains(frame, "data: {}") {
+			t.Fatalf("private-Group membership change did not reset the open stream: %s", frame)
+		}
+	case err := <-privateOpenResetError:
+		t.Fatalf("read private open-Group reset: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("private open-Meets stream was not reset after membership changed")
+	}
+	stopPrivateOpenStream()
+	privateOpenStreamResponse.Body.Close()
 	stopPrivateStream()
 	privateStreamResponse.Body.Close()
 	_ = getSnapshot("group-a")
 	if got := strings.Count(logs.String(), "current-Meets query watch opened"); got != 4 {
 		t.Fatalf("opened %d current-Meets query watches, want one per admitted Group", got)
+	}
+	if got := strings.Count(logs.String(), "open-Meets query watch opened"); got != 3 {
+		t.Fatalf("opened %d open-Meets query watches, want one per admitted Group view", got)
 	}
 
 	streamCtx, stopStream := context.WithCancel(ctx)
@@ -309,6 +401,26 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	}
 	if !strings.Contains(initialFrame, "event: current_meets") || !strings.Contains(initialFrame, "id: v1.") || !strings.Contains(initialFrame, `"meets":[`) {
 		t.Fatalf("invalid cursor did not recover with a complete snapshot: %s", initialFrame)
+	}
+	openStreamCtx, stopOpenStream := context.WithCancel(ctx)
+	openStreamRequest, err := http.NewRequestWithContext(openStreamCtx, http.MethodGet, baseURL+"/api/meets/group-a/open/stream?after=not-a-valid-cursor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openStreamResponse, err := client.Do(openStreamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openStreamResponse.StatusCode != http.StatusOK {
+		t.Fatalf("open-Meets stream status=%d body=%s", openStreamResponse.StatusCode, readVenueResponseBody(t, openStreamResponse))
+	}
+	openStreamReader := bufio.NewReader(openStreamResponse.Body)
+	openInitialFrame, err := readCurrentMeetsFrame(openStreamReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(openInitialFrame, "event: open_meets") || !strings.Contains(openInitialFrame, "id: v1.") || !strings.Contains(openInitialFrame, `"date":"2020-01-01"`) {
+		t.Fatalf("open stream did not recover with a complete past-dated snapshot: %s", openInitialFrame)
 	}
 
 	if _, err := firestoreClient.Collection("votes").Doc("meet-a").Set(ctx, map[string]any{"deleted-venue": []string{"member", "another"}}); err != nil {
@@ -334,6 +446,64 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("read current-Meets stream after separate vote/attendance updates: %v", err)
 	case <-time.After(500 * time.Millisecond):
 	}
+	openFrames := make(chan string, 1)
+	openFrameErrors := make(chan error, 1)
+	go func() {
+		frame, err := readCurrentMeetsFrame(openStreamReader)
+		if err != nil {
+			openFrameErrors <- err
+			return
+		}
+		openFrames <- frame
+	}()
+	select {
+	case frame := <-openFrames:
+		t.Fatalf("vote or attendance update triggered an open-Meets frame: %s", frame)
+	case err := <-openFrameErrors:
+		t.Fatalf("read open-Meets stream after separate vote/attendance updates: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	lateOpenMeet := firestoreClient.Collection("polls").Doc("late-open-meet")
+	if _, err := lateOpenMeet.Set(ctx, map[string]any{
+		"date": "2019-12-31", "completed": false, "groupId": "group-a", "pubs": map[string]any{"venue-1": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case createdFrame := <-openFrames:
+		if !strings.Contains(createdFrame, `"id":"late-open-meet"`) {
+			t.Fatalf("creating a past-dated open Meet did not update the complete view: %s", createdFrame)
+		}
+	case err := <-openFrameErrors:
+		t.Fatalf("read created open-Meet frame: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("creating a past-dated open Meet did not update the complete view")
+	}
+	if _, err := lateOpenMeet.Update(ctx, []firestore.Update{{Path: "completed", Value: true}}); err != nil {
+		t.Fatal(err)
+	}
+	completedFrames := make(chan string, 1)
+	completedFrameErrors := make(chan error, 1)
+	go func() {
+		frame, err := readCurrentMeetsFrame(openStreamReader)
+		if err != nil {
+			completedFrameErrors <- err
+			return
+		}
+		completedFrames <- frame
+	}()
+	select {
+	case completedFrame := <-completedFrames:
+		if !strings.Contains(completedFrame, "event: open_meets") || strings.Contains(completedFrame, `"id":"late-open-meet"`) {
+			t.Fatalf("completing an open Meet did not remove it from the complete view: %s", completedFrame)
+		}
+	case err := <-completedFrameErrors:
+		t.Fatalf("read completed open-Meet frame: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("completing an open Meet did not remove it from the complete view")
+	}
+	stopOpenStream()
+	openStreamResponse.Body.Close()
 	if _, err := deletedVenue.Update(ctx, []firestore.Update{{Path: "name", Value: "The New Maypole"}}); err != nil {
 		t.Fatal(err)
 	}

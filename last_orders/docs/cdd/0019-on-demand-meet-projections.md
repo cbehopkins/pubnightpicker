@@ -13,8 +13,8 @@
 ## 1. Purpose and Scope
 
 Maintain local SQLite projections for individually requested Meets and the
-current-Meets collections of requested Groups, without replicating the entire
-authoritative Meet collection.
+current- and open-Meet collections of requested Groups, without replicating the
+entire authoritative Meet collection.
 
 Firestore remains authoritative. HandPump admits projections on demand and keeps
 each admitted projection updated through a shared Firestore watch. Expiry bounds
@@ -22,7 +22,7 @@ retention, not total size or listener count.
 
 There is no individual-Meet client stream in this design. A source document watch
 keeps cached detail reads updated without implying a corresponding public stream.
-Current-Meets collection streaming remains part of the existing interface.
+Current- and open-Meets collection streaming use independent Group views.
 
 This CDD specifies intent and lifecycle guarantees, not projected fields, concrete
 table schemas, locking primitives or goroutine structure.
@@ -68,25 +68,43 @@ Failed authorisation, missing resources, abandoned initialisation and recovery
 timeouts do not renew an existing entry. GETs, source changes and traffic on
 already-open streams do not renew it either.
 
-### 2.3 Other Queries
+### 2.3 Open Meets for a Group
 
-Historical, search and other Meet queries outside the current-Meets view continue
-to query Firestore directly. Returning a Meet in query results does not admit its
-individual projection. The current-Meets GET is the explicit projection-backed
-collection exception.
+An open-Meets GET or stream connection admits a projection keyed by Group ID,
+independently of that Group's current-Meets projection. One Firestore query watch
+per admitted Group and open-Meets view, per HandPump instance, maintains the
+voting page's complete view for all interested clients.
 
-### 2.4 Separation from Voting and Attendance
+Include voting-open Meets belonging to the requested Group regardless of
+scheduled date, ordered by date then Meet ID. Do not apply a date cutoff. Passing
+London midnight alone does not change open-Meets membership. An empty result is a
+valid, admitted, watched collection.
 
-Meet detail, current and past responses contain no vote or attendance data,
+The initial expiry deadline is six hours after admission. Each successfully
+accepted, authorised open-Meets stream connection moves the shared deadline to
+six hours after that acceptance. Failed authorisation, missing resources,
+abandoned initialisation and recovery timeouts do not renew it. GETs, source
+changes and traffic on already-open streams do not renew it either.
+
+### 2.4 Other Queries
+
+Historical, search and other Meet queries outside the current- and open-Meets
+views continue to query Firestore directly. Returning a Meet in query results
+does not admit its individual projection. Current- and open-Meets are the
+projection-backed collection exceptions.
+
+### 2.5 Separation from Voting and Attendance
+
+Meet detail, current, open and past responses contain no vote or attendance data,
 including counts or caller-specific state. Venue candidates belong to the Meet;
 votes and their counts belong to voting. The frontend composes the separate
 interfaces with independent loading and error states. An unavailable attendance
 or voting result must not make a Meet disappear or silently become zero.
 
 Vote and attendance changes do not update a Meet projection, advance a Meet
-resource version or trigger a current-Meets event. They may independently use
-the shared global sequence. The existing attendance interface remains separate;
-preserving live voting updates requires a separate voting API design.
+resource version or trigger current- or open-Meets events. They may independently
+use the shared global sequence. The existing attendance interface remains
+separate; live voting updates require a separate voting API design.
 
 ## 3. Ownership and Persistence
 
@@ -99,11 +117,12 @@ Keep runtime watch handles, cancellation and subscriber coordination in memory.
 Use the shared projection-watch and streaming machinery where applicable; do not
 create a separate durable recovery workflow for these disposable caches.
 
-The individual-Meet and per-Group projections own their data and lifecycles
-independently. They may share conversion helpers, but neither updates or removes
-the other's projected records. A Meet may consequently be observed through both
-a Group query watch and an individual document watch. This overlap is accepted
-to avoid coupling their ownership, expiry and recovery.
+The individual-Meet, current-Meets and open-Meets projections own their data and
+lifecycles independently. The current- and open-Meets views for one Group may
+share conversion and streaming machinery, but neither updates or removes the
+other's projected records. A Meet may consequently be observed through either
+Group query watch and an individual document watch. This overlap is accepted to
+avoid coupling their ownership, expiry and recovery.
 
 Each admitted entry owns its watch lifetime independently of the request that
 created it. A caller cancelling its wait or disconnecting does not cancel shared
@@ -128,14 +147,14 @@ Meet cache. Later source changes use the same validated, transactional write
 path. Older results and callbacks must not overwrite newer committed state.
 
 Follow CDD-0014/0015 for atomic projected values, resource versions, global
-sequence allocation and idempotent application. Current-Meets snapshots and
-cursors must describe the same SQLite state, with no missed final state during
-snapshot-to-live handover. Projection fields and concrete normalisation remain
-implementation work.
+sequence allocation and idempotent application. Current- and open-Meets
+snapshots and cursors must describe the same SQLite state, with no missed final
+state during snapshot-to-live handover. Projection fields and concrete
+normalisation remain implementation work.
 
 ### 4.1 Venue Composition
 
-The current-Meets view includes selected Venue summaries from the shared Venue
+Current- and open-Meets views include selected Venue summaries from the shared Venue
 projection. Retain the current details and deleted status of soft-deleted Venues
 in that projection, including on a fresh baseline. An internal read for Meet
 views can include them; ordinary Venue discovery, GET and Venue collection
@@ -170,7 +189,7 @@ rather than requiring an exact timer for every entry. The sweep interval is a
 configuration decision, not an additional retention guarantee.
 
 Retirement makes the entry unavailable for further use, cancels its source watch,
-resets and closes any associated current-Meets streams, and removes its owned
+resets and closes any associated current- or open-Meets streams, and removes its owned
 cached view and admission data. Eviction means local observation has ended; it
 does not mean the authoritative Meet has been deleted.
 
@@ -203,12 +222,12 @@ London date. Admission racing with midnight must not serve an old-date entry or
 allow a retiring watch to publish into the new-date projection.
 
 This rule changes collection membership, not the existence of the underlying
-Meets. It does not retire individual-Meet or Venue projections.
+Meets. It does not retire individual-Meet, open-Meets or Venue projections.
 
 ## 7. Failures and Recovery
 
 When a source watch reports a failure, mark the entry unavailable and reset and
-close its current-Meets client streams. Retain the entry while retrying until
+close the affected current- or open-Meets client streams. Retain the entry while retrying until
 recovery or expiry. GETs and new streams wait within their bounded allowance for
 a fresh authoritative baseline; they must not serve the known-disconnected view
 as healthy. Network failure detection itself is not guaranteed to be immediate.
@@ -229,18 +248,19 @@ isolation where an underlying database failure affects other work too.
 
 Authoritative deletion of an individually watched Meet retires its entry and
 watch; subsequent detail reads check Firestore and return not found if still
-absent. There is no detail stream to notify. A Meet leaving a current-Meets
-query produces an updated collection snapshot while the Group watch remains open.
-This need not mean Meet deletion.
+absent. There is no detail stream to notify. A Meet entering or leaving a
+current- or open-Meets query produces an updated collection snapshot while the
+Group watch remains open. This need not mean Meet deletion.
 
-If the shared Venue listener reports failure, reset and close current-Meets
-streams that require Venue details and make those composed views unavailable
+If the shared Venue listener reports failure, reset and close current- or
+open-Meets streams that require Venue details and make those composed views unavailable
 until a fresh Venue baseline commits. Groups without that dependency need not
 reset solely for this reason. Reconnecting requests use the same bounded wait.
 
 ## 8. Client Streaming, Authorisation and Writes
 
-Only the current-Meets projection has a client stream within this design. Follow
+Current- and open-Meets projections have client streams within this design.
+Follow
 CDD-0013/0017: full replacement snapshots on connection and relevant changes,
 fresh snapshots on reconnect, existing cursor handling, bounded subscriber
 buffers and slow-client closure. No durable replay of every mutation is promised.
@@ -248,6 +268,8 @@ buffers and slow-client closure. No durable replay of every mutation is promised
 Use the existing generic `view_reset` event, with no event ID and `data: {}`,
 before closing for retirement, detected watch failure or applicable authorisation
 invalidation. Reconnection reauthorises and creates or joins a usable entry.
+London midnight retires current-Meets streams only; open-Meets streams remain
+open because date passing does not change their membership.
 
 Authorise every GET and stream connection in the API layer. The cache may admit
 and fetch an entry before the API decides whether to return it, so a denied
@@ -273,14 +295,14 @@ audit contract are separate work; a projection cannot reconstruct actor history.
 
 ## 9. Restart, Shutdown and Operational Limits
 
-On HandPump restart, discard these two kinds of cached view and admission data;
-do not eagerly restore their watches. Rebuild only when requested, and require
+On HandPump restart, discard individual, current- and open-Meet cached view and
+admission data; do not eagerly restore their watches. Rebuild only when requested, and require
 fresh baselines before serving. Preserve unrelated SQLite data, durable work and
 shared sequence infrastructure. Persisted deadlines do not promise admission
 survives a process restart.
 
 Backend startup readiness still applies, but individual Meet and per-Group
-current-Meets baselines are per-entry requirements, not startup-wide blockers.
+current- and open-Meets baselines are per-entry requirements, not startup-wide blockers.
 
 On shutdown, stop entry admission, cancel owned watches and close active client
 streams through HandPump's lifecycle. This is not Landlord shutdown draining.
@@ -309,7 +331,7 @@ Implementation checks must demonstrate:
 - Initial views wait for committed baselines; empty results, missing Meets and
   unavailable sources remain distinct outcomes.
 - Group baseline reconciliation cannot affect another Group or individual cache.
-- Successful current-Meets stream admission renews the shared deadline; GETs,
+- Successful current- or open-Meets stream admission renews that view's shared deadline; GETs,
   failed admissions, source updates and retries do not.
 - Request cancellation does not cancel entry-owned work or other callers.
 - Expiry, renewal and replacement races cannot revive or corrupt retired entries.
@@ -318,7 +340,7 @@ Implementation checks must demonstrate:
 - Source and application failures stop unhealthy reads and streams; recovery
   requires a fresh atomic baseline and remains bounded by entry expiry.
 - Authoritative removal and ordinary cache eviction have distinct behaviour.
-- Vote and attendance changes never update Meet versions or trigger Meet streams;
+- Vote and attendance changes never update Meet versions or trigger collection streams;
   candidates remain Meet data and separate frontend failures do not erase Meets.
 - Soft-deleted Venue details survive a fresh Venue baseline, remain excluded from
   ordinary Venue reads and are available in Meet views; confirmed missing and
@@ -332,7 +354,7 @@ Implementation checks must demonstrate:
 - Projection lifecycle diagnostics are disabled by default and opt-in per
   projection; failures remain visible without repeated-log flooding. Source
   observation and replay never create Firestore action audit records.
-- Current-Meets snapshots, cursor handover, reconnects, authorisation invalidation
+- Current- and open-Meets snapshots, cursor handover, reconnects, authorisation invalidation
   and slow-client handling satisfy the existing streaming contract.
 - Restart discards only these disposable caches and does not restore all watches
   or reset unrelated synchronisation state or durable work.
@@ -343,8 +365,8 @@ Implementation checks must demonstrate:
   and indexes while implementing the adapters.
 - Choose concrete configuration for request wait bounds, sweep frequency and the
   initial six-hour cache lifetime; no additional timing values are fixed here.
-- Design the voting snapshot and live-update interface independently. Attendance
-  and votes are not implicitly covered by watching the Meet document.
+- Design live voting updates independently of the open-Meets view. Attendance and
+  votes are not implicitly covered by watching the Meet document.
 - Specify write-endpoint consistency requirements separately.
 - Specify write-side action audit delivery, attribution and failure handling
   separately; existing producers do not imply an atomic audit guarantee.

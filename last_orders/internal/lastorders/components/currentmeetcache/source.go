@@ -20,14 +20,18 @@ func NewFirestoreSource(client *firestore.Client) (Source, error) {
 	return &firestoreSource{client: client}, nil
 }
 
-func (s *firestoreSource) Watch(ctx context.Context, groupID, date string) (Stream, error) {
-	if groupID == "" || date == "" {
-		return nil, fmt.Errorf("group ID and current date are required")
+func (s *firestoreSource) Watch(ctx context.Context, groupID string, view ViewQuery) (Stream, error) {
+	if groupID == "" || (view.Kind == CurrentView && view.Date == "") ||
+		(view.Kind == OpenView && view.Date != "") || (view.Kind != CurrentView && view.Kind != OpenView) {
+		return nil, fmt.Errorf("valid Group Meet view query is required")
 	}
 	query := s.client.Collection("polls").
 		Where("groupId", "==", groupID).
-		Where("completed", "==", true).
-		Where("date", ">=", date).
+		Where("completed", "==", view.Kind == CurrentView)
+	if view.Kind == CurrentView {
+		query = query.Where("date", ">=", view.Date)
+	}
+	query = query.
 		OrderBy("date", firestore.Asc).
 		OrderBy(firestore.DocumentID, firestore.Asc)
 	return &firestoreStream{iterator: query.Snapshots(ctx)}, nil

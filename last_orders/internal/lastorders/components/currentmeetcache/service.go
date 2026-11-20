@@ -25,21 +25,23 @@ const (
 )
 
 type Service struct {
-	store          *Store
-	source         Source
-	venues         *venuecache.Store
-	hub            *sse.Hub
-	logger         *slog.Logger
-	now            func() time.Time
-	location       *time.Location
-	diagnostics    bool
-	mu             sync.Mutex
-	entries        map[string]*entry
-	closed         bool
-	venueAvailable bool
+	store           *Store
+	source          Source
+	venues          *venuecache.Store
+	hub             *sse.Hub
+	logger          *slog.Logger
+	now             func() time.Time
+	location        *time.Location
+	diagnostics     bool
+	openDiagnostics bool
+	mu              sync.Mutex
+	entries         map[string]*entry
+	closed          bool
+	venueAvailable  bool
 }
 
 type entry struct {
+	kind          ViewKind
 	groupID       string
 	date          string
 	owner         string
@@ -73,7 +75,7 @@ func (watch *sourceWatch) stop() {
 
 func NewService(store *Store, source Source, venues *venuecache.Store, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
 	if store == nil || source == nil || venues == nil || hub == nil {
-		return nil, fmt.Errorf("current-Meets store, source, Venue store, and stream hub are required")
+		return nil, fmt.Errorf("Group Meet store, source, Venue store, and stream hub are required")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -88,7 +90,8 @@ func NewService(store *Store, source Source, venues *venuecache.Store, hub *sse.
 	return &Service{
 		store: store, source: source, venues: venues, hub: hub, logger: logger, now: now,
 		location: location, diagnostics: os.Getenv("LAST_ORDERS_CURRENT_MEET_DIAGNOSTICS") == "true",
-		entries: make(map[string]*entry), venueAvailable: true,
+		openDiagnostics: os.Getenv("LAST_ORDERS_OPEN_MEET_DIAGNOSTICS") == "true",
+		entries:         make(map[string]*entry), venueAvailable: true,
 	}, nil
 }
 
@@ -104,7 +107,18 @@ func (s *Service) Get(ctx context.Context, groupID string) (Snapshot, error) {
 	if err := s.RetireBefore(ctx, date); err != nil {
 		return Snapshot{}, fmt.Errorf("retire prior current-Meets date: %w", err)
 	}
-	current, err := s.admit(groupID, date)
+	return s.get(ctx, CurrentView, groupID, date)
+}
+
+func (s *Service) GetOpen(ctx context.Context, groupID string) (Snapshot, error) {
+	if groupID == "" {
+		return Snapshot{}, ErrUnavailable
+	}
+	return s.get(ctx, OpenView, groupID, "")
+}
+
+func (s *Service) get(ctx context.Context, kind ViewKind, groupID, date string) (Snapshot, error) {
+	current, err := s.admit(kind, groupID, date)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -112,7 +126,7 @@ func (s *Service) Get(ctx context.Context, groupID string) (Snapshot, error) {
 	defer timer.Stop()
 	for {
 		s.mu.Lock()
-		if current.retired || s.entries[entryKey(groupID, date)] != current {
+		if current.retired || s.entries[entryKey(kind, groupID, date)] != current {
 			s.mu.Unlock()
 			return Snapshot{}, ErrUnavailable
 		}
@@ -129,13 +143,13 @@ func (s *Service) Get(ctx context.Context, groupID string) (Snapshot, error) {
 			continue
 		}
 		if current.available {
-			snapshot, readErr := s.store.Snapshot(ctx, groupID, current.owner, s.venues)
-			if readErr == nil && date == s.CurrentDate() {
+			snapshot, readErr := s.store.Snapshot(ctx, kind, groupID, date, current.owner, s.venues)
+			if readErr == nil && (kind != CurrentView || date == s.CurrentDate()) {
 				current.lastDigest = digest(snapshot)
 				s.mu.Unlock()
 				return snapshot, nil
 			}
-			if readErr == nil {
+			if readErr == nil && kind == CurrentView {
 				readErr = ErrRetired
 			}
 			if ctx.Err() != nil {
@@ -165,17 +179,25 @@ func (s *Service) Get(ctx context.Context, groupID string) (Snapshot, error) {
 }
 
 func (s *Service) Renew(ctx context.Context, groupID, date string) error {
+	return s.renew(ctx, CurrentView, groupID, date)
+}
+
+func (s *Service) RenewOpen(ctx context.Context, groupID string) error {
+	return s.renew(ctx, OpenView, groupID, "")
+}
+
+func (s *Service) renew(ctx context.Context, kind ViewKind, groupID, date string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if date != s.CurrentDate() {
+	if kind == CurrentView && date != s.CurrentDate() {
 		return ErrRetired
 	}
-	current := s.entries[entryKey(groupID, date)]
+	current := s.entries[entryKey(kind, groupID, date)]
 	if current == nil || current.retired || !current.available {
 		return ErrRetired
 	}
 	validUntil := s.now().Add(entryLifetime)
-	if err := s.store.Renew(ctx, groupID, date, current.owner, validUntil); err != nil {
+	if err := s.store.Renew(ctx, kind, groupID, date, current.owner, validUntil); err != nil {
 		return err
 	}
 	current.validUntil = validUntil
@@ -200,14 +222,14 @@ func (s *Service) NotifyVenueChanges(ctx context.Context, venueIDs []string) {
 	}
 	s.mu.Unlock()
 	for _, current := range entries {
-		snapshot, err := s.store.Snapshot(ctx, current.groupID, current.owner, s.venues)
+		snapshot, err := s.store.Snapshot(ctx, current.kind, current.groupID, current.date, current.owner, s.venues)
 		if err != nil {
 			s.markUnavailable(current, err)
 			continue
 		}
 		newDigest := digest(snapshot)
 		s.mu.Lock()
-		if s.entries[entryKey(current.groupID, current.date)] != current || current.retired {
+		if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
 			s.mu.Unlock()
 			continue
 		}
@@ -215,7 +237,7 @@ func (s *Service) NotifyVenueChanges(ctx context.Context, venueIDs []string) {
 		current.lastDigest = newDigest
 		s.mu.Unlock()
 		if oldDigest == "" || oldDigest != newDigest {
-			s.hub.PublishChanged(viewKey(current.groupID, current.date), snapshot.Sequence)
+			s.hub.PublishChanged(viewKey(current.kind, current.groupID, current.date), snapshot.Sequence)
 		}
 	}
 }
@@ -236,7 +258,7 @@ func (s *Service) VenueSourceUnavailable(err error) {
 	}
 	s.mu.Unlock()
 	for _, current := range entries {
-		s.hub.ResetView(viewKey(current.groupID, current.date))
+		s.hub.ResetView(viewKey(current.kind, current.groupID, current.date))
 	}
 	s.logger.Warn("current-Meets Venue source unavailable", "error_type", fmt.Sprintf("%T", err))
 }
@@ -264,14 +286,14 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 	var watches []*sourceWatch
 	var retired []ExpiredEntry
 	for _, expired := range entries {
-		current := s.entries[entryKey(expired.GroupID, expired.Date)]
+		current := s.entries[entryKey(expired.Kind, expired.GroupID, expired.Date)]
 		if current != nil && (current.owner != expired.Owner || current.validUntil.After(now)) {
 			continue
 		}
 		if current != nil {
 			s.retireLocked(current)
-			if s.diagnostics {
-				s.logger.Info("current-Meets projection evicted", "group_id", maskID(expired.GroupID), "date", expired.Date)
+			if s.diagnosticsEnabled(expired.Kind) {
+				s.logger.Info(viewLabel(expired.Kind)+" projection evicted", "group_id", maskID(expired.GroupID), "date", expired.Date)
 			}
 			if current.watch != nil {
 				watches = append(watches, current.watch)
@@ -297,14 +319,14 @@ func (s *Service) RetireBefore(ctx context.Context, date string) error {
 	var retired []ExpiredEntry
 	var watches []*sourceWatch
 	for _, current := range s.entries {
-		if current.date >= date {
+		if current.kind != CurrentView || current.date >= date {
 			continue
 		}
 		s.retireLocked(current)
-		if s.diagnostics {
+		if s.diagnosticsEnabled(current.kind) {
 			s.logger.Info("current-Meets projection retired at London midnight", "group_id", maskID(current.groupID), "date", current.date)
 		}
-		retired = append(retired, ExpiredEntry{GroupID: current.groupID, Date: current.date, Owner: current.owner})
+		retired = append(retired, ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
 		if current.watch != nil {
 			watches = append(watches, current.watch)
 			current.watch = nil
@@ -343,33 +365,33 @@ func (s *Service) Close() {
 	}
 }
 
-func (s *Service) admit(groupID, date string) (*entry, error) {
+func (s *Service) admit(kind ViewKind, groupID, date string) (*entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, ErrUnavailable
 	}
-	key := entryKey(groupID, date)
+	key := entryKey(kind, groupID, date)
 	if current := s.entries[key]; current != nil && !current.retired {
 		return current, nil
 	}
 	owner := uuid.NewString()
 	validUntil := s.now().Add(entryLifetime)
 	storeCtx, cancelStore := context.WithTimeout(context.Background(), 5*time.Second)
-	err := s.store.Admit(storeCtx, groupID, date, owner, validUntil)
+	err := s.store.Admit(storeCtx, kind, groupID, date, owner, validUntil)
 	cancelStore()
 	if err != nil {
-		s.logger.Warn("current-Meets projection admission failed", "group_id", maskID(groupID), "error_type", fmt.Sprintf("%T", err))
+		s.logger.Warn(viewLabel(kind)+" projection admission failed", "group_id", maskID(groupID), "error_type", fmt.Sprintf("%T", err))
 		return nil, fmt.Errorf("%w: persist current-Meets admission: %v", ErrUnavailable, err)
 	}
 	watchCtx, cancel := context.WithCancel(context.Background())
 	current := &entry{
-		groupID: groupID, date: date, owner: owner, validUntil: validUntil,
+		kind: kind, groupID: groupID, date: date, owner: owner, validUntil: validUntil,
 		ctx: watchCtx, cancel: cancel, changed: make(chan struct{}), venueIDs: make(map[string]struct{}),
 	}
 	s.entries[key] = current
-	if s.diagnostics {
-		s.logger.Info("current-Meets projection admitted", "group_id", maskID(groupID), "date", date, "valid_until", validUntil)
+	if s.diagnosticsEnabled(kind) {
+		s.logger.Info(viewLabel(kind)+" projection admitted", "group_id", maskID(groupID), "date", date, "valid_until", validUntil)
 	}
 	go s.observe(current)
 	return current, nil
@@ -378,7 +400,7 @@ func (s *Service) admit(groupID, date string) (*entry, error) {
 func (s *Service) observe(current *entry) {
 	for current.ctx.Err() == nil {
 		watchCtx, cancelWatch := context.WithCancel(current.ctx)
-		stream, err := s.source.Watch(watchCtx, current.groupID, current.date)
+		stream, err := s.source.Watch(watchCtx, current.groupID, ViewQuery{Kind: current.kind, Date: current.date})
 		if err != nil {
 			cancelWatch()
 			s.markUnavailable(current, err)
@@ -423,10 +445,10 @@ func (s *Service) observe(current *entry) {
 }
 
 func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
-	if current.date != s.CurrentDate() {
+	if current.kind == CurrentView && current.date != s.CurrentDate() {
 		s.mu.Lock()
 		var watch *sourceWatch
-		if s.entries[entryKey(current.groupID, current.date)] == current && !current.retired {
+		if s.entries[entryKey(current.kind, current.groupID, current.date)] == current && !current.retired {
 			s.retireLocked(current)
 			watch = current.watch
 			current.watch = nil
@@ -435,19 +457,19 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		if watch != nil {
 			watch.stop()
 		}
-		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{GroupID: current.groupID, Date: current.date, Owner: current.owner})
+		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
 		return ErrRetired
 	}
-	projections, err := validateSnapshot(current.groupID, current.date, snapshot)
+	projections, err := validateSnapshot(current.groupID, ViewQuery{Kind: current.kind, Date: current.date}, snapshot)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	if s.entries[entryKey(current.groupID, current.date)] != current || current.retired {
+	if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
 		s.mu.Unlock()
 		return ErrRetired
 	}
-	if current.date != s.CurrentDate() {
+	if current.kind == CurrentView && current.date != s.CurrentDate() {
 		s.retireLocked(current)
 		watch := current.watch
 		current.watch = nil
@@ -455,10 +477,10 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		if watch != nil {
 			watch.stop()
 		}
-		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{GroupID: current.groupID, Date: current.date, Owner: current.owner})
+		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
 		return ErrRetired
 	}
-	sequence, changed, err := s.store.Apply(current.ctx, current.groupID, current.date, current.owner, projections, snapshot.ReadTime)
+	sequence, changed, err := s.store.Apply(current.ctx, current.kind, current.groupID, current.date, current.owner, projections, snapshot.ReadTime)
 	if err == nil {
 		current.venueIDs = selectedVenueIDs(projections)
 	}
@@ -467,16 +489,16 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		return err
 	}
 	if changed {
-		view, err := s.store.Snapshot(current.ctx, current.groupID, current.owner, s.venues)
+		view, err := s.store.Snapshot(current.ctx, current.kind, current.groupID, current.date, current.owner, s.venues)
 		if err != nil {
 			return err
 		}
 		s.mu.Lock()
-		if s.entries[entryKey(current.groupID, current.date)] == current && !current.retired {
+		if s.entries[entryKey(current.kind, current.groupID, current.date)] == current && !current.retired {
 			current.lastDigest = digest(view)
 		}
 		s.mu.Unlock()
-		s.hub.PublishChanged(viewKey(current.groupID, current.date), sequence)
+		s.hub.PublishChanged(viewKey(current.kind, current.groupID, current.date), sequence)
 	}
 	return nil
 }
@@ -484,13 +506,13 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 func (s *Service) setWatch(current *entry, watch *sourceWatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.entries[entryKey(current.groupID, current.date)] != current || current.retired {
+	if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
 		watch.stop()
 		return
 	}
 	current.watch = watch
-	if s.diagnostics {
-		s.logger.Info("current-Meets query watch opened", "group_id", maskID(current.groupID), "date", current.date)
+	if s.diagnosticsEnabled(current.kind) {
+		s.logger.Info(viewLabel(current.kind)+" query watch opened", "group_id", maskID(current.groupID), "date", current.date)
 	}
 }
 
@@ -505,7 +527,7 @@ func (s *Service) clearWatch(current *entry, watch *sourceWatch) {
 func (s *Service) markAvailable(current *entry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.entries[entryKey(current.groupID, current.date)] != current || current.retired {
+	if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
 		return
 	}
 	current.available = true
@@ -515,32 +537,32 @@ func (s *Service) markAvailable(current *entry) {
 
 func (s *Service) markUnavailable(current *entry, err error) {
 	s.mu.Lock()
-	if s.entries[entryKey(current.groupID, current.date)] != current || current.retired {
+	if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
 		s.mu.Unlock()
 		return
 	}
 	current.available = false
 	s.signal(current)
 	if !current.failureLogged {
-		s.logger.Warn("current-Meets projection unavailable", "group_id", maskID(current.groupID), "date", current.date, "error_type", fmt.Sprintf("%T", err))
+		s.logger.Warn(viewLabel(current.kind)+" projection unavailable", "group_id", maskID(current.groupID), "date", current.date, "error_type", fmt.Sprintf("%T", err))
 		current.failureLogged = true
 	}
 	s.mu.Unlock()
-	s.hub.ResetView(viewKey(current.groupID, current.date))
-	if s.diagnostics {
-		s.logger.Info("current-Meets baseline attempt failed", "group_id", maskID(current.groupID), "date", current.date, "err", err)
+	s.hub.ResetView(viewKey(current.kind, current.groupID, current.date))
+	if s.diagnosticsEnabled(current.kind) {
+		s.logger.Info(viewLabel(current.kind)+" baseline attempt failed", "group_id", maskID(current.groupID), "date", current.date, "err", err)
 	}
 }
 
 func (s *Service) retireLocked(current *entry) {
-	key := entryKey(current.groupID, current.date)
+	key := entryKey(current.kind, current.groupID, current.date)
 	if s.entries[key] == current {
 		delete(s.entries, key)
 	}
 	current.retired = true
 	current.cancel()
 	s.signal(current)
-	s.hub.ResetView(viewKey(current.groupID, current.date))
+	s.hub.ResetView(viewKey(current.kind, current.groupID, current.date))
 }
 
 func (s *Service) signal(current *entry) {
@@ -576,8 +598,30 @@ func digest(snapshot Snapshot) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func entryKey(groupID, date string) string { return groupID + "\x00" + date }
-func viewKey(groupID, date string) string  { return "current-meets:" + groupID + ":" + date }
+func entryKey(kind ViewKind, groupID, date string) string {
+	return string(kind) + "\x00" + groupID + "\x00" + date
+}
+
+func viewKey(kind ViewKind, groupID, date string) string {
+	if kind == OpenView {
+		return "open-meets:" + groupID
+	}
+	return "current-meets:" + groupID + ":" + date
+}
+
+func (s *Service) diagnosticsEnabled(kind ViewKind) bool {
+	if kind == OpenView {
+		return s.openDiagnostics
+	}
+	return s.diagnostics
+}
+
+func viewLabel(kind ViewKind) string {
+	if kind == OpenView {
+		return "open-Meets"
+	}
+	return "current-Meets"
+}
 
 func maskID(value string) string {
 	sum := sha256.Sum256([]byte(value))
