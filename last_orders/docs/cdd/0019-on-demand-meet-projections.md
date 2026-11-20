@@ -93,7 +93,26 @@ views continue to query Firestore directly. Returning a Meet in query results
 does not admit its individual projection. Current- and open-Meets are the
 projection-backed collection exceptions.
 
-### 2.5 Separation from Voting and Attendance
+### 2.5 Meet-read authorisation
+
+All individual and Group-scoped Meet reads require an authenticated caller.
+Authenticated callers may read Meets in public Groups. Private-Group Meets
+require a `true` membership entry or global administrator authority; visibility
+does not imply membership, and group-scoped administrator authority is out of
+scope for these reads. Denied private-Group reads use `404` to avoid disclosing
+the Group. If authoritative access cannot be checked, the API returns `503`
+and does not cache the refresh failure as a denial.
+
+Each HandPump instance caches Group authority and global administrator
+decisions for 10 seconds. The existing Groups collection watch invalidates
+entries for changed Groups and all Group-scoped entries on each new baseline,
+including reconnect. A `roles/admin` document watch invalidates global
+administrator entries and resets active streams for UIDs whose effective grant
+changed. A new role-watch baseline resets all authenticated streams on that
+instance. A lookup invalidated while in flight is discarded and retried once;
+if a fresh decision is still unavailable, the request fails closed with `503`.
+
+### 2.6 Separation from Voting and Attendance
 
 Meet detail, current, open and past responses contain no vote or attendance data,
 including counts or caller-specific state. Venue candidates belong to the Meet;

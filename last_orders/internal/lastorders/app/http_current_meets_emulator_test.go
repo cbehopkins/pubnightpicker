@@ -50,6 +50,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		}
 	}
 	privateGroup := firestoreClient.Collection("groups").Doc("private-group")
+	adminRole := firestoreClient.Collection("roles").Doc("admin")
 	deletedVenue := firestoreClient.Collection("pubs").Doc("deleted-venue")
 	if _, err := deletedVenue.Set(ctx, map[string]any{
 		"name": "The Old Maypole", "venueType": "pub", "address": "Old Street",
@@ -86,6 +87,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		for _, groupID := range groups {
 			_, _ = firestoreClient.Collection("groups").Doc(groupID).Delete(cleanupCtx)
 		}
+		_, _ = adminRole.Delete(cleanupCtx)
 		for meetID := range meets {
 			_, _ = firestoreClient.Collection("polls").Doc(meetID).Delete(cleanupCtx)
 		}
@@ -147,6 +149,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 				statuses <- 0
 				return
 			}
+			request.Header.Set("Authorization", "Bearer valid-token")
 			response, err := client.Do(request)
 			if err != nil {
 				statuses <- 0
@@ -177,7 +180,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		} `json:"meets"`
 	} {
 		t.Helper()
-		response := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/"+groupID+"/current", "", "")
+		response := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/"+groupID+"/current", "Bearer valid-token", "")
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("current-Meets GET for %q status=%d body=%s", groupID, response.StatusCode, readVenueResponseBody(t, response))
@@ -244,7 +247,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		} `json:"meets"`
 	} {
 		t.Helper()
-		response := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/"+groupID+"/open", "", "")
+		response := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/"+groupID+"/open", "Bearer valid-token", "")
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("open-Meets GET for %q status=%d body=%s", groupID, response.StatusCode, readVenueResponseBody(t, response))
@@ -279,16 +282,16 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	}
 	privateOpenDenied := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/private-group/open", "", "")
 	privateOpenDenied.Body.Close()
-	if privateOpenDenied.StatusCode != http.StatusNotFound {
-		t.Fatalf("anonymous private open-Meets GET status=%d, want HTTP 404", privateOpenDenied.StatusCode)
+	if privateOpenDenied.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous open-Meets GET status=%d, want HTTP 401", privateOpenDenied.StatusCode)
 	}
 	if empty := getSnapshot("empty-group"); empty.Meets == nil || len(empty.Meets) != 0 {
 		t.Fatalf("empty Group snapshot=%+v", empty)
 	}
 	privateDenied := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/private-group/current", "", "")
 	privateDenied.Body.Close()
-	if privateDenied.StatusCode != http.StatusNotFound {
-		t.Fatalf("anonymous private-Group GET status=%d, want HTTP 404", privateDenied.StatusCode)
+	if privateDenied.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous current-Meets GET status=%d, want HTTP 401", privateDenied.StatusCode)
 	}
 	privateAllowed := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/private-group/current", "Bearer valid-token", "")
 	if privateAllowed.StatusCode != http.StatusOK {
@@ -328,6 +331,20 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	waitForPrivateMeetStatus := func(wantStatus int) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			result := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meets/private-group/current", "Bearer valid-token", "")
+			result.Body.Close()
+			if result.StatusCode == wantStatus {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("private-Group Meet status did not become %d after authority change", wantStatus)
+	}
+	waitForPrivateMeetStatus(http.StatusNotFound)
 	privateReset := make(chan string, 1)
 	privateResetError := make(chan error, 1)
 	go func() {
@@ -368,6 +385,49 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("private open-Meets stream was not reset after membership changed")
 	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPrivateMeetStatus(http.StatusOK)
+	adminStreamCtx, stopAdminStream := context.WithCancel(ctx)
+	adminStreamRequest, err := http.NewRequestWithContext(adminStreamCtx, http.MethodGet, baseURL+"/api/meets/private-group/current/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminStreamRequest.Header.Set("Authorization", "Bearer valid-token")
+	adminStreamResponse, err := client.Do(adminStreamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminStreamReader := bufio.NewReader(adminStreamResponse.Body)
+	if _, err := readCurrentMeetsFrame(adminStreamReader); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": false}); err != nil {
+		t.Fatal(err)
+	}
+	adminReset, adminResetError := make(chan string, 1), make(chan error, 1)
+	go func() {
+		frame, err := readCurrentMeetsFrame(adminStreamReader)
+		if err != nil {
+			adminResetError <- err
+			return
+		}
+		adminReset <- frame
+	}()
+	select {
+	case frame := <-adminReset:
+		if !strings.Contains(frame, "event: view_reset") || !strings.Contains(frame, "data: {}") {
+			t.Fatalf("global-admin revocation did not reset the private-Group stream: %s", frame)
+		}
+	case err := <-adminResetError:
+		t.Fatalf("read global-admin revocation reset: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("private-Group stream was not reset after global-admin revocation")
+	}
+	stopAdminStream()
+	adminStreamResponse.Body.Close()
+	waitForPrivateMeetStatus(http.StatusNotFound)
 	stopPrivateOpenStream()
 	privateOpenStreamResponse.Body.Close()
 	stopPrivateStream()
@@ -386,6 +446,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Header.Set("Authorization", "Bearer valid-token")
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -407,6 +468,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	openStreamRequest.Header.Set("Authorization", "Bearer valid-token")
 	openStreamResponse, err := client.Do(openStreamRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -544,6 +606,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Header.Set("Authorization", "Bearer valid-token")
 	response, err = client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -590,6 +653,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	renewalRequest.Header.Set("Authorization", "Bearer valid-token")
 	renewalResponse, err := client.Do(renewalRequest)
 	if err != nil {
 		t.Fatal(err)

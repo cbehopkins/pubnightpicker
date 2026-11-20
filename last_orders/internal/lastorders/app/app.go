@@ -45,6 +45,7 @@ import (
 	notificationmirrorlistener "last_orders/internal/lastorders/database/listeners/notificationmirror"
 	notificationprofilelistener "last_orders/internal/lastorders/database/listeners/notificationprofile"
 	pushtestlistener "last_orders/internal/lastorders/database/listeners/pushtest"
+	roleauthorizationlistener "last_orders/internal/lastorders/database/listeners/roleauthorization"
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
@@ -214,6 +215,7 @@ type App struct {
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
 	groupCacheListener          *groupcachelistener.Listener
+	roleAuthorizationListener   *roleauthorizationlistener.Listener
 	groupCacheStartMu           sync.Mutex
 	groupCacheStarted           bool
 	venueStreamHub              *sse.Hub
@@ -1197,6 +1199,23 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
+		invalidator, ok := groupAuthorizer.(interface {
+			InvalidateGroup(string)
+			InvalidateAllGroups()
+			InvalidateGlobalAdmins()
+		})
+		if !ok {
+			return fmt.Errorf("Firestore Group authorizer does not support cache invalidation")
+		}
+		application.groupCacheListener.SetAuthorizationInvalidator(invalidator)
+		roleSource, err := roleauthorizationlistener.NewFirestoreSource(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		application.roleAuthorizationListener, err = roleauthorizationlistener.New(roleSource, invalidator.InvalidateGlobalAdmins, cfg.Logger, application.venueStreamHub)
+		if err != nil {
+			return err
+		}
 		pastMeetsSource, err := pastmeets.NewFirestoreSource(application.firestoreClient)
 		if err != nil {
 			return err
@@ -1347,15 +1366,27 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Recipient and venue reads must see complete projections before any work runs.
-	for _, projection := range []interface {
+	projections := []interface {
 		Start(context.Context) error
 		Ready() <-chan struct{}
-	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener} {
+	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener}
+	if a.roleAuthorizationListener != nil {
+		projections = append(projections, a.roleAuthorizationListener)
+	}
+	for _, projection := range projections {
 		if err := projection.Start(producerCtx); err != nil {
 			return fmt.Errorf("start projection listener: %w", err)
 		}
 	}
-	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()} {
+	readySignals := []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()}
+	if a.roleAuthorizationListener != nil {
+		readySignals = append(readySignals, a.roleAuthorizationListener.Ready())
+	}
+	var roleAuthorizationErrors <-chan error
+	if a.roleAuthorizationListener != nil {
+		roleAuthorizationErrors = a.roleAuthorizationListener.Errors()
+	}
+	for _, ready := range readySignals {
 		select {
 		case <-ready:
 		case err := <-a.notificationProfileListener.Errors():
@@ -1364,6 +1395,8 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("venue cache projection failed: %w", err)
 		case err := <-a.groupCacheListener.Errors():
 			return fmt.Errorf("group cache projection failed: %w", err)
+		case err := <-roleAuthorizationErrors:
+			return fmt.Errorf("role authorisation listener failed: %w", err)
 		case <-producerCtx.Done():
 			a.logger.Info("run context cancelled before projections were ready")
 			return nil
@@ -1575,15 +1608,27 @@ func (a *App) runHandPump(ctx context.Context) error {
 		a.runMu.Unlock()
 		close(runDone)
 	}()
-	for _, projection := range []interface {
+	projections := []interface {
 		Start(context.Context) error
 		Ready() <-chan struct{}
-	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener} {
+	}{a.notificationProfileListener, a.venueCacheListener, a.groupCacheListener}
+	if a.roleAuthorizationListener != nil {
+		projections = append(projections, a.roleAuthorizationListener)
+	}
+	for _, projection := range projections {
 		if err := projection.Start(runCtx); err != nil {
 			return fmt.Errorf("start HandPump projection: %w", err)
 		}
 	}
-	for _, ready := range []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()} {
+	readySignals := []<-chan struct{}{a.notificationProfileListener.Ready(), a.venueCacheListener.Ready(), a.groupCacheListener.Ready()}
+	if a.roleAuthorizationListener != nil {
+		readySignals = append(readySignals, a.roleAuthorizationListener.Ready())
+	}
+	var roleAuthorizationErrors <-chan error
+	if a.roleAuthorizationListener != nil {
+		roleAuthorizationErrors = a.roleAuthorizationListener.Errors()
+	}
+	for _, ready := range readySignals {
 		select {
 		case <-ready:
 		case err := <-a.notificationProfileListener.Errors():
@@ -1592,6 +1637,8 @@ func (a *App) runHandPump(ctx context.Context) error {
 			return fmt.Errorf("venue cache projection failed: %w", err)
 		case err := <-a.groupCacheListener.Errors():
 			return fmt.Errorf("group cache projection failed: %w", err)
+		case err := <-roleAuthorizationErrors:
+			return fmt.Errorf("role authorisation listener failed: %w", err)
 		case <-runCtx.Done():
 			return nil
 		}
@@ -1780,6 +1827,9 @@ func (a *App) closeListeners() error {
 	}
 	if a.groupCacheListener != nil {
 		closeErrs = append(closeErrs, a.groupCacheListener.Close())
+	}
+	if a.roleAuthorizationListener != nil {
+		closeErrs = append(closeErrs, a.roleAuthorizationListener.Close())
 	}
 	if a.notificationProfileListener != nil {
 		closeErrs = append(closeErrs, a.notificationProfileListener.Close())

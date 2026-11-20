@@ -20,14 +20,20 @@ var ErrNoGroups = errors.New("authoritative Groups collection is empty")
 var ErrMalformedDocument = errors.New("malformed Group document")
 
 type Listener struct {
-	service   *component.Service
-	store     *component.Store
-	logger    *slog.Logger
-	hub       *sse.Hub
-	ready     chan struct{}
-	failed    chan error
-	readyOnce sync.Once
+	service       *component.Service
+	store         *component.Store
+	logger        *slog.Logger
+	hub           *sse.Hub
+	authorization AuthorizationInvalidator
+	ready         chan struct{}
+	failed        chan error
+	readyOnce     sync.Once
 	lifecycle.Controller
+}
+
+type AuthorizationInvalidator interface {
+	InvalidateGroup(string)
+	InvalidateAllGroups()
 }
 
 func New(service *component.Service, store *component.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
@@ -55,6 +61,10 @@ func (l *Listener) Errors() <-chan error {
 	return l.failed
 }
 
+func (l *Listener) SetAuthorizationInvalidator(invalidator AuthorizationInvalidator) {
+	l.authorization = invalidator
+}
+
 func (l *Listener) Start(ctx context.Context) error {
 	return l.Controller.Start(ctx, l.watch)
 }
@@ -78,8 +88,13 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, baseline bool) error {
+	if baseline && l.authorization != nil {
+		l.authorization.InvalidateAllGroups()
+	}
 	mutations := make([]component.Mutation, 0, len(changes))
+	changedIDs := make([]component.GroupID, 0, len(changes))
 	for _, change := range changes {
+		changedIDs = append(changedIDs, component.GroupID(change.Doc.ID))
 		mutation := component.Mutation{ID: component.GroupID(change.Doc.ID)}
 		if change.Kind != component.ChangeRemoved {
 			group, err := component.GroupFromDocument(change.Doc)
@@ -93,6 +108,13 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 			mutation.Group = &group
 		}
 		mutations = append(mutations, mutation)
+	}
+	if l.authorization != nil {
+		if !baseline {
+			for _, groupID := range changedIDs {
+				l.authorization.InvalidateGroup(string(groupID))
+			}
+		}
 	}
 	if baseline && len(mutations) == 0 {
 		return ErrNoGroups

@@ -41,6 +41,9 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 	group := firestoreClient.Collection("groups").Doc(groupID)
 	privateGroup := firestoreClient.Collection("groups").Doc("private-group")
 	hiddenGroup := firestoreClient.Collection("groups").Doc("hidden-group")
+	malformedMemberGroup := firestoreClient.Collection("groups").Doc("malformed-member-group")
+	adminGroup := firestoreClient.Collection("groups").Doc("admin-group")
+	adminRole := firestoreClient.Collection("roles").Doc("admin")
 	venue := firestoreClient.Collection("pubs").Doc("venue-1")
 	if _, err := group.Set(ctx, map[string]any{"name": "Public Group", "visibility": "public"}); err != nil {
 		t.Fatal(err)
@@ -52,6 +55,15 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := hiddenGroup.Set(ctx, map[string]any{"name": "Hidden Group", "visibility": "private", "members": map[string]any{"someone-else": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := malformedMemberGroup.Set(ctx, map[string]any{"name": "Malformed Member Group", "visibility": "private", "members": map[string]any{"verified-user": "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminGroup.Set(ctx, map[string]any{"name": "Admin Group", "visibility": "private", "members": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := meet.Set(ctx, map[string]any{
@@ -77,6 +89,14 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 	if _, err := hiddenMeet.Set(ctx, map[string]any{"date": "2026-11-20", "completed": false, "groupId": "hidden-group"}); err != nil {
 		t.Fatal(err)
 	}
+	malformedMemberMeet := firestoreClient.Collection("polls").Doc("malformed-member-meet")
+	if _, err := malformedMemberMeet.Set(ctx, map[string]any{"date": "2026-11-20", "completed": false, "groupId": "malformed-member-group"}); err != nil {
+		t.Fatal(err)
+	}
+	adminMeet := firestoreClient.Collection("polls").Doc("admin-meet")
+	if _, err := adminMeet.Set(ctx, map[string]any{"date": "2026-11-20", "completed": false, "groupId": "admin-group"}); err != nil {
+		t.Fatal(err)
+	}
 	missingVenueMeet := firestoreClient.Collection("polls").Doc("missing-venue-meet")
 	if _, err := missingVenueMeet.Set(ctx, map[string]any{"date": "2026-11-20", "completed": false, "groupId": groupID, "selected": "missing-venue"}); err != nil {
 		t.Fatal(err)
@@ -88,8 +108,13 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 		_, _ = group.Delete(cleanupCtx)
 		_, _ = privateGroup.Delete(cleanupCtx)
 		_, _ = hiddenGroup.Delete(cleanupCtx)
+		_, _ = malformedMemberGroup.Delete(cleanupCtx)
+		_, _ = adminGroup.Delete(cleanupCtx)
+		_, _ = adminRole.Delete(cleanupCtx)
 		_, _ = memberMeet.Delete(cleanupCtx)
 		_, _ = hiddenMeet.Delete(cleanupCtx)
+		_, _ = malformedMemberMeet.Delete(cleanupCtx)
+		_, _ = adminMeet.Delete(cleanupCtx)
 		_, _ = missingVenueMeet.Delete(cleanupCtx)
 		_, _ = firestoreClient.Collection("polls").Doc("created-after-miss").Delete(cleanupCtx)
 		_, _ = venue.Delete(cleanupCtx)
@@ -224,10 +249,12 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 		}
 	}
 	for path, wantStatus := range map[string]int{
-		"private-meet":       http.StatusOK,
-		"hidden-meet":        http.StatusNotFound,
-		"does-not-exist":     http.StatusNotFound,
-		"missing-venue-meet": http.StatusOK,
+		"private-meet":          http.StatusOK,
+		"hidden-meet":           http.StatusNotFound,
+		"malformed-member-meet": http.StatusNotFound,
+		"admin-meet":            http.StatusNotFound,
+		"does-not-exist":        http.StatusNotFound,
+		"missing-venue-meet":    http.StatusOK,
 	} {
 		result := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meet/"+path, "Bearer valid-token", "")
 		if result.StatusCode != wantStatus {
@@ -250,6 +277,14 @@ func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 		}
 		result.Body.Close()
 	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForMeetStatus(t, client, baseURL, "admin-meet", http.StatusOK)
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": false}); err != nil {
+		t.Fatal(err)
+	}
+	waitForMeetStatus(t, client, baseURL, "admin-meet", http.StatusNotFound)
 	missingMeet := doVenueRequest(t, client, http.MethodGet, baseURL+"/api/meet/created-after-miss", "Bearer valid-token", "")
 	if missingMeet.StatusCode != http.StatusNotFound {
 		body := readVenueResponseBody(t, missingMeet)

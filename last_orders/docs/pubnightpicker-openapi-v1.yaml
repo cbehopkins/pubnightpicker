@@ -810,15 +810,15 @@ paths:
       operationId: listCurrentMeets
       summary: List current Meets for a group
       description: |
-        Returns completed voting-phase Meets whose local date is today or in the
+        Requires authentication. Returns completed voting-phase Meets whose local date is today or in the
         future, ordered by date then Meet ID, together with selected Venue
-        summaries. Votes and attendance are separate concerns. Public Group Meet
-        details are available without authentication. The response includes an
+        summaries. Public Group Meets are readable by any authenticated caller;
+        private Group Meets require membership or global administrator authority.
+        Votes and attendance are separate concerns. The response includes an
         opaque cursor from the same consistent local snapshot, suitable for
         starting the corresponding stream.
       security:
         - bearerAuth: []
-        - {}
       responses:
         '200':
           description: Current Meets snapshot.
@@ -841,7 +841,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: The requested projection or its required Venue data is temporarily unavailable.
+          description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
   /meets/{group_id}/current/stream:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -850,7 +850,7 @@ paths:
       operationId: streamCurrentMeets
       summary: Stream changes to current Meets
       description: |
-        Server-Sent Events. `after` is an opaque cursor from a snapshot;
+        Requires authentication. Server-Sent Events. `after` is an opaque cursor from a snapshot;
         Last-Event-ID may be used on reconnect and takes precedence if both are
         supplied. Every connection receives a complete current-Meets replacement
         snapshot and a fresh cursor, then another complete replacement after each
@@ -862,7 +862,6 @@ paths:
         this does not imply Firebase is globally caught up.
       security:
         - bearerAuth: []
-        - {}
       parameters:
         - name: after
           in: query
@@ -909,7 +908,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Backend readiness, the requested projection or required Venue data is temporarily unavailable.
+          description: Backend readiness, the requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
           headers:
             Retry-After:
               schema:
@@ -923,14 +922,15 @@ paths:
       operationId: listOpenMeets
       summary: List voting-open Meets for a group
       description: |
-        Returns voting-open Meets belonging to the requested Group, regardless
+        Requires authentication. Returns voting-open Meets belonging to the requested Group, regardless
         of scheduled date, ordered by date then Meet ID. The response includes
         candidate Venue IDs but no votes or attendance data. The opaque cursor
         corresponds to the same consistent local snapshot used by the stream.
         Time passing at London midnight does not change open-Meet membership.
+        Public Groups are readable by any authenticated caller; private Groups
+        require membership or global administrator authority.
       security:
         - bearerAuth: []
-        - {}
       responses:
         '200':
           description: Open Meets snapshot.
@@ -949,7 +949,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: The requested projection is temporarily unavailable.
+          description: The requested projection or authoritative Meet access decision is temporarily unavailable.
   /meets/{group_id}/open/stream:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -958,7 +958,7 @@ paths:
       operationId: streamOpenMeets
       summary: Stream changes to voting-open Meets
       description: |
-        Server-Sent Events. Every authorised connection receives a complete
+        Requires authentication. Server-Sent Events. Every authorised connection receives a complete
         open-Meets replacement snapshot and a fresh opaque cursor, then another
         replacement when open-Meet membership or displayed data changes. Voting
         and attendance changes do not trigger this stream. Open membership is
@@ -968,7 +968,6 @@ paths:
         connections renew the shared Group view's six-hour deadline.
       security:
         - bearerAuth: []
-        - {}
       parameters:
         - name: after
           in: query
@@ -1008,7 +1007,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Backend readiness or the requested projection is temporarily unavailable.
+          description: Backend readiness, the requested projection, or authoritative Meet access decision is temporarily unavailable.
           headers:
             Retry-After:
               schema:
@@ -1021,7 +1020,7 @@ paths:
       tags: [Meets]
       operationId: listPastMeets
       summary: List past Meets for a group
-      description: Returns voting-complete Meets for the requested Group with a scheduled date before today in Europe/London, newest first, ordered by date descending and Meet ID ascending for ties. Historical results are queried directly and do not admit individual Meet projections. Votes and attendance are omitted; no stream is provided for this collection.
+      description: Requires authentication. Returns voting-complete Meets for the requested Group with a scheduled date before today in Europe/London, newest first, ordered by date descending and Meet ID ascending for ties. Public Groups are readable by any authenticated caller; private Groups require membership or global administrator authority. Historical results are queried directly and do not admit individual Meet projections. Votes and attendance are omitted; no stream is provided for this collection.
       security:
         - bearerAuth: []
       parameters:
@@ -1060,7 +1059,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '503':
-          description: The authoritative query or required Venue details are temporarily unavailable.
+          description: The authoritative query, required Venue details, or authoritative Meet access decision is temporarily unavailable.
           content:
             application/json:
               schema:
@@ -1074,7 +1073,7 @@ paths:
       tags: [Meets]
       operationId: getMeet
       summary: Get a Meet
-      description: Requires authentication. Public Group Meets are readable by any authenticated caller; private Group Meets require membership. Votes and attendance are separate concerns.
+      description: Requires authentication. Public Group Meets are readable by any authenticated caller; private Group Meets require membership or global administrator authority. Only a true UID entry in the Group members map grants membership. Votes and attendance are separate concerns.
       security:
         - bearerAuth: []
       responses:
@@ -1091,7 +1090,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: The requested projection or its required Venue data is temporarily unavailable.
+          description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
     parameters:
       - $ref: '#/components/parameters/MeetId'
