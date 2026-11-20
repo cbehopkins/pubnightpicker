@@ -21,13 +21,16 @@ var ErrMalformedDocument = errors.New("malformed venue cache document")
 var errPersistence = errors.New("persist venue cache projection")
 
 type Listener struct {
-	service   *venuecache.Service
-	store     *venuecache.Store
-	hub       *sse.Hub
-	logger    *slog.Logger
-	ready     chan struct{}
-	failed    chan error
-	readyOnce sync.Once
+	service           *venuecache.Service
+	store             *venuecache.Store
+	hub               *sse.Hub
+	logger            *slog.Logger
+	ready             chan struct{}
+	failed            chan error
+	readyOnce         sync.Once
+	onSourceFailure   func(error)
+	onSourceRecovery  func()
+	onCommittedChange func(context.Context, []string)
 	lifecycle.Controller
 }
 
@@ -57,6 +60,18 @@ func (l *Listener) Errors() <-chan error {
 	return l.failed
 }
 
+func (l *Listener) SetSourceFailureHandler(handler func(error)) {
+	l.onSourceFailure = handler
+}
+
+func (l *Listener) SetSourceRecoveryHandler(handler func()) {
+	l.onSourceRecovery = handler
+}
+
+func (l *Listener) SetCommittedChangeHandler(handler func(context.Context, []string)) {
+	l.onCommittedChange = handler
+}
+
 func (l *Listener) Start(ctx context.Context) error {
 	return l.Controller.Start(ctx, l.watch)
 }
@@ -70,17 +85,29 @@ func (l *Listener) watch(ctx context.Context) {
 		Apply:      projectionwatch.ApplyBatch[venuecache.Change](l.applyBatch),
 		RetryDelay: retryDelay,
 		Logger:     l.logger,
+		SourceFailed: func(err error) {
+			if l.onSourceFailure != nil {
+				l.onSourceFailure(err)
+			}
+		},
 		BaselineApplied: func() {
 			l.readyOnce.Do(func() { close(l.ready) })
+			if l.onSourceRecovery != nil {
+				l.onSourceRecovery()
+			}
 		},
 	})
 	if err != nil {
+		if l.onSourceFailure != nil {
+			l.onSourceFailure(err)
+		}
 		l.failed <- err
 	}
 }
 
 func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, baseline bool) error {
 	mutations := make([]venuecache.Mutation, 0, len(changes))
+	changedIDs := make([]string, 0, len(changes))
 	for _, change := range changes {
 		mutation := venuecache.Mutation{ID: change.Doc.ID}
 		if change.Kind != venuecache.ChangeRemoved {
@@ -95,6 +122,7 @@ func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, 
 			mutation.Projection = &projection
 		}
 		mutations = append(mutations, mutation)
+		changedIDs = append(changedIDs, change.Doc.ID)
 	}
 	if err := l.store.ApplyBatch(ctx, mutations, baseline); err != nil {
 		return errors.Join(errPersistence, err)
@@ -105,6 +133,9 @@ func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, 
 			return errors.Join(errPersistence, err)
 		}
 		l.hub.PublishChanged("venues:all", snapshot.State.Sequence)
+	}
+	if !baseline && l.onCommittedChange != nil && len(changedIDs) > 0 {
+		l.onCommittedChange(ctx, changedIDs)
 	}
 	return nil
 }

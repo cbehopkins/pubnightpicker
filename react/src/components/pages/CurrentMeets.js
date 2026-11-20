@@ -41,7 +41,8 @@ import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
 /** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
-/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
+/** @typedef {{ id?: string, status?: string, name?: string, address?: string, image_url?: string | null }} SelectedVenueSummary */
+/** @typedef {{ selectedVenueId?: string, selectedVenueSummary?: SelectedVenueSummary | null, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, MeetValue]> }} SortedMeetCollection */
 
 /** @typedef {import("../../store").RootState} RootState */
@@ -309,6 +310,7 @@ export function PastMeets() {
  * @param {{
  *  meetId: string,
  *  currentVenueId: string,
+ *  selectedVenueSummary?: SelectedVenueSummary | null,
  *  restaurantId: string | null | undefined,
  *  restaurantTime: string | null | undefined,
  *  date: string,
@@ -324,6 +326,7 @@ export function PastMeets() {
 function CurrentMeet({
   meetId,
   currentVenueId,
+  selectedVenueSummary,
   restaurantId,
   restaurantTime,
   date,
@@ -348,11 +351,27 @@ function CurrentMeet({
     meetId,
     canReadProtectedMeetData
   );
+  let currentMeetVenues = venues;
+  if (selectedVenueSummary?.status === "active" || selectedVenueSummary?.status === "deleted") {
+    currentMeetVenues = {
+      ...venues,
+      [currentVenueId]: {
+        name: selectedVenueSummary.name,
+        address: selectedVenueSummary.address,
+        image: selectedVenueSummary.image_url || undefined,
+      },
+    };
+  } else if (selectedVenueSummary?.status === "missing") {
+    currentMeetVenues = {
+      ...venues,
+      [currentVenueId]: { name: "Venue details unavailable" },
+    };
+  }
   const meetViewModel = buildCurrentMeetViewModel({
     currentVenueId,
     restaurantId,
     restaurantTime,
-    venues,
+    venues: currentMeetVenues,
     votes,
     attendance,
     currUserId: normalizedUserId,
@@ -402,6 +421,9 @@ function CurrentMeet({
               ) : (
                 <h2 className="h4 mb-1">{mainVenue.name}</h2>
               )}
+              {selectedVenueSummary?.status === "deleted" && (
+                <span className="badge text-bg-secondary ms-2">Deleted</span>
+              )}
               <p className="text-body-secondary mb-0">{date}</p>
             </div>
             {canChat && (
@@ -417,6 +439,9 @@ function CurrentMeet({
           </div>
 
           {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
+          {selectedVenueSummary?.status === "missing" && (
+            <p className="text-body-secondary mb-3">This Meet references a Venue that is no longer available.</p>
+          )}
 
           {shouldShowMainImage && (
             <div className="mb-3">
@@ -577,9 +602,15 @@ function CurrentMeets() {
       return typeof uid === "string" && uid.length > 0 ? uid : null;
     }
   );
+  const groupId = useSelector(
+    /** @param {RootState} state */
+    (state) => state.group?.groupId ?? null
+  );
   const privateData = useUserPrivateData(currUserId);
   const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
-  const meetData = useCurrentMeets();
+  const currentMeetsState = useCurrentMeets(groupId, currUserId);
+  const meetData = currentMeetsState.meetData ?? currentMeetsState;
+  const currentMeetEntries = [...meetData.sortedByDate()];
   const venues = useVenues();
   const canReschedule = useRole("canCompletePoll");
   const canDeleteMeet = useRole("canCreatePoll");
@@ -596,6 +627,19 @@ function CurrentMeets() {
             Upcoming Meet details and attendance tracking.
           </p>
         </div>
+        {currentMeetsState.isLoading && <p role="status">Loading Current Meets...</p>}
+        {currentMeetsState.errorMessage && (
+          <div className="alert alert-warning" role="alert">
+            <p className="mb-2">{currentMeetsState.errorMessage}</p>
+            {currentMeetsState.isStale && <p className="mb-2">Showing the last received snapshot.</p>}
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={currentMeetsState.retry}>
+              Retry
+            </button>
+          </div>
+        )}
+        {!currentMeetsState.isLoading && !currentMeetsState.errorMessage && currentMeetEntries.length === 0 && (
+          <p className="text-body-secondary">There are no current Meets for this Group.</p>
+        )}
         {rescheduleState.isRescheduling && (
           <RescheduleMeetModal
             selectedVenueId={rescheduleState.selectedVenueId}
@@ -611,12 +655,13 @@ function CurrentMeets() {
             onCancel={rescheduleState.cancelReschedule}
           />
         )}
-        {[...meetData.sortedByDate()].map(([key, value]) => {
+        {currentMeetEntries.map(([key, value]) => {
           return (
             <CurrentMeet
               key={key}
               meetId={key}
               currentVenueId={value.selectedVenueId}
+              selectedVenueSummary={value.selectedVenueSummary}
               restaurantId={value.restaurantId}
               restaurantTime={value.restaurantTime}
               date={value.date}

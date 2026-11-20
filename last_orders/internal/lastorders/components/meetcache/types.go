@@ -83,7 +83,11 @@ func ProjectionFromDocument(document Document) (Projection, error) {
 	if err != nil {
 		return Projection{}, err
 	}
-	previousVenueIDs, err := optionalStringSlice(document.Data, "previous_venue_ids")
+	previousVenueIDsField := "previous_pubs"
+	if _, exists := document.Data[previousVenueIDsField]; !exists {
+		previousVenueIDsField = "previous_venue_ids"
+	}
+	previousVenueIDs, err := optionalStringSlice(document.Data, previousVenueIDsField)
 	if err != nil {
 		return Projection{}, err
 	}

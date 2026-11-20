@@ -221,6 +221,52 @@ describe("CurrentMeets", () => {
     expect(screen.getAllByTestId("attendance-actions")).toHaveLength(1);
   });
 
+  it("keeps the last Meet snapshot visible with an independent stream retry state", () => {
+    const retry = vi.fn();
+    useCurrentMeetsMock.mockReturnValue({
+      ...createFuturePollData({ selectedVenueId: "venue-main", date: "2026-03-30" }),
+      isLoading: false,
+      isStale: true,
+      errorMessage: "Current Meets are temporarily unavailable.",
+      retry,
+    });
+    useVenuesMock.mockReturnValue({
+      "venue-main": { name: "The Maypole", venueType: "pub" },
+    });
+
+    render(<CurrentMeets />);
+
+    expect(screen.getByText("The Maypole")).toBeTruthy();
+    expect(screen.getByText("Showing the last received snapshot.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("renders retained details for a soft-deleted selected Venue", () => {
+    useCurrentMeetsMock.mockReturnValue({
+      ...createFuturePollData({
+        selectedVenueId: "venue-deleted",
+        selectedVenueSummary: {
+          id: "venue-deleted",
+          status: "deleted",
+          name: "The Old Maypole",
+          address: "Old Street",
+          image_url: null,
+        },
+        date: "2026-03-30",
+      }),
+      isLoading: false,
+      errorMessage: null,
+    });
+    useVenuesMock.mockReturnValue({});
+
+    render(<CurrentMeets />);
+
+    expect(screen.getByRole("heading", { name: "The Old Maypole" })).toBeTruthy();
+    expect(screen.getByText("Deleted")).toBeTruthy();
+    expect(screen.getByText("Old Street")).toBeTruthy();
+  });
+
   it("displays a domain Venue's website and image on a current Meet", () => {
     useCurrentMeetsMock.mockReturnValue(createFuturePollData({
       selectedVenueId: "venue-main",

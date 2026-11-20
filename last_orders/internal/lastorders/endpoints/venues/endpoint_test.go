@@ -1099,8 +1099,16 @@ func TestVenueWriteChangeWakesCollectionStream(t *testing.T) {
 	hub := sse.NewHub()
 	subscription := hub.Register("venues:all", "venues:public", "")
 	defer subscription.Unregister()
-	endpoint := &Endpoint{Reader: &testReader{snapshot: venuecache.Snapshot{State: basestore.SyncState{Generation: "generation-1", Sequence: 2}}}, Hub: hub}
-	endpoint.publishVenueChange(context.Background())
+	committedVenueID := ""
+	endpoint := &Endpoint{
+		Reader:            &testReader{snapshot: venuecache.Snapshot{State: basestore.SyncState{Generation: "generation-1", Sequence: 2}}},
+		Hub:               hub,
+		OnCommittedChange: func(_ context.Context, venueID string) { committedVenueID = venueID },
+	}
+	endpoint.publishVenueChange(context.Background(), "venue-1")
+	if committedVenueID != "venue-1" {
+		t.Fatalf("committed Venue callback ID=%q, want venue-1", committedVenueID)
+	}
 	select {
 	case <-subscription.Changed():
 		if sequence := subscription.TakeChanged(); sequence != 2 {

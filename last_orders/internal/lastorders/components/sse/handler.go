@@ -27,8 +27,12 @@ type Handler struct {
 	// default. The inherited server deadline is cleared for this stream only,
 	// then a fresh deadline is applied and cleared around each frame.
 	WriteTimeout time.Duration
-	Authorize    func(context.Context) (allowed bool, deniedStatus int)
-	Snapshot     func(context.Context, CursorInput) (ViewSnapshot, error)
+	// SnapshotFailureStatus overrides the status used when a view snapshot is
+	// unavailable. Zero defaults to HTTP 500.
+	SnapshotFailureStatus int
+	Authorize             func(context.Context) (allowed bool, deniedStatus int)
+	Snapshot              func(context.Context, CursorInput) (ViewSnapshot, error)
+	Accepted              func(context.Context) error
 }
 
 // ViewSnapshot is one consistent replacement and its synchronization cursor.
@@ -88,11 +92,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cursor, supplied := RequestCursor(r)
 	initial, err := h.Snapshot(r.Context(), CursorInput{Value: cursor, Supplied: supplied})
 	if err != nil {
-		http.Error(w, "view is unavailable", http.StatusInternalServerError)
+		http.Error(w, "view is unavailable", h.snapshotFailureStatus())
 		return
 	}
 	if !validSnapshot(initial) {
-		http.Error(w, "view is unavailable", http.StatusInternalServerError)
+		http.Error(w, "view is unavailable", h.snapshotFailureStatus())
 		return
 	}
 	if h.stopping(sub) {
@@ -101,6 +105,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.invalidated(sub) {
 		h.writeReset(w)
 		return
+	}
+	if !h.authorized(r.Context(), w) {
+		return
+	}
+	if h.Accepted != nil {
+		if err := h.Accepted(r.Context()); err != nil {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "view is unavailable", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	sub.DiscardChangesThrough(initial.Sequence)
 
@@ -128,6 +142,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if h.invalidated(sub) {
+				h.writeReset(w)
+				return
+			}
+			if allowed, _ := h.Authorize(r.Context()); !allowed {
 				h.writeReset(w)
 				return
 			}
@@ -186,6 +204,13 @@ func (h *Handler) writeTimeout() time.Duration {
 		return DefaultWriteTimeout
 	}
 	return h.WriteTimeout
+}
+
+func (h *Handler) snapshotFailureStatus() int {
+	if h.SnapshotFailureStatus < 400 || h.SnapshotFailureStatus > 599 {
+		return http.StatusInternalServerError
+	}
+	return h.SnapshotFailureStatus
 }
 
 func (h *Handler) authorized(ctx context.Context, w http.ResponseWriter) bool {

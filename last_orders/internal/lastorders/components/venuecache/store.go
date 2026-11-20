@@ -61,6 +61,20 @@ func (s *Store) GetForMeet(ctx context.Context, venueID string) (VenueProjection
 	return projection, false, nil
 }
 
+// GetForMeetInTx reads retained Venue details using the caller's SQLite
+// snapshot. A missing row is authoritative only after the Venue baseline is
+// ready, which HandPump guarantees before serving current-Meets views.
+func (s *Store) GetForMeetInTx(ctx context.Context, tx *sql.Tx, venueID string) (VenueProjection, bool, error) {
+	projection, _, err := readVenue(ctx, tx, venueID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VenueProjection{}, false, nil
+	}
+	if err != nil {
+		return VenueProjection{}, false, err
+	}
+	return projection, true, nil
+}
+
 // Snapshot returns the complete public venue collection and its committed
 // projection position from one SQLite read transaction.
 func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.SyncState, error) {

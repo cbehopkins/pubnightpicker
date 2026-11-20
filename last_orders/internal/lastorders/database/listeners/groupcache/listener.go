@@ -9,6 +9,7 @@ import (
 	"time"
 
 	component "last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/database/listeners/projectionwatch"
 )
@@ -22,13 +23,14 @@ type Listener struct {
 	service   *component.Service
 	store     *component.Store
 	logger    *slog.Logger
+	hub       *sse.Hub
 	ready     chan struct{}
 	failed    chan error
 	readyOnce sync.Once
 	lifecycle.Controller
 }
 
-func New(service *component.Service, store *component.Store, logger *slog.Logger) (*Listener, error) {
+func New(service *component.Service, store *component.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("group cache service is required")
 	}
@@ -38,7 +40,11 @@ func New(service *component.Service, store *component.Store, logger *slog.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}, nil
+	listener := &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}
+	if len(hubs) > 0 {
+		listener.hub = hubs[0]
+	}
+	return listener, nil
 }
 
 func (l *Listener) Ready() <-chan struct{} {
@@ -96,6 +102,11 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 			return fmt.Errorf("validate and persist Group baseline: %w", err)
 		}
 		return fmt.Errorf("persist Group projection changes: %w", err)
+	}
+	if !baseline && l.hub != nil {
+		for _, mutation := range mutations {
+			l.hub.InvalidateScope("current-meets-group:" + string(mutation.ID))
+		}
 	}
 	return nil
 }

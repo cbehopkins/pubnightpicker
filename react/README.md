@@ -148,11 +148,12 @@ failures block entry and show a retry option. The resolved opaque Group ID is
 kept in memory only, so a fresh load discovers it again.
 
 For local development, use Last Orders with a demo-project emulator and seed the
-default Group before opening the frontend. This preparation does not change
-existing Meet reads, permissions or access to Meets without a `groupId`. New
-Meets created by the frontend and Last Orders Event Venue recurrence receive
-the resolved Group ID in their initial Firestore write; the Group-scoped Meet
-API remains deferred.
+default Group before opening the frontend. The Current Meets page reads the
+resolved Group's complete current view from Last Orders; Meets without a
+`groupId` are not included. Complete the existing-Meet migration before relying
+on the Group-scoped current view. New Meets created by the frontend and Last
+Orders Event Venue recurrence receive the resolved Group ID in their initial
+Firestore write. Votes and attendance remain separate Firestore interfaces.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
