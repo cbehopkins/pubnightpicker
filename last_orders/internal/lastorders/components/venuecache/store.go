@@ -62,15 +62,18 @@ func (s *Store) GetForMeet(ctx context.Context, venueID string) (VenueProjection
 }
 
 // GetForMeetInTx reads retained Venue details using the caller's SQLite
-// snapshot. A missing row is authoritative only after the Venue baseline is
-// ready, which HandPump guarantees before serving current-Meets views.
+// snapshot. A missing local row is an unconfirmed cache miss, not proof that
+// the authoritative Venue is absent.
 func (s *Store) GetForMeetInTx(ctx context.Context, tx *sql.Tx, venueID string) (VenueProjection, bool, error) {
-	projection, _, err := readVenue(ctx, tx, venueID)
+	projection, deleted, err := readVenue(ctx, tx, venueID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return VenueProjection{}, false, nil
+		return VenueProjection{}, false, ErrCacheMiss
 	}
 	if err != nil {
 		return VenueProjection{}, false, err
+	}
+	if deleted && projection.DeletedOn == "" {
+		return VenueProjection{}, false, nil
 	}
 	return projection, true, nil
 }
@@ -183,6 +186,36 @@ func (s *Store) Put(ctx context.Context, projection VenueProjection) error {
 	return s.ApplyBatch(ctx, []Mutation{{ID: projection.ID, Projection: &projection}}, false)
 }
 
+func (s *Store) PutIfAbsent(ctx context.Context, projection VenueProjection) (bool, error) {
+	normalised, err := normaliseVenue(projection)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.base.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var exists int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM venue_cache WHERE venue_id = ?`, normalised.ID).Scan(&exists)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err := s.put(ctx, tx, normalised); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ApplyBatch applies one source batch atomically. A baseline replaces the
 // complete venue projection; a delta applies only its listed mutations.
 func (s *Store) ApplyBatch(ctx context.Context, mutations []Mutation, baseline bool) error {
@@ -263,6 +296,10 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 	current, deleted, err := readVenue(ctx, tx, projection.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if err == nil && !current.UpdateTime.IsZero() &&
+		(projection.UpdateTime.IsZero() || projection.UpdateTime.Before(current.UpdateTime)) {
+		return nil
 	}
 	deletedOn := projection.DeletedOn != ""
 	if err == nil && deleted == deletedOn && current.Equal(projection) {

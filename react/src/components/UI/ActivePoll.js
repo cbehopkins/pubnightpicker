@@ -284,6 +284,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
                 <PollVote
                     poll_data={poll_data}
                     poll_id={poll_id}
+                    venues={venues}
                     on_complete={on_complete}
                 />
             </div>

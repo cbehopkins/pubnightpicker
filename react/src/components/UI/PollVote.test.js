@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PollVote from "./PollVote";
+import ActivePoll from "./ActivePoll";
 import { removeVenueFromMeet } from "../../dbtools/polls";
 
 const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock } = vi.hoisted(() => ({
@@ -48,8 +49,16 @@ vi.mock("../../hooks/useUsers", () => ({
 }));
 
 vi.mock("../../dbtools/polls", () => ({
+    addVenueToMeet: vi.fn(),
+    deleteMeet: vi.fn(),
     removeVenueFromMeet: vi.fn(async () => undefined),
 }));
+
+vi.mock("../../hooks/useOnlineStatus", () => ({ default: () => ({ isOnline: true }) }));
+vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
+    default: () => ({ mostVisited: [], leastVisited: [], random: [], isLoading: false }),
+}));
+vi.mock("../../hooks/useAutopopulateAction", () => ({ default: () => ({ handleAutopopulate: vi.fn() }) }));
 
 vi.mock("./ShowAttendance", () => ({
     default: showAttendanceMock,
@@ -168,6 +177,25 @@ describe("PollVote attendance display mode", () => {
 
         expect(screen.getByText("Venue 1")).toBeTruthy();
         expect(screen.getByText("Global")).toBeTruthy();
+    });
+
+    it("renders a streamed candidate using its catalogue name", () => {
+        const { rerender } = render(<ActivePoll
+            poll_id="poll-1"
+            poll_data={{ date: "2026-05-11", venues: { "venue-1": true } }}
+            venues={{}}
+            on_complete={vi.fn()}
+        />);
+
+        expect(within(screen.getByRole("table")).getByText("Unknown venue")).toBeTruthy();
+        rerender(<ActivePoll
+            poll_id="poll-1"
+            poll_data={{ date: "2026-05-11", venues: { "venue-1": true } }}
+            venues={{ "venue-1": { name: "Venue 1" } }}
+            on_complete={vi.fn()}
+        />);
+
+        expect(within(screen.getByRole("table")).getByText("Venue 1")).toBeTruthy();
     });
 
     it("votes for a Meet venue", async () => {

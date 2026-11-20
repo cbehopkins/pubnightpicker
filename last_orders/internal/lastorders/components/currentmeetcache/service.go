@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/components/meetcache"
+	"last_orders/internal/lastorders/components/sourcewatch"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
 
@@ -28,6 +29,7 @@ type Service struct {
 	store           *Store
 	source          Source
 	venues          *venuecache.Store
+	venueResolver   VenueResolver
 	hub             *sse.Hub
 	logger          *slog.Logger
 	now             func() time.Time
@@ -38,6 +40,10 @@ type Service struct {
 	entries         map[string]*entry
 	closed          bool
 	venueAvailable  bool
+}
+
+type VenueResolver interface {
+	GetForMeet(context.Context, string) (venuecache.VenueProjection, bool, error)
 }
 
 type entry struct {
@@ -52,30 +58,18 @@ type entry struct {
 	available     bool
 	retired       bool
 	failureLogged bool
-	watch         *sourceWatch
+	watch         *sourcewatch.Watch
 	venueIDs      map[string]struct{}
 	lastDigest    string
 }
 
-type sourceWatch struct {
-	stream Stream
-	cancel context.CancelFunc
-	once   sync.Once
-}
-
-func (watch *sourceWatch) stop() {
-	if watch == nil {
-		return
-	}
-	watch.once.Do(func() {
-		watch.cancel()
-		watch.stream.Stop()
-	})
-}
-
 func NewService(store *Store, source Source, venues *venuecache.Store, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
-	if store == nil || source == nil || venues == nil || hub == nil {
-		return nil, fmt.Errorf("Group Meet store, source, Venue store, and stream hub are required")
+	return NewServiceWithVenueResolver(store, source, venues, venues, hub, logger, now)
+}
+
+func NewServiceWithVenueResolver(store *Store, source Source, venues *venuecache.Store, resolver VenueResolver, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	if store == nil || source == nil || venues == nil || resolver == nil || hub == nil {
+		return nil, fmt.Errorf("Group Meet store, source, Venue store, Venue resolver, and stream hub are required")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -89,7 +83,8 @@ func NewService(store *Store, source Source, venues *venuecache.Store, hub *sse.
 	}
 	return &Service{
 		store: store, source: source, venues: venues, hub: hub, logger: logger, now: now,
-		location: location, diagnostics: os.Getenv("LAST_ORDERS_CURRENT_MEET_DIAGNOSTICS") == "true",
+		venueResolver: resolver,
+		location:      location, diagnostics: os.Getenv("LAST_ORDERS_CURRENT_MEET_DIAGNOSTICS") == "true",
 		openDiagnostics: os.Getenv("LAST_ORDERS_OPEN_MEET_DIAGNOSTICS") == "true",
 		entries:         make(map[string]*entry), venueAvailable: true,
 	}, nil
@@ -115,6 +110,31 @@ func (s *Service) GetOpen(ctx context.Context, groupID string) (Snapshot, error)
 		return Snapshot{}, ErrUnavailable
 	}
 	return s.get(ctx, OpenView, groupID, "")
+}
+
+func (s *Service) snapshot(ctx context.Context, kind ViewKind, groupID, date, owner string) (Snapshot, error) {
+	confirmedMissing := make(map[string]struct{})
+	for {
+		snapshot, err := s.store.snapshot(ctx, kind, groupID, date, owner, s.venues, confirmedMissing)
+		if err == nil {
+			return snapshot, nil
+		}
+		cacheMiss, isCacheMiss := err.(missingVenueCacheEntry)
+		if !isCacheMiss {
+			return Snapshot{}, err
+		}
+		venue, missing, err := s.venueResolver.GetForMeet(ctx, cacheMiss.venueID)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("resolve selected Venue %q: %w", cacheMiss.venueID, err)
+		}
+		if missing {
+			confirmedMissing[cacheMiss.venueID] = struct{}{}
+			continue
+		}
+		if _, err := s.venues.PutIfAbsent(ctx, venue); err != nil {
+			return Snapshot{}, fmt.Errorf("persist resolved Venue %q: %w", cacheMiss.venueID, err)
+		}
+	}
 }
 
 func (s *Service) get(ctx context.Context, kind ViewKind, groupID, date string) (Snapshot, error) {
@@ -143,7 +163,17 @@ func (s *Service) get(ctx context.Context, kind ViewKind, groupID, date string) 
 			continue
 		}
 		if current.available {
-			snapshot, readErr := s.store.Snapshot(ctx, kind, groupID, date, current.owner, s.venues)
+			s.mu.Unlock()
+			snapshot, readErr := s.snapshot(ctx, kind, groupID, date, current.owner)
+			s.mu.Lock()
+			if current.retired || s.entries[entryKey(kind, groupID, date)] != current {
+				s.mu.Unlock()
+				return Snapshot{}, ErrUnavailable
+			}
+			if !current.available || (!s.venueAvailable && len(current.venueIDs) > 0) {
+				s.mu.Unlock()
+				continue
+			}
 			if readErr == nil && (kind != CurrentView || date == s.CurrentDate()) {
 				current.lastDigest = digest(snapshot)
 				s.mu.Unlock()
@@ -161,7 +191,7 @@ func (s *Service) get(ctx context.Context, kind ViewKind, groupID, date string) 
 			s.signal(current)
 			s.mu.Unlock()
 			if watch != nil {
-				watch.stop()
+				watch.Stop()
 			}
 			s.markUnavailable(current, readErr)
 			continue
@@ -222,7 +252,7 @@ func (s *Service) NotifyVenueChanges(ctx context.Context, venueIDs []string) {
 	}
 	s.mu.Unlock()
 	for _, current := range entries {
-		snapshot, err := s.store.Snapshot(ctx, current.kind, current.groupID, current.date, current.owner, s.venues)
+		snapshot, err := s.snapshot(ctx, current.kind, current.groupID, current.date, current.owner)
 		if err != nil {
 			s.markUnavailable(current, err)
 			continue
@@ -283,7 +313,7 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 		s.mu.Unlock()
 		return err
 	}
-	var watches []*sourceWatch
+	var watches []*sourcewatch.Watch
 	var retired []ExpiredEntry
 	for _, expired := range entries {
 		current := s.entries[entryKey(expired.Kind, expired.GroupID, expired.Date)]
@@ -304,7 +334,7 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 	}
 	s.mu.Unlock()
 	for _, watch := range watches {
-		watch.stop()
+		watch.Stop()
 	}
 	for _, expired := range retired {
 		if err := s.store.DeleteIfOwner(ctx, expired); err != nil {
@@ -317,7 +347,7 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 func (s *Service) RetireBefore(ctx context.Context, date string) error {
 	s.mu.Lock()
 	var retired []ExpiredEntry
-	var watches []*sourceWatch
+	var watches []*sourcewatch.Watch
 	for _, current := range s.entries {
 		if current.kind != CurrentView || current.date >= date {
 			continue
@@ -334,7 +364,7 @@ func (s *Service) RetireBefore(ctx context.Context, date string) error {
 	}
 	s.mu.Unlock()
 	for _, watch := range watches {
-		watch.stop()
+		watch.Stop()
 	}
 	for _, expired := range retired {
 		if err := s.store.DeleteIfOwner(ctx, expired); err != nil {
@@ -351,7 +381,7 @@ func (s *Service) Close() {
 		return
 	}
 	s.closed = true
-	var watches []*sourceWatch
+	var watches []*sourcewatch.Watch
 	for _, current := range s.entries {
 		s.retireLocked(current)
 		if current.watch != nil {
@@ -361,19 +391,26 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	for _, watch := range watches {
-		watch.stop()
+		watch.Stop()
 	}
 }
 
 func (s *Service) admit(kind ViewKind, groupID, date string) (*entry, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrUnavailable
 	}
 	key := entryKey(kind, groupID, date)
+	var expiredWatch *sourcewatch.Watch
 	if current := s.entries[key]; current != nil && !current.retired {
-		return current, nil
+		if current.validUntil.After(s.now()) {
+			s.mu.Unlock()
+			return current, nil
+		}
+		s.retireLocked(current)
+		expiredWatch = current.watch
+		current.watch = nil
 	}
 	owner := uuid.NewString()
 	validUntil := s.now().Add(entryLifetime)
@@ -382,6 +419,10 @@ func (s *Service) admit(kind ViewKind, groupID, date string) (*entry, error) {
 	cancelStore()
 	if err != nil {
 		s.logger.Warn(viewLabel(kind)+" projection admission failed", "group_id", maskID(groupID), "error_type", fmt.Sprintf("%T", err))
+		s.mu.Unlock()
+		if expiredWatch != nil {
+			expiredWatch.Stop()
+		}
 		return nil, fmt.Errorf("%w: persist current-Meets admission: %v", ErrUnavailable, err)
 	}
 	watchCtx, cancel := context.WithCancel(context.Background())
@@ -392,6 +433,10 @@ func (s *Service) admit(kind ViewKind, groupID, date string) (*entry, error) {
 	s.entries[key] = current
 	if s.diagnosticsEnabled(kind) {
 		s.logger.Info(viewLabel(kind)+" projection admitted", "group_id", maskID(groupID), "date", date, "valid_until", validUntil)
+	}
+	s.mu.Unlock()
+	if expiredWatch != nil {
+		expiredWatch.Stop()
 	}
 	go s.observe(current)
 	return current, nil
@@ -409,14 +454,14 @@ func (s *Service) observe(current *entry) {
 			}
 			continue
 		}
-		watch := &sourceWatch{stream: stream, cancel: cancelWatch}
+		watch := sourcewatch.New(cancelWatch, stream)
 		s.setWatch(current, watch)
 		snapshot, err := stream.Next()
 		if err == nil {
 			err = s.apply(current, snapshot)
 		}
 		if err != nil {
-			watch.stop()
+			watch.Stop()
 			s.clearWatch(current, watch)
 			s.markUnavailable(current, err)
 			if !waitRetry(current.ctx) {
@@ -436,7 +481,7 @@ func (s *Service) observe(current *entry) {
 				break
 			}
 		}
-		watch.stop()
+		watch.Stop()
 		s.clearWatch(current, watch)
 		if !waitRetry(current.ctx) {
 			return
@@ -447,7 +492,7 @@ func (s *Service) observe(current *entry) {
 func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 	if current.kind == CurrentView && current.date != s.CurrentDate() {
 		s.mu.Lock()
-		var watch *sourceWatch
+		var watch *sourcewatch.Watch
 		if s.entries[entryKey(current.kind, current.groupID, current.date)] == current && !current.retired {
 			s.retireLocked(current)
 			watch = current.watch
@@ -455,7 +500,7 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		}
 		s.mu.Unlock()
 		if watch != nil {
-			watch.stop()
+			watch.Stop()
 		}
 		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
 		return ErrRetired
@@ -475,7 +520,7 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		current.watch = nil
 		s.mu.Unlock()
 		if watch != nil {
-			watch.stop()
+			watch.Stop()
 		}
 		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
 		return ErrRetired
@@ -489,7 +534,7 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		return err
 	}
 	if changed {
-		view, err := s.store.Snapshot(current.ctx, current.kind, current.groupID, current.date, current.owner, s.venues)
+		view, err := s.snapshot(current.ctx, current.kind, current.groupID, current.date, current.owner)
 		if err != nil {
 			return err
 		}
@@ -503,11 +548,11 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 	return nil
 }
 
-func (s *Service) setWatch(current *entry, watch *sourceWatch) {
+func (s *Service) setWatch(current *entry, watch *sourcewatch.Watch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.entries[entryKey(current.kind, current.groupID, current.date)] != current || current.retired {
-		watch.stop()
+		watch.Stop()
 		return
 	}
 	current.watch = watch
@@ -516,7 +561,7 @@ func (s *Service) setWatch(current *entry, watch *sourceWatch) {
 	}
 }
 
-func (s *Service) clearWatch(current *entry, watch *sourceWatch) {
+func (s *Service) clearWatch(current *entry, watch *sourcewatch.Watch) {
 	s.mu.Lock()
 	if current.watch == watch {
 		current.watch = nil

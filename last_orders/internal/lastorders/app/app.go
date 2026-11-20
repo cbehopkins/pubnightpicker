@@ -419,7 +419,7 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
-		currentMeetCacheService, err = currentmeetcache.NewService(currentMeetCacheStore, currentMeetSource, venueCacheStore, venueStreamHub, cfg.Logger, cfg.Clock.Now)
+		currentMeetCacheService, err = currentmeetcache.NewServiceWithVenueResolver(currentMeetCacheStore, currentMeetSource, venueCacheStore, venueCacheService, venueStreamHub, cfg.Logger, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}

@@ -53,14 +53,14 @@ func TestPastMeetsGetAgainstFirestoreEmulatorDoesNotAdmitIndividualMeets(t *test
 		t.Fatal(err)
 	}
 	meets := map[string]map[string]any{
-		"meet-a":             {"date": "2026-11-19", "completed": true, "groupId": "public-group", "selected": "soft-deleted-venue"},
-		"meet-b":             {"date": "2026-11-19", "completed": true, "groupId": "public-group", "selected": "hard-missing-venue"},
-		"meet-old":           {"date": "2026-11-18", "completed": true, "groupId": "public-group"},
-		"meet-today":         {"date": "2026-11-20", "completed": true, "groupId": "public-group"},
-		"meet-upcoming":      {"date": "2026-11-21", "completed": true, "groupId": "public-group"},
-		"meet-incomplete":    {"date": "2026-11-19", "completed": false, "groupId": "public-group"},
-		"meet-other-group":   {"date": "2026-11-19", "completed": true, "groupId": "hidden-group"},
-		"private-meet":       {"date": "2026-11-19", "completed": true, "groupId": "private-group"},
+		"meet-a":              {"date": "2026-11-19", "completed": true, "groupId": "public-group", "selected": "soft-deleted-venue"},
+		"meet-b":              {"date": "2026-11-19", "completed": true, "groupId": "public-group", "selected": "hard-missing-venue"},
+		"meet-old":            {"date": "2026-11-18", "completed": true, "groupId": "public-group"},
+		"meet-today":          {"date": "2026-11-20", "completed": true, "groupId": "public-group"},
+		"meet-upcoming":       {"date": "2026-11-21", "completed": true, "groupId": "public-group"},
+		"meet-incomplete":     {"date": "2026-11-19", "completed": false, "groupId": "public-group"},
+		"meet-other-group":    {"date": "2026-11-19", "completed": true, "groupId": "hidden-group"},
+		"private-meet":        {"date": "2026-11-19", "completed": true, "groupId": "private-group"},
 		"hidden-private-meet": {"date": "2026-11-19", "completed": true, "groupId": "hidden-group"},
 	}
 	for meetID, data := range meets {
@@ -159,7 +159,7 @@ func TestPastMeetsGetAgainstFirestoreEmulatorDoesNotAdmitIndividualMeets(t *test
 		result.Body = string(body)
 		if response.StatusCode == http.StatusOK {
 			var page struct {
-				Meets      []struct {
+				Meets []struct {
 					ID    string          `json:"id"`
 					Date  string          `json:"date"`
 					Venue json.RawMessage `json:"venue"`
@@ -178,12 +178,12 @@ func TestPastMeetsGetAgainstFirestoreEmulatorDoesNotAdmitIndividualMeets(t *test
 		t.Fatalf("first past-Meets page status=%d meets=%+v cursor=%v", first.Status, first.Meets, first.NextCursor)
 	}
 	var deletedVenue struct {
-		ID        string `json:"id"`
-		Status    string `json:"status"`
-		Name      string `json:"name"`
-		Address   string `json:"address"`
-		Website   string `json:"website_url"`
-		Image     string `json:"image_url"`
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Name    string `json:"name"`
+		Address string `json:"address"`
+		Website string `json:"website_url"`
+		Image   string `json:"image_url"`
 	}
 	if err := json.Unmarshal(first.Meets[0].Venue, &deletedVenue); err != nil {
 		t.Fatal(err)

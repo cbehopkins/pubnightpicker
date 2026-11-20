@@ -87,20 +87,22 @@ describe("Meet read compatibility", () => {
     await waitFor(() => expect(result.current.past.nextCursor).toBe("opaque-next-cursor"));
     await waitFor(() => expect(streamConnections).toHaveLength(1));
     expect(streamConnections[0].path).toBe("api/meets/group-a/current/stream");
-    act(() => streamConnections[0].options.onmessage({ event: "current_meets", data: JSON.stringify({
-      cursor: "cursor-1",
-      meets: [{
-        id: "meet-2",
-        group_id: "group-a",
-        date: "2099-05-01",
-        voting_complete: true,
-        venue: { id: "venue-2", status: "active", name: "The Maypole", address: "" },
-        candidate_venue_ids: ["venue-2"],
-        previous_venue_ids: [],
-        restaurant_id: null,
-        restaurant_time: null,
-      }],
-    }) }));
+    act(() => streamConnections[0].options.onmessage({
+      event: "current_meets", data: JSON.stringify({
+        cursor: "cursor-1",
+        meets: [{
+          id: "meet-2",
+          group_id: "group-a",
+          date: "2099-05-01",
+          voting_complete: true,
+          venue: { id: "venue-2", status: "active", name: "The Maypole", address: "" },
+          candidate_venue_ids: ["venue-2"],
+          previous_venue_ids: [],
+          restaurant_id: null,
+          restaurant_time: null,
+        }],
+      })
+    }));
 
     expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meets/group-a/past", expect.objectContaining({
       method: "GET",
@@ -172,13 +174,15 @@ describe("Meet read compatibility", () => {
   it("resets retired current-Meets state and reconnects without the old cursor", async () => {
     const { result } = renderHook(() => useCurrentMeets("group-a"));
     await waitFor(() => expect(streamConnections).toHaveLength(1));
-    act(() => streamConnections[0].options.onmessage({ event: "current_meets", data: JSON.stringify({
-      cursor: "old-cursor",
-      meets: [{
-        id: "old-meet", group_id: "group-a", date: "2026-11-20", voting_complete: true,
-        venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
-      }],
-    }) }));
+    act(() => streamConnections[0].options.onmessage({
+      event: "current_meets", data: JSON.stringify({
+        cursor: "old-cursor",
+        meets: [{
+          id: "old-meet", group_id: "group-a", date: "2026-11-20", voting_complete: true,
+          venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
+        }],
+      })
+    }));
     expect(result.current.meetData.meets).toHaveProperty("old-meet");
 
     act(() => streamConnections[0].options.onmessage({ event: "view_reset", data: "{}" }));
@@ -187,13 +191,15 @@ describe("Meet read compatibility", () => {
     expect(result.current.isLoading).toBe(true);
     expect(result.current.meetData.meets).toEqual({});
 
-    act(() => streamConnections[1].options.onmessage({ event: "current_meets", data: JSON.stringify({
-      cursor: "new-cursor",
-      meets: [{
-        id: "new-meet", group_id: "group-a", date: "2026-11-21", voting_complete: true,
-        venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
-      }],
-    }) }));
+    act(() => streamConnections[1].options.onmessage({
+      event: "current_meets", data: JSON.stringify({
+        cursor: "new-cursor",
+        meets: [{
+          id: "new-meet", group_id: "group-a", date: "2026-11-21", voting_complete: true,
+          venue: null, candidate_venue_ids: [], previous_venue_ids: [], restaurant_id: null, restaurant_time: null,
+        }],
+      })
+    }));
     expect(result.current.meetData.meets).toHaveProperty("new-meet");
   });
 
@@ -202,20 +208,22 @@ describe("Meet read compatibility", () => {
     const { result } = renderHook(() => useOpenMeets("group-a", "user-1"));
     await waitFor(() => expect(streamConnections).toHaveLength(1));
     expect(streamConnections[0].path).toBe("api/meets/group-a/open/stream");
-    act(() => streamConnections[0].options.onmessage({ event: "open_meets", data: JSON.stringify({
-      cursor: "open-cursor",
-      meets: [{
-        id: "overdue-open",
-        group_id: "group-a",
-        date: "2020-01-01",
-        voting_complete: false,
-        venue: null,
-        candidate_venue_ids: ["venue-1"],
-        previous_venue_ids: [],
-        restaurant_id: null,
-        restaurant_time: null,
-      }],
-    }) }));
+    act(() => streamConnections[0].options.onmessage({
+      event: "open_meets", data: JSON.stringify({
+        cursor: "open-cursor",
+        meets: [{
+          id: "overdue-open",
+          group_id: "group-a",
+          date: "2020-01-01",
+          voting_complete: false,
+          venue: null,
+          candidate_venue_ids: ["venue-1"],
+          previous_venue_ids: [],
+          restaurant_id: null,
+          restaurant_time: null,
+        }],
+      })
+    }));
 
     expect(result.current.meetData.meets["overdue-open"]).toMatchObject({
       date: "2020-01-01",
@@ -227,20 +235,22 @@ describe("Meet read compatibility", () => {
     act(() => streamConnections[0].options.onmessage({ event: "view_reset", data: "{}" }));
     await waitFor(() => expect(streamConnections).toHaveLength(2));
     expect(result.current.meetData.meets).toEqual({});
-    act(() => streamConnections[1].options.onmessage({ event: "open_meets", data: JSON.stringify({
-      cursor: "fresh-open-cursor",
-      meets: [{
-        id: "still-open",
-        group_id: "group-a",
-        date: "2019-12-31",
-        voting_complete: false,
-        venue: null,
-        candidate_venue_ids: [],
-        previous_venue_ids: [],
-        restaurant_id: null,
-        restaurant_time: null,
-      }],
-    }) }));
+    act(() => streamConnections[1].options.onmessage({
+      event: "open_meets", data: JSON.stringify({
+        cursor: "fresh-open-cursor",
+        meets: [{
+          id: "still-open",
+          group_id: "group-a",
+          date: "2019-12-31",
+          voting_complete: false,
+          venue: null,
+          candidate_venue_ids: [],
+          previous_venue_ids: [],
+          restaurant_id: null,
+          restaurant_time: null,
+        }],
+      })
+    }));
     expect(result.current.meetData.meets).toHaveProperty("still-open");
   });
 });

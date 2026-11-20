@@ -5,11 +5,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"last_orders/internal/lastorders/components/currentmeetcache"
+
+	"cloud.google.com/go/firestore"
+	"github.com/google/uuid"
 )
 
 type groupAuthorizationSourceStub struct {
@@ -179,6 +184,198 @@ func TestMeetAPIRecoversAfterAuthorizationSourceFailure(t *testing.T) {
 	now = now.Add(authorizationFailureRetryInterval)
 	if response := request(); response.Code != http.StatusOK {
 		t.Fatalf("recovered Meet GET status=%d body=%s, want HTTP 200", response.Code, response.Body)
+	}
+}
+
+type controllableFirestoreAuthorizationSource struct {
+	base        groupAuthorizationSource
+	mu          sync.Mutex
+	readErr     error
+	readStarted chan struct{}
+	releaseRead chan struct{}
+}
+
+func (s *controllableFirestoreAuthorizationSource) ReadGroup(ctx context.Context, groupID string) (groupAuthorizationDocument, bool, error) {
+	s.mu.Lock()
+	readErr, started, release := s.readErr, s.readStarted, s.releaseRead
+	s.readStarted, s.releaseRead = nil, nil
+	s.mu.Unlock()
+	if readErr != nil {
+		return groupAuthorizationDocument{}, false, readErr
+	}
+	document, exists, err := s.base.ReadGroup(ctx, groupID)
+	if err != nil {
+		return groupAuthorizationDocument{}, false, err
+	}
+	if started != nil {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return groupAuthorizationDocument{}, false, ctx.Err()
+		}
+	}
+	return document, exists, nil
+}
+
+func (s *controllableFirestoreAuthorizationSource) ReadGlobalAdmins(ctx context.Context) (map[string]any, bool, error) {
+	return s.base.ReadGlobalAdmins(ctx)
+}
+
+func (s *controllableFirestoreAuthorizationSource) setReadError(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.readErr = err
+}
+
+func (s *controllableFirestoreAuthorizationSource) blockNextRead() (<-chan struct{}, func()) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	s.mu.Lock()
+	s.readStarted, s.releaseRead = started, release
+	s.mu.Unlock()
+	return started, func() { once.Do(func() { close(release) }) }
+}
+
+func TestMeetAPIUsesFirestoreAuthorityCacheAgainstEmulator(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Firestore emulator integration test")
+	}
+	if strings.TrimSpace(os.Getenv("FIRESTORE_EMULATOR_HOST")) == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	projectID := "demo-meet-auth-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	client, err := firestore.NewClient(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	groups := []string{"ttl-group", "admin-ttl-group", "race-group", "recovery-group"}
+	for _, groupID := range groups {
+		data := map[string]any{
+			"name": groupID, "visibility": "public",
+		}
+		if groupID == "admin-ttl-group" {
+			data["visibility"] = "private"
+			data["members"] = map[string]any{}
+		}
+		if _, err := client.Collection("groups").Doc(groupID).Set(ctx, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	adminRole := client.Collection("roles").Doc("admin")
+	t.Cleanup(func() {
+		cleanupCtx, finish := context.WithTimeout(context.Background(), 5*time.Second)
+		defer finish()
+		for _, groupID := range groups {
+			_, _ = client.Collection("groups").Doc(groupID).Delete(cleanupCtx)
+		}
+		_, _ = adminRole.Delete(cleanupCtx)
+	})
+
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	source := &controllableFirestoreAuthorizationSource{base: firestoreGroupAuthorizationSource{client: client}}
+	authorizer := newCachedGroupAuthorizer(source, func() time.Time { return now })
+	endpoint := &Endpoint{
+		Current: &currentReaderStub{date: "2026-11-20", snapshot: currentmeetcache.Snapshot{
+			Date: "2026-11-20", Generation: "generation-1",
+		}},
+		Groups: authorizer, Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	clientHTTP := server.Client()
+	get := func(groupID string) int {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/meets/"+groupID+"/current", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer valid-token")
+		response, err := clientHTTP.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+
+	if status := get("ttl-group"); status != http.StatusOK {
+		t.Fatalf("initial public Group GET status=%d, want HTTP 200", status)
+	}
+	if _, err := client.Collection("groups").Doc("ttl-group").Update(ctx, []firestore.Update{
+		{Path: "visibility", Value: "private"},
+		{Path: "members", Value: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if status := get("ttl-group"); status != http.StatusOK {
+		t.Fatalf("cached public decision status=%d, want HTTP 200 before TTL expiry", status)
+	}
+	now = now.Add(authorizationCacheTTL)
+	if status := get("ttl-group"); status != http.StatusNotFound {
+		t.Fatalf("expired public decision status=%d, want private-Group HTTP 404", status)
+	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	authorizer.InvalidateGlobalAdmins()
+	if status := get("admin-ttl-group"); status != http.StatusOK {
+		t.Fatalf("global-admin grant status=%d, want HTTP 200", status)
+	}
+	if _, err := adminRole.Set(ctx, map[string]any{"verified-user": false}); err != nil {
+		t.Fatal(err)
+	}
+	if status := get("admin-ttl-group"); status != http.StatusOK {
+		t.Fatalf("cached global-admin decision status=%d, want HTTP 200 before TTL expiry", status)
+	}
+	now = now.Add(authorizationCacheTTL)
+	if status := get("admin-ttl-group"); status != http.StatusNotFound {
+		t.Fatalf("expired global-admin decision status=%d, want HTTP 404", status)
+	}
+
+	authorizer.InvalidateGroup("recovery-group")
+	source.setReadError(errors.New("simulated Firestore outage"))
+	if status := get("recovery-group"); status != http.StatusServiceUnavailable {
+		t.Fatalf("authority outage status=%d, want HTTP 503", status)
+	}
+	source.setReadError(nil)
+	if status := get("recovery-group"); status != http.StatusServiceUnavailable {
+		t.Fatalf("immediate recovery retry status=%d, want HTTP 503 during backoff", status)
+	}
+	now = now.Add(authorizationFailureRetryInterval)
+	if status := get("recovery-group"); status != http.StatusOK {
+		t.Fatalf("recovered authority GET status=%d, want HTTP 200", status)
+	}
+
+	readStarted, releaseRead := source.blockNextRead()
+	defer releaseRead()
+	decision := make(chan int, 1)
+	go func() { decision <- get("race-group") }()
+	select {
+	case <-readStarted:
+	case <-ctx.Done():
+		t.Fatal("Firestore-backed authorization lookup did not start")
+	}
+	if _, err := client.Collection("groups").Doc("race-group").Update(ctx, []firestore.Update{
+		{Path: "visibility", Value: "private"},
+		{Path: "members", Value: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authorizer.InvalidateGroup("race-group")
+	releaseRead()
+	select {
+	case status := <-decision:
+		if status != http.StatusNotFound {
+			t.Fatalf("invalidation-raced API status=%d, want HTTP 404 after fresh retry", status)
+		}
+	case <-ctx.Done():
+		t.Fatal("Meet API did not finish its invalidation-raced authorization retry")
 	}
 }
 

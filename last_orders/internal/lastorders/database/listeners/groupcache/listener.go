@@ -91,6 +91,9 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 	if baseline && l.authorization != nil {
 		l.authorization.InvalidateAllGroups()
 	}
+	if baseline && l.hub != nil {
+		l.hub.InvalidateAllAuthenticated()
+	}
 	mutations := make([]component.Mutation, 0, len(changes))
 	changedIDs := make([]component.GroupID, 0, len(changes))
 	for _, change := range changes {

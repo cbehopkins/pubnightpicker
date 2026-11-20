@@ -143,6 +143,22 @@ func (s *Store) Apply(ctx context.Context, kind ViewKind, groupID, date, owner s
 }
 
 func (s *Store) Snapshot(ctx context.Context, kind ViewKind, groupID, date, owner string, venues *venuecache.Store) (Snapshot, error) {
+	return s.snapshot(ctx, kind, groupID, date, owner, venues, nil)
+}
+
+type missingVenueCacheEntry struct {
+	venueID string
+}
+
+func (e missingVenueCacheEntry) Error() string {
+	return fmt.Sprintf("Venue %q is not present in the local projection", e.venueID)
+}
+
+func (e missingVenueCacheEntry) Unwrap() error {
+	return venuecache.ErrCacheMiss
+}
+
+func (s *Store) snapshot(ctx context.Context, kind ViewKind, groupID, date, owner string, venues *venuecache.Store, confirmedMissing map[string]struct{}) (Snapshot, error) {
 	table, err := tableFor(kind)
 	if err != nil {
 		return Snapshot{}, err
@@ -181,6 +197,14 @@ func (s *Store) Snapshot(ctx context.Context, kind ViewKind, groupID, date, owne
 		if projection.SelectedVenueID != "" {
 			venue, exists, err := venues.GetForMeetInTx(ctx, tx, projection.SelectedVenueID)
 			if err != nil {
+				if errors.Is(err, venuecache.ErrCacheMiss) {
+					if _, confirmed := confirmedMissing[projection.SelectedVenueID]; confirmed {
+						view.MissingVenueID = projection.SelectedVenueID
+						result.Meets = append(result.Meets, view)
+						continue
+					}
+					return Snapshot{}, missingVenueCacheEntry{venueID: projection.SelectedVenueID}
+				}
 				return Snapshot{}, fmt.Errorf("read selected Venue %q: %w", projection.SelectedVenueID, err)
 			}
 			if !exists {

@@ -23,7 +23,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 /** @typedef {Record<string, string[]>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollVenueEntry */
-/** @typedef {{ venues?: Record<string, PollVenueEntry>, date?: string }} PollData */
+/** @typedef {{ venues?: Record<string, PollVenueEntry | boolean>, date?: string }} PollData */
 /** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
 /**
@@ -77,6 +77,7 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @typedef {Object} PollVoteProps
  * @property {string} poll_id
  * @property {PollData} poll_data
+ * @property {Record<string, PollVenueEntry | undefined>=} venues
  * @property {(venueId: string, venueName: string, pollId: string) => void} on_complete
  * @property {boolean=} mobile
  */
@@ -537,7 +538,7 @@ function PollVote(props) {
   const showAttendanceColumns = canShowAttendance && !mobile && isWideForAttendance;
 
   // Get sorted poll rows
-  const rowEntries = usePollRows(props.poll_data);
+  const rowEntries = usePollRows(props.poll_data, props.venues);
 
   // Get ballot actions (batch attendance handlers)
   const { pollVenueIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(

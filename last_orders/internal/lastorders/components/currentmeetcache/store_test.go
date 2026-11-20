@@ -58,6 +58,78 @@ func TestNewStoreDiscardsPreviousProcessViewsWithoutResettingSequence(t *testing
 	}
 }
 
+func TestSnapshotDoesNotTreatUnobservedVenueAsConfirmedMissing(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venues, err := venuecache.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.Admit(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Apply(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", []meetcache.Projection{{
+		ID: "meet-a", GroupID: "group-a", Date: "2026-11-20", VotingComplete: true, SelectedVenueID: "venue-a",
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Snapshot(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", venues)
+	if !errors.Is(err, venuecache.ErrCacheMiss) || snapshot.Meets != nil {
+		t.Fatalf("snapshot=%+v err=%v, want an unconfirmed Venue cache miss", snapshot, err)
+	}
+}
+
+func TestSnapshotTreatsObservedVenueTombstoneAsConfirmedMissing(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venues, err := venuecache.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.Admit(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Apply(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", []meetcache.Projection{{
+		ID: "meet-a", GroupID: "group-a", Date: "2026-11-20", VotingComplete: true, SelectedVenueID: "venue-a",
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := venues.Put(ctx, venuecache.VenueProjection{ID: "venue-a", Name: "Former Pub"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := venues.Delete(ctx, "venue-a"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Snapshot(ctx, CurrentView, "group-a", "2026-11-20", "owner-a", venues)
+	if err != nil || len(snapshot.Meets) != 1 || snapshot.Meets[0].MissingVenueID != "venue-a" || snapshot.Meets[0].Venue != nil {
+		t.Fatalf("snapshot=%+v err=%v, want the tombstoned Venue represented as missing", snapshot, err)
+	}
+}
+
 func readCurrentSyncState(t *testing.T, base *basestore.Store) basestore.SyncState {
 	t.Helper()
 	tx, err := base.DB().BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})

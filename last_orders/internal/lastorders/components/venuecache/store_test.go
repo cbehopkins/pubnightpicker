@@ -72,6 +72,62 @@ func TestStorePutGetReplaceAndDelete(t *testing.T) {
 	}
 }
 
+func TestStorePutDoesNotOverwriteNewerFirestoreVersion(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	newer := VenueProjection{
+		ID: "venue-1", Name: "Newer Venue",
+		UpdateTime: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC),
+	}
+	older := VenueProjection{
+		ID: "venue-1", Name: "Older Venue",
+		UpdateTime: newer.UpdateTime.Add(-time.Second),
+	}
+	if err := store.Put(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	sequence := venueSyncState(t, store.base).Sequence
+	if err := store.Put(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, newer.ID)
+	if err != nil || !got.Equal(newer) {
+		t.Fatalf("Venue after stale Put=%+v err=%v, want the newer projection %+v", got, err, newer)
+	}
+	if currentSequence := venueSyncState(t, store.base).Sequence; currentSequence != sequence {
+		t.Fatalf("stale Put advanced sequence from %d to %d", sequence, currentSequence)
+	}
+}
+
+func TestStorePutIfAbsentPreservesWatchUpdatesAndTombstones(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	newer := VenueProjection{
+		ID: "venue-1", Name: "Watch Update",
+		UpdateTime: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC),
+	}
+	if err := store.Put(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	inserted, err := store.PutIfAbsent(ctx, VenueProjection{
+		ID: "venue-1", Name: "Delayed Lookup",
+		UpdateTime: newer.UpdateTime.Add(-time.Second),
+	})
+	if err != nil || inserted {
+		t.Fatalf("PutIfAbsent inserted=%t err=%v, want existing watch row preserved", inserted, err)
+	}
+	if err := store.Delete(ctx, "venue-1"); err != nil {
+		t.Fatal(err)
+	}
+	inserted, err = store.PutIfAbsent(ctx, VenueProjection{ID: "venue-1", Name: "Delayed Lookup"})
+	if err != nil || inserted {
+		t.Fatalf("PutIfAbsent after tombstone inserted=%t err=%v, want tombstone preserved", inserted, err)
+	}
+	if _, missing, err := store.GetForMeet(ctx, "venue-1"); err != nil || !missing {
+		t.Fatalf("GetForMeet tombstone missing=%t err=%v, want confirmed missing", missing, err)
+	}
+}
+
 func TestStoreCreatesIndependentTable(t *testing.T) {
 	store := newTestStore(t)
 	var name string

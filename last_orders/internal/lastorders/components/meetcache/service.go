@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"last_orders/internal/lastorders/components/sourcewatch"
+
 	"github.com/google/uuid"
 )
 
@@ -42,23 +44,7 @@ type entry struct {
 	missing       bool
 	retired       bool
 	failureLogged bool
-	watch         *sourceWatch
-}
-
-type sourceWatch struct {
-	stream Stream
-	cancel context.CancelFunc
-	once   sync.Once
-}
-
-func (watch *sourceWatch) stop() {
-	if watch == nil {
-		return
-	}
-	watch.once.Do(func() {
-		watch.cancel()
-		watch.stream.Stop()
-	})
+	watch         *sourcewatch.Watch
 }
 
 func NewService(store *Store, source Source, logger *slog.Logger, now func() time.Time) (*Service, error) {
@@ -119,7 +105,7 @@ func (s *Service) Get(ctx context.Context, meetID string) (Snapshot, error) {
 			signal(current)
 			s.mu.Unlock()
 			if watch != nil {
-				watch.stop()
+				watch.Stop()
 			}
 			s.markUnavailable(current, readErr)
 			continue
@@ -186,9 +172,9 @@ func (s *Service) observe(current *entry) {
 			}
 			continue
 		}
-		watch := &sourceWatch{stream: stream, cancel: cancelWatch}
+		watch := sourcewatch.New(cancelWatch, stream)
 		stopStream := func() {
-			watch.stop()
+			watch.Stop()
 			s.clearStream(current, watch)
 		}
 		s.setStream(current, watch)
@@ -267,11 +253,11 @@ func (s *Service) apply(current *entry, projection Projection, sourceVersion tim
 	return snapshot, err
 }
 
-func (s *Service) setStream(current *entry, watch *sourceWatch) {
+func (s *Service) setStream(current *entry, watch *sourcewatch.Watch) {
 	s.mu.Lock()
 	if s.entries[current.id] != current || current.retired {
 		s.mu.Unlock()
-		watch.stop()
+		watch.Stop()
 		return
 	}
 	current.watch = watch
@@ -281,7 +267,7 @@ func (s *Service) setStream(current *entry, watch *sourceWatch) {
 	s.mu.Unlock()
 }
 
-func (s *Service) clearStream(current *entry, watch *sourceWatch) {
+func (s *Service) clearStream(current *entry, watch *sourcewatch.Watch) {
 	s.mu.Lock()
 	if current.watch == watch {
 		current.watch = nil
@@ -338,7 +324,7 @@ func (s *Service) retireMissing(current *entry) {
 		s.logger.Info("Meet projection retired after source deletion", "meet_id", maskedMeetID(current.id))
 	}
 	s.mu.Unlock()
-	watch.stop()
+	watch.Stop()
 	_ = s.store.DeleteIfOwner(context.Background(), current.id, current.owner)
 }
 
@@ -349,7 +335,7 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 		s.mu.Unlock()
 		return err
 	}
-	watches := make([]*sourceWatch, 0, len(entries))
+	watches := make([]*sourcewatch.Watch, 0, len(entries))
 	for _, expired := range entries {
 		if current := s.entries[expired.ID]; current != nil && current.owner == expired.Owner {
 			delete(s.entries, expired.ID)
@@ -367,7 +353,7 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 	}
 	s.mu.Unlock()
 	for _, watch := range watches {
-		watch.stop()
+		watch.Stop()
 	}
 	for _, expired := range entries {
 		if err := s.store.DeleteIfOwner(ctx, expired.ID, expired.Owner); err != nil {
@@ -384,7 +370,7 @@ func (s *Service) Close() {
 		return
 	}
 	s.closed = true
-	watches := make([]*sourceWatch, 0, len(s.entries))
+	watches := make([]*sourcewatch.Watch, 0, len(s.entries))
 	for id, current := range s.entries {
 		delete(s.entries, id)
 		current.retired = true
@@ -397,7 +383,7 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	for _, watch := range watches {
-		watch.stop()
+		watch.Stop()
 	}
 }
 

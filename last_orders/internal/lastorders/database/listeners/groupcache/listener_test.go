@@ -10,6 +10,7 @@ import (
 
 	"last_orders/internal/lastorders/basestore"
 	component "last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/sse"
 
 	_ "modernc.org/sqlite"
 )
@@ -42,7 +43,10 @@ func TestMalformedBaselineInvalidatesGroupAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalidator := &authorizationInvalidatorSpy{}
-	listener := &Listener{store: store, logger: slog.Default(), authorization: invalidator}
+	hub := sse.NewHub()
+	subscription := hub.Register("current-meets:group-a", "current-meets-group:group-a", "user-a")
+	defer subscription.Unregister()
+	listener := &Listener{store: store, logger: slog.Default(), authorization: invalidator, hub: hub}
 	err = listener.applyBatch(context.Background(), []component.Change{{
 		Kind: component.ChangeAdded,
 		Doc:  component.Document{ID: "group-a", Data: map[string]any{"visibility": "private"}},
@@ -52,5 +56,10 @@ func TestMalformedBaselineInvalidatesGroupAuthorization(t *testing.T) {
 	}
 	if invalidator.allInvalidations != 1 || invalidator.groupInvalidations != 0 {
 		t.Fatalf("invalidations all=%d group=%d, want all=1 group=0", invalidator.allInvalidations, invalidator.groupInvalidations)
+	}
+	select {
+	case <-subscription.Invalidated():
+	default:
+		t.Fatal("malformed reconnect baseline did not reset authenticated streams")
 	}
 }

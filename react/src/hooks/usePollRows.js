@@ -7,10 +7,11 @@ import { useMemo } from "react";
 /**
  * Hook that extracts and sorts venue rows from poll data
  * Returns array of [venueName, venueId] tuples sorted alphabetically, with "Global" always first
- * @param {{ venues?: Record<string, { name?: string }>} | null | undefined} pollData
+ * @param {{ venues?: Record<string, { name?: string } | boolean>} | null | undefined} pollData
+ * @param {Record<string, { name?: string } | undefined>} [venues]
  * @returns {PollRow[]}
  */
-export function usePollRows(pollData) {
+export function usePollRows(pollData, venues) {
   return useMemo(() => {
     /** @type {PollRow[]} */
     const rows = [["Global", "any"]];
@@ -22,12 +23,13 @@ export function usePollRows(pollData) {
         if (id === "any") {
           continue;
         }
-        venueRows.push([venue?.name || "Unknown venue", id]);
+        const name = venues?.[id]?.name || (typeof venue === "object" && venue?.name) || "Unknown venue";
+        venueRows.push([name, id]);
       }
     }
 
     venueRows.sort((a, b) => a[0].localeCompare(b[0]));
     rows.push(...venueRows);
     return rows;
-  }, [pollData]);
+  }, [pollData, venues]);
 }

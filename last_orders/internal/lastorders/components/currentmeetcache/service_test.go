@@ -1,6 +1,7 @@
 package currentmeetcache
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -233,10 +234,8 @@ func TestOpenAndCurrentViewsUseIndependentSharedGroupWatches(t *testing.T) {
 	if err != nil || len(openAfterMidnight.Meets) != 1 || openAfterMidnight.Meets[0].Meet.ID != "overdue-open" {
 		t.Fatalf("open-Meets view changed at London midnight: snapshot=%+v err=%v", openAfterMidnight.Meets, err)
 	}
-	select {
-	case duplicate := <-source.calls:
-		t.Fatalf("London midnight reopened the open-Meets watch: %+v", duplicate)
-	default:
+	if replacement := waitForViewWatch(t, ctx, source.calls); replacement.groupID != "group-a" || replacement.query.Kind != OpenView {
+		t.Fatalf("open-Meets watch after its six-hour expiry=%+v, want a replacement for the same Group", replacement)
 	}
 }
 
@@ -376,6 +375,91 @@ type viewWatchCall struct {
 type viewWatchSource struct {
 	calls     chan viewWatchCall
 	snapshots map[ViewKind]QuerySnapshot
+}
+
+type venueResolverFunc func(context.Context, string) (venuecache.VenueProjection, bool, error)
+
+func (resolver venueResolverFunc) GetForMeet(ctx context.Context, venueID string) (venuecache.VenueProjection, bool, error) {
+	return resolver(ctx, venueID)
+}
+
+func TestServiceResolvesUnobservedVenuesBeforeComposingSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		resolve venueResolverFunc
+		check   func(*testing.T, Snapshot)
+	}{
+		{
+			name: "present in authoritative source",
+			resolve: func(_ context.Context, venueID string) (venuecache.VenueProjection, bool, error) {
+				return venuecache.VenueProjection{ID: venueID, Name: "The New Crown"}, false, nil
+			},
+			check: func(t *testing.T, snapshot Snapshot) {
+				if len(snapshot.Meets) != 1 || snapshot.Meets[0].Venue == nil || snapshot.Meets[0].Venue.ID != "venue-a" || snapshot.Meets[0].Venue.Name != "The New Crown" {
+					t.Fatalf("snapshot=%+v, want the authoritative Venue summary", snapshot)
+				}
+			},
+		},
+		{
+			name: "confirmed absent from authoritative source",
+			resolve: func(context.Context, string) (venuecache.VenueProjection, bool, error) {
+				return venuecache.VenueProjection{}, true, nil
+			},
+			check: func(t *testing.T, snapshot Snapshot) {
+				if len(snapshot.Meets) != 1 || snapshot.Meets[0].MissingVenueID != "venue-a" {
+					t.Fatalf("snapshot=%+v, want the confirmed missing Venue reference", snapshot)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", ":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			t.Setenv("LAST_ORDERS_CURRENT_MEET_DIAGNOSTICS", "true")
+			base, err := basestore.New(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewStore(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			venues, err := venuecache.New(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+			source := &viewWatchSource{
+				calls: make(chan viewWatchCall, 1),
+				snapshots: map[ViewKind]QuerySnapshot{
+					CurrentView: {Documents: []meetcache.Document{{
+						ID: "meet-a", Exists: true, Version: clock, Data: map[string]any{
+							"groupId": "group-a", "date": "2026-11-20", "completed": true, "selected": "venue-a",
+						},
+					}}, ReadTime: clock},
+				},
+			}
+			var logs bytes.Buffer
+			resolverCalls := 0
+			resolver := venueResolverFunc(func(ctx context.Context, venueID string) (venuecache.VenueProjection, bool, error) {
+				resolverCalls++
+				return test.resolve(ctx, venueID)
+			})
+			service, err := NewServiceWithVenueResolver(store, source, venues, resolver, sse.NewHub(), slog.New(slog.NewTextHandler(&logs, nil)), func() time.Time { return clock })
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(service.Close)
+			snapshot, err := service.Get(context.Background(), "group-a")
+			if err != nil {
+				t.Fatalf("Get() error=%v resolver calls=%d diagnostics=%s", err, resolverCalls, logs.String())
+			}
+			test.check(t, snapshot)
+		})
+	}
 }
 
 func (source *viewWatchSource) Watch(ctx context.Context, groupID string, query ViewQuery) (Stream, error) {
