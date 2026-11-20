@@ -251,11 +251,11 @@ export function PastMeets() {
   );
 
   const goToNextPage = useCallback(() => {
-      if (!hasNextPage || !nextCursor || isLoading) {
+    if (!hasNextPage || !nextCursor || isLoading) {
       return;
     }
-      writePaginationParams(pageSize, [...cursorTrail, nextCursor]);
-    }, [hasNextPage, nextCursor, isLoading, writePaginationParams, pageSize, cursorTrail]);
+    writePaginationParams(pageSize, [...cursorTrail, nextCursor]);
+  }, [hasNextPage, nextCursor, isLoading, writePaginationParams, pageSize, cursorTrail]);
 
   const goToPreviousPage = useCallback(() => {
     if (!hasPreviousPage || isLoading) {
