@@ -63,10 +63,10 @@ func (watch *sourceWatch) stop() {
 
 func NewService(store *Store, source Source, logger *slog.Logger, now func() time.Time) (*Service, error) {
 	if store == nil {
-		return nil, fmt.Errorf("Meet projection store is required")
+		return nil, fmt.Errorf("meet projection store is required")
 	}
 	if source == nil {
-		return nil, fmt.Errorf("Meet source is required")
+		return nil, fmt.Errorf("meet source is required")
 	}
 	if logger == nil {
 		logger = slog.Default()

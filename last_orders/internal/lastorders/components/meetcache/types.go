@@ -48,24 +48,24 @@ type Source interface {
 	Watch(context.Context, string) (Stream, error)
 }
 
-var ErrNotFound = fmt.Errorf("Meet not found")
-var ErrUnavailable = fmt.Errorf("Meet projection unavailable")
+var ErrNotFound = fmt.Errorf("meet not found")
+var ErrUnavailable = fmt.Errorf("meet projection unavailable")
 
 func ProjectionFromDocument(document Document) (Projection, error) {
 	if document.ID == "" {
-		return Projection{}, fmt.Errorf("Meet document ID is required")
+		return Projection{}, fmt.Errorf("meet document ID is required")
 	}
 	groupID, ok := document.Data["groupId"].(string)
 	if !ok || groupID == "" {
-		return Projection{}, fmt.Errorf("Meet %q field %q must be a non-empty string", document.ID, "groupId")
+		return Projection{}, fmt.Errorf("meet %q field %q must be a non-empty string", document.ID, "groupId")
 	}
 	date, err := meetDate(document.Data["date"])
 	if err != nil {
-		return Projection{}, fmt.Errorf("Meet %q field %q: %w", document.ID, "date", err)
+		return Projection{}, fmt.Errorf("meet %q field %q: %w", document.ID, "date", err)
 	}
 	completed, ok := document.Data["completed"].(bool)
 	if !ok {
-		return Projection{}, fmt.Errorf("Meet %q field %q must be a boolean", document.ID, "completed")
+		return Projection{}, fmt.Errorf("meet %q field %q must be a boolean", document.ID, "completed")
 	}
 	selectedVenueID, err := optionalString(document.Data, "selected")
 	if err != nil {

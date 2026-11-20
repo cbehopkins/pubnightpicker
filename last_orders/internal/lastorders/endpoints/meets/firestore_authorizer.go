@@ -15,7 +15,7 @@ type firestoreGroupAuthorizer struct {
 
 func NewFirestoreGroupAuthorizer(client *firestore.Client) (GroupAuthorizer, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return &firestoreGroupAuthorizer{client: client}, nil
 }

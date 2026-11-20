@@ -48,7 +48,7 @@ func NewStore(base *basestore.Store) (*Store, error) {
 
 func (s *Store) Admit(ctx context.Context, meetID, owner string, validUntil time.Time) error {
 	if meetID == "" || owner == "" {
-		return fmt.Errorf("Meet ID and owner token are required")
+		return fmt.Errorf("meet ID and owner token are required")
 	}
 	_, err := s.base.DB().ExecContext(ctx, `
 		INSERT INTO meet_cache(meet_id, owner_token, valid_until)
@@ -69,7 +69,7 @@ func (s *Store) Admit(ctx context.Context, meetID, owner string, validUntil time
 
 func (s *Store) Apply(ctx context.Context, meetID, owner string, projection Projection, sourceVersion time.Time) (Snapshot, error) {
 	if meetID == "" || owner == "" || projection.ID != meetID {
-		return Snapshot{}, fmt.Errorf("Meet ID, matching projection, and owner token are required")
+		return Snapshot{}, fmt.Errorf("meet ID, matching projection, and owner token are required")
 	}
 	encoded, err := json.Marshal(projection)
 	if err != nil {
@@ -191,5 +191,5 @@ func formatSourceVersion(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
 }
 
-var ErrRetired = errors.New("Meet projection entry retired")
+var ErrRetired = errors.New("meet projection entry retired")
 var ErrStale = errors.New("stale Meet source update")

@@ -94,6 +94,45 @@ func TestFirestoreWatchCompleteBaselineBeforeDeltas(t *testing.T) {
 	}
 }
 
+func TestFirestoreSoftDeleteReturnsUpdatedDocument(t *testing.T) {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	project := "demo-venue-soft-delete-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	client, err := firestore.NewClient(ctx, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	venue := client.Collection(collection).Doc("soft-deleted")
+	if _, err := venue.Set(ctx, map[string]any{"name": "Soft-deleted venue"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, finish := context.WithTimeout(context.Background(), 5*time.Second)
+		defer finish()
+		_, _ = venue.Delete(cleanup)
+	})
+	source, err := NewFirestoreSource(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := source.Get(ctx, venue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := source.SoftDeleteIfUnchanged(ctx, venue.ID, before.UpdateTime)
+	if err != nil {
+		t.Fatalf("soft-delete venue: %v", err)
+	}
+	deletedOn, ok := updated.Data["deleted_on"].(time.Time)
+	if updated.ID != venue.ID || !ok || deletedOn.IsZero() || !updated.UpdateTime.After(before.UpdateTime) {
+		t.Fatalf("soft-delete result=%+v; want updated document with deleted_on", updated)
+	}
+}
+
 func assertFirestoreBaseline(t *testing.T, stream ChangeStream, want map[string]string) {
 	t.Helper()
 	changes, err := stream.Next()
