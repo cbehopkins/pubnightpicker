@@ -39,6 +39,13 @@ Given("a venue is available to current and past meets", async function () {
     const today = londonDate();
 
     await withEmulatorAdmin(async (db, auth) => {
+        const groupResponse = await fetch(new URL("api/groups?name=ampubnight", process.env.VITE_LAST_ORDERS_API_BASE_URL));
+        const groupBody = await groupResponse.text();
+        assert.equal(groupResponse.status, 200, groupBody);
+        const groups = JSON.parse(groupBody).groups;
+        assert.equal(groups.length, 1, "expected exactly one public default Group");
+        const groupId = groups[0].id;
+
         const venueResponse = await fetch(new URL("api/venues", process.env.VITE_LAST_ORDERS_API_BASE_URL), {
             method: "POST",
             headers: {
@@ -59,11 +66,13 @@ Given("a venue is available to current and past meets", async function () {
             setDoc(doc(db, "polls", `public-current-${fixtureId}`), {
                 date: today,
                 completed: true,
+                groupId,
                 selected: this.publicVenueId,
             }),
             setDoc(doc(db, "polls", `public-past-${fixtureId}`), {
                 date: shiftDate(today, -1),
                 completed: true,
+                groupId,
                 selected: this.publicVenueId,
             }),
         ]);

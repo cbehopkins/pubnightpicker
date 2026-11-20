@@ -49,7 +49,7 @@ func NewStore(base *basestore.Store) (*Store, error) {
 
 func (s *Store) Admit(ctx context.Context, groupID, date, owner string, validUntil time.Time) error {
 	if groupID == "" || date == "" || owner == "" {
-		return fmt.Errorf("Group ID, view date, and owner token are required")
+		return fmt.Errorf("group ID, view date, and owner token are required")
 	}
 	_, err := s.base.DB().ExecContext(ctx, `
 		INSERT INTO current_meet_cache(group_id, owner_token, view_date, valid_until)

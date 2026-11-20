@@ -22,7 +22,7 @@ func NewFirestoreSource(client *firestore.Client) (Source, error) {
 
 func (s *firestoreSource) Watch(ctx context.Context, groupID, date string) (Stream, error) {
 	if groupID == "" || date == "" {
-		return nil, fmt.Errorf("Group ID and current date are required")
+		return nil, fmt.Errorf("group ID and current date are required")
 	}
 	query := s.client.Collection("polls").
 		Where("groupId", "==", groupID).
