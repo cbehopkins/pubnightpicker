@@ -106,7 +106,9 @@ Anonymous access is permitted for public Group discovery and public Venue/Locati
 
 ### 3.3 Meet access
 
-Meet-related reads require authentication and Group membership, including:
+Meet-related reads require authentication. Individual Meet details are readable
+when the Group is public or the caller is a member of its private Group.
+Other Meet-related reads require Group membership, including:
 
 - Current and past Meet collections.
 - Individual Meet details.
@@ -114,7 +116,8 @@ Meet-related reads require authentication and Group membership, including:
 - Attendance snapshots and updates.
 - Attendance and current-Meet streams.
 
-Global administrators may access these resources through inherited administrative authority.
+Global administrators may access all Meet resources through inherited
+administrative authority.
 
 Authentication establishes identity only. It does not automatically grant membership or resource permissions.
 
@@ -216,10 +219,13 @@ The current page needs enough information to avoid an N+1 pattern of per-Meet re
 - Completion/voting state.
 - Selected Venue summary where present.
 - Venue name, address and image where available.
-- Attendance counts.
-- Information needed to render the caller's attendance state and actions.
 
-The exact DTO should be finalised in OpenAPI, but the read model should be shaped around the page's needs.
+Meet responses do not contain votes or attendance, including counts or
+caller-specific state. Venue candidates are Meet data; votes are voting data.
+The frontend composes the separate interfaces with independent loading and
+error states. Live voting updates require a separately designed voting API.
+Current Meets are ordered by scheduled date, earliest first, then Meet ID.
+See [CDD-0019](../cdd/0019-on-demand-meet-projections.md) for view composition.
 
 ### 6.4 Past Meet response
 
@@ -522,7 +528,14 @@ Global administrators can always see and edit every Venue. A caller with `canMan
 
 Venue deletion is soft deletion using `deleted_on`. Location deletion is not supported.
 
-Normal discovery and ordinary operational queries exclude deleted records. Historical Meets must continue to reference the resources they used.
+Normal discovery and ordinary operational queries exclude deleted records.
+Meet views retain references to soft-deleted Venues and display their retained
+details and deleted status. The shared Venue projection must retain those details
+on a fresh baseline and expose them to an internal Meet-view read, without
+changing ordinary Venue discovery or GET visibility. A confirmed missing Venue is
+represented by its ID and missing status, not fabricated details. Temporary
+source failure is not proof of absence. See
+[CDD-0019](../cdd/0019-on-demand-meet-projections.md#41-venue-composition).
 
 A Venue's `banned` state is distinct from deletion. Banning indicates that PubNightPicker should not visit the Venue because of a moderation or operational reason; it does not mean the record has been deleted.
 

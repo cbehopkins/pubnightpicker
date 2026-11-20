@@ -240,8 +240,11 @@ must not fail an SSE request: return a complete current snapshot and a newly
 issued cursor. In particular, `GET /api/venues/stream` recovers this way and
 does not validate the supplied cursor before returning its full snapshot.
 Paginated `GET /api/venues?cursor=...` is a separate contract; invalid or stale
-list cursors continue to return `400 invalid_cursor`. No cursor expiry is
-needed while tombstones are retained indefinitely.
+list cursors continue to return `400 invalid_cursor`. V1 has no cursor expiry
+and always returns a complete view. Evicted on-demand Meet entries may discard
+per-entry history without retaining indefinite tombstones; future incremental
+resume for those entries needs a retention boundary or equivalent recovery. See
+[CDD-0019](0019-on-demand-meet-projections.md).
 
 The endpoint adapter owns resource-specific snapshot queries and authorization,
 and obtains the snapshot's committed generation and sequence from the same

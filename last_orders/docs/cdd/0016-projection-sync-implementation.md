@@ -58,8 +58,10 @@ block venue work or shared sequence infrastructure.
   listeners, read-through population and direct local mutations.
 - Identical projected values and deletion of already-absent resources are
   no-ops. Failed transactions advance neither data nor committed versions.
-- V1 retains tombstones indefinitely. Cleanup and a corresponding cursor
-  retention boundary are deferred to V2.
+- V1 retains tombstones indefinitely except for evicted disposable Meet entries,
+  whose per-entry history may be discarded because V1 reconnects return full
+  views. Incremental resume for those entries needs a retention boundary or
+  equivalent recovery. Other cleanup remains deferred to V2.
 - Database generation identity persists across ordinary restarts and changes
   when projection history is rebuilt. A generation mismatch requires refresh.
 - Existing projection rows may be discarded and repopulated during migration;

@@ -811,10 +811,11 @@ paths:
       summary: List current Meets for a group
       description: |
         Returns completed voting-phase Meets whose local date is today or in the
-        future, together with the venue and attendance summary needed by the
-        current-Meets view. Public Group Meet details are available without
-        authentication. The response includes an opaque cursor from the same
-        consistent local snapshot, suitable for starting the corresponding stream.
+        future, ordered by date then Meet ID, together with selected Venue
+        summaries. Votes and attendance are separate concerns. Public Group Meet
+        details are available without authentication. The response includes an
+        opaque cursor from the same consistent local snapshot, suitable for
+        starting the corresponding stream.
       security:
         - bearerAuth: []
         - {}
@@ -839,6 +840,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection or its required Venue data is temporarily unavailable.
   /meets/{group_id}/current/stream:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -851,11 +854,12 @@ paths:
         Last-Event-ID may be used on reconnect and takes precedence if both are
         supplied. Every connection receives a complete current-Meets replacement
         snapshot and a fresh cursor, then another complete replacement after each
-        relevant change. Invalid cursors recover with the same replacement, not
-        an error. The subscriber is registered before the consistent snapshot
-        read, so concurrent changes are not missed. SSE is unavailable until
-        backend startup readiness checks complete; this does not imply Firebase
-        is globally caught up.
+        relevant Meet or selected Venue change. Votes and attendance do not
+        trigger this stream. Invalid cursors recover with the same replacement,
+        not an error. The subscriber is registered before the consistent
+        snapshot read, so concurrent changes are not missed. SSE is unavailable
+        until backend readiness and the requested entry's baseline are ready;
+        this does not imply Firebase is globally caught up.
       security:
         - bearerAuth: []
         - {}
@@ -890,10 +894,10 @@ paths:
                 description: |
                   Each message follows SSE framing. Event IDs are opaque cursors.
                   `event: current_meets` data is a complete replacement snapshot
-                  of the collection. A generic `event: view_reset` is sent at
-                  a committed authorization change or London midnight, then the
-                  connection closes. The reset has no ID and carries
-                  `data: {}`.
+                  of the collection. A generic `event: view_reset` is sent for
+                  retirement, a detected required-watch failure, a committed
+                  authorization change or London midnight, then the connection
+                  closes. The reset has no ID and carries `data: {}`.
               example: |
                 id: eyJ2IjoxLCJzdHJlYW0iOiJjdXJyZW50LW1lZXRzLXYxIn0.signature
                 event: current_meets
@@ -905,7 +909,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Backend startup readiness checks have not completed. Retry after the backend is ready.
+          description: Backend readiness, the requested projection or required Venue data is temporarily unavailable.
           headers:
             Retry-After:
               schema:
@@ -964,10 +968,9 @@ paths:
       tags: [Meets]
       operationId: getMeet
       summary: Get a Meet
-      description: Returns the Meet details visible to the caller, including its current voting/completion information.
+      description: Requires authentication. Public Group Meets are readable by any authenticated caller; private Group Meets require membership. Votes and attendance are separate concerns.
       security:
         - bearerAuth: []
-        - {}
       responses:
         '200':
           description: Meet details.
@@ -981,6 +984,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection or its required Venue data is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -1721,10 +1726,14 @@ components:
           type: [string, 'null']
     VenueSummary:
       type: object
-      required: [id, name, address]
+      description: Current details for an active or soft-deleted Venue referenced by a Meet.
+      required: [id, status, name, address]
       properties:
         id:
           type: string
+        status:
+          type: string
+          enum: [active, deleted]
         name:
           type: string
         address:
@@ -1734,6 +1743,16 @@ components:
           format: uri
         venue_type:
           $ref: '#/components/schemas/VenueType'
+    MissingVenueReference:
+      type: object
+      description: The authoritative Venue document is confirmed absent; no details are invented.
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [missing]
     AttendanceCounts:
       type: object
       required: [attending_count, not_attending_count]
@@ -1746,7 +1765,7 @@ components:
           minimum: 0
     Meet:
       type: object
-      required: [id, group_id, date, voting_complete, previous_venue_ids, attendance]
+      required: [id, group_id, date, voting_complete, previous_venue_ids]
       properties:
         id:
           type: string
@@ -1761,7 +1780,14 @@ components:
         venue:
           oneOf:
             - $ref: '#/components/schemas/VenueSummary'
+            - $ref: '#/components/schemas/MissingVenueReference'
             - type: 'null'
+          description: Null when no Venue is selected; missing references retain their Venue ID.
+        candidate_venue_ids:
+          type: array
+          description: Active Venue candidates for the Meet; excludes the reserved `any` voting option.
+          items:
+            type: string
         restaurant_id:
           type: [string, 'null']
         restaurant_time:
@@ -1772,8 +1798,6 @@ components:
           type: array
           items:
             type: string
-        attendance:
-          $ref: '#/components/schemas/AttendanceCounts'
     CurrentMeetsSnapshot:
       type: object
       required: [cursor, meets]

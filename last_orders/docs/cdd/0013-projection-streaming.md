@@ -93,8 +93,9 @@ It is not an implementation-ready cursor or wire contract.
   and recovery envelopes will be specified in OpenAPI. Every connection gets a
   full current view and fresh cursor; an unusable cursor is not an error.
 - SSE connections are not accepted until backend startup readiness checks have
-  completed. Required local projections must be initialised and startup
-  baselines committed; this does not claim that Firebase is globally caught up.
+  completed. Startup-required projections must have committed their baselines;
+  on-demand Meet entries instead require their own baseline when requested, not
+  eager admission at startup. This does not claim Firebase is globally caught up.
   Active streams close during shutdown and clients reconnect after startup.
 - The API must not promise durable replay of every intermediate event.
 - Existing authentication and Group authorisation rules apply to snapshots,
@@ -158,7 +159,8 @@ because every reconnect receives a complete snapshot.
   secret specified in [CDD-0017](0017-sse-stream-prototype.md#v1-slice-opaque-cursors-on-full-snapshots), scoped
   to stream contract, resource ID, database generation and global sequence.
   Current-Meets tokens also include the `Europe/London` calendar date. V1 has
-  no cursor expiry while tombstones are retained indefinitely. Malformed,
+  no cursor expiry and always returns a complete view; evicted on-demand Meet
+  history need not be retained. Malformed,
   tampered, future, wrong-scope, wrong-generation or wrong-date cursors return
   a full view. Signing-key rotation also results in full views.
 - **Handover:** Register the subscriber before reading the snapshot. Read the
@@ -167,18 +169,22 @@ because every reconnect receives a complete snapshot.
   deliver later notifications.
 - **Events:** Send complete replacement views on stream connection and after
   relevant changes. Current-Meets events replace the collection; attendance
-  events contain aggregate counts. The opaque cursor is both the SSE event ID
+  events contain aggregate counts. Meet views exclude votes and attendance;
+  relevant selected Venue changes update the composed current-Meets view. The
+  opaque cursor is both the SSE event ID
   and the `cursor` field in snapshot/event JSON. `Last-Event-ID` takes
   precedence over `after`. Past-Meet pagination cursors are separate.
-- **Startup/runtime:** Do not accept SSE until required local projections have
-  committed startup baselines. V1 deploys one backend instance and one
+- **Startup/runtime:** Do not accept SSE until startup-required projections have
+  committed their baselines. On-demand Meet entries instead require a per-entry
+  baseline on request. V1 deploys one backend instance and one
   persistent SQLite database. Future instances use independent local databases
   and listeners; V1 does not guarantee cross-instance convergence. Close active
   streams during shutdown. Bound
   subscriber buffers; close a slow client's stream on overflow so it can
   reconnect for a complete view.
-- **Public attendance:** Public Group Meet details and attendance counts are
-  available anonymously. Anonymous attendance responses and streams never
+- **Public attendance:** Public Group Meet details and separate attendance
+  counts are available anonymously. Meet responses do not contain attendance.
+  Anonymous attendance responses and streams never
   expose attendee identities; authenticated GET responses may include attendee
   details.
 - **Authorization invalidation:** After a permission or membership change
