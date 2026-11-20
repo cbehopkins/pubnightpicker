@@ -11,10 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
+
+	"github.com/google/uuid"
 )
 
 const (

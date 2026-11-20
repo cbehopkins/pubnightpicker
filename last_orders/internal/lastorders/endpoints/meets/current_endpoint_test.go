@@ -62,8 +62,8 @@ func TestRegisterCurrentMeetsGetUnavailableWithoutProjection(t *testing.T) {
 	}
 	var payload struct {
 		Error struct {
-			Code string `json:\"code\"`
-		} `json:\"error\"`
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)

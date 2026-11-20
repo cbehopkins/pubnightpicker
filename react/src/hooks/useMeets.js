@@ -21,7 +21,7 @@ const noCurrentGroup = {
   isLoading: false,
   isStale: false,
   errorMessage: "The current Group is unavailable.",
-  retry: () => {},
+  retry: () => { },
 };
 
 function useTodaysDate() {
@@ -202,7 +202,7 @@ function retryCurrentMeets(streamKey) {
 export function useCurrentMeets(groupId, userId = "") {
   const streamKey = groupId ? `${groupId}\u0000${userId ?? ""}` : null;
   const subscribe = useCallback(
-    (subscriber) => groupId ? subscribeCurrentMeets(groupId, streamKey, subscriber) : () => {},
+    (subscriber) => groupId ? subscribeCurrentMeets(groupId, streamKey, subscriber) : () => { },
     [groupId, streamKey],
   );
   const getSnapshot = useCallback(

@@ -44,13 +44,13 @@ type Endpoint struct {
 }
 
 type venueSummary struct {
-	ID        string  `json:"id"`
-	Status    string  `json:"status"`
-	Name      string  `json:"name"`
-	Address   string  `json:"address"`
+	ID         string  `json:"id"`
+	Status     string  `json:"status"`
+	Name       string  `json:"name"`
+	Address    string  `json:"address"`
 	WebsiteURL *string `json:"website_url"`
-	ImageURL  *string `json:"image_url"`
-	VenueType string  `json:"venue_type"`
+	ImageURL   *string `json:"image_url"`
+	VenueType  string  `json:"venue_type"`
 }
 
 type missingVenueReference struct {
