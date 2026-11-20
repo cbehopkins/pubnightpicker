@@ -26,6 +26,7 @@ import (
 	"last_orders/internal/lastorders/components/groupcache"
 	"last_orders/internal/lastorders/components/idempotency"
 	"last_orders/internal/lastorders/components/listenerscope"
+	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/notificationprofile"
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/ratelimit"
@@ -48,6 +49,7 @@ import (
 	groupsendpoint "last_orders/internal/lastorders/endpoints/groups"
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
 	logendpoint "last_orders/internal/lastorders/endpoints/log"
+	meetsendpoint "last_orders/internal/lastorders/endpoints/meets"
 	pingendpoint "last_orders/internal/lastorders/endpoints/ping"
 	venuesendpoint "last_orders/internal/lastorders/endpoints/venues"
 	versionendpoint "last_orders/internal/lastorders/endpoints/version"
@@ -187,6 +189,7 @@ type App struct {
 	recurrenceService           RecurrenceService
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
+	meetCacheService            *meetcache.Service
 	groupCacheStore             *groupcache.Store
 	groupCacheService           *groupcache.Service
 	notificationProfileStore    *notificationprofile.Store
@@ -340,12 +343,9 @@ func New(cfg Config) (application *App, err error) {
 	// Replace the previous cleanup stack with a new one for the baseStore and subsequent resources.
 	cleanup = newCleanupStack()
 	cleanup.Add(baseStore.Close)
-	var cellarStore cellar.Store
-	if cfg.Component != "handpump" {
-		cellarStore, err = publicsqlite.NewStore(baseStore.DB(), nil)
-		if err != nil {
-			return nil, fmt.Errorf("init cellar store: %w", err)
-		}
+	cellarStore, err := publicsqlite.NewStore(baseStore.DB(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("init cellar store: %w", err)
 	}
 
 	var firestoreClient *firestore.Client
@@ -387,6 +387,21 @@ func New(cfg Config) (application *App, err error) {
 	venueCacheService, err := venuecache.NewService(venueCacheStore, venueSource, cfg.Logger)
 	if err != nil {
 		return nil, err
+	}
+	var meetCacheService *meetcache.Service
+	if firestoreClient != nil && cfg.Component != "landlord" {
+		meetCacheStore, err := meetcache.NewStore(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init Meet cache store: %w", err)
+		}
+		meetSource, err := meetcache.NewFirestoreSource(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+		meetCacheService, err = meetcache.NewService(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
 	}
 	venueStreamHub := sse.NewHub()
 	venueCacheListener, err := venuecachelistener.New(venueCacheService, venueCacheStore, cfg.Logger, venueStreamHub)
@@ -436,12 +451,25 @@ func New(cfg Config) (application *App, err error) {
 	}
 
 	if cfg.Component == "handpump" {
+		cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay, Clock: cfg.Clock})
+		var periodicTimers []*cellar.Timer
+		if meetCacheService != nil {
+			timer, err := registerMeetProjectionHousekeeping(cellarRuntime, meetCacheService, cfg.Clock, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, timer)
+		}
 		application = &App{
 			logger:                      cfg.Logger,
+			clock:                       cfg.Clock,
 			baseStore:                   baseStore,
+			cellarStore:                 cellarStore,
+			cellarRuntime:               cellarRuntime,
 			firestoreClient:             firestoreClient,
 			venueCacheStore:             venueCacheStore,
 			venueCacheService:           venueCacheService,
+			meetCacheService:            meetCacheService,
 			groupCacheStore:             groupCacheStore,
 			groupCacheService:           groupCacheService,
 			notificationProfileStore:    notificationProfileStore,
@@ -449,6 +477,7 @@ func New(cfg Config) (application *App, err error) {
 			venueCacheListener:          venueCacheListener,
 			groupCacheListener:          groupCacheListener,
 			notificationProfileListener: notificationProfileListener,
+			periodicTimers:              periodicTimers,
 			component:                   cfg.Component,
 		}
 		historyClient := &landlordinternal.EmailHistoryClient{BaseURL: cfg.LandlordInternalURL, Token: cfg.InternalAPIToken}
@@ -747,6 +776,13 @@ func New(cfg Config) (application *App, err error) {
 	admindeleteplugin.Register()
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay, Clock: cfg.Clock})
+	var meetProjectionTimer *cellar.Timer
+	if meetCacheService != nil {
+		meetProjectionTimer, err = registerMeetProjectionHousekeeping(cellarRuntime, meetCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := registerTruthFanouts(cellarRuntime); err != nil {
 		return nil, err
 	}
@@ -928,6 +964,10 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 	}
+	periodicTimers := []*cellar.Timer{autoCompleteTimer, reevaluateTimer}
+	if meetProjectionTimer != nil {
+		periodicTimers = append(periodicTimers, meetProjectionTimer)
+	}
 
 	newPollListener, err := newpolllistener.New(newpolllistener.Config{
 		Source: newPollSource,
@@ -993,6 +1033,7 @@ func New(cfg Config) (application *App, err error) {
 		recurrenceService:           recurrenceService,
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
+		meetCacheService:            meetCacheService,
 		groupCacheStore:             groupCacheStore,
 		groupCacheService:           groupCacheService,
 		notificationProfileStore:    notificationProfileStore,
@@ -1014,7 +1055,7 @@ func New(cfg Config) (application *App, err error) {
 		component:                   cfg.Component,
 		shutdownDrainTimeout:        cfg.ShutdownDrainTimeout,
 		claimGate:                   claimGate,
-		periodicTimers:              []*cellar.Timer{autoCompleteTimer, reevaluateTimer},
+		periodicTimers:              periodicTimers,
 		acceptingWork:               true,
 		notificationMirrorListener:  notificationMirrorListener,
 		venueCacheListener:          venueCacheListener,
@@ -1095,6 +1136,14 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	}
 	venueEndpoint := &venuesendpoint.Endpoint{Reader: application.venueCacheService, Ready: application.venueCacheListener.Ready(), Hub: application.venueStreamHub, Cursors: application.venueCursorCodec, EditTokens: editTokenCodec, DeleteTokens: deleteTokenCodec, Auth: cfg.AuthVerifier}
 	venueEndpoint.Register(apiMux)
+	var groupAuthorizer meetsendpoint.GroupAuthorizer
+	if application.firestoreClient != nil {
+		groupAuthorizer, err = meetsendpoint.NewFirestoreGroupAuthorizer(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+	}
+	(&meetsendpoint.Endpoint{Reader: application.meetCacheService, Venues: application.venueCacheService, Groups: groupAuthorizer, Auth: cfg.AuthVerifier}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {
 		return err
@@ -1109,13 +1158,35 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte("ok"))
 	})
-	if application.cellarStore != nil {
+	if application.cellarStore != nil && application.component != "handpump" {
 		mux.Handle("POST /log", &logendpoint.Endpoint{Cells: application, Logger: cfg.Logger})
 	}
 	mux.Handle("/api/", apiHandler)
 	application.httpListener = listener
 	application.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	return nil
+}
+
+func registerMeetProjectionHousekeeping(runtime *cellar.Cellar, service *meetcache.Service, clock cellar.Clock, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewTimer("meet-projection.housekeeping", cellar.TimerConfig{
+		Interval: time.Minute,
+		Mode:     cellar.TimerFixedRate,
+	}, func(ctx context.Context) error {
+		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
+			logger.Error("Meet projection housekeeping failed", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
 }
 
 func dialFirestoreIPv4(ctx context.Context, address string) (net.Conn, error) {
@@ -1394,7 +1465,22 @@ func summarizeDrainWork(cells []cellar.Cell, now time.Time) drainWorkSummary {
 func (a *App) runHandPump(ctx context.Context) error {
 	defer a.shutdownHTTP()
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	runDone := make(chan struct{})
+	a.runMu.Lock()
+	a.runCancel = cancel
+	a.runDone = runDone
+	a.runMu.Unlock()
+	defer func() {
+		for _, timer := range a.periodicTimers {
+			timer.StopProduction()
+		}
+		cancel()
+		a.runMu.Lock()
+		a.runCancel = nil
+		a.runDone = nil
+		a.runMu.Unlock()
+		close(runDone)
+	}()
 	for _, projection := range []interface {
 		Start(context.Context) error
 		Ready() <-chan struct{}
@@ -1424,8 +1510,27 @@ func (a *App) runHandPump(ctx context.Context) error {
 			a.logger.Error("HandPump HTTP server stopped unexpectedly", "err", err)
 		}
 	}()
+	cellarDone := make(chan error, 1)
+	go func() { cellarDone <- a.cellarRuntime.Start(runCtx) }()
+	cellarResultConsumed := false
+	defer func() {
+		cancel()
+		_ = a.cellarRuntime.Stop()
+		if !cellarResultConsumed {
+			<-cellarDone
+		}
+	}()
 	select {
 	case <-ctx.Done():
+		return nil
+	case err := <-cellarDone:
+		cellarResultConsumed = true
+		if err != nil {
+			return fmt.Errorf("HandPump Cellar stopped: %w", err)
+		}
+		if ctx.Err() == nil {
+			return fmt.Errorf("HandPump Cellar stopped unexpectedly")
+		}
 		return nil
 	case err := <-a.notificationProfileListener.Errors():
 		return fmt.Errorf("notification profile projection failed: %w", err)
@@ -1513,6 +1618,9 @@ func (a *App) awaitGroupProjection(ctx context.Context) error {
 func (a *App) Close() error {
 	a.stopAcceptingWork()
 	a.shutdownHTTP()
+	if a.meetCacheService != nil {
+		a.meetCacheService.Close()
+	}
 	a.runMu.Lock()
 	runCancel := a.runCancel
 	runDone := a.runDone
@@ -1523,7 +1631,8 @@ func (a *App) Close() error {
 		if runDone != nil {
 			<-runDone
 		}
-	} else {
+	}
+	if runCancel == nil || a.component == "handpump" {
 		a.closeListeners()
 	}
 	if a.baseStore == nil {

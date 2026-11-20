@@ -92,10 +92,6 @@ func (l *Listener) applyBatch(ctx context.Context, changes []venuecache.Change, 
 				l.logger.Warn("skip malformed venue cache document", "venue_id", change.Doc.ID, "err", err)
 				continue
 			}
-			if projection.DeletedOn != "" {
-				mutations = append(mutations, mutation)
-				continue
-			}
 			mutation.Projection = &projection
 		}
 		mutations = append(mutations, mutation)

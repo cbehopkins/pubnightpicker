@@ -60,6 +60,31 @@ func (s *Service) Get(ctx context.Context, venueID string) (VenueProjection, err
 	return projection, nil
 }
 
+func (s *Service) GetForMeet(ctx context.Context, venueID string) (VenueProjection, bool, error) {
+	projection, missing, err := s.store.GetForMeet(ctx, venueID)
+	if err == nil {
+		return projection, missing, nil
+	}
+	if !errors.Is(err, ErrCacheMiss) {
+		return VenueProjection{}, false, fmt.Errorf("read Venue projection for Meet: %w", err)
+	}
+	doc, err := s.source.Get(ctx, venueID)
+	if errors.Is(err, ErrNotFound) {
+		return VenueProjection{}, true, nil
+	}
+	if err != nil {
+		return VenueProjection{}, false, err
+	}
+	projection, err = ProjectionFromDocument(doc)
+	if err != nil {
+		return VenueProjection{}, false, err
+	}
+	if err := s.store.Put(ctx, projection); err != nil {
+		return VenueProjection{}, false, fmt.Errorf("persist Venue projection for Meet: %w", err)
+	}
+	return projection, false, nil
+}
+
 // ListEventVenues currently forwards to the authoritative source. The API is
 // intentionally owned by the cache so local listing can be added later without
 // changing recurrence consumers.
@@ -174,7 +199,11 @@ func (s *Service) DeleteWithVersion(ctx context.Context, venueID string, expecte
 	if err != nil {
 		return VenueProjection{}, err
 	}
-	if err := s.store.Delete(ctx, venueID); err != nil {
+	projection, err := ProjectionFromDocument(doc)
+	if err != nil {
+		return VenueProjection{}, err
+	}
+	if err := s.store.Put(ctx, projection); err != nil {
 		return VenueProjection{}, fmt.Errorf("persist deleted venue projection: %w", err)
 	}
 	return VenueProjection{}, nil

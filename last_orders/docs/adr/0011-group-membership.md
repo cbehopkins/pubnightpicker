@@ -86,7 +86,10 @@ A Group has one of two visibility values:
 - `public`
 - `private`
 
-Visibility determines discoverability. It does not, by itself, grant membership or write access.
+Visibility determines discoverability. For individual Meet reads, authenticated
+callers may read Meets in public Groups; private Group Meets require membership
+or global-administrator authority. Visibility does not grant membership or write
+access.
 
 ### 4.1 Discovery rules
 
