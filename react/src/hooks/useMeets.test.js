@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useActiveMeets, useCurrentMeets, usePastMeets } from "./useMeets";
 
-const { records, completedRecords, whereMock, getDocsMock, getDocMock, limitMock, startAfterMock } = vi.hoisted(() => ({
+const { records, whereMock, requestLastOrdersMock } = vi.hoisted(() => ({
   records: {
     "meet-1": {
       date: "2020-01-01",
@@ -13,18 +13,8 @@ const { records, completedRecords, whereMock, getDocsMock, getDocMock, limitMock
       createdByUid: "creator",
     },
   },
-  completedRecords: {
-    "meet-2": {
-      date: "2099-05-01",
-      completed: true,
-      selected: "venue-2",
-    },
-  },
   whereMock: vi.fn((...args) => args),
-  getDocsMock: vi.fn(),
-  getDocMock: vi.fn(),
-  limitMock: vi.fn((value) => ["limit", value]),
-  startAfterMock: vi.fn((value) => ["startAfter", value]),
+  requestLastOrdersMock: vi.fn(),
 }));
 
 const eventSources = [];
@@ -51,18 +41,15 @@ vi.mock("firebase/firestore", () => ({
   collection: vi.fn((...args) => args),
   query: vi.fn((...args) => args),
   where: whereMock,
-  orderBy: vi.fn(),
-  limit: limitMock,
-  startAfter: startAfterMock,
-  getDocs: getDocsMock,
-  getDoc: getDocMock,
-  doc: vi.fn(),
 }));
 vi.mock("./useQueryDb", () => ({
-  default: (query) => query[1][2] ? completedRecords : records,
+  default: () => records,
 }));
+vi.mock("../utils/lastOrdersApi", () => ({ requestLastOrders: requestLastOrdersMock }));
 
 afterEach(() => {
+  vi.useRealTimers();
+  requestLastOrdersMock.mockReset();
   vi.unstubAllGlobals();
   eventSources.length = 0;
 });
@@ -87,29 +74,22 @@ describe("Meet read compatibility", () => {
     ]);
   });
 
-  it("preserves completed Meet fields, date filters and the paginated cursor", async () => {
-    const cursor = { exists: () => true };
-    const raw = {
-      date: "2021-05-01",
-      completed: true,
-      selected: "venue-1",
-      previous_pubs: ["venue-2"],
-      restaurant: null,
-      restaurant_time: "",
-      completedByUid: "completer",
-      pubs: { "venue-1": { name: "The Maypole" } },
-    };
-    getDocMock.mockResolvedValue(cursor);
-    getDocsMock.mockResolvedValue({
-      docs: [
-        { id: "meet-1", data: () => raw },
-        { id: "meet-2", data: () => ({ date: "2021-04-01", completed: true }) },
-      ]
+  it("loads a Group-scoped past-Meets page with the opaque cursor and Venue summary", async () => {
+    requestLastOrdersMock.mockResolvedValue({
+      meets: [{
+        id: "meet-1",
+        date: "2021-05-01",
+        venue: {
+          id: "venue-1", status: "deleted", name: "The Maypole", address: "High Street",
+          website_url: "https://maypole.example", image_url: "https://maypole.example/photo.jpg",
+        },
+      }],
+      next_cursor: "opaque-next-cursor",
     });
 
     vi.stubGlobal("EventSource", FakeEventSource);
-    const { result } = renderHook(() => ({ current: useCurrentMeets("group-a"), past: usePastMeets(1, "cursor-id") }));
-    await waitFor(() => expect(result.current.past.lastVisibleId).toBe("meet-1"));
+    const { result } = renderHook(() => ({ current: useCurrentMeets("group-a"), past: usePastMeets("group-a", 1, "opaque-before-cursor") }));
+    await waitFor(() => expect(result.current.past.nextCursor).toBe("opaque-next-cursor"));
     await waitFor(() => expect(eventSources).toHaveLength(1));
     act(() => eventSources[0].dispatch("current_meets", {
       cursor: "cursor-1",
@@ -126,9 +106,12 @@ describe("Meet read compatibility", () => {
       }],
     }));
 
-    const today = new Date().toISOString().slice(0, 10);
-    expect(whereMock).toHaveBeenCalledWith("completed", "==", true);
-    expect(whereMock).toHaveBeenCalledWith("date", "<", today);
+    expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meets/group-a/past", expect.objectContaining({
+      method: "GET",
+      query: { limit: "1", before: "opaque-before-cursor" },
+    }));
+    expect(whereMock).not.toHaveBeenCalledWith("completed", "==", true);
+    expect(whereMock).not.toHaveBeenCalledWith("date", "<", expect.any(String));
     expect(result.current.current.meetData.meets["meet-2"]).toEqual({
       date: "2099-05-01",
       votingCompleted: true,
@@ -139,22 +122,55 @@ describe("Meet read compatibility", () => {
       restaurantTime: null,
       selectedVenueSummary: { id: "venue-2", status: "active", name: "The Maypole", address: "" },
     });
-    expect(startAfterMock).toHaveBeenCalledWith(cursor);
-    expect(limitMock).toHaveBeenCalledWith(2);
     expect(result.current.past.hasNextPage).toBe(true);
     expect(result.current.past.meetData.meets).toEqual({
       "meet-1": {
         date: "2021-05-01",
         votingCompleted: true,
         selectedVenueId: "venue-1",
-        previousVenueIds: ["venue-2"],
-        restaurantId: null,
-        restaurantTime: "",
-        completedByUid: "completer",
-        venues: { "venue-1": { name: "The Maypole" } },
+        venues: { "venue-1": true },
+        selectedVenueSummary: {
+          id: "venue-1", status: "deleted", name: "The Maypole", address: "High Street",
+          website: "https://maypole.example", image: "https://maypole.example/photo.jpg",
+        },
       },
     });
     expect(result.current.past).not.toHaveProperty("pollData");
+  });
+
+  it("keeps temporary API failures visible and retryable", async () => {
+    requestLastOrdersMock.mockRejectedValue({
+      code: "past_meets_unavailable",
+      message: "Past Meets are temporarily unavailable.",
+    });
+    const { result } = renderHook(() => usePastMeets("group-a", 5, null));
+
+    await waitFor(() => expect(result.current.errorCode).toBe("past_meets_unavailable"));
+
+    expect(result.current.errorMessage).toBe("Past Meets are temporarily unavailable.");
+    expect(result.current.meetData.meets).toEqual({});
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it("refreshes the first page at the London date boundary across spring DST", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-29T00:00:05.000Z"));
+    requestLastOrdersMock.mockResolvedValue({ meets: [], next_cursor: null });
+    const { unmount } = renderHook(() => usePastMeets("group-a", 5, null));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(requestLastOrdersMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(requestLastOrdersMock).toHaveBeenCalledTimes(2);
+    unmount();
   });
 
   it("resets retired current-Meets state and reconnects without the old cursor", async () => {

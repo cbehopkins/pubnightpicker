@@ -29,6 +29,7 @@ import (
 	"last_orders/internal/lastorders/components/listenerscope"
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/pastmeets"
 	"last_orders/internal/lastorders/components/pushsources"
 	"last_orders/internal/lastorders/components/ratelimit"
 	"last_orders/internal/lastorders/components/recurrence"
@@ -1190,8 +1191,17 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	}
 	venueEndpoint.Register(apiMux)
 	var groupAuthorizer meetsendpoint.GroupAuthorizer
+	var pastMeetsService *pastmeets.Service
 	if application.firestoreClient != nil {
 		groupAuthorizer, err = meetsendpoint.NewFirestoreGroupAuthorizer(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		pastMeetsSource, err := pastmeets.NewFirestoreSource(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		pastMeetsService, err = pastmeets.NewService(pastMeetsSource, cfg.Clock.Now)
 		if err != nil {
 			return err
 		}
@@ -1200,7 +1210,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
-		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec,
+		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {

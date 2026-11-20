@@ -19,6 +19,7 @@ const {
   setAttendanceStatusMock,
   clearAttendanceMock,
   runAttendanceActionMock,
+  currentGroup,
 } = vi.hoisted(() => {
   return {
     reschedulePollMock: vi.fn(async () => undefined),
@@ -34,6 +35,7 @@ const {
     setAttendanceStatusMock: vi.fn(async () => undefined),
     clearAttendanceMock: vi.fn(async () => undefined),
     runAttendanceActionMock: vi.fn(async (fn) => fn()),
+    currentGroup: { value: "group-a" },
   };
 });
 
@@ -142,9 +144,19 @@ function createFuturePollData(pollValue) {
 }
 
 function createPastPollData(pollValue) {
+  const value = {
+    selectedVenueSummary: {
+      id: pollValue.selectedVenueId,
+      status: "active",
+      name: "The Maypole",
+      image: "https://img.example.com/maypole.png",
+    },
+    ...pollValue,
+  };
   return {
+    meets: { "poll-1": value },
     *sortedByDate() {
-      yield ["poll-1", pollValue];
+      yield ["poll-1", value];
     },
   };
 }
@@ -159,6 +171,7 @@ describe("CurrentMeets", () => {
     useRoleMock.mockReset();
     useAdminMock.mockReset();
     useSelectorMock.mockReset();
+    currentGroup.value = "group-a";
     reschedulePollMock.mockReset();
     deletePollMock.mockReset();
     setAttendanceStatusMock.mockReset();
@@ -166,7 +179,10 @@ describe("CurrentMeets", () => {
     runAttendanceActionMock.mockReset();
 
     runAttendanceActionMock.mockImplementation(async (fn) => fn());
-    useSelectorMock.mockReturnValue("user-1");
+    useSelectorMock.mockImplementation((selector) => selector({
+      auth: { uid: "user-1" },
+      group: { groupId: currentGroup.value },
+    }));
     useVotesMock.mockReturnValue([{}]);
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
@@ -178,10 +194,10 @@ describe("CurrentMeets", () => {
       }),
       hasNextPage: false,
       hasPreviousPage: false,
-      goToNextPage: vi.fn(),
-      goToPreviousPage: vi.fn(),
-      pageIndex: 0,
+      nextCursor: null,
       isLoading: false,
+      errorMessage: null,
+      retry: vi.fn(),
     });
   });
 
@@ -501,51 +517,115 @@ describe("PastMeets", () => {
     usePastMeetsMock.mockReturnValue({
       meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: false,
-      lastVisibleId: null,
+      nextCursor: null,
       isLoading: false,
-    });
-    useVenuesMock.mockReturnValue({
-      "venue-main": { name: "The Maypole" },
+      errorMessage: null,
+      retry: vi.fn(),
     });
 
     renderPastMeets("/past_meets?pastPageSize=5&pastCursorTrail=poll-older");
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "10" } });
 
-    expect(usePastMeetsMock).toHaveBeenLastCalledWith(10, null);
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-a", 10, null);
   });
 
   it("uses URL cursor trail for older/newer navigation", () => {
     usePastMeetsMock.mockReturnValue({
       meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
       hasNextPage: true,
-      lastVisibleId: "poll-last-visible",
+      nextCursor: "opaque-next-cursor",
       isLoading: false,
-    });
-    useVenuesMock.mockReturnValue({
-      "venue-main": { name: "The Maypole" },
+      errorMessage: null,
+      retry: vi.fn(),
     });
 
     renderPastMeets();
 
     fireEvent.click(screen.getByText("Older Meets"));
-    expect(usePastMeetsMock).toHaveBeenLastCalledWith(5, "poll-last-visible");
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-a", 5, "opaque-next-cursor");
     expect(screen.getByText("Page 2")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Newer Meets"));
-    expect(usePastMeetsMock).toHaveBeenLastCalledWith(5, null);
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-a", 5, null);
     expect(screen.getByText("Page 1")).toBeTruthy();
+  });
+
+  it("resets the cursor trail when the selected Group changes", () => {
+    usePastMeetsMock.mockImplementation((groupId) => ({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
+      hasNextPage: false,
+      nextCursor: null,
+      isLoading: groupId === "group-b",
+      errorMessage: null,
+      retry: vi.fn(),
+    }));
+    const page = () => (
+      <MemoryRouter initialEntries={["/past_meets?pastPageSize=5&pastCursorTrail=old-group-cursor"]}>
+        <Routes>
+          <Route path="/past_meets" element={<PastMeets />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    const view = render(page());
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-a", 5, "old-group-cursor");
+
+    currentGroup.value = "group-b";
+    view.rerender(page());
+
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-b", 5, null);
+    expect(screen.getByText("Page 1")).toBeTruthy();
+    expect(screen.queryByText("The Maypole")).toBeNull();
+    currentGroup.value = "group-a";
+  });
+
+  it("resets an expired cursor after the API reports a date-boundary rejection", () => {
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
+      hasNextPage: false,
+      nextCursor: null,
+      isLoading: false,
+      errorMessage: "The past-Meets cursor is invalid.",
+      errorCode: "invalid_cursor",
+      retry: vi.fn(),
+    });
+
+    renderPastMeets("/past_meets?pastPageSize=5&pastCursorTrail=expired-cursor");
+
+    expect(usePastMeetsMock).toHaveBeenLastCalledWith("group-a", 5, null);
+    expect(screen.getByText("Page 1")).toBeTruthy();
+  });
+
+  it("shows a retry control for temporary Past Meets API failures", () => {
+    const retry = vi.fn();
+    usePastMeetsMock.mockReturnValue({
+      meetData: { meets: {} },
+      hasNextPage: false,
+      nextCursor: null,
+      isLoading: false,
+      errorMessage: "Past Meets are temporarily unavailable.",
+      errorCode: "past_meets_unavailable",
+      retry,
+    });
+
+    renderPastMeets();
+
+    expect(screen.getByRole("alert").textContent).toContain("Past Meets are temporarily unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it("shows a placeholder when the Venue image URL is invalid", () => {
     usePastMeetsMock.mockReturnValue({
-      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
+      meetData: createPastPollData({
+        selectedVenueId: "venue-main", date: "2026-03-20",
+        selectedVenueSummary: { id: "venue-main", status: "active", name: "The Maypole", image: "invalid" },
+      }),
       hasNextPage: false,
-      lastVisibleId: null,
+      nextCursor: null,
       isLoading: false,
-    });
-    useVenuesMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", image: "not-a-valid-image-url" },
+      errorMessage: null,
+      retry: vi.fn(),
     });
 
     renderPastMeets();
@@ -556,13 +636,15 @@ describe("PastMeets", () => {
 
   it("falls back to placeholder when image request fails", () => {
     usePastMeetsMock.mockReturnValue({
-      meetData: createPastPollData({ selectedVenueId: "venue-main", date: "2026-03-20" }),
+      meetData: createPastPollData({
+        selectedVenueId: "venue-main", date: "2026-03-20",
+        selectedVenueSummary: { id: "venue-main", status: "active", name: "The Maypole", image: "https://img.example.com/maypole.png" },
+      }),
       hasNextPage: false,
-      lastVisibleId: null,
+      nextCursor: null,
       isLoading: false,
-    });
-    useVenuesMock.mockReturnValue({
-      "venue-main": { name: "The Maypole", image: "https://img.example.com/maypole.png" },
+      errorMessage: null,
+      retry: vi.fn(),
     });
 
     renderPastMeets();
@@ -572,5 +654,24 @@ describe("PastMeets", () => {
 
     expect(screen.getByText("No image available")).toBeTruthy();
     expect(screen.queryByAltText("Photo of The Maypole")).toBeNull();
+  });
+
+  it("keeps a historical Meet visible when its Venue is confirmed missing", () => {
+    usePastMeetsMock.mockReturnValue({
+      meetData: createPastPollData({
+        selectedVenueId: "missing-venue", date: "2026-03-20",
+        selectedVenueSummary: { id: "missing-venue", status: "missing", name: "" },
+      }),
+      hasNextPage: false,
+      nextCursor: null,
+      isLoading: false,
+      errorMessage: null,
+      retry: vi.fn(),
+    });
+
+    renderPastMeets();
+
+    expect(screen.getByText("Venue unavailable")).toBeTruthy();
+    expect(screen.getByText("2026-03-20")).toBeTruthy();
   });
 });

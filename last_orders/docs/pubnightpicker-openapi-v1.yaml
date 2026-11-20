@@ -922,10 +922,9 @@ paths:
       tags: [Meets]
       operationId: listPastMeets
       summary: List past Meets for a group
-      description: Returns completed Meets with a local date before today, newest first. No stream is provided for this historical collection.
+      description: Returns voting-complete Meets for the requested Group with a scheduled date before today in Europe/London, newest first, ordered by date descending and Meet ID ascending for ties. Historical results are queried directly and do not admit individual Meet projections. Votes and attendance are omitted; no stream is provided for this collection.
       security:
         - bearerAuth: []
-        - {}
       parameters:
         - name: limit
           in: query
@@ -938,7 +937,7 @@ paths:
         - name: before
           in: query
           required: false
-          description: Opaque pagination cursor from the previous page.
+          description: Stable opaque pagination cursor from the previous page, scoped to this Group and London date. This is not a stream cursor.
           schema:
             type: string
       responses:
@@ -957,8 +956,16 @@ paths:
                 $ref: '#/components/schemas/PastMeetsPage'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: The authoritative query or required Venue details are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/InternalError'
   /meet/{meet_id}:
@@ -1801,6 +1808,21 @@ components:
           type: array
           items:
             type: string
+    PastMeet:
+      type: object
+      required: [id, date, venue]
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+          format: date
+        venue:
+          oneOf:
+            - $ref: '#/components/schemas/VenueSummary'
+            - $ref: '#/components/schemas/MissingVenueReference'
+            - type: 'null'
+          description: Null when no Venue is selected; missing references retain their Venue ID.
     CurrentMeetsSnapshot:
       type: object
       required: [cursor, meets]
@@ -1819,7 +1841,7 @@ components:
         meets:
           type: array
           items:
-            $ref: '#/components/schemas/Meet'
+            $ref: '#/components/schemas/PastMeet'
         next_cursor:
           type: [string, 'null']
     CompleteMeetRequest:

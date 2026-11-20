@@ -1,18 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useSyncExternalStore } from "react";
 import {
-  query,
   collection,
+  query,
   where,
-  orderBy,
-  limit,
-  startAfter,
-  getDocs,
-  getDoc,
-  doc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import useQueryDb from "./useQueryDb";
-import { MeetData, getTodaysDate, millisecUntilMidnight } from "../utils/meetSorting";
+import { MeetData } from "../utils/meetSorting";
+import { requestLastOrders } from "../utils/lastOrdersApi";
 import { lastOrdersApiURL } from "../utils/lastOrdersApiURL";
 
 const currentMeetStreams = new Map();
@@ -24,22 +19,28 @@ const noCurrentGroup = {
   retry: () => { },
 };
 
-function useTodaysDate() {
-  const [todaysDate, setTodaysDate] = useState(getTodaysDate());
+const londonDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
+function getLondonDate() {
+  const parts = Object.fromEntries(londonDateFormatter.formatToParts(new Date()).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function useLondonDate() {
+  const [date, setDate] = useState(getLondonDate);
   useEffect(() => {
-    // When the date changes, then the Meets we should filter by should also change
-    const timeout = millisecUntilMidnight();
-    const timeoutId = setTimeout(() => {
-      setTodaysDate(getTodaysDate());
-    }, timeout + 2000);
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [todaysDate]);
-
-  return todaysDate;
+    const intervalID = setInterval(() => {
+      const currentDate = getLondonDate();
+      setDate((previousDate) => currentDate === previousDate ? previousDate : currentDate);
+    }, 60_000);
+    return () => clearInterval(intervalID);
+  }, []);
+  return date;
 }
 
 function createCurrentMeetStream(groupId) {
@@ -217,65 +218,107 @@ export function useCurrentMeets(groupId, userId = "") {
   return groupId ? { ...state, retry: () => retryCurrentMeets(streamKey) } : noCurrentGroup;
 }
 
-export function usePastMeets(pageSize = 5, cursorId = null) {
-  const todaysDate = useTodaysDate();
-  const baseQuery = useMemo(
-    () =>
-      query(
-        collection(db, "polls"),
-        where("completed", "==", true),
-        where("date", "<", todaysDate),
-        orderBy("date", "desc")
-      ),
-    [todaysDate]
-  );
-
-  const [meetRecords, setMeetRecords] = useState({});
-  const [lastVisibleId, setLastVisibleId] = useState(null);
-  const [hasNextPage, setHasNextPage] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const fetchPage = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      let pageQuery = query(baseQuery, limit(pageSize + 1));
-
-      if (cursorId) {
-        const cursorSnapshot = await getDoc(doc(db, "polls", cursorId));
-        if (cursorSnapshot.exists()) {
-          pageQuery = query(baseQuery, startAfter(cursorSnapshot), limit(pageSize + 1));
-        }
-      }
-
-      const snapshot = await getDocs(pageQuery);
-      let docs = [...snapshot.docs];
-      const computedHasNextPage = docs.length > pageSize;
-      if (computedHasNextPage) {
-        docs = docs.slice(0, pageSize);
-      }
-
-      const nextMeetRecords = docs.reduce((acc, snap) => {
-        acc[snap.id] = snap.data();
-        return acc;
-      }, {});
-
-      setMeetRecords(nextMeetRecords);
-      setLastVisibleId(docs[docs.length - 1]?.id || null);
-      setHasNextPage(computedHasNextPage);
-    } finally {
-      setIsLoading(false);
+function pastMeetData(payload) {
+  if (!payload || !Array.isArray(payload.meets) ||
+    (payload.next_cursor !== null && typeof payload.next_cursor !== "string")) {
+    throw new Error("Last Orders returned an invalid past-Meets page.");
+  }
+  const records = {};
+  for (const meet of payload.meets) {
+    if (!meet || typeof meet.id !== "string" || typeof meet.date !== "string") {
+      throw new Error("Last Orders returned an invalid past-Meet record.");
     }
-  }, [baseQuery, pageSize, cursorId]);
-
-  useEffect(() => {
-    fetchPage();
-  }, [fetchPage]);
-
+    const venue = meet.venue;
+    if (venue !== null && (!venue || typeof venue.id !== "string" ||
+      !["active", "deleted", "missing"].includes(venue.status))) {
+      throw new Error("Last Orders returned an invalid past-Meet Venue summary.");
+    }
+    const selectedVenueSummary = venue === null ? null : {
+      id: venue.id,
+      status: venue.status,
+      name: typeof venue.name === "string" ? venue.name : "",
+      address: typeof venue.address === "string" ? venue.address : "",
+      website: typeof venue.website_url === "string" ? venue.website_url : "",
+      image: typeof venue.image_url === "string" ? venue.image_url : "",
+    };
+    records[meet.id] = {
+      date: meet.date,
+      completed: true,
+      selected: selectedVenueSummary?.id ?? "",
+      pubs: selectedVenueSummary ? { [selectedVenueSummary.id]: true } : {},
+      selectedVenueSummary,
+    };
+  }
   return {
-    meetData: new MeetData(meetRecords),
-    hasNextPage,
-    lastVisibleId,
-    isLoading,
+    meetData: new MeetData(records),
+    nextCursor: payload.next_cursor,
+  };
+}
+
+export function usePastMeets(groupId, pageSize = 5, cursor = null) {
+  const londonDate = useLondonDate();
+  const [retryCount, setRetryCount] = useState(0);
+  const requestKey = JSON.stringify([groupId, pageSize, cursor, londonDate, retryCount]);
+  const [state, setState] = useState({
+    requestKey: null,
+    meetData: new MeetData({}),
+    nextCursor: null,
+    hasNextPage: false,
+    isLoading: Boolean(groupId),
+    errorMessage: groupId ? null : "The current Group is unavailable.",
+    errorCode: null,
+  });
+  useEffect(() => {
+    if (!groupId) {
+      setState({
+        requestKey,
+        meetData: new MeetData({}), nextCursor: null, hasNextPage: false,
+        isLoading: false, errorMessage: "The current Group is unavailable.", errorCode: null,
+      });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ requestKey, meetData: new MeetData({}), nextCursor: null, hasNextPage: false, isLoading: true, errorMessage: null, errorCode: null });
+    requestLastOrders(`api/meets/${encodeURIComponent(groupId)}/past`, {
+      method: "GET",
+      query: { limit: String(pageSize), ...(cursor ? { before: cursor } : {}) },
+      signal: controller.signal,
+    }).then((payload) => {
+      try {
+        const page = pastMeetData(payload);
+        setState({
+          requestKey,
+          ...page,
+          hasNextPage: page.nextCursor !== null,
+          isLoading: false,
+          errorMessage: null,
+          errorCode: null,
+        });
+      } catch (error) {
+        setState({ requestKey, meetData: new MeetData({}), nextCursor: null, hasNextPage: false, isLoading: false, errorMessage: error.message, errorCode: "invalid_response" });
+      }
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      setState({
+        requestKey,
+        meetData: new MeetData({}), nextCursor: null, hasNextPage: false, isLoading: false,
+        errorMessage: error?.message || "Past Meets are temporarily unavailable.",
+        errorCode: error?.code || "request_error",
+      });
+    });
+    return () => controller.abort();
+  }, [groupId, pageSize, cursor, retryCount, londonDate, requestKey]);
+
+  const requestIsCurrent = state.requestKey === requestKey;
+  return {
+    ...state,
+    meetData: requestIsCurrent ? state.meetData : new MeetData({}),
+    nextCursor: requestIsCurrent ? state.nextCursor : null,
+    hasNextPage: requestIsCurrent && state.hasNextPage,
+    isLoading: !requestIsCurrent || state.isLoading,
+    errorMessage: requestIsCurrent ? state.errorMessage : null,
+    errorCode: requestIsCurrent ? state.errorCode : null,
+    retry: () => setRetryCount((count) => count + 1),
   };
 }
 

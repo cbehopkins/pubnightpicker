@@ -2,10 +2,15 @@ package meets
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/firebaseauth"
@@ -32,6 +37,11 @@ type currentReader interface {
 	CurrentDate() string
 }
 
+type pastMeetsReader interface {
+	Today() string
+	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
+}
+
 type Endpoint struct {
 	Reader       reader
 	Venues       venueReader
@@ -41,6 +51,7 @@ type Endpoint struct {
 	CurrentReady <-chan struct{}
 	CurrentHub   *sse.Hub
 	Cursors      *sse.CursorCodec
+	Past         pastMeetsReader
 }
 
 type venueSummary struct {
@@ -75,10 +86,175 @@ type currentMeetsResponse struct {
 	Meets  []meetResponse `json:"meets"`
 }
 
+type pastMeetsResponse struct {
+	Meets      []pastMeetResponse `json:"meets"`
+	NextCursor *string            `json:"next_cursor"`
+}
+
+type pastMeetResponse struct {
+	ID    string `json:"id"`
+	Date  string `json:"date"`
+	Venue any    `json:"venue"`
+}
+
+type pastMeetPosition struct {
+	Date string `json:"date"`
+	ID   string `json:"id"`
+}
+
+const pastMeetsCursorScope = "past-meets-v1"
+
 func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
 	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.currentStream)))
+	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.past)))
+}
+
+func (e *Endpoint) past(w http.ResponseWriter, r *http.Request) {
+	if e.Past == nil || e.Groups == nil || e.Cursors == nil {
+		writePastUnavailable(w)
+		return
+	}
+	groupID := r.PathValue("group_id")
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	today := e.Past.Today()
+	limit, err := parsePastMeetsLimit(r)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	var afterDate, afterID string
+	if values, supplied := r.URL.Query()["before"]; supplied {
+		if len(values) != 1 || values[0] == "" {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_cursor", "The past-Meets cursor is invalid.")
+			return
+		}
+		claims, err := e.Cursors.Validate(values[0], sse.CursorExpectation{
+			Stream: pastMeetsCursorScope, Resource: groupID, Generation: pastMeetsCursorScope,
+			HighWater: 0, Date: today,
+		})
+		if err != nil {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_cursor", "The past-Meets cursor is invalid.")
+			return
+		}
+		position, err := decodePastMeetPosition(claims.Position)
+		if err != nil {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_cursor", "The past-Meets cursor is invalid.")
+			return
+		}
+		if position.Date >= today {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_cursor", "The past-Meets cursor is invalid.")
+			return
+		}
+		afterDate, afterID = position.Date, position.ID
+	}
+	meets, hasNext, err := e.Past.List(r.Context(), groupID, today, limit, afterDate, afterID)
+	if err != nil {
+		writePastUnavailable(w)
+		return
+	}
+	if len(meets) > limit {
+		writePastUnavailable(w)
+		return
+	}
+	response := pastMeetsResponse{Meets: make([]pastMeetResponse, 0, len(meets))}
+	for _, meet := range meets {
+		selectedVenue, err := e.selectedVenueResponse(r.Context(), meet.SelectedVenueID)
+		if err != nil {
+			writePastVenueUnavailable(w)
+			return
+		}
+		response.Meets = append(response.Meets, pastMeetResponse{ID: meet.ID, Date: meet.Date, Venue: selectedVenue})
+	}
+	if hasNext && len(meets) > 0 {
+		position, err := json.Marshal(pastMeetPosition{Date: meets[len(meets)-1].Date, ID: meets[len(meets)-1].ID})
+		if err != nil {
+			firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to create the past-Meets cursor.")
+			return
+		}
+		claims := sse.CursorClaims{
+			Stream: pastMeetsCursorScope, Resource: groupID, Generation: pastMeetsCursorScope,
+			Date: today, Position: base64.RawURLEncoding.EncodeToString(position),
+		}
+		token, err := e.Cursors.Encode(claims)
+		if err != nil {
+			firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to create the past-Meets cursor.")
+			return
+		}
+		response.NextCursor = &token
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func parsePastMeetsLimit(r *http.Request) (int, error) {
+	values, supplied := r.URL.Query()["limit"]
+	if !supplied {
+		return 20, nil
+	}
+	if len(values) != 1 {
+		return 0, fmt.Errorf("limit must be supplied once")
+	}
+	limit, err := strconv.Atoi(values[0])
+	if err != nil || limit < 1 || limit > 100 {
+		return 0, fmt.Errorf("limit must be between 1 and 100")
+	}
+	return limit, nil
+}
+
+func decodePastMeetPosition(encoded string) (pastMeetPosition, error) {
+	data, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(data) == 0 || len(data) > 512 {
+		return pastMeetPosition{}, sse.ErrInvalidCursor
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var position pastMeetPosition
+	if err := decoder.Decode(&position); err != nil || position.ID == "" {
+		return pastMeetPosition{}, sse.ErrInvalidCursor
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return pastMeetPosition{}, sse.ErrInvalidCursor
+	}
+	date, err := time.Parse(time.DateOnly, position.Date)
+	if err != nil || date.Format(time.DateOnly) != position.Date {
+		return pastMeetPosition{}, sse.ErrInvalidCursor
+	}
+	return position, nil
+}
+
+func (e *Endpoint) selectedVenueResponse(ctx context.Context, venueID string) (any, error) {
+	if venueID == "" {
+		return nil, nil
+	}
+	if e.Venues == nil {
+		return nil, errors.New("Venue reader is unavailable")
+	}
+	venue, missing, err := e.Venues.GetForMeet(ctx, venueID)
+	if err != nil {
+		return nil, err
+	}
+	if missing {
+		return missingVenueReference{ID: venueID, Status: "missing"}, nil
+	}
+	venueType := venue.VenueType
+	if venueType == "" {
+		venueType = "pub"
+	}
+	status := "active"
+	if venue.DeletedOn != "" {
+		status = "deleted"
+	}
+	return venueSummary{
+		ID: venue.ID, Status: status, Name: venue.Name, Address: venue.Address,
+		WebsiteURL: optionalValue(venue.Website), ImageURL: optionalValue(venue.PhotoURL), VenueType: venueType,
+	}, nil
 }
 
 func (e *Endpoint) current(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +401,14 @@ func writeCurrentUnavailable(w http.ResponseWriter) {
 	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Current Meets are temporarily unavailable.")
 }
 
+func writePastUnavailable(w http.ResponseWriter) {
+	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "past_meets_unavailable", "Past Meets are temporarily unavailable.")
+}
+
+func writePastVenueUnavailable(w http.ResponseWriter) {
+	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "venue_unavailable", "Past Meet Venue data is temporarily unavailable.")
+}
+
 func writeCurrentReadError(w http.ResponseWriter, err error) {
 	if errors.Is(err, currentmeetcache.ErrUnavailable) || errors.Is(err, currentmeetcache.ErrRetired) {
 		writeCurrentUnavailable(w)
@@ -266,33 +450,10 @@ func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projection := snapshot.Projection
-	var selectedVenue any
-	if projection.SelectedVenueID != "" {
-		if e.Venues == nil {
-			firebaseauth.WriteError(w, http.StatusServiceUnavailable, "venue_unavailable", "Meet Venue data is temporarily unavailable.")
-			return
-		}
-		venue, missing, err := e.Venues.GetForMeet(r.Context(), projection.SelectedVenueID)
-		if err != nil {
-			firebaseauth.WriteError(w, http.StatusServiceUnavailable, "venue_unavailable", "Meet Venue data is temporarily unavailable.")
-			return
-		}
-		if missing {
-			selectedVenue = missingVenueReference{ID: projection.SelectedVenueID, Status: "missing"}
-		} else {
-			venueType := venue.VenueType
-			if venueType == "" {
-				venueType = "pub"
-			}
-			status := "active"
-			if venue.DeletedOn != "" {
-				status = "deleted"
-			}
-			selectedVenue = venueSummary{
-				ID: venue.ID, Status: status, Name: venue.Name, Address: venue.Address,
-				WebsiteURL: optionalValue(venue.Website), ImageURL: optionalValue(venue.PhotoURL), VenueType: venueType,
-			}
-		}
+	selectedVenue, err := e.selectedVenueResponse(r.Context(), projection.SelectedVenueID)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "venue_unavailable", "Meet Venue data is temporarily unavailable.")
+		return
 	}
 	response := meetResponse{
 		ID:                projection.ID,

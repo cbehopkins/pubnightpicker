@@ -2,7 +2,9 @@ package meets
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,8 +13,10 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/components/currentmeetcache"
+	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/sse"
+	"last_orders/internal/lastorders/components/venuecache"
 )
 
 type currentReaderStub struct {
@@ -32,6 +36,38 @@ func (r *currentReaderStub) Renew(context.Context, string, string) error {
 }
 
 func (r *currentReaderStub) CurrentDate() string { return r.date }
+
+type pastMeetsReaderStub struct {
+	today string
+	list  func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
+}
+
+func (r *pastMeetsReaderStub) Today() string { return r.today }
+
+func (r *pastMeetsReaderStub) List(ctx context.Context, groupID, beforeDate string, limit int, afterDate, afterID string) ([]meetcache.Projection, bool, error) {
+	return r.list(ctx, groupID, beforeDate, limit, afterDate, afterID)
+}
+
+type venueReaderStub func(context.Context, string) (venuecache.VenueProjection, bool, error)
+
+func (r venueReaderStub) GetForMeet(ctx context.Context, venueID string) (venuecache.VenueProjection, bool, error) {
+	return r(ctx, venueID)
+}
+
+type pastMeetAuthStub struct{}
+
+func (pastMeetAuthStub) Verify(_ context.Context, token string) (firebaseauth.Principal, error) {
+	if token != "valid-token" {
+		return firebaseauth.Principal{}, firebaseauth.ErrUnauthenticated
+	}
+	return firebaseauth.Principal{UID: "verified-user"}, nil
+}
+
+func authenticatedPastRequest(path string) *http.Request {
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+	return request
+}
 
 type groupAuthorizerStub func(context.Context, string, string) (bool, error)
 
@@ -70,6 +106,253 @@ func TestRegisterCurrentMeetsGetUnavailableWithoutProjection(t *testing.T) {
 	}
 	if payload.Error.Code != "projection_unavailable" {
 		t.Fatalf("error code=%q, want projection_unavailable", payload.Error.Code)
+	}
+}
+
+func TestRegisterPastMeetsGetUnavailableWithoutQuery(t *testing.T) {
+	mux := http.NewServeMux()
+	(&Endpoint{Auth: pastMeetAuthStub{}}).Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/group-a/past"))
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("past-Meets GET status=%d body=%s, want HTTP 503", response.Code, response.Body)
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Error.Code != "past_meets_unavailable" {
+		t.Fatalf("error code=%q, want past_meets_unavailable", payload.Error.Code)
+	}
+}
+
+func TestPastMeetsRequiresAuthentication(t *testing.T) {
+	mux := http.NewServeMux()
+	(&Endpoint{}).Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/meets/group-a/past", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated past-Meets GET status=%d body=%s, want HTTP 401", response.Code, response.Body)
+	}
+}
+
+func TestPastMeetsGetReturnsOpaquePageAndSelectedVenueSummaries(t *testing.T) {
+	codec := testCurrentCursorCodec(t)
+	var gotGroupID, gotBeforeDate, gotAfterDate, gotAfterID string
+	var gotLimit int
+	list := func(_ context.Context, groupID, beforeDate string, limit int, afterDate, afterID string) ([]meetcache.Projection, bool, error) {
+		gotGroupID, gotBeforeDate, gotLimit = groupID, beforeDate, limit
+		gotAfterDate, gotAfterID = afterDate, afterID
+		return []meetcache.Projection{
+			{ID: "meet-b", GroupID: "group-a", Date: "2026-11-18", VotingComplete: true, SelectedVenueID: "deleted-venue"},
+			{ID: "meet-a", GroupID: "group-a", Date: "2026-11-17", VotingComplete: true, SelectedVenueID: "missing-venue"},
+		}, true, nil
+	}
+	endpoint := &Endpoint{
+		Past: &pastMeetsReaderStub{today: "2026-11-20", list: list},
+		Venues: venueReaderStub(func(_ context.Context, venueID string) (venuecache.VenueProjection, bool, error) {
+			if venueID == "missing-venue" {
+				return venuecache.VenueProjection{}, true, nil
+			}
+			return venuecache.VenueProjection{
+				ID: venueID, Name: "Old Pub", Address: "Old Street", Website: "https://pub.example",
+				PhotoURL: "https://pub.example/photo.jpg", VenueType: "pub", DeletedOn: "2026-11-18T00:00:00Z",
+			}, false, nil
+		}),
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "verified-user" && groupID == "group-a", nil
+		}),
+		Cursors: codec, Auth: pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/group-a/past?limit=2"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("past-Meets GET status=%d body=%s", response.Code, response.Body)
+	}
+	var payload struct {
+		Meets []struct {
+			ID    string          `json:"id"`
+			Date  string          `json:"date"`
+			Venue json.RawMessage `json:"venue"`
+		} `json:"meets"`
+		NextCursor *string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if gotGroupID != "group-a" || gotBeforeDate != "2026-11-20" || gotLimit != 2 || gotAfterDate != "" || gotAfterID != "" {
+		t.Fatalf("past query args group=%q before=%q limit=%d after=(%q,%q)", gotGroupID, gotBeforeDate, gotLimit, gotAfterDate, gotAfterID)
+	}
+	if len(payload.Meets) != 2 || payload.Meets[0].ID != "meet-b" || payload.Meets[1].ID != "meet-a" || payload.NextCursor == nil {
+		t.Fatalf("past-Meets page=%+v", payload)
+	}
+	var selectedVenue struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal(payload.Meets[0].Venue, &selectedVenue); err != nil {
+		t.Fatal(err)
+	}
+	if selectedVenue.ID != "deleted-venue" || selectedVenue.Status != "deleted" || selectedVenue.Name != "Old Pub" {
+		t.Fatalf("deleted Venue summary=%+v", selectedVenue)
+	}
+	var missingVenue struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(payload.Meets[1].Venue, &missingVenue); err != nil {
+		t.Fatal(err)
+	}
+	if missingVenue.ID != "missing-venue" || missingVenue.Status != "missing" {
+		t.Fatalf("missing Venue reference=%+v", missingVenue)
+	}
+	claims, err := codec.Validate(*payload.NextCursor, sse.CursorExpectation{
+		Stream: "past-meets-v1", Resource: "group-a", Generation: "past-meets-v1", HighWater: 0, Date: "2026-11-20",
+	})
+	if err != nil {
+		t.Fatalf("validate next cursor: %v", err)
+	}
+	if claims.Position == "" || strings.Contains(response.Body.String(), "votes") || strings.Contains(response.Body.String(), "attendance") {
+		t.Fatalf("cursor or Meet response is invalid: %s", response.Body)
+	}
+	secondResponse := httptest.NewRecorder()
+	secondRequest := authenticatedPastRequest("/api/meets/group-a/past?limit=2&before=" + *payload.NextCursor)
+	mux.ServeHTTP(secondResponse, secondRequest)
+	if secondResponse.Code != http.StatusOK || gotAfterDate != "2026-11-17" || gotAfterID != "meet-a" {
+		t.Fatalf("second page status=%d position=(%q,%q) body=%s", secondResponse.Code, gotAfterDate, gotAfterID, secondResponse.Body)
+	}
+	var secondPayload pastMeetsResponse
+	if err := json.Unmarshal(secondResponse.Body.Bytes(), &secondPayload); err != nil {
+		t.Fatal(err)
+	}
+	if secondPayload.NextCursor == nil || *secondPayload.NextCursor != *payload.NextCursor {
+		t.Fatalf("cursor for stable page position changed: first=%q second=%v", *payload.NextCursor, secondPayload.NextCursor)
+	}
+}
+
+func TestPastMeetsRejectsInvalidCursorBeforeQuery(t *testing.T) {
+	listCalls := 0
+	endpoint := &Endpoint{
+		Past: &pastMeetsReaderStub{
+			today: "2026-11-20",
+			list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+				listCalls++
+				return nil, false, nil
+			},
+		},
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/group-a/past?before=invalid"))
+	if response.Code != http.StatusBadRequest || listCalls != 0 {
+		t.Fatalf("invalid cursor status=%d list calls=%d body=%s", response.Code, listCalls, response.Body)
+	}
+}
+
+func TestPastMeetsRejectsCursorPositionOutsideLondonDate(t *testing.T) {
+	codec := testCurrentCursorCodec(t)
+	position, err := json.Marshal(pastMeetPosition{Date: "2026-11-20", ID: "meet-today"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := codec.Encode(sse.CursorClaims{
+		Stream: pastMeetsCursorScope, Resource: "group-a", Generation: pastMeetsCursorScope,
+		Date: "2026-11-20", Position: base64.RawURLEncoding.EncodeToString(position),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCalls := 0
+	endpoint := &Endpoint{
+		Past: &pastMeetsReaderStub{
+			today: "2026-11-20",
+			list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+				listCalls++
+				return nil, false, nil
+			},
+		},
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Cursors: codec, Auth: pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/group-a/past?before="+token))
+	if response.Code != http.StatusBadRequest || listCalls != 0 {
+		t.Fatalf("today cursor position status=%d list calls=%d body=%s", response.Code, listCalls, response.Body)
+	}
+}
+
+func TestPastMeetsDoesNotQueryUnauthorizedGroup(t *testing.T) {
+	listCalls := 0
+	endpoint := &Endpoint{
+		Past: &pastMeetsReaderStub{
+			today: "2026-11-20",
+			list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+				listCalls++
+				return nil, false, nil
+			},
+		},
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return false, nil }),
+		Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/private-group/past"))
+	if response.Code != http.StatusNotFound || listCalls != 0 {
+		t.Fatalf("denied past-Meets status=%d list calls=%d body=%s", response.Code, listCalls, response.Body)
+	}
+}
+
+func TestPastMeetsDoesNotTreatTransientSourceFailuresAsMissing(t *testing.T) {
+	transientErr := errors.New("temporary source failure")
+	for _, test := range []struct {
+		name string
+		past pastMeetsReader
+		venues venueReader
+	}{
+		{
+			name: "Meet query",
+			past: &pastMeetsReaderStub{today: "2026-11-20", list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+				return nil, false, transientErr
+			}},
+		},
+		{
+			name: "Venue lookup",
+			past: &pastMeetsReaderStub{today: "2026-11-20", list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+				return []meetcache.Projection{{ID: "meet-1", GroupID: "group-a", Date: "2026-11-19", SelectedVenueID: "venue-1"}}, false, nil
+			}},
+			venues: venueReaderStub(func(context.Context, string) (venuecache.VenueProjection, bool, error) {
+				return venuecache.VenueProjection{}, false, transientErr
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			endpoint := &Endpoint{
+				Past: test.past, Venues: test.venues,
+				Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+				Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
+			}
+			mux := http.NewServeMux()
+			endpoint.Register(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, authenticatedPastRequest("/api/meets/group-a/past"))
+			if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), `"status":"missing"`) {
+				t.Fatalf("transient error status=%d body=%s", response.Code, response.Body)
+			}
+		})
 	}
 }
 
