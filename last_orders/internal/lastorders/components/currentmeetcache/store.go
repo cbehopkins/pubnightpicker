@@ -181,7 +181,7 @@ func (s *Store) Snapshot(ctx context.Context, groupID, owner string, venues *ven
 				}
 				view.Venue = &VenueSummary{
 					ID: venue.ID, Status: status, Name: venue.Name, Address: venue.Address,
-					ImageURL: optionalString(venue.PhotoURL), VenueType: venueType,
+					WebsiteURL: optionalString(venue.Website), ImageURL: optionalString(venue.PhotoURL), VenueType: venueType,
 				}
 			}
 		}

@@ -53,7 +53,8 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	deletedVenue := firestoreClient.Collection("pubs").Doc("deleted-venue")
 	if _, err := deletedVenue.Set(ctx, map[string]any{
 		"name": "The Old Maypole", "venueType": "pub", "address": "Old Street",
-		"pubImage": "https://img.example.test/old.png", "deleted_on": "2026-11-19T00:00:00Z",
+		"web_site": "https://old-maypole.example.test", "pubImage": "https://img.example.test/old.png",
+		"deleted_on": "2026-11-19T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,14 +201,15 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("current-Meets order or size is wrong: %+v", current)
 	}
 	var selectedVenue struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-		Name   string `json:"name"`
+		ID         string `json:"id"`
+		Status     string `json:"status"`
+		Name       string `json:"name"`
+		WebsiteURL string `json:"website_url"`
 	}
 	if err := json.Unmarshal(current.Meets[0].Venue, &selectedVenue); err != nil {
 		t.Fatal(err)
 	}
-	if selectedVenue.ID != "deleted-venue" || selectedVenue.Status != "deleted" || selectedVenue.Name != "The Old Maypole" {
+	if selectedVenue.ID != "deleted-venue" || selectedVenue.Status != "deleted" || selectedVenue.Name != "The Old Maypole" || selectedVenue.WebsiteURL != "https://old-maypole.example.test" {
 		t.Fatalf("soft-deleted selected Venue=%+v", selectedVenue)
 	}
 	if len(current.Meets[0].PreviousVenueIDs) != 1 || current.Meets[0].PreviousVenueIDs[0] != "old-venue" {

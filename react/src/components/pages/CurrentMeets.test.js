@@ -251,6 +251,7 @@ describe("CurrentMeets", () => {
           status: "deleted",
           name: "The Old Maypole",
           address: "Old Street",
+          website_url: "old-maypole.example.test",
           image_url: null,
         },
         date: "2026-03-30",
@@ -262,7 +263,7 @@ describe("CurrentMeets", () => {
 
     render(<CurrentMeets />);
 
-    expect(screen.getByRole("heading", { name: "The Old Maypole" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "The Old Maypole" }).getAttribute("href")).toBe("https://old-maypole.example.test");
     expect(screen.getByText("Deleted")).toBeTruthy();
     expect(screen.getByText("Old Street")).toBeTruthy();
   });

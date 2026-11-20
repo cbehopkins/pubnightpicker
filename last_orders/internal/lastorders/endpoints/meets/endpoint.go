@@ -48,6 +48,7 @@ type venueSummary struct {
 	Status    string  `json:"status"`
 	Name      string  `json:"name"`
 	Address   string  `json:"address"`
+	WebsiteURL *string `json:"website_url"`
 	ImageURL  *string `json:"image_url"`
 	VenueType string  `json:"venue_type"`
 }
@@ -195,7 +196,8 @@ func (e *Endpoint) currentResponse(groupID string, snapshot currentmeetcache.Sna
 		if item.Venue != nil {
 			selectedVenue = venueSummary{
 				ID: item.Venue.ID, Status: item.Venue.Status, Name: item.Venue.Name,
-				Address: item.Venue.Address, ImageURL: item.Venue.ImageURL, VenueType: item.Venue.VenueType,
+				Address: item.Venue.Address, WebsiteURL: item.Venue.WebsiteURL,
+				ImageURL: item.Venue.ImageURL, VenueType: item.Venue.VenueType,
 			}
 		} else if item.MissingVenueID != "" {
 			selectedVenue = missingVenueReference{ID: item.MissingVenueID, Status: "missing"}
@@ -288,7 +290,7 @@ func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {
 			}
 			selectedVenue = venueSummary{
 				ID: venue.ID, Status: status, Name: venue.Name, Address: venue.Address,
-				ImageURL: optionalValue(venue.PhotoURL), VenueType: venueType,
+				WebsiteURL: optionalValue(venue.Website), ImageURL: optionalValue(venue.PhotoURL), VenueType: venueType,
 			}
 		}
 	}

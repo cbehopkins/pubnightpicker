@@ -1738,6 +1738,9 @@ components:
           type: string
         address:
           type: string
+        website_url:
+          type: [string, 'null']
+          format: uri
         image_url:
           type: [string, 'null']
           format: uri

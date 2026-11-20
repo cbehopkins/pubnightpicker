@@ -25,12 +25,13 @@ type Source interface {
 }
 
 type VenueSummary struct {
-	ID        string
-	Status    string
-	Name      string
-	Address   string
-	ImageURL  *string
-	VenueType string
+	ID         string
+	Status     string
+	Name       string
+	Address    string
+	WebsiteURL *string
+	ImageURL   *string
+	VenueType  string
 }
 
 type MeetView struct {

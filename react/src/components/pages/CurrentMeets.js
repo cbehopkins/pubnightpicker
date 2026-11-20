@@ -41,7 +41,7 @@ import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
 /** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
-/** @typedef {{ id?: string, status?: string, name?: string, address?: string, image_url?: string | null }} SelectedVenueSummary */
+/** @typedef {{ id?: string, status?: string, name?: string, address?: string, website_url?: string | null, image_url?: string | null }} SelectedVenueSummary */
 /** @typedef {{ selectedVenueId?: string, selectedVenueSummary?: SelectedVenueSummary | null, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, MeetValue]> }} SortedMeetCollection */
 
@@ -358,6 +358,7 @@ function CurrentMeet({
       [currentVenueId]: {
         name: selectedVenueSummary.name,
         address: selectedVenueSummary.address,
+        website: selectedVenueSummary.website_url || undefined,
         image: selectedVenueSummary.image_url || undefined,
       },
     };
