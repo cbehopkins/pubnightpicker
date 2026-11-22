@@ -538,7 +538,7 @@ func (e *Endpoint) selectedVenueResponse(ctx context.Context, venueID string) (a
 		return nil, nil
 	}
 	if e.Venues == nil {
-		return nil, errors.New("Venue reader is unavailable")
+		return nil, errors.New("venue reader is unavailable")
 	}
 	venue, missing, err := e.Venues.GetForMeet(ctx, venueID)
 	if err != nil {

@@ -129,6 +129,7 @@ function startMeetStream(stream) {
   stream.controller = controller;
   try {
     streamLastOrders(`api/meets/${encodeURIComponent(stream.groupId)}/${collectionPath}/stream`, {
+      allowAnonymous: true,
       signal: controller.signal,
       onopen: async (response) => {
         const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
@@ -319,6 +320,7 @@ export function usePastMeets(groupId, pageSize = 5, cursor = null) {
     setState({ requestKey, meetData: new MeetData({}), nextCursor: null, hasNextPage: false, isLoading: true, errorMessage: null, errorCode: null });
     requestLastOrders(`api/meets/${encodeURIComponent(groupId)}/past`, {
       method: "GET",
+      allowAnonymous: true,
       query: { limit: String(pageSize), ...(cursor ? { before: cursor } : {}) },
       signal: controller.signal,
     }).then((payload) => {

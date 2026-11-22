@@ -69,7 +69,7 @@ func NewService(store *Store, source Source, venues *venuecache.Store, hub *sse.
 
 func NewServiceWithVenueResolver(store *Store, source Source, venues *venuecache.Store, resolver VenueResolver, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
 	if store == nil || source == nil || venues == nil || resolver == nil || hub == nil {
-		return nil, fmt.Errorf("Group Meet store, source, Venue store, Venue resolver, and stream hub are required")
+		return nil, fmt.Errorf("group Meet store, source, Venue store, Venue resolver, and stream hub are required")
 	}
 	if logger == nil {
 		logger = slog.Default()

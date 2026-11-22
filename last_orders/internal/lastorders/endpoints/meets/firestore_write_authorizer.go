@@ -19,7 +19,7 @@ type firestoreWriteAuthorizer struct {
 
 func NewFirestoreWriteAuthorizer(client *firestore.Client) (WriteAuthorizer, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return firestoreWriteAuthorizer{client: client}, nil
 }

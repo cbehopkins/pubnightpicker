@@ -1208,7 +1208,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 			InvalidateGlobalAdmins()
 		})
 		if !ok {
-			return fmt.Errorf("Firestore Group authorizer does not support cache invalidation")
+			return fmt.Errorf("firestore Group authorizer does not support cache invalidation")
 		}
 		application.groupCacheListener.SetAuthorizationInvalidator(invalidator)
 		roleSource, err := roleauthorizationlistener.NewFirestoreSource(application.firestoreClient)

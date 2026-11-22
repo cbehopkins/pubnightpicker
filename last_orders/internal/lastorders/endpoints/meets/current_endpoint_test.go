@@ -537,7 +537,7 @@ func TestOpenMeetsStreamSendsCompleteSnapshotAndRenews(t *testing.T) {
 		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
 			return uid == "" && groupID == "group-a", nil
 		}),
-		Auth:   pastMeetAuthStub{},
+		Auth: pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
@@ -579,7 +579,7 @@ func TestCurrentMeetsStreamSendsReplacementForInvalidCursorAndRenews(t *testing.
 		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
 			return uid == "" && groupID == "group-a", nil
 		}),
-		Auth:   pastMeetAuthStub{},
+		Auth: pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
 	endpoint.Register(mux)

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamLastOrders } from "./lastOrdersApi";
+import { requestLastOrders, streamLastOrders } from "./lastOrdersApi";
 
 const { authMock, fetchEventSourceMock } = vi.hoisted(() => ({
     authMock: { currentUser: null },
@@ -16,6 +16,24 @@ afterEach(() => {
 });
 
 describe("streamLastOrders", () => {
+    it("allows an anonymous stream when optional authentication is enabled", async () => {
+        let capturedOptions;
+        fetchEventSourceMock.mockImplementation((_url, options) => {
+            capturedOptions = options;
+        });
+        const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await streamLastOrders("api/meets/group-a/open/stream", {
+            allowAnonymous: true,
+            signal: new AbortController().signal,
+        });
+        await capturedOptions.fetch("http://localhost:8081/api/meets/group-a/open/stream", {});
+
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(new Headers(fetchMock.mock.calls[0][1].headers).has("Authorization")).toBe(false);
+    });
+
     it("refreshes the bearer token for reconnects and preserves the SSE cursor", async () => {
         let capturedOptions;
         fetchEventSourceMock.mockImplementation((_url, options) => {
@@ -69,5 +87,23 @@ describe("streamLastOrders", () => {
         await expect(capturedOptions.fetch("http://localhost:8081/api/meets/group-a/open/stream", {}))
             .rejects.toMatchObject({ code: "signed_out" });
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe("requestLastOrders", () => {
+    it("allows anonymous public reads without an Authorization header", async () => {
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ meets: [], next_cursor: null }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(requestLastOrders("api/meets/group-a/past", {
+            method: "GET",
+            allowAnonymous: true,
+        })).resolves.toEqual({ meets: [], next_cursor: null });
+
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(new Headers(fetchMock.mock.calls[0][1].headers).has("Authorization")).toBe(false);
     });
 });

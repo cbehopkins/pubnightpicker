@@ -9,32 +9,34 @@ export { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
  * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit} [options]
  * @returns {Promise<void>}
  */
-export function streamLastOrders(path, options = {}) {
+export function streamLastOrders(path, { allowAnonymous = false, ...options } = {}) {
     const user = auth.currentUser;
-    if (!user) {
+    if (!user && !allowAnonymous) {
         throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");
     }
-    const userID = user.uid;
+    const userID = user?.uid;
     const authenticatedFetch = async (input, init = {}) => {
         init.signal?.throwIfAborted();
         if (auth.currentUser?.uid !== userID) {
             throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
         }
-        let token;
-        try {
-            token = await user.getIdToken();
-        } catch {
+        const headers = new Headers(init.headers);
+        if (user) {
+            let token;
+            try {
+                token = await user.getIdToken();
+            } catch {
+                if (auth.currentUser?.uid !== userID) {
+                    throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
+                }
+                throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
+            }
+            init.signal?.throwIfAborted();
             if (auth.currentUser?.uid !== userID) {
                 throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
             }
-            throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
+            headers.set("Authorization", `Bearer ${token}`);
         }
-        init.signal?.throwIfAborted();
-        if (auth.currentUser?.uid !== userID) {
-            throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
-        }
-        const headers = new Headers(init.headers);
-        headers.set("Authorization", `Bearer ${token}`);
         return fetch(input, {
             ...init,
             headers,
@@ -60,17 +62,21 @@ export async function requestLastOrders(path, {
     contentType = "application/json",
     ifMatch = null,
     query = null,
+    allowAnonymous = false,
     signal = new AbortController().signal,
 } = {}) {
     const url = lastOrdersApiURL(path, query);
     const user = auth.currentUser;
-    if (!user) {
+    if (allowAnonymous && method !== "GET") {
+        throw new LastOrdersApiError("invalid_request", "Anonymous requests are only permitted for GET.");
+    }
+    if (!user && !allowAnonymous) {
         throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");
     }
     signal.throwIfAborted();
     const ensureCurrentSession = () => {
         signal.throwIfAborted();
-        if (auth.currentUser?.uid !== user.uid) {
+        if (auth.currentUser?.uid !== user?.uid) {
             throw new LastOrdersApiError("signed_out", "Your sign-in session changed. Please try again.");
         }
     };
@@ -78,16 +84,20 @@ export async function requestLastOrders(path, {
         const abort = () => reject(signal.reason);
         signal.addEventListener("abort", abort, { once: true });
         const execute = async () => {
-            let token;
-            try {
-                token = await user.getIdToken();
-            } catch {
+            let headers = {};
+            if (user) {
+                let token;
+                try {
+                    token = await user.getIdToken();
+                } catch {
+                    ensureCurrentSession();
+                    throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
+                }
                 ensureCurrentSession();
-                throw new LastOrdersApiError("token_error", "Unable to obtain a sign-in token. Please sign in again.");
+                headers = { Authorization: `Bearer ${token}` };
             }
             ensureCurrentSession();
             const hasBody = body !== null || method === "POST";
-            const headers = { Authorization: `Bearer ${token}` };
             if (ifMatch !== null) {
                 headers["If-Match"] = `"${ifMatch}"`;
             }

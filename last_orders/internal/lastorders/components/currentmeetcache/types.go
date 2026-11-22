@@ -72,7 +72,7 @@ func validateSnapshot(groupID string, query ViewQuery, source QuerySnapshot) ([]
 			return nil, fmt.Errorf("validate current Meet %q: %w", document.ID, err)
 		}
 		if projection.GroupID != groupID {
-			return nil, fmt.Errorf("Meet %q does not belong to the watched Group", projection.ID)
+			return nil, fmt.Errorf("meet %q does not belong to the watched Group", projection.ID)
 		}
 		if query.Kind == CurrentView && (!projection.VotingComplete || projection.Date < query.Date) {
 			return nil, fmt.Errorf("current Meet %q does not match the watched date", projection.ID)

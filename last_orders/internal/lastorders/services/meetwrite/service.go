@@ -15,9 +15,9 @@ import (
 
 var (
 	ErrInvalidInput  = errors.New("invalid Meet input")
-	ErrGroupNotFound = errors.New("Group not found")
-	ErrMeetNotFound  = errors.New("Meet not found")
-	ErrVenueNotFound = errors.New("Venue not found")
+	ErrGroupNotFound = errors.New("group not found")
+	ErrMeetNotFound  = errors.New("meet not found")
+	ErrVenueNotFound = errors.New("venue not found")
 	ErrInvalidState  = errors.New("invalid Meet state")
 )
 
@@ -54,7 +54,7 @@ type Service struct {
 
 func New(client *firestore.Client) (*Service, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return &Service{client: client}, nil
 }

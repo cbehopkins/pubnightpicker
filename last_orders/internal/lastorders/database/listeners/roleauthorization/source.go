@@ -14,7 +14,7 @@ type FirestoreSource struct {
 
 func NewFirestoreSource(client *firestore.Client) (*FirestoreSource, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return &FirestoreSource{client: client}, nil
 }
