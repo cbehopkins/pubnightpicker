@@ -10,13 +10,20 @@ const {
   docMock,
   onSnapshotMock,
   updateDocMock,
+  runTransactionMock,
 } = vi.hoisted(() => {
+  const updateDocMock = vi.fn(async () => undefined);
+  const runTransactionMock = vi.fn(async (_db, callback) => callback({
+    get: vi.fn(async () => ({ exists: () => true })),
+    set: vi.fn(async (ref, payload) => updateDocMock(ref, payload)),
+  }));
   return {
     arrayRemoveMock: vi.fn((value) => `arrayRemove:${value}`),
     arrayUnionMock: vi.fn((value) => `arrayUnion:${value}`),
     docMock: vi.fn(() => ({ id: "votes-doc-ref" })),
     onSnapshotMock: vi.fn(),
-    updateDocMock: vi.fn(async () => undefined),
+    updateDocMock,
+    runTransactionMock,
   };
 });
 
@@ -33,6 +40,7 @@ vi.mock("firebase/firestore", () => {
     doc: docMock,
     onSnapshot: onSnapshotMock,
     updateDoc: updateDocMock,
+    runTransaction: runTransactionMock,
   };
 });
 
@@ -144,5 +152,19 @@ describe("useVotes", () => {
         "pub-1": "arrayRemove:user-1",
       },
     );
+  });
+
+  it("does not initialise votes when the Meet has been deleted", async () => {
+    onSnapshotMock.mockImplementation(() => () => undefined);
+    runTransactionMock.mockImplementationOnce(async (_db, callback) => callback({
+      get: vi.fn(async () => ({ exists: () => false })),
+      set: vi.fn(),
+    }));
+
+    const { result } = renderHook(() => useVotes("poll-1"));
+
+    await expect(act(async () => {
+      await result.current[1]("pub-1", "user-1");
+    })).rejects.toThrow("This Meet no longer exists.");
   });
 });

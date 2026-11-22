@@ -351,7 +351,6 @@ function VotableVenue({
   allowDelete,
   allowCompletePoll,
   pollId,
-  pollDate,
   completeHandler,
   showAttendanceColumns,
   usersByUid,
@@ -367,9 +366,7 @@ function VotableVenue({
     clearVote,
     setEta,
     clearEta,
-    pollId,
-    pollDate,
-    venueName
+    pollId
   );
 
   // Override allowGlobalAttendanceControls to include pollVenueIds length check

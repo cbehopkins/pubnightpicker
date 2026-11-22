@@ -1,10 +1,9 @@
 // @ts-check
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { arrayRemove, arrayUnion, deleteField, doc, onSnapshot } from "firebase/firestore";
+import { arrayRemove, arrayUnion, deleteField, doc, onSnapshot, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
-import { updateDocWithInitialization } from "../utils/firestoreDocOps";
 import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
 /**
@@ -41,8 +40,15 @@ function useAttendance(meetId, enabled = true) {
 
     /** @type {(payload: Record<string, unknown>) => Promise<void>} */
     const updateAttendanceDoc = useCallback(async (payload) => {
-        await updateDocWithInitialization(docRef, payload);
-    }, [docRef]);
+        await runTransaction(db, async (transaction) => {
+            const meetRef = doc(db, "polls", meetId);
+            const meetSnapshot = await transaction.get(meetRef);
+            if (!meetSnapshot.exists()) {
+                throw new Error("This Meet no longer exists.");
+            }
+            transaction.set(docRef, payload, { merge: true });
+        });
+    }, [docRef, meetId]);
 
     useEffect(() => {
         if (!enabled) {

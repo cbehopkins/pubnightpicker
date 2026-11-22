@@ -6,6 +6,8 @@ export const POLL_ACTION_CREATE = "create";
 export const POLL_ACTION_COMPLETE = "complete";
 export const POLL_ACTION_ADD_VENUE = "addVenue";
 export const POLL_ACTION_DELETE_VENUE = "deleteVenue";
+export const POLL_ACTION_RESCHEDULE = "reschedule";
+export const POLL_ACTION_DELETE = "delete";
 
 const ACTIONS_REQUIRING_SELECTED_VENUE = new Set([
     POLL_ACTION_COMPLETE,
@@ -18,6 +20,8 @@ const VALID_POLL_ACTIONS = new Set([
     POLL_ACTION_COMPLETE,
     POLL_ACTION_ADD_VENUE,
     POLL_ACTION_DELETE_VENUE,
+    POLL_ACTION_RESCHEDULE,
+    POLL_ACTION_DELETE,
 ]);
 
 function getCurrentActorUid() {

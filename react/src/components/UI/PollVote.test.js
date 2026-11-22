@@ -6,7 +6,7 @@ import PollVote from "./PollVote";
 import ActivePoll from "./ActivePoll";
 import { removeVenueFromMeet } from "../../dbtools/polls";
 
-const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock } = vi.hoisted(() => ({
+const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
     showAttendanceMock: vi.fn(() => <div data-testid="show-attendance" />),
     useSelectorMock: vi.fn(),
     useAttendanceMock: vi.fn(),
@@ -16,6 +16,10 @@ const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, use
     onSnapshotMock: vi.fn(),
     updateDocMock: vi.fn(async () => undefined),
     setGlobalAttendanceMock: vi.fn(),
+    runTransactionMock: vi.fn(async (_db, callback) => callback({
+        get: vi.fn(async () => ({ exists: () => true })),
+        set: vi.fn(async (ref, payload) => updateDocMock(ref, payload)),
+    })),
 }));
 
 vi.mock("react-redux", () => ({
@@ -30,6 +34,7 @@ vi.mock("firebase/firestore", () => ({
     updateDoc: updateDocMock,
     arrayUnion: (value) => `arrayUnion:${value}`,
     arrayRemove: (value) => `arrayRemove:${value}`,
+    runTransaction: runTransactionMock,
 }));
 
 vi.mock("../../hooks/useAttendance", () => ({
@@ -213,7 +218,7 @@ describe("PollVote attendance display mode", () => {
 
         fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
 
-        await waitFor(() => expect(removeVenueFromMeet).toHaveBeenCalledWith("poll-1", "venue-1", "2026-05-11", "Venue 1"));
+        await waitFor(() => expect(removeVenueFromMeet).toHaveBeenCalledWith("poll-1", "venue-1"));
     });
 
     it("sets attendance for every Meet venue", async () => {

@@ -4,10 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { Provider } from "react-redux";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const { authMock, addDocMock, setDocMock } = vi.hoisted(() => ({
+const { authMock, addDocMock, setDocMock, requestLastOrdersMock, notifyErrorMock } = vi.hoisted(() => ({
     authMock: { currentUser: { uid: "creator-user" } },
     addDocMock: vi.fn(async () => ({ id: "created-poll" })),
     setDocMock: vi.fn(async () => undefined),
+    requestLastOrdersMock: vi.fn(async () => ({ id: "created-poll", date: "2026-10-15" })),
+    notifyErrorMock: vi.fn(),
 }));
 vi.mock("../../firebase", () => ({ auth: authMock, db: {} }));
 vi.mock("firebase/firestore", () => ({
@@ -15,6 +17,11 @@ vi.mock("firebase/firestore", () => ({
     collection: (_db, name) => name, doc: (_db, name, id) => `${name}/${id}`,
 }));
 vi.mock("../../dbtools/pollActionAudit", () => ({ logPollActionAudit: vi.fn(), POLL_ACTION_CREATE: "create" }));
+vi.mock("../../utils/lastOrdersApi", () => ({ requestLastOrders: requestLastOrdersMock }));
+vi.mock("../../utils/notify", () => ({ notifyError: notifyErrorMock }));
+vi.mock("../../permissions", () => ({
+    getUserFacingErrorMessage: (error, fallback) => error?.message || fallback,
+}));
 vi.mock("../UI/Button", () => ({ default: ({ children, ...props }) => <button {...props}>{children}</button> }));
 import NewPoll from "./NewPoll";
 import { logPollActionAudit } from "../../dbtools/pollActionAudit";
@@ -27,37 +34,43 @@ function renderNewPoll() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    requestLastOrdersMock.mockResolvedValue({ id: "created-poll", date: "2026-10-15" });
     authMock.currentUser = { uid: "creator-user" };
     store.dispatch(setGroupId("opaque-group-id"));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it("records the creator in the initial poll write", async () => {
+it("creates a Meet through the Last Orders API", async () => {
     const { container } = renderNewPoll();
     fireEvent.change(container.querySelector("input"), { target: { value: "2026-10-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Poll" }));
-    await waitFor(() => expect(addDocMock).toHaveBeenCalledWith("polls", { date: "2026-10-15", completed: false, createdByUid: "creator-user", groupId: "opaque-group-id" }));
-    await waitFor(() => expect(logPollActionAudit).toHaveBeenCalledWith("create", { pollId: "created-poll", pollDate: "2026-10-15" }));
-    expect(setDocMock).toHaveBeenCalledWith("votes/created-poll", { any: [] });
-    expect(setDocMock).toHaveBeenCalledWith("attendance/created-poll", {});
+    await waitFor(() => expect(requestLastOrdersMock).toHaveBeenCalledWith(
+        "api/meets/opaque-group-id",
+        { method: "POST", body: { date: "2026-10-15" } },
+    ));
+    expect(addDocMock).not.toHaveBeenCalled();
+    expect(setDocMock).not.toHaveBeenCalled();
+    expect(logPollActionAudit).not.toHaveBeenCalled();
 });
 
 it("does not create a poll when the resolved Group is unavailable", async () => {
     store.dispatch(setGroupId(null));
-    const error = vi.spyOn(console, "error").mockImplementation(() => { });
     const { container } = renderNewPoll();
     fireEvent.change(container.querySelector("input"), { target: { value: "2026-10-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Poll" }));
-    await waitFor(() => expect(error).toHaveBeenCalled());
+    await waitFor(() => expect(notifyErrorMock).toHaveBeenCalledWith("No resolved Group for poll creation."));
+    expect(requestLastOrdersMock).not.toHaveBeenCalled();
     expect(addDocMock).not.toHaveBeenCalled();
 });
 
-it("does not create a poll without an authenticated actor", async () => {
-    authMock.currentUser = null;
-    const error = vi.spyOn(console, "error").mockImplementation(() => { });
+it("shows an uncertain creation outcome and does not retry", async () => {
+    requestLastOrdersMock.mockRejectedValue({ code: "connection_error" });
     const { container } = renderNewPoll();
     fireEvent.change(container.querySelector("input"), { target: { value: "2026-10-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Poll" }));
-    await waitFor(() => expect(error).toHaveBeenCalled());
+    await waitFor(() => expect(notifyErrorMock).toHaveBeenCalledWith(
+        "Meet creation outcome is uncertain. Refresh the open Meets view before retrying.",
+    ));
+    expect(requestLastOrdersMock).toHaveBeenCalledTimes(1);
     expect(addDocMock).not.toHaveBeenCalled();
 });
