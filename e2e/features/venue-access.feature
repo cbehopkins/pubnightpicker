@@ -4,10 +4,11 @@ Feature: Public venue access
   I want venue details to load without venue-management permission
   So that current and past meet information remains public
 
-  @meet_read_api_07
-  Scenario: Anonymous visitors can view venue details in current and past meets
+  Scenario: Anonymous visitors can view open, current and past Meets
     Given a fresh emulator database has been bootstrapped with the journey admin
-    Given a venue is available to current and past meets
+    Given a venue is available to open, current and past meets
+    When anonymous views the public venue in Open Meets
+    Then anonymous sees the public venue in Open Meets
     When anonymous views the public venue in Current Meets
     Then anonymous sees the public venue details in Current Meets
     When anonymous views the public venue in Past Meets
@@ -15,7 +16,7 @@ Feature: Public venue access
 
   Scenario: Signed-in non-managers can view meets and the read-only venue catalogue
     Given a fresh emulator database has been bootstrapped with the journey admin
-    And a venue is available to current and past meets
+    And a venue is available to open, current and past meets
     When Erin creates an account
     Then Erin is logged in
     When Erin attempts to create a venue directly through Last Orders

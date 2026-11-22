@@ -382,6 +382,7 @@ func TestMeetAPIUsesFirestoreAuthorityCacheAgainstEmulator(t *testing.T) {
 func TestGroupAuthorizerGrantsOnlyTrueMembershipAndAdminValues(t *testing.T) {
 	for _, test := range []struct {
 		name         string
+		anonymous    bool
 		group        groupAuthorizationDocument
 		groupExists  bool
 		admins       map[string]any
@@ -393,8 +394,10 @@ func TestGroupAuthorizerGrantsOnlyTrueMembershipAndAdminValues(t *testing.T) {
 		{name: "true member", group: groupAuthorizationDocument{Visibility: "private", Members: map[string]any{"caller": true}}, groupExists: true, want: true},
 		{name: "false member", group: groupAuthorizationDocument{Visibility: "private", Members: map[string]any{"caller": false}}, groupExists: true, adminsExists: true, want: false},
 		{name: "malformed member value", group: groupAuthorizationDocument{Visibility: "private", Members: map[string]any{"caller": "true"}}, groupExists: true, adminsExists: true, want: false},
+		{name: "anonymous empty-key member", anonymous: true, group: groupAuthorizationDocument{Visibility: "private", Members: map[string]any{"": true}}, groupExists: true, want: false},
 		{name: "true global administrator", group: groupAuthorizationDocument{Visibility: "private"}, groupExists: true, admins: map[string]any{"caller": true}, adminsExists: true, want: true},
 		{name: "malformed global administrator value", group: groupAuthorizationDocument{Visibility: "private"}, groupExists: true, admins: map[string]any{"caller": "true"}, adminsExists: true, want: false},
+		{name: "anonymous empty-key global administrator", anonymous: true, group: groupAuthorizationDocument{Visibility: "private"}, groupExists: true, admins: map[string]any{"": true}, adminsExists: true, want: false},
 		{name: "missing administrator document", group: groupAuthorizationDocument{Visibility: "private"}, groupExists: true, want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -403,7 +406,11 @@ func TestGroupAuthorizerGrantsOnlyTrueMembershipAndAdminValues(t *testing.T) {
 				admins: test.admins, adminsExists: test.adminsExists,
 			}
 			authorizer := newCachedGroupAuthorizer(source, time.Now)
-			allowed, err := authorizer.CanRead(context.Background(), "caller", "group-a")
+			uid := "caller"
+			if test.anonymous {
+				uid = ""
+			}
+			allowed, err := authorizer.CanRead(context.Background(), uid, "group-a")
 			if err != nil || allowed != test.want {
 				t.Fatalf("CanRead() = (%v, %v), want (%v, nil)", allowed, err, test.want)
 			}

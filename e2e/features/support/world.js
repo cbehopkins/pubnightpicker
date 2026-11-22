@@ -59,7 +59,6 @@ class BrowserWorld extends World {
 setWorldConstructor(BrowserWorld);
 
 Before(async function ({ pickle }) {
-  if (pickle.tags.some((tag) => tag.name === "@meet_read_api_07")) return "skipped";
   if (!pickle.tags.some((tag) => tag.name === "@last_orders")) {
     this.defaultGroups = [{ id: "frontend-journey-group", name: "ampubnight", visibility: "public" }];
   }

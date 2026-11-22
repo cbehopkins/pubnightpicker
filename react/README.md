@@ -163,6 +163,13 @@ does not authorise production migration or deployment. A gap between migration
 and writer deployment may require a separate catch-up migration, outside this
 work.
 
+Voting and attendance remain separate from Meet writes. The frontend reads
+missing `votes/{meetId}` or `attendance/{meetId}` documents as empty and reports
+snapshot/read failures. Its first writes use Firestore transactions that verify
+`polls/{meetId}` exists, then merge with `set(..., { merge: true })`; this
+initialises missing child documents without replacing concurrent updates or
+creating orphan child data after Meet deletion.
+
 ## Firestore Index Drift Check
 
 To catch index drift before deploys, run:

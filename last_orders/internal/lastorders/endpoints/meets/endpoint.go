@@ -130,11 +130,11 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/meet/{meet_id}/reschedule", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.reschedule)))
 	mux.Handle("DELETE /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.delete)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
-	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.current)))
-	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.currentStream)))
-	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.open)))
-	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.openStream)))
-	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.past)))
+	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
+	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.currentStream)))
+	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
+	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
+	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.past)))
 }
 
 func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {

@@ -61,10 +61,12 @@ The cache:
 The cache is disposable and does not require persistence or reconstruction across process restarts.
 
 For Group-scoped Meet reads, the cache holds Group authority documents by Group
-ID and global administrator decisions by UID. Public visibility grants read
-access to any authenticated caller; private Groups require a `true` membership
-value or global administrator authority. Visibility never implies membership,
-and group-scoped administrator authority is not included in this policy.
+ID and global administrator decisions by UID. Public visibility grants anonymous
+and authenticated callers access to open, current and past collections and
+current/open streams. Individual Meet details require authentication. Private
+Groups require a `true` membership value or global administrator authority.
+Visibility never implies membership, and group-scoped administrator authority
+is not included in this policy.
 
 ### 4. Permission-cache expiry
 

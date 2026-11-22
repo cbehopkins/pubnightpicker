@@ -86,10 +86,11 @@ A Group has one of two visibility values:
 - `public`
 - `private`
 
-Visibility determines discoverability. For individual Meet reads, authenticated
-callers may read Meets in public Groups; private Group Meets require membership
-or global-administrator authority. Visibility does not grant membership or write
-access.
+Visibility determines discoverability. Anonymous and authenticated callers may
+read open, current and past Meet collections and their current/open streams in
+public Groups. Individual Meet details require authentication. Private Group
+Meets require membership or global-administrator authority. Visibility does not
+grant membership or write access.
 
 ### 4.1 Discovery rules
 
@@ -144,10 +145,11 @@ missing entries, `false`, and values of any other type do not. Group visibility
 does not imply membership.
 
 Global administrator authority remains in `roles/admin`, using the same
-UID-to-boolean representation and grant rule. Any authenticated caller may
-read Meets in a public Group. Private-Group Meets require membership or global
-administrator authority. Group-scoped administrator authority is out of scope
-for this read policy.
+UID-to-boolean representation and grant rule. Anonymous and authenticated
+callers may read public Group open, current and past collections and current/open
+streams. Individual Meet details require authentication. Private-Group Meets
+require membership or global-administrator authority. Group-scoped administrator
+authority is out of scope for this read policy.
 
 ### 5.3 API
 

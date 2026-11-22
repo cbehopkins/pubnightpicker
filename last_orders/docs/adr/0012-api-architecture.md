@@ -106,15 +106,16 @@ Anonymous access is permitted for public Group discovery and public Venue/Locati
 
 ### 3.3 Meet access
 
-Meet-related reads require authentication. Individual Meet details are readable
-when the Group is public or the caller is a member of its private Group.
-Other Meet-related reads require Group membership, including:
+Anonymous and authenticated callers may read open, current and past Meet
+collections and current/open streams for public Groups. Invalid supplied
+credentials still return `401`; they never fall back to anonymous access.
+Individual Meet details require authentication and are readable when the Group
+is public or the caller is a member of its private Group. Other Meet-related
+reads require Group membership, including:
 
-- Current and past Meet collections.
-- Individual Meet details.
 - Voting snapshots and vote operations.
 - Attendance snapshots and updates.
-- Attendance and current-Meet streams.
+- Attendance streams.
 
 Global administrators may access all Meet resources through inherited
 administrative authority.

@@ -85,10 +85,10 @@ func (a *firestoreGroupAuthorizer) CanRead(ctx context.Context, uid, groupID str
 			return false, err
 		}
 		allowed := exists && group.Visibility == "public"
-		if exists && !allowed {
+		if exists && !allowed && uid != "" {
 			allowed = isTrue(group.Members[uid])
 		}
-		if exists && !allowed {
+		if exists && !allowed && uid != "" {
 			allowed, invalidated, err = a.globalAdmin(ctx, uid)
 			if invalidated {
 				if attempt == 0 {

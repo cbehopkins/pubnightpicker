@@ -95,13 +95,14 @@ projection-backed collection exceptions.
 
 ### 2.5 Meet-read authorisation
 
-All individual and Group-scoped Meet reads require an authenticated caller.
-Authenticated callers may read Meets in public Groups. Private-Group Meets
-require a `true` membership entry or global administrator authority; visibility
-does not imply membership, and group-scoped administrator authority is out of
-scope for these reads. Denied private-Group reads use `404` to avoid disclosing
-the Group. If authoritative access cannot be checked, the API returns `503`
-and does not cache the refresh failure as a denial.
+Anonymous and authenticated callers may read open, current and past Meet
+collections and current/open streams in public Groups. Individual Meet details
+require authentication. Private-Group Meets require a `true` membership entry or
+global administrator authority; visibility does not imply membership, and
+group-scoped administrator authority is out of scope for these reads. Denied
+private-Group reads use `404` to avoid disclosing the Group. If authoritative
+access cannot be checked, the API returns `503` and does not cache the refresh
+failure as a denial.
 
 Each HandPump instance caches Group authority and global administrator
 decisions for 10 seconds. The existing Groups collection watch invalidates
@@ -295,9 +296,10 @@ and fetch an entry before the API decides whether to return it, so a denied
 request may still populate the cache. A shared cached view or watch grants no
 access by itself. Authorisation must apply to the Group association in the
 representation actually returned. Individual Meet GET requires authentication;
-public Groups permit reads by authenticated callers, while private Groups
-require membership or global-administrator authority. Collection views and
-other Meet operations retain their existing membership rules. Do not infer
+public Groups permit it for authenticated callers, while private Groups require
+membership or global-administrator authority. Open/current/past collection
+views and current/open streams allow anonymous access only for public Groups.
+Other Meet operations retain their existing membership rules. Do not infer
 authorisation from projection admission.
 
 Writes remain authoritative in Firestore. These watches subsequently update the

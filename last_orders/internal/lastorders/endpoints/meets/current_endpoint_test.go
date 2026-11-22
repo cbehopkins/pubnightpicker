@@ -126,20 +126,53 @@ func TestRegisterCurrentMeetsGetUnavailableWithoutProjection(t *testing.T) {
 	}
 }
 
-func TestGroupScopedMeetReadsRequireAuthentication(t *testing.T) {
+func TestAnonymousCanReadPublicGroupMeetCollections(t *testing.T) {
+	endpoint := &Endpoint{
+		Current: &currentReaderStub{date: "2026-11-20", snapshot: currentmeetcache.Snapshot{
+			Date: "2026-11-20", Generation: "generation-1",
+		}},
+		Open: &openMeetsReaderStub{snapshot: currentmeetcache.Snapshot{Generation: "generation-1"}},
+		Past: &pastMeetsReaderStub{today: "2026-11-20", list: func(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error) {
+			return nil, false, nil
+		}},
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return groupID == "public-group" && (uid == "" || uid == "verified-user"), nil
+		}),
+		Cursors: testCurrentCursorCodec(t), Auth: pastMeetAuthStub{},
+	}
 	mux := http.NewServeMux()
-	(&Endpoint{Auth: pastMeetAuthStub{}}).Register(mux)
+	endpoint.Register(mux)
+
 	for _, path := range []string{
-		"/api/meets/group-a/current",
-		"/api/meets/group-a/current/stream",
-		"/api/meets/group-a/open",
-		"/api/meets/group-a/open/stream",
+		"/api/meets/public-group/open",
+		"/api/meets/public-group/current",
+		"/api/meets/public-group/past",
 	} {
 		response := httptest.NewRecorder()
 		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusUnauthorized {
-			t.Errorf("unauthenticated GET %s status=%d body=%s, want HTTP 401", path, response.Code, response.Body)
+		if response.Code != http.StatusOK {
+			t.Errorf("anonymous GET %s status=%d body=%s, want HTTP 200", path, response.Code, response.Body)
 		}
+	}
+
+	for _, path := range []string{
+		"/api/meets/private-group/open",
+		"/api/meets/private-group/current",
+		"/api/meets/private-group/past",
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("anonymous GET %s status=%d body=%s, want HTTP 404", path, response.Code, response.Body)
+		}
+	}
+
+	invalidToken := httptest.NewRequest(http.MethodGet, "/api/meets/public-group/current", nil)
+	invalidToken.Header.Set("Authorization", "Bearer invalid-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, invalidToken)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid-token current-Meets GET status=%d body=%s, want HTTP 401", response.Code, response.Body)
 	}
 }
 
@@ -179,16 +212,6 @@ func TestRegisterPastMeetsGetUnavailableWithoutQuery(t *testing.T) {
 	}
 	if payload.Error.Code != "past_meets_unavailable" {
 		t.Fatalf("error code=%q, want past_meets_unavailable", payload.Error.Code)
-	}
-}
-
-func TestPastMeetsRequiresAuthentication(t *testing.T) {
-	mux := http.NewServeMux()
-	(&Endpoint{}).Register(mux)
-	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/meets/group-a/past", nil))
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated past-Meets GET status=%d body=%s, want HTTP 401", response.Code, response.Body)
 	}
 }
 
@@ -511,7 +534,9 @@ func TestOpenMeetsStreamSendsCompleteSnapshotAndRenews(t *testing.T) {
 	}}
 	endpoint := &Endpoint{
 		Open: reader, CurrentReady: ready, CurrentHub: sse.NewHub(), Cursors: testCurrentCursorCodec(t),
-		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "" && groupID == "group-a", nil
+		}),
 		Auth:   pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
@@ -519,7 +544,6 @@ func TestOpenMeetsStreamSendsCompleteSnapshotAndRenews(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	request := httptest.NewRequest(http.MethodGet, "/api/meets/group-a/open/stream?after=invalid", nil).WithContext(ctx)
-	request.Header.Set("Authorization", "Bearer valid-token")
 	response := &flushableRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
@@ -552,7 +576,9 @@ func TestCurrentMeetsStreamSendsReplacementForInvalidCursorAndRenews(t *testing.
 	}}
 	endpoint := &Endpoint{
 		Current: reader, CurrentReady: ready, CurrentHub: sse.NewHub(), Cursors: testCurrentCursorCodec(t),
-		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "" && groupID == "group-a", nil
+		}),
 		Auth:   pastMeetAuthStub{},
 	}
 	mux := http.NewServeMux()
@@ -560,7 +586,6 @@ func TestCurrentMeetsStreamSendsReplacementForInvalidCursorAndRenews(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	request := httptest.NewRequest(http.MethodGet, "/api/meets/group-a/current/stream?after=invalid", nil).WithContext(ctx)
-	request.Header.Set("Authorization", "Bearer valid-token")
 	response := &flushableRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
