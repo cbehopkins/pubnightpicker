@@ -67,6 +67,7 @@ import (
 	admindeletesvc "last_orders/internal/lastorders/services/admindelete"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
+	meetwritesvc "last_orders/internal/lastorders/services/meetwrite"
 	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
@@ -1193,6 +1194,8 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	}
 	venueEndpoint.Register(apiMux)
 	var groupAuthorizer meetsendpoint.GroupAuthorizer
+	var meetWriter meetsendpoint.MeetWriter
+	var writeAuthorizer meetsendpoint.WriteAuthorizer
 	var pastMeetsService *pastmeets.Service
 	if application.firestoreClient != nil {
 		groupAuthorizer, err = meetsendpoint.NewFirestoreGroupAuthorizer(application.firestoreClient)
@@ -1224,6 +1227,14 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
+		meetWriter, err = meetwritesvc.New(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		writeAuthorizer, err = meetsendpoint.NewFirestoreWriteAuthorizer(application.firestoreClient)
+		if err != nil {
+			return err
+		}
 	}
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
@@ -1231,6 +1242,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
+		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {

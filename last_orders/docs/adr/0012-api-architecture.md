@@ -280,6 +280,13 @@ Rules:
 
 The ability to choose a Venue outside the candidate list is intentional: the final plan may change to another nearby Venue.
 
+`POST /meet/{meet_id}/complete` is a first-commit-wins transition. An open Meet
+may be completed once; a later API attempt, whether identical or different,
+returns conflict. During backend-first migration, the existing direct frontend
+writer may still compete with automatic completion. The completed-state
+transaction prevents overwrites, but full cross-writer first-commit guarantees
+begin only after the frontend cutover.
+
 ### 7.2 Rescheduling endpoint: compatibility semantics
 
 ```http
@@ -295,8 +302,11 @@ Rules:
 - The scheduled date remains unchanged.
 - Voting does not reopen.
 - The caller needs the same permission as completion; there is no separate reschedule permission.
-- When the selected Venue changes, the previous Venue ID is appended to `previous_venue_ids`.
+- When the selected Venue changes, the actual previous Venue ID is appended to `previous_venue_ids`, preserving order and duplicates.
 - Changing restaurant details alone does not append a previous Venue ID.
+- Omitted restaurant fields are preserved; clearing the restaurant also clears its time.
+- A time-only update is valid for an existing restaurant.
+- A supplied date is rejected.
 - Venue history is retained.
 
 The exact request schema should be documented in OpenAPI to make the Venue-only semantics explicit and avoid future confusion.

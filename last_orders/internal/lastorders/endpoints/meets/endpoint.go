@@ -17,6 +17,7 @@ import (
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/services/meetwrite"
 )
 
 type reader interface {
@@ -47,6 +48,15 @@ type pastMeetsReader interface {
 	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
 }
 
+type MeetWriter interface {
+	Create(context.Context, string, string, string) (meetwrite.Meet, error)
+	GroupID(context.Context, string) (string, error)
+	ChangeCandidate(context.Context, string, string, string, bool) (meetwrite.Meet, error)
+	Complete(context.Context, string, string, string, string, string) (meetwrite.Meet, error)
+	Reschedule(context.Context, string, meetwrite.RescheduleInput, string) (meetwrite.Meet, error)
+	Delete(context.Context, string, string) error
+}
+
 type Endpoint struct {
 	Reader       reader
 	Venues       venueReader
@@ -58,6 +68,8 @@ type Endpoint struct {
 	CurrentHub   *sse.Hub
 	Cursors      *sse.CursorCodec
 	Past         pastMeetsReader
+	Writer       MeetWriter
+	WriteAccess  WriteAuthorizer
 }
 
 type venueSummary struct {
@@ -111,12 +123,296 @@ type pastMeetPosition struct {
 const pastMeetsCursorScope = "past-meets-v1"
 
 func (e *Endpoint) Register(mux *http.ServeMux) {
+	mux.Handle("POST /api/meets/{group_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.create)))
+	mux.Handle("PUT /api/meet/{meet_id}/candidates/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.addCandidate)))
+	mux.Handle("DELETE /api/meet/{meet_id}/candidates/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeCandidate)))
+	mux.Handle("POST /api/meet/{meet_id}/complete", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.complete)))
+	mux.Handle("POST /api/meet/{meet_id}/reschedule", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.reschedule)))
+	mux.Handle("DELETE /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.delete)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.current)))
 	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.currentStream)))
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.open)))
 	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.past)))
+}
+
+func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canCreatePoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to delete Meets.")
+		return
+	}
+	if err := e.Writer.Delete(r.Context(), meetID, currentUID(r.Context())); err != nil {
+		e.writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) reschedule(w http.ResponseWriter, r *http.Request) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+		return
+	}
+	if _, hasDate := fields["date"]; hasDate {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "A Meet date cannot be changed by rescheduling.")
+		return
+	}
+	for key := range fields {
+		if key != "venue_id" && key != "restaurant_id" && key != "restaurant_time" {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+			return
+		}
+	}
+	input := meetwrite.RescheduleInput{}
+	var valid bool
+	if input.VenueIDSet, input.VenueID, valid = decodeOptionalString(fields, "venue_id"); !valid {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+		return
+	}
+	if input.RestaurantIDSet, input.RestaurantID, valid = decodeOptionalString(fields, "restaurant_id"); !valid {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+		return
+	}
+	if input.RestaurantTimeSet, input.RestaurantTime, valid = decodeOptionalString(fields, "restaurant_time"); !valid {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The reschedule request is invalid.")
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canCompletePoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to reschedule Meets.")
+		return
+	}
+	updated, err := e.Writer.Reschedule(r.Context(), meetID, input, currentUID(r.Context()))
+	if e.writeServiceError(w, err) {
+		return
+	}
+	e.writeMeet(w, http.StatusOK, updated)
+}
+
+func decodeOptionalString(fields map[string]json.RawMessage, key string) (bool, *string, bool) {
+	value, exists := fields[key]
+	if !exists {
+		return false, nil, true
+	}
+	if string(value) == "null" {
+		return true, nil, true
+	}
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return true, nil, false
+	}
+	return true, &decoded, true
+}
+
+func (e *Endpoint) complete(w http.ResponseWriter, r *http.Request) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	var request struct {
+		VenueID        string `json:"venue_id"`
+		RestaurantID   string `json:"restaurant_id"`
+		RestaurantTime string `json:"restaurant_time"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The completion request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The completion request is invalid.")
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canCompletePoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to complete Meets.")
+		return
+	}
+	completed, err := e.Writer.Complete(r.Context(), meetID, request.VenueID, request.RestaurantID, request.RestaurantTime, currentUID(r.Context()))
+	if e.writeServiceError(w, err) {
+		return
+	}
+	e.writeMeet(w, http.StatusOK, completed)
+}
+
+func (e *Endpoint) addCandidate(w http.ResponseWriter, r *http.Request) {
+	e.changeCandidate(w, r, true)
+}
+
+func (e *Endpoint) removeCandidate(w http.ResponseWriter, r *http.Request) {
+	e.changeCandidate(w, r, false)
+}
+
+func (e *Endpoint) changeCandidate(w http.ResponseWriter, r *http.Request, add bool) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	meetID, venueID := r.PathValue("meet_id"), r.PathValue("venue_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canAddPubToPoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to change Meet candidates.")
+		return
+	}
+	updated, err := e.Writer.ChangeCandidate(r.Context(), meetID, venueID, currentUID(r.Context()), add)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	e.writeMeet(w, http.StatusOK, updated)
+}
+
+func (e *Endpoint) writeServiceError(w http.ResponseWriter, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, meetwrite.ErrInvalidInput):
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The Meet request is invalid.")
+	case errors.Is(err, meetwrite.ErrGroupNotFound), errors.Is(err, meetwrite.ErrMeetNotFound), errors.Is(err, meetwrite.ErrVenueNotFound):
+		firebaseauth.WriteError(w, http.StatusNotFound, "not_found", "The requested resource was not found.")
+	case errors.Is(err, meetwrite.ErrInvalidState):
+		firebaseauth.WriteError(w, http.StatusConflict, "invalid_state", "The Meet is not in a state that allows this operation.")
+	default:
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to update the Meet.")
+	}
+	return true
+}
+
+func (e *Endpoint) writeMeet(w http.ResponseWriter, statusCode int, meet meetwrite.Meet) {
+	response := meetResponse{
+		ID: meet.ID, GroupID: meet.GroupID, Date: meet.Date,
+		VotingComplete: meet.VotingComplete, CandidateVenueIDs: meet.CandidateVenueIDs,
+		Venue: nil, RestaurantID: optionalValue(meet.RestaurantID),
+		RestaurantTime: optionalValue(meet.RestaurantTime), PreviousVenueIDs: meet.PreviousVenueIDs,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (e *Endpoint) create(w http.ResponseWriter, r *http.Request) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	var request struct {
+		Date string `json:"date"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The Meet request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The Meet request is invalid.")
+		return
+	}
+	groupID := r.PathValue("group_id")
+	if groupID == "" {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "A Group ID is required.")
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canCreatePoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to create Meets.")
+		return
+	}
+	created, err := e.Writer.Create(r.Context(), groupID, request.Date, currentUID(r.Context()))
+	switch {
+	case errors.Is(err, meetwrite.ErrInvalidInput):
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The Meet date is invalid.")
+		return
+	case errors.Is(err, meetwrite.ErrGroupNotFound):
+		firebaseauth.WriteError(w, http.StatusNotFound, "group_not_found", "The requested Group was not found.")
+		return
+	case err != nil:
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to create the Meet.")
+		return
+	}
+	response := meetResponse{
+		ID: created.ID, GroupID: created.GroupID, Date: created.Date,
+		CandidateVenueIDs: []string{}, PreviousVenueIDs: []string{},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (e *Endpoint) past(w http.ResponseWriter, r *http.Request) {

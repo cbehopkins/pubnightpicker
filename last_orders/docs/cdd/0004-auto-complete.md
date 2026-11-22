@@ -324,17 +324,21 @@ candidate result.
 Candidate selects Venue A
     |
     v
-Human completes poll with Venue B
+Human or automatic writer completes the Meet
     |
     v
 Close observes completed == true
     |
     v
-successful no-op; Venue B remains selected
+successful no-op; the first committed selection remains selected
 ```
 
-Manual completion wins this race because the existing completed poll is the
-authoritative state. The Close handler must never overwrite it.
+The first committed completion wins. The close handler must never overwrite an
+already-completed Meet. Once the direct frontend writer is replaced by the
+HandPump completion API, this conditional transaction guarantees first-commit
+wins across all writers. During backend-first migration, the direct frontend
+writer can still compete with automatic completion, so this guarantee is
+not claimed across that transition interval.
 
 ### 7.2 Duplicate Close Work
 

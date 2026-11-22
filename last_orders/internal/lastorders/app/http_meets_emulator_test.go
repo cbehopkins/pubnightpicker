@@ -17,7 +17,311 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Firestore emulator integration test")
+	}
+	if strings.TrimSpace(os.Getenv("FIRESTORE_EMULATOR_HOST")) == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	projectID := "demo-meet-write-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+
+	firestoreClient, err := firestore.NewClient(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = firestoreClient.Close() })
+	groupID := "public-group"
+	if _, err := firestoreClient.Collection("groups").Doc(groupID).Set(ctx, map[string]any{"name": "Public Group", "visibility": "public"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("roles").Doc("canCreatePoll").Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("roles").Doc("canAddPubToPoll").Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("roles").Doc("canCompletePoll").Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("pubs").Doc("venue-add").Set(ctx, map[string]any{"name": "Candidate Venue", "venueType": "event"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("pubs").Doc("venue-other").Set(ctx, map[string]any{"name": "Other Venue", "venueType": "pub"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("pubs").Doc("restaurant-1").Set(ctx, map[string]any{"name": "Restaurant", "venueType": "restaurant"}); err != nil {
+		t.Fatal(err)
+	}
+
+	config := testConfig(t, t.TempDir()+"/meet-write.db", firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
+	config.EnableFirestore = true
+	config.FirestoreProjectID = projectID
+	config.Component = "handpump"
+	config.LandlordInternalURL = "http://127.0.0.1:8082"
+	config.InternalAPIToken = "test-only-internal-token-0123456789"
+	config.HTTPAddr = "127.0.0.1:0"
+	config.AllowAuthEmulator = true
+	config.VenueSource = nil
+	config.GroupSource = nil
+	application, err := app.New(config)
+	if err != nil {
+		t.Fatalf("new HandPump: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	runCtx, stop := context.WithCancel(ctx)
+	runDone := make(chan error, 1)
+	go func() { runDone <- application.Run(runCtx) }()
+	t.Cleanup(func() {
+		stop()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("stop app: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Error("app did not stop")
+		}
+	})
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	baseURL := "http://" + application.HTTPAddr()
+	waitForVenueHTTP(t, ctx, client, baseURL)
+	unauthenticated := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "", `{"date":"2026-11-18"}`)
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated Meet create status=%d, want HTTP 401", unauthenticated.StatusCode)
+	}
+	unauthenticated.Body.Close()
+
+	created := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"2026-11-18"}`)
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		body := readVenueResponseBody(t, created)
+		t.Fatalf("Meet create status=%d body=%s, want HTTP 201", created.StatusCode, body)
+	}
+	var result struct {
+		ID     string `json:"id"`
+		Group  string `json:"group_id"`
+		Date   string `json:"date"`
+		Voting bool   `json:"voting_complete"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ID == "" || result.Group != groupID || result.Date != "2026-11-18" || result.Voting {
+		t.Fatalf("created Meet response=%+v", result)
+	}
+	meetSnapshot, err := firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read committed Meet: %v", err)
+	}
+	meetData := meetSnapshot.Data()
+	if meetData["groupId"] != groupID || meetData["date"] != "2026-11-18" || meetData["completed"] != false {
+		t.Fatalf("committed Meet data=%v", meetData)
+	}
+	audits, err := firestoreClient.Collection("poll_action_audit").Where("pollId", "==", result.ID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("read creation audit: %v", err)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("creation audits=%d, want 1", len(audits))
+	}
+	audit := audits[0].Data()
+	if audit["actionType"] != "create" || audit["actorUid"] != "verified-user" || audit["groupId"] != groupID || audit["pollDate"] != "2026-11-18" {
+		t.Fatalf("creation audit=%v", audit)
+	}
+	if _, err := firestoreClient.Collection("votes").Doc(result.ID).Set(ctx, map[string]any{"venue-add": []string{"verified-user"}}); err != nil {
+		t.Fatal(err)
+	}
+	candidateURL := baseURL + "/api/meet/" + result.ID + "/candidates/venue-add"
+	reservedCandidate := doVenueRequest(t, client, http.MethodPut, baseURL+"/api/meet/"+result.ID+"/candidates/any", "Bearer valid-token", "")
+	if reservedCandidate.StatusCode != http.StatusBadRequest {
+		body := readVenueResponseBody(t, reservedCandidate)
+		t.Fatalf("reserved any candidate status=%d body=%s, want HTTP 400", reservedCandidate.StatusCode, body)
+	}
+	reservedCandidate.Body.Close()
+
+	for _, operation := range []struct {
+		method string
+		url    string
+	}{
+		{http.MethodPut, candidateURL},
+		{http.MethodPut, candidateURL},
+		{http.MethodDelete, candidateURL},
+		{http.MethodDelete, baseURL + "/api/meet/" + result.ID + "/candidates/absent-venue"},
+	} {
+		response := doVenueRequest(t, client, operation.method, operation.url, "Bearer valid-token", "")
+		if response.StatusCode != http.StatusOK {
+			body := readVenueResponseBody(t, response)
+			t.Fatalf("candidate %s status=%d body=%s, want HTTP 200", operation.method, response.StatusCode, body)
+		}
+		response.Body.Close()
+	}
+	meetSnapshot, err = firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read Meet after candidate removal: %v", err)
+	}
+	if candidates, ok := meetSnapshot.Data()["pubs"].(map[string]any); ok && len(candidates) != 0 {
+		t.Fatalf("candidate map after removal=%v, want empty", candidates)
+	}
+	votes, err := firestoreClient.Collection("votes").Doc(result.ID).Get(ctx)
+	if err != nil || votes.Data()["venue-add"] == nil {
+		t.Fatalf("removed candidate votes=%v, err=%v; want votes retained", votes, err)
+	}
+	audits, err = firestoreClient.Collection("poll_action_audit").Where("pollId", "==", result.ID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("read candidate audits: %v", err)
+	}
+	if len(audits) != 3 {
+		t.Fatalf("audits after candidate no-ops=%d, want creation plus two candidate changes", len(audits))
+	}
+	completionURL := baseURL + "/api/meet/" + result.ID + "/complete"
+	invalidCompletion := doVenueRequest(t, client, http.MethodPost, completionURL, "Bearer valid-token", `{"venue_id":"missing-venue"}`)
+	if invalidCompletion.StatusCode != http.StatusNotFound {
+		body := readVenueResponseBody(t, invalidCompletion)
+		t.Fatalf("completion with missing Venue status=%d body=%s, want HTTP 404", invalidCompletion.StatusCode, body)
+	}
+	invalidCompletion.Body.Close()
+	completed := doVenueRequest(t, client, http.MethodPost, completionURL, "Bearer valid-token", `{"venue_id":"venue-add"}`)
+	if completed.StatusCode != http.StatusOK {
+		body := readVenueResponseBody(t, completed)
+		t.Fatalf("Meet completion status=%d body=%s, want HTTP 200", completed.StatusCode, body)
+	}
+	completed.Body.Close()
+	completedMeet, err := firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read completed Meet: %v", err)
+	}
+	completedData := completedMeet.Data()
+	if completedData["completed"] != true || completedData["selected"] != "venue-add" || completedData["completedByUid"] != "verified-user" {
+		t.Fatalf("completed Meet data=%v", completedData)
+	}
+	completionRetry := doVenueRequest(t, client, http.MethodPost, completionURL, "Bearer valid-token", `{"venue_id":"venue-add"}`)
+	if completionRetry.StatusCode != http.StatusConflict {
+		body := readVenueResponseBody(t, completionRetry)
+		t.Fatalf("repeated Meet completion status=%d body=%s, want HTTP 409", completionRetry.StatusCode, body)
+	}
+	completionRetry.Body.Close()
+	audits, err = firestoreClient.Collection("poll_action_audit").Where("pollId", "==", result.ID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("read completion audits: %v", err)
+	}
+	if len(audits) != 4 {
+		t.Fatalf("audits after completion retry=%d, want one completion audit", len(audits))
+	}
+	rescheduleURL := baseURL + "/api/meet/" + result.ID + "/reschedule"
+	reschedule := func(body string, wantStatus int) {
+		t.Helper()
+		response := doVenueRequest(t, client, http.MethodPost, rescheduleURL, "Bearer valid-token", body)
+		if response.StatusCode != wantStatus {
+			responseBody := readVenueResponseBody(t, response)
+			t.Fatalf("Meet reschedule body=%s status=%d, want HTTP %d", responseBody, response.StatusCode, wantStatus)
+		}
+		response.Body.Close()
+	}
+	reschedule(`{"date":"2026-11-19"}`, http.StatusBadRequest)
+	reschedule(`{"venue_id":"venue-other","restaurant_id":"restaurant-1","restaurant_time":"18:30"}`, http.StatusOK)
+	reschedule(`{"restaurant_time":"19:15"}`, http.StatusOK)
+	reschedule(`{"venue_id":"venue-add"}`, http.StatusOK)
+	reschedule(`{"venue_id":"venue-other"}`, http.StatusOK)
+	reschedule(`{"restaurant_id":null}`, http.StatusOK)
+	reschedule(`{"venue_id":"venue-other"}`, http.StatusOK)
+	rescheduledMeet, err := firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read rescheduled Meet: %v", err)
+	}
+	rescheduledData := rescheduledMeet.Data()
+	if rescheduledData["selected"] != "venue-other" || rescheduledData["completed"] != true {
+		t.Fatalf("rescheduled Meet data=%v", rescheduledData)
+	}
+	if _, exists := rescheduledData["restaurant"]; exists {
+		t.Fatalf("restaurant was not cleared: %v", rescheduledData)
+	}
+	if _, exists := rescheduledData["restaurant_time"]; exists {
+		t.Fatalf("restaurant time was not cleared: %v", rescheduledData)
+	}
+	if _, exists := rescheduledData["completedByUid"]; exists {
+		t.Fatalf("completion actor was not cleared: %v", rescheduledData)
+	}
+	history, ok := rescheduledData["previous_pubs"].([]any)
+	if !ok || len(history) != 3 || history[0] != "venue-add" || history[1] != "venue-other" || history[2] != "venue-add" {
+		t.Fatalf("reschedule history=%v, want [venue-add venue-other venue-add]", rescheduledData["previous_pubs"])
+	}
+	audits, err = firestoreClient.Collection("poll_action_audit").Where("pollId", "==", result.ID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("read reschedule audits: %v", err)
+	}
+	if len(audits) != 9 {
+		t.Fatalf("audits after reschedule no-ops=%d, want 9", len(audits))
+	}
+	if _, err := firestoreClient.Collection("attendance").Doc(result.ID).Set(ctx, map[string]any{"venue-add": map[string]any{"canCome": []string{"verified-user"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("open_actions").Doc(result.ID).Set(ctx, map[string]any{"push": []string{"venue-other"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firestoreClient.Collection("messages").Doc(result.ID).Set(ctx, map[string]any{"text": "unrelated chat record"}); err != nil {
+		t.Fatal(err)
+	}
+	deleteURL := baseURL + "/api/meet/" + result.ID
+	deleted := doVenueRequest(t, client, http.MethodDelete, deleteURL, "Bearer valid-token", "")
+	if deleted.StatusCode != http.StatusNoContent {
+		body := readVenueResponseBody(t, deleted)
+		t.Fatalf("Meet deletion status=%d body=%s, want HTTP 204", deleted.StatusCode, body)
+	}
+	deleted.Body.Close()
+	for _, collection := range []string{"polls", "votes", "attendance", "open_actions"} {
+		_, err := firestoreClient.Collection(collection).Doc(result.ID).Get(ctx)
+		if status.Code(err) != codes.NotFound {
+			t.Fatalf("%s/%s read error=%v, want not found", collection, result.ID, err)
+		}
+	}
+	if _, err := firestoreClient.Collection("messages").Doc(result.ID).Get(ctx); err != nil {
+		t.Fatalf("unrelated message was removed: %v", err)
+	}
+	missingDelete := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/missing-meet", "Bearer valid-token", "")
+	if missingDelete.StatusCode != http.StatusNotFound {
+		body := readVenueResponseBody(t, missingDelete)
+		t.Fatalf("missing Meet deletion status=%d body=%s, want HTTP 404", missingDelete.StatusCode, body)
+	}
+	missingDelete.Body.Close()
+
+	secondCreate := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"2026-11-18"}`)
+	if secondCreate.StatusCode != http.StatusCreated {
+		body := readVenueResponseBody(t, secondCreate)
+		t.Fatalf("same-date Meet create status=%d body=%s, want HTTP 201", secondCreate.StatusCode, body)
+	}
+	var secondResult struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(secondCreate.Body).Decode(&secondResult); err != nil {
+		t.Fatal(err)
+	}
+	secondCreate.Body.Close()
+	if secondResult.ID == "" || secondResult.ID == result.ID {
+		t.Fatalf("same-date Meet ID=%q, want a distinct Firestore ID", secondResult.ID)
+	}
+	secondDelete := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/"+secondResult.ID, "Bearer valid-token", "")
+	if secondDelete.StatusCode != http.StatusNoContent {
+		body := readVenueResponseBody(t, secondDelete)
+		t.Fatalf("Meet deletion with missing children status=%d body=%s, want HTTP 204", secondDelete.StatusCode, body)
+	}
+	secondDelete.Body.Close()
+	secondAudits, err := firestoreClient.Collection("poll_action_audit").Where("pollId", "==", secondResult.ID).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("read second Meet audits: %v", err)
+	}
+	if len(secondAudits) != 2 {
+		t.Fatalf("second Meet audits=%d, want create and delete", len(secondAudits))
+	}
+}
 
 func TestIndividualMeetGetAgainstFirestoreEmulator(t *testing.T) {
 	if testing.Short() {

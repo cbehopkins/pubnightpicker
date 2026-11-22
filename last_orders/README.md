@@ -439,6 +439,11 @@ attribution. Legacy/automatic polls with no human actor and rescheduled completi
 notifications have no actor exception. Attribution is carried in the durable
 Truth, rather than inferred from the best-effort audit trail.
 
+The direct React Firestore writer remains until the separate frontend cutover. Before
+that cutover, full first-committed-completion protection across automatic, API and
+React writers is not guaranteed; the HandPump API itself uses the same conditional
+completion transaction as automatic completion and cannot be overwritten after commit.
+
 When enabled, Sweego uses dry-run, Mailtrap uses its sandbox and dummy sends remain
 dummy. Suppressed emails include test emails and bypass the poll-email delivery
 allowance. The separate 10-per-day test-email request throttle is unchanged.
