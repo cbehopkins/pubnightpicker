@@ -6,7 +6,7 @@ export { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
 
 /**
  * @param {string} path
- * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit} [options]
+ * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit & { allowAnonymous?: boolean }} [options]
  * @returns {Promise<void>}
  */
 export function streamLastOrders(path, { allowAnonymous = false, ...options } = {}) {
@@ -84,6 +84,7 @@ export async function requestLastOrders(path, {
         const abort = () => reject(signal.reason);
         signal.addEventListener("abort", abort, { once: true });
         const execute = async () => {
+            /** @type {Record<string, string>} */
             let headers = {};
             if (user) {
                 let token;
