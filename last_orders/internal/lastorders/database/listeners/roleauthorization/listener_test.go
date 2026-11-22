@@ -11,9 +11,10 @@ import (
 )
 
 type reconnectingSource struct {
-	mu             sync.Mutex
-	calls          int
-	continueChange <-chan struct{}
+	mu                 sync.Mutex
+	calls              int
+	continueChange     <-chan struct{}
+	continueDisconnect <-chan struct{}
 }
 
 func (s *reconnectingSource) Watch(ctx context.Context) (Stream, error) {
@@ -21,15 +22,16 @@ func (s *reconnectingSource) Watch(ctx context.Context) (Stream, error) {
 	s.calls++
 	call := s.calls
 	s.mu.Unlock()
-	return &reconnectingStream{ctx: ctx, failAfterBaseline: call == 1, continueChange: s.continueChange}, nil
+	return &reconnectingStream{ctx: ctx, failAfterBaseline: call == 1, continueChange: s.continueChange, continueDisconnect: s.continueDisconnect}, nil
 }
 
 type reconnectingStream struct {
-	ctx               context.Context
-	failAfterBaseline bool
-	baselineSent      bool
-	changeSent        bool
-	continueChange    <-chan struct{}
+	ctx                context.Context
+	failAfterBaseline  bool
+	baselineSent       bool
+	changeSent         bool
+	continueChange     <-chan struct{}
+	continueDisconnect <-chan struct{}
 }
 
 func (s *reconnectingStream) Next() ([]Change, error) {
@@ -40,10 +42,19 @@ func (s *reconnectingStream) Next() ([]Change, error) {
 	if s.failAfterBaseline {
 		if !s.changeSent {
 			s.changeSent = true
-			<-s.continueChange
+			select {
+			case <-s.continueChange:
+			case <-s.ctx.Done():
+				return nil, s.ctx.Err()
+			}
 			return []Change{{UIDs: []string{"user-a"}}}, nil
 		}
-		return nil, errors.New("simulated listener disconnect")
+		select {
+		case <-s.continueDisconnect:
+			return nil, errors.New("simulated listener disconnect")
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		}
 	}
 	<-s.ctx.Done()
 	return nil, s.ctx.Err()
@@ -55,9 +66,10 @@ func TestListenerInvalidatesGlobalAdminCacheOnReconnectBaseline(t *testing.T) {
 	var mu sync.Mutex
 	invalidations := 0
 	continueChange := make(chan struct{})
+	continueDisconnect := make(chan struct{})
 	hub := sse.NewHub()
 	subscription := hub.Register("current-meets:group-a", "current-meets-group:group-a", "user-a")
-	listener, err := New(&reconnectingSource{continueChange: continueChange}, func() {
+	listener, err := New(&reconnectingSource{continueChange: continueChange, continueDisconnect: continueDisconnect}, func() {
 		mu.Lock()
 		invalidations++
 		mu.Unlock()
@@ -105,6 +117,7 @@ func TestListenerInvalidatesGlobalAdminCacheOnReconnectBaseline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("admin UID change did not invalidate its stream")
 	}
+	close(continueDisconnect)
 	waitForInvalidations(3)
 	select {
 	case <-subscription.Invalidated():

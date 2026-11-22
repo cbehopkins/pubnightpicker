@@ -149,10 +149,9 @@ When("{word} creates a poll through the UI for Meet Chat", async function (name)
     await page.locator('input[type="date"]').fill(this.meetChatDate);
     await page.getByRole("button", { name: "Add Poll", exact: true }).click();
     await page.getByRole("heading", { name: this.meetChatDate, exact: true }).waitFor();
-    const uid = this.actorUids.get(name);
     this.meetChatId = await withEmulatorAdmin(async (db) => {
         const polls = await waitForValue(async () => {
-            const result = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.meetChatDate), where("createdByUid", "==", uid)));
+            const result = await getDocsFromServer(query(collection(db, "polls"), where("date", "==", this.meetChatDate)));
             return result.empty ? null : result;
         }, (result) => result !== null, `UI-created poll for Meet Chat for ${name}`);
         assert.equal(polls.size, 1);

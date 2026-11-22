@@ -196,6 +196,22 @@ Then("{word} sees the poll on Active Polls", async function (name) {
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor();
 });
 
+Then("the admin sees Bob as the poll creator in the audit", async function () {
+    const admin = this.actors.get("admin");
+    assert.notEqual(admin.context(), this.actors.get("Bob").context());
+    await admin.getByRole("link", { name: "Admin", exact: true }).click();
+    await admin.getByRole("button", { name: "Logs", exact: true }).click();
+    await admin.getByRole("heading", { name: "Poll Action Audit", exact: true }).waitFor();
+    await admin.getByLabel("Action", { exact: true }).selectOption({ label: "Create" });
+    const row = admin.getByRole("row").filter({
+        has: admin.getByText(this.pollId, { exact: true }),
+    });
+    await row.getByRole("cell", { name: "create", exact: true }).waitFor();
+    assert.equal(await row.count(), 1, "the poll must have exactly one creation audit row");
+    await row.getByText(this.pollDate, { exact: true }).waitFor();
+    await row.getByRole("cell").getByText("Bob", { exact: true }).waitFor();
+});
+
 When("Bob filters the venue picker to Pub and adds:", async function (table) {
     const bob = this.actors.get("Bob");
     const poll = journeyPoll(this, "Bob");

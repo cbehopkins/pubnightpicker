@@ -89,8 +89,8 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 				continue
 			}
 			pollDate, _ := change.Doc.Data["date"].(string)
-			createdByUID, _ := change.Doc.Data["createdByUid"].(string)
-			l.createTruth(change.Doc.ID, pollDate, createdByUID)
+			// FIXME: Simplify createTruth to remove the unused creator argument.
+			l.createTruth(change.Doc.ID, pollDate, "")
 		}
 	}
 }

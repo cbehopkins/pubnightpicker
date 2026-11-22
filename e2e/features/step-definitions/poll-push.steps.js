@@ -85,7 +85,7 @@ When("{word} creates the notification journey poll", async function (actor) {
     await pollPanel(this, actor).waitFor();
     this.notificationPoll.id = await withEmulatorAdmin(async (db) => {
         const polls = await waitForValue(() => getDocsFromServer(query(collection(db, "polls"),
-            where("date", "==", this.notificationPoll.date), where("createdByUid", "==", this.actorUids.get(actor)))),
+            where("date", "==", this.notificationPoll.date))),
             (result) => !result.empty, "UI-created notification poll");
         assert.equal(polls.size, 1);
         return polls.docs[0].id;

@@ -30,6 +30,7 @@ Feature: Members organise and chat about a meet
     And Claire opens Active Polls
     And Bob creates a poll on a clear date
     Then Claire sees the poll on Active Polls
+    And the admin sees Bob as the poll creator in the audit
     When Bob filters the venue picker to Pub and adds:
       | venue            |
       | Journey Red Lion |
