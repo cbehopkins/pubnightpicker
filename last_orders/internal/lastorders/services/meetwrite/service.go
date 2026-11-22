@@ -65,6 +65,8 @@ func (s *Service) Create(ctx context.Context, groupID, date, actorUID string) (M
 	}
 	groupRef := s.client.Collection(groupCollection).Doc(groupID)
 	meetRef := s.client.Collection(meetCollection).NewDoc()
+	votesRef := s.client.Collection("votes").Doc(meetRef.ID)
+	attendanceRef := s.client.Collection("attendance").Doc(meetRef.ID)
 	auditRef := s.client.Collection(auditCollection).NewDoc()
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		if _, err := tx.Get(groupRef); err != nil {
@@ -78,6 +80,12 @@ func (s *Service) Create(ctx context.Context, groupID, date, actorUID string) (M
 			"completed": false,
 			"groupId":   groupID,
 		}); err != nil {
+			return err
+		}
+		if err := tx.Create(votesRef, map[string]any{}); err != nil {
+			return err
+		}
+		if err := tx.Create(attendanceRef, map[string]any{}); err != nil {
 			return err
 		}
 		return tx.Create(auditRef, map[string]any{

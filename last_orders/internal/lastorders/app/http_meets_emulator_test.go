@@ -14,6 +14,7 @@ import (
 
 	"last_orders/internal/lastorders/app"
 	"last_orders/internal/lastorders/components/firebaseidempotency/firebaseidempotencytest"
+	"last_orders/internal/lastorders/services/meetwrite"
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
@@ -99,6 +100,40 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("unauthenticated Meet create status=%d, want HTTP 401", unauthenticated.StatusCode)
 	}
 	unauthenticated.Body.Close()
+	if _, err := firestoreClient.Collection("roles").Doc("canCreatePoll").Delete(ctx); err != nil {
+		t.Fatalf("remove Meet creation permission: %v", err)
+	}
+	unauthorized := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"2026-11-18"}`)
+	if unauthorized.StatusCode != http.StatusForbidden {
+		body := readVenueResponseBody(t, unauthorized)
+		t.Fatalf("unauthorised Meet create status=%d body=%s, want HTTP 403", unauthorized.StatusCode, body)
+	}
+	unauthorized.Body.Close()
+	if _, err := firestoreClient.Collection("roles").Doc("canCreatePoll").Set(ctx, map[string]any{"verified-user": true}); err != nil {
+		t.Fatalf("restore Meet creation permission: %v", err)
+	}
+	invalidCreate := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"not-a-date"}`)
+	if invalidCreate.StatusCode != http.StatusBadRequest {
+		body := readVenueResponseBody(t, invalidCreate)
+		t.Fatalf("invalid Meet create status=%d body=%s, want HTTP 400", invalidCreate.StatusCode, body)
+	}
+	invalidCreate.Body.Close()
+	writer, err := meetwrite.New(firestoreClient)
+	if err != nil {
+		t.Fatalf("new Meet writer: %v", err)
+	}
+	if _, err := writer.Create(ctx, groupID, "2026-11-18", strings.Repeat("x", 1<<20)); err == nil {
+		t.Fatal("Meet creation with an oversized audit actor succeeded, want transaction failure")
+	}
+	for _, collection := range []string{"polls", "votes", "attendance", "poll_action_audit"} {
+		documents, err := firestoreClient.Collection(collection).Documents(ctx).GetAll()
+		if err != nil {
+			t.Fatalf("read %s after failed Meet creation: %v", collection, err)
+		}
+		if len(documents) != 0 {
+			t.Fatalf("%s has %d documents after failed Meet creation, want none", collection, len(documents))
+		}
+	}
 
 	created := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"2026-11-18"}`)
 	defer created.Body.Close()
@@ -125,6 +160,20 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 	meetData := meetSnapshot.Data()
 	if meetData["groupId"] != groupID || meetData["date"] != "2026-11-18" || meetData["completed"] != false {
 		t.Fatalf("committed Meet data=%v", meetData)
+	}
+	votesSnapshot, err := firestoreClient.Collection("votes").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read initial votes document: %v", err)
+	}
+	if votesData := votesSnapshot.Data(); len(votesData) != 0 {
+		t.Fatalf("initial votes data=%v, want empty document", votesData)
+	}
+	attendanceSnapshot, err := firestoreClient.Collection("attendance").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read initial attendance document: %v", err)
+	}
+	if attendanceData := attendanceSnapshot.Data(); len(attendanceData) != 0 {
+		t.Fatalf("initial attendance data=%v, want empty document", attendanceData)
 	}
 	audits, err := firestoreClient.Collection("poll_action_audit").Where("pollId", "==", result.ID).Documents(ctx).GetAll()
 	if err != nil {

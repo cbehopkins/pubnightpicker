@@ -825,7 +825,7 @@ paths:
                   format: date
       responses:
         '201':
-          description: Committed Meet and creation audit.
+          description: Committed Meet, empty votes and attendance documents, and creation audit.
           content:
             application/json:
               schema:
