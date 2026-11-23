@@ -28,15 +28,27 @@ const (
 )
 
 type Meet struct {
-	ID                string
-	GroupID           string
-	Date              string
-	VotingComplete    bool
-	CandidateVenueIDs []string
-	SelectedVenueID   string
-	RestaurantID      string
-	RestaurantTime    string
-	PreviousVenueIDs  []string
+	ID                   string
+	GroupID              string
+	Date                 string
+	VotingComplete       bool
+	CandidateVenueIDs    []string
+	SelectedVenueID      string
+	SelectedVenue        *VenueSummary
+	SelectedVenueMissing bool
+	RestaurantID         string
+	RestaurantTime       string
+	PreviousVenueIDs     []string
+}
+
+type VenueSummary struct {
+	ID         string
+	Status     string
+	Name       string
+	Address    string
+	WebsiteURL string
+	ImageURL   string
+	VenueType  string
 }
 
 type RescheduleInput struct {
@@ -155,10 +167,14 @@ func (s *Service) Complete(ctx context.Context, meetID, selectedVenueID, restaur
 		if groupID == "" || date == "" {
 			return ErrInvalidState
 		}
-		venueName, err := readVenueName(tx, selectedVenueRef)
+		selectedVenue, missingVenue, err := readVenueSummary(tx, selectedVenueRef, false)
 		if err != nil {
 			return err
 		}
+		if missingVenue {
+			return ErrVenueNotFound
+		}
+		venueName := selectedVenue.Name
 		restaurantName := ""
 		if restaurantRef != nil {
 			restaurantName, err = readVenueName(tx, restaurantRef)
@@ -215,6 +231,7 @@ func (s *Service) Complete(ctx context.Context, meetID, selectedVenueID, restaur
 			updated["restaurant_time"] = restaurantTime
 		}
 		result = meetFromData(meetID, updated)
+		result.SelectedVenue = &selectedVenue
 		return nil
 	})
 	if err != nil {
@@ -325,17 +342,16 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 		}
 		venueChanged := newVenueID != oldVenueID
 		restaurantChanged := newRestaurantID != oldRestaurantID || newRestaurantTime != oldRestaurantTime
+		selectedVenue, missingVenue, err := readVenueSummary(tx, s.client.Collection("pubs").Doc(newVenueID), !venueChanged)
+		if err != nil {
+			return err
+		}
 		if !venueChanged && !restaurantChanged {
 			result = meetFromData(meetID, data)
+			setSelectedVenue(&result, selectedVenue, missingVenue)
 			return nil
 		}
-		venueName, restaurantName := "", ""
-		if venueChanged {
-			venueName, err = readVenueName(tx, s.client.Collection("pubs").Doc(newVenueID))
-			if err != nil {
-				return err
-			}
-		}
+		venueName, restaurantName := selectedVenue.Name, ""
 		if newRestaurantID != "" && newRestaurantID != oldRestaurantID {
 			restaurantName, err = readVenueName(tx, s.client.Collection("pubs").Doc(newRestaurantID))
 			if err != nil {
@@ -398,6 +414,7 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 			return err
 		}
 		result = meetFromData(meetID, updated)
+		setSelectedVenue(&result, selectedVenue, missingVenue)
 		return nil
 	})
 	if err != nil {
@@ -427,23 +444,58 @@ func readStringSlice(value any) ([]string, bool) {
 	}
 }
 
-func readVenueName(tx *firestore.Transaction, ref *firestore.DocumentRef) (string, error) {
+func readVenueSummary(tx *firestore.Transaction, ref *firestore.DocumentRef, allowDeleted bool) (VenueSummary, bool, error) {
 	doc, err := tx.Get(ref)
 	if status.Code(err) == codes.NotFound {
-		return "", ErrVenueNotFound
+		return VenueSummary{}, true, nil
 	}
 	if err != nil {
-		return "", err
+		return VenueSummary{}, false, err
 	}
 	data := doc.Data()
+	venueStatus := "active"
 	if deleted, exists := data["deleted_on"]; exists && deleted != nil {
-		return "", ErrVenueNotFound
+		if !allowDeleted {
+			return VenueSummary{}, false, ErrVenueNotFound
+		}
+		venueStatus = "deleted"
 	}
 	name, _ := data["name"].(string)
 	if strings.TrimSpace(name) == "" {
+		return VenueSummary{}, false, ErrVenueNotFound
+	}
+	venueType, _ := data["venueType"].(string)
+	if venueType == "" {
+		venueType = "pub"
+	}
+	return VenueSummary{
+		ID: ref.ID, Status: venueStatus, Name: name,
+		Address: firestoreString(data, "address"), WebsiteURL: firestoreString(data, "web_site"),
+		ImageURL: firestoreString(data, "pubImage"), VenueType: venueType,
+	}, false, nil
+}
+
+func readVenueName(tx *firestore.Transaction, ref *firestore.DocumentRef) (string, error) {
+	venue, missing, err := readVenueSummary(tx, ref, false)
+	if err != nil {
+		return "", err
+	}
+	if missing {
 		return "", ErrVenueNotFound
 	}
-	return name, nil
+	return venue.Name, nil
+}
+
+func firestoreString(data map[string]any, field string) string {
+	value, _ := data[field].(string)
+	return value
+}
+
+func setSelectedVenue(meet *Meet, venue VenueSummary, missing bool) {
+	meet.SelectedVenueMissing = missing
+	if !missing {
+		meet.SelectedVenue = &venue
+	}
 }
 
 func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID string, add bool) (Meet, error) {

@@ -2003,7 +2003,7 @@ components:
           minimum: 0
     Meet:
       type: object
-      required: [id, group_id, date, voting_complete, previous_venue_ids]
+      required: [id, group_id, date, voting_complete, venue, previous_venue_ids]
       properties:
         id:
           type: string

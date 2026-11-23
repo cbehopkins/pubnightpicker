@@ -136,19 +136,23 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 	}
 
 	created := doVenueRequest(t, client, http.MethodPost, baseURL+"/api/meets/"+groupID, "Bearer valid-token", `{"date":"2026-11-18"}`)
-	defer created.Body.Close()
 	if created.StatusCode != http.StatusCreated {
 		body := readVenueResponseBody(t, created)
 		t.Fatalf("Meet create status=%d body=%s, want HTTP 201", created.StatusCode, body)
 	}
+	createdBody := readVenueResponseBody(t, created)
 	var result struct {
 		ID     string `json:"id"`
 		Group  string `json:"group_id"`
 		Date   string `json:"date"`
 		Voting bool   `json:"voting_complete"`
 	}
-	if err := json.NewDecoder(created.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal([]byte(createdBody), &result); err != nil {
 		t.Fatal(err)
+	}
+	wantCreatedBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":false,"venue":null,"candidate_venue_ids":[],"restaurant_id":null,"restaurant_time":null,"previous_venue_ids":[]}`
+	if createdBody != wantCreatedBody {
+		t.Fatalf("Meet create body=%s, want %s", createdBody, wantCreatedBody)
 	}
 	if result.ID == "" || result.Group != groupID || result.Date != "2026-11-18" || result.Voting {
 		t.Fatalf("created Meet response=%+v", result)
@@ -198,20 +202,27 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 	reservedCandidate.Body.Close()
 
 	for _, operation := range []struct {
-		method string
-		url    string
+		method   string
+		url      string
+		wantBody string
 	}{
-		{http.MethodPut, candidateURL},
-		{http.MethodPut, candidateURL},
-		{http.MethodDelete, candidateURL},
-		{http.MethodDelete, baseURL + "/api/meet/" + result.ID + "/candidates/absent-venue"},
+		{
+			method: http.MethodPut, url: candidateURL,
+			wantBody: `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":false,"venue":null,"candidate_venue_ids":["venue-add"],"restaurant_id":null,"restaurant_time":null,"previous_venue_ids":[]}`,
+		},
+		{method: http.MethodPut, url: candidateURL},
+		{method: http.MethodDelete, url: candidateURL},
+		{method: http.MethodDelete, url: baseURL + "/api/meet/" + result.ID + "/candidates/absent-venue"},
 	} {
 		response := doVenueRequest(t, client, operation.method, operation.url, "Bearer valid-token", "")
 		if response.StatusCode != http.StatusOK {
 			body := readVenueResponseBody(t, response)
 			t.Fatalf("candidate %s status=%d body=%s, want HTTP 200", operation.method, response.StatusCode, body)
 		}
-		response.Body.Close()
+		body := readVenueResponseBody(t, response)
+		if operation.wantBody != "" && body != operation.wantBody {
+			t.Fatalf("candidate %s body=%s, want %s", operation.method, body, operation.wantBody)
+		}
 	}
 	meetSnapshot, err = firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
 	if err != nil {
@@ -243,7 +254,11 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 		body := readVenueResponseBody(t, completed)
 		t.Fatalf("Meet completion status=%d body=%s, want HTTP 200", completed.StatusCode, body)
 	}
-	completed.Body.Close()
+	completedBody := readVenueResponseBody(t, completed)
+	wantCompletedBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-add","status":"active","name":"Candidate Venue","address":"","website_url":null,"image_url":null,"venue_type":"event"},"candidate_venue_ids":[],"restaurant_id":null,"restaurant_time":null,"previous_venue_ids":[]}`
+	if completedBody != wantCompletedBody {
+		t.Fatalf("Meet completion body=%s, want %s", completedBody, wantCompletedBody)
+	}
 	completedMeet, err := firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
 	if err != nil {
 		t.Fatalf("read completed Meet: %v", err)
@@ -266,18 +281,26 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 		t.Fatalf("audits after completion retry=%d, want one completion audit", len(audits))
 	}
 	rescheduleURL := baseURL + "/api/meet/" + result.ID + "/reschedule"
-	reschedule := func(body string, wantStatus int) {
+	reschedule := func(body string, wantStatus int) string {
 		t.Helper()
 		response := doVenueRequest(t, client, http.MethodPost, rescheduleURL, "Bearer valid-token", body)
 		if response.StatusCode != wantStatus {
 			responseBody := readVenueResponseBody(t, response)
 			t.Fatalf("Meet reschedule body=%s status=%d, want HTTP %d", responseBody, response.StatusCode, wantStatus)
 		}
-		response.Body.Close()
+		return readVenueResponseBody(t, response)
 	}
 	reschedule(`{"date":"2026-11-19"}`, http.StatusBadRequest)
-	reschedule(`{"venue_id":"venue-other","restaurant_id":"restaurant-1","restaurant_time":"18:30"}`, http.StatusOK)
-	reschedule(`{"restaurant_time":"19:15"}`, http.StatusOK)
+	venueChangedBody := reschedule(`{"venue_id":"venue-other","restaurant_id":"restaurant-1","restaurant_time":"18:30"}`, http.StatusOK)
+	wantVenueChangedBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-other","status":"active","name":"Other Venue","address":"","website_url":null,"image_url":null,"venue_type":"pub"},"candidate_venue_ids":[],"restaurant_id":"restaurant-1","restaurant_time":"18:30","previous_venue_ids":["venue-add"]}`
+	if venueChangedBody != wantVenueChangedBody {
+		t.Fatalf("Venue-changing reschedule body=%s, want %s", venueChangedBody, wantVenueChangedBody)
+	}
+	restaurantOnlyBody := reschedule(`{"restaurant_time":"19:15"}`, http.StatusOK)
+	wantRestaurantOnlyBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-other","status":"active","name":"Other Venue","address":"","website_url":null,"image_url":null,"venue_type":"pub"},"candidate_venue_ids":[],"restaurant_id":"restaurant-1","restaurant_time":"19:15","previous_venue_ids":["venue-add"]}`
+	if restaurantOnlyBody != wantRestaurantOnlyBody {
+		t.Fatalf("restaurant-only reschedule body=%s, want %s", restaurantOnlyBody, wantRestaurantOnlyBody)
+	}
 	reschedule(`{"venue_id":"venue-add"}`, http.StatusOK)
 	reschedule(`{"venue_id":"venue-other"}`, http.StatusOK)
 	reschedule(`{"restaurant_id":null}`, http.StatusOK)
