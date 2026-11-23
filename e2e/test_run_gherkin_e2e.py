@@ -44,6 +44,8 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertEqual(env["GOFLAGS"], "")
         self.assertEqual(env["GOENV"], "off")
         self.assertNotIn("LAST_ORDERS_E2E_INITIAL_TIME", env)
+        self.assertEqual(env["ENABLE_ADMIN_DELETE_REQUESTS"], "false")
+        self.assertEqual(env["ADMIN_DELETE_DRY_RUN"], "true")
         self.assertEqual(
             clock_env["LAST_ORDERS_E2E_CLOCK_ADDR"], runner.CLOCK_CONTROL_ADDR
         )
@@ -140,7 +142,7 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertEqual(group.call_args.args[0], "frontend")
         self.assertIsNone(group.call_args.args[1])
 
-    def test_default_runs_both_groups_with_different_state_paths(self) -> None:
+    def test_default_runs_only_safe_groups_with_different_state_paths(self) -> None:
         def build_command(command: list[str], cwd: Path, env: dict[str, str]) -> int:
             output_index = command.index("-o") + 1
             Path(command[output_index]).touch()
@@ -161,12 +163,25 @@ class JourneyRunnerTests(unittest.TestCase):
         self.assertEqual(build.call_args.args[2]["GOFLAGS"], "")
         self.assertEqual(build.call_args.args[2]["GOENV"], "off")
         self.assertEqual(
-            [call.args[0] for call in group.call_args_list], ["frontend", "last-orders"]
+            [call.args[0] for call in group.call_args_list],
+            ["frontend", "last-orders"],
         )
         self.assertNotEqual(
             group.call_args_list[0].args[2], group.call_args_list[1].args[2]
         )
         self.assertEqual(discovery.call_count, 2)
+
+    def test_all_groups_is_an_explicit_opt_in_to_account_deletion(self) -> None:
+        with patch.object(runner, "E2E_DIR", self.root), patch.object(
+            runner, "_preflight"
+        ), patch.object(runner, "_discover"), patch.object(
+            runner, "_build_backend", return_value=self.root / "last-orders"
+        ), patch.object(runner, "_run_group", return_value=0) as group:
+            self.assertEqual(runner.main(["--group", "all"]), 0)
+        self.assertEqual(
+            [call.args[0] for call in group.call_args_list],
+            ["frontend", "last-orders", "account-deletion"],
+        )
 
     def test_application_time_mode_selects_tagged_scenarios_with_fresh_state(
         self,
@@ -318,7 +333,7 @@ class JourneyRunnerTests(unittest.TestCase):
     def test_application_time_tag_is_excluded_from_ordinary_backend_runs(self) -> None:
         self.assertEqual(
             runner._scenario_tags("last-orders", False),
-            "(@last_orders) and not @application_time",
+            "(@last_orders) and not @application_time and not @account_deletion",
         )
         self.assertEqual(
             runner._scenario_tags("last-orders", True),
@@ -477,30 +492,52 @@ class JourneyRunnerTests(unittest.TestCase):
             runner._remove_scratch(self.root / "synthetic")
 
     def test_backend_readiness_failure_cleans_all_started_services(self) -> None:
-        owners = [Mock(), Mock()]
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(runner, "_require_free_ports"))
-            stack.enter_context(patch.object(runner, "_remove_stale_hub_locator"))
-            stack.enter_context(
-                patch.object(runner, "_find_firebase", return_value=["firebase"])
-            )
-            stack.enter_context(
-                patch.object(runner, "_tool", side_effect=lambda name: name)
-            )
-            stack.enter_context(patch.object(runner, "_wait_for_emulators"))
-            stack.enter_context(patch.object(runner, "_run_command", return_value=0))
-            stack.enter_context(patch.object(runner, "ProcessTree", side_effect=owners))
-            stack.enter_context(
-                patch.object(
-                    runner, "_wait_for_url", side_effect=TimeoutError("synthetic")
+        for group, real_delete_enabled in (
+            ("last-orders", False),
+            ("account-deletion", True),
+        ):
+            with self.subTest(group=group):
+                owners = [Mock(), Mock()]
+                with ExitStack() as stack:
+                    stack.enter_context(patch.object(runner, "_require_free_ports"))
+                    stack.enter_context(patch.object(runner, "_remove_stale_hub_locator"))
+                    stack.enter_context(
+                        patch.object(runner, "_find_firebase", return_value=["firebase"])
+                    )
+                    stack.enter_context(
+                        patch.object(runner, "_tool", side_effect=lambda name: name)
+                    )
+                    stack.enter_context(patch.object(runner, "_wait_for_emulators"))
+                    stack.enter_context(patch.object(runner, "_run_command", return_value=0))
+                    process_tree = stack.enter_context(
+                        patch.object(runner, "ProcessTree", side_effect=owners)
+                    )
+                    stack.enter_context(
+                        patch.object(
+                            runner, "_wait_for_url", side_effect=TimeoutError("synthetic")
+                        )
+                    )
+                    with self.assertRaises(TimeoutError):
+                        runner._run_group(
+                            group, self.root / "backend", self.root, self.root
+                        )
+                for owner in owners:
+                    owner.stop.assert_called_once()
+
+                backend_call = process_tree.call_args_list[1]
+                backend_env = backend_call.kwargs["env"]
+                self.assertEqual(
+                    backend_env["ENABLE_ADMIN_DELETE_REQUESTS"],
+                    "true" if real_delete_enabled else "false",
                 )
-            )
-            with self.assertRaises(TimeoutError):
-                runner._run_group(
-                    "last-orders", self.root / "backend", self.root, self.root
+                self.assertEqual(
+                    backend_env["ADMIN_DELETE_DRY_RUN"],
+                    "false" if real_delete_enabled else "true",
                 )
-        for owner in owners:
-            owner.stop.assert_called_once()
+                self.assertEqual(
+                    "-enable-real-auth-delete" in backend_call.args[0],
+                    real_delete_enabled,
+                )
 
     def test_interruption_during_bootstrap_cleans_emulators(self) -> None:
         owner = Mock()

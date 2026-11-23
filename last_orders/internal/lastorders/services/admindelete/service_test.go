@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"google.golang.org/api/googleapi"
 	"last_orders/internal/lastorders/services/votecleanup"
 	"last_orders/internal/lastorders/truths"
+
+	"google.golang.org/api/googleapi"
 )
 
 type fakeRepository struct {

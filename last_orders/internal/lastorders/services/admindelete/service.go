@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/services/votecleanup"
+	"last_orders/internal/lastorders/truths"
+
 	firebaseauthsdk "firebase.google.com/go/v4/auth"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"last_orders/internal/lastorders/services/votecleanup"
-	"last_orders/internal/lastorders/truths"
 )
 
 const (

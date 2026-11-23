@@ -36,7 +36,13 @@ BACKEND_URL = "http://127.0.0.1:8081"
 CLOCK_CONTROL_ADDR = "127.0.0.1:8082"
 CLOCK_CONTROL_URL = f"http://{CLOCK_CONTROL_ADDR}"
 EMULATOR_PORTS = (8080, 9099, 4400, 4500, 9150)
-GROUP_TAGS = {"frontend": "not @last_orders", "last-orders": "@last_orders"}
+GROUP_TAGS = {
+    "frontend": "not @last_orders",
+    "last-orders": "@last_orders",
+    "account-deletion": "@last_orders and @account_deletion",
+}
+BACKEND_GROUPS = frozenset({"last-orders", "account-deletion"})
+DEFAULT_GROUPS = ("frontend", "last-orders")
 VITE_ENTRY = REACT_DIR / "node_modules" / "vite" / "bin" / "vite.js"
 CUCUMBER_ENTRY = (
     E2E_DIR / "node_modules" / "@cucumber" / "cucumber" / "bin" / "cucumber.js"
@@ -282,7 +288,7 @@ def _preflight(groups: tuple[str, ...], env: dict[str, str]) -> None:
             raise FileNotFoundError(
                 f"Missing {entry}; install React and E2E npm dependencies first"
             )
-    if "last-orders" in groups:
+    if BACKEND_GROUPS.intersection(groups):
         _tool("go")
     check = "const {chromium}=require('playwright');if(!require('node:fs').existsSync(chromium.executablePath()))process.exit(1)"
     if _run_command([_tool("node"), "-e", check], E2E_DIR, env):
@@ -344,7 +350,7 @@ def _scenario_tags(group: str, application_time: bool) -> str:
     if application_time:
         return f"({tags}) and @application_time"
     if group == "last-orders":
-        return f"({tags}) and not @application_time"
+        return f"({tags}) and not @application_time and not @account_deletion"
     return tags
 
 
@@ -517,7 +523,7 @@ def _run_group(
     application_time: bool = False,
 ) -> int:
     backend_ports = (8081, 8082) if application_time else (8081,)
-    ports = (*EMULATOR_PORTS, 3000, *(backend_ports if group == "last-orders" else ()))
+    ports = (*EMULATOR_PORTS, 3000, *(backend_ports if group in BACKEND_GROUPS else ()))
     _require_free_ports(ports)
     _remove_stale_hub_locator()
     env = _environment(application_time)
@@ -564,26 +570,35 @@ def _run_group(
             services,
         ):
             raise RuntimeError("Emulator admin bootstrap failed")
-        if group == "last-orders":
+        if group in BACKEND_GROUPS:
             if binary is None:
                 raise RuntimeError("Backend group requires a built Last Orders binary")
             backend_env = {**env, "LAST_ORDERS_CURSOR_HMAC_KEY": secrets.token_hex(32)}
             _validate_environment(backend_env, application_time)
+            backend_args = [
+                str(binary),
+                "all",
+                f"-db-path={scratch / 'last-orders.db'}",
+                "-http-addr=127.0.0.1:8081",
+                "-push-client=dummy",
+                "-allow-auth-emulator",
+                f"-polls-since={polls_since}",
+            ]
+            if group == "account-deletion":
+                backend_env.update(
+                    {
+                        "ENABLE_ADMIN_DELETE_REQUESTS": "true",
+                        "ADMIN_DELETE_DRY_RUN": "false",
+                    }
+                )
+                backend_args.append("-enable-real-auth-delete")
             stdout_path = artifacts / "last-orders.jsonl"
             stdout = files.enter_context(stdout_path.open("w", encoding="utf-8"))
             stderr = files.enter_context(
                 (artifacts / "last-orders.stderr.log").open("w", encoding="utf-8")
             )
             services["Last Orders"] = ProcessTree(
-                [
-                    str(binary),
-                    "all",
-                    f"-db-path={scratch / 'last-orders.db'}",
-                    "-http-addr=127.0.0.1:8081",
-                    "-push-client=dummy",
-                    "-allow-auth-emulator",
-                    f"-polls-since={polls_since}",
-                ],
+                backend_args,
                 cwd=LAST_ORDERS_DIR,
                 env=backend_env,
                 stdout=stdout,
@@ -619,7 +634,7 @@ def _run_group(
         )
         _wait_for_url(BASE_URL, services)
         cucumber_env = env
-        if group == "last-orders":
+        if group in BACKEND_GROUPS:
             cucumber_env = {
                 **env,
                 "E2E_BACKEND_LOG_PATH": str(artifacts / "last-orders.jsonl"),
@@ -649,7 +664,9 @@ def _run_group(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--group", choices=("all", *GROUP_TAGS), default="all")
+    parser.add_argument(
+        "--group", choices=("default", "all", *GROUP_TAGS), default="default"
+    )
     parser.add_argument(
         "--name", help="Run only Cucumber scenarios matching this name expression"
     )
@@ -665,14 +682,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Run only @application_time Last Orders scenarios with a tagged backend and fresh state per scenario",
     )
     args = parser.parse_args(argv)
-    if args.lifecycle == "scenario" and args.group != "last-orders":
-        parser.error("--lifecycle scenario requires --group last-orders")
+    if args.lifecycle == "scenario" and args.group not in BACKEND_GROUPS:
+        parser.error("--lifecycle scenario requires a backend-dependent group")
     if args.application_time and args.group != "last-orders":
         parser.error("--application-time requires --group last-orders")
     lifecycle = args.lifecycle or ("scenario" if args.application_time else "group")
     if args.application_time and lifecycle != "scenario":
         parser.error("--application-time requires the scenario lifecycle")
-    groups = tuple(GROUP_TAGS) if args.group == "all" else (args.group,)
+    if args.group == "default":
+        groups = DEFAULT_GROUPS
+    elif args.group == "all":
+        groups = tuple(GROUP_TAGS)
+    else:
+        groups = (args.group,)
     env = _environment(args.application_time)
     _validate_environment(env, args.application_time)
     _preflight(groups, env)
@@ -683,7 +705,7 @@ def main(argv: list[str] | None = None) -> int:
     with _scratch_directory() as scratch:
         binary = (
             _build_backend(scratch, env, args.application_time)
-            if "last-orders" in groups
+            if BACKEND_GROUPS.intersection(groups)
             else None
         )
         discovered = {}

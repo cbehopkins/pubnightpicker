@@ -361,26 +361,24 @@ real diagnostic UI, with no request leaving the local demo environment.
 
 ## Phase 9: Admin User Deletion
 
-Keep deletion out of the default backend browser group until the harness has a
-separate, explicit deletion configuration. Begin with a dry-run journey:
+Real Auth deletion is covered by the opt-in
+`npm run test:journey:account-deletion` emulator acceptance command, not the
+standard E2E command. Its separate runner group enables admin deletion and the
+real-delete capability only for the fresh demo Auth/Firestore emulators.
 
-- An admin deletes a synthetic target through Manage Users.
-- Verify the UI summary and app-data scrub: votes and attendance are removed,
-  messages are anonymised, push endpoints and role entries are removed, and
-  private/public profile documents are deleted.
-- Verify the queued request reaches `dry_run_validated` and its audit evidence
-  is recorded. In dry-run mode the Firebase Auth account remains; do not assert
-  that the target can no longer sign in.
+The browser journeys cover both deletion paths:
 
-Only add real Auth deletion as a separate opt-in emulator acceptance command.
-It must require explicit Auth-emulator routing and deletion flags, use a unique
-synthetic account, and verify that account is removed while another account
-remains usable. The standard E2E command must never enable this mode or target a
-live Firebase project.
+- A member deletes their own account through My Preferences, including typed
+  confirmation and password re-authentication.
+- An admin deletes a different member through Manage Users and waits for the
+  backend request to reach `auth_deleted`.
+- Each journey verifies that the target cannot sign in from a fresh browser
+  context and that the admin and another member can sign in again from fresh
+  contexts.
 
-Acceptance: default deletion coverage proves safe data scrubbing and dry-run
-validation only. Auth deletion is tested solely in a separately guarded demo
-Auth emulator run.
+The standard E2E command must never enable real Auth deletion or target a live
+Firebase project. Dry-run request validation and detailed app-data scrub
+assertions remain separate coverage concerns.
 
 ## Validation And Rollout
 

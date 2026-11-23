@@ -11,6 +11,7 @@
         "test:journey": "python run_gherkin_e2e.py",
         "test:journey:frontend": "python run_gherkin_e2e.py --group frontend",
         "test:journey:last-orders": "python run_gherkin_e2e.py --group last-orders",
+        "test:journey:account-deletion": "python run_gherkin_e2e.py --group account-deletion",
         "test:harness": "python -m unittest discover -s . -p test_run_gherkin_e2e.py",
         "test:support": "node --test support.test.js"
     },
