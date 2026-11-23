@@ -1012,7 +1012,31 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Voting snapshots are temporarily unavailable.")
 		return
 	}
-	optionIDs := append([]string(nil), meetSnapshot.Projection.CandidateVenueIDs...)
+	response := e.votingResponse(r.Context(), meetSnapshot.Projection, votes, principal.UID)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (votingSnapshotResponse, int64, error) {
+	meetSnapshot, err := e.Reader.Get(ctx, meetID)
+	if err != nil {
+		return votingSnapshotResponse{}, 0, err
+	}
+	allowed, err := e.Groups.CanRead(ctx, uid, meetSnapshot.Projection.GroupID)
+	if err != nil || !allowed {
+		return votingSnapshotResponse{}, 0, meetcache.ErrNotFound
+	}
+	votes, err := e.Voting.Get(ctx, meetSnapshot.Projection.ID)
+	if err != nil {
+		return votingSnapshotResponse{}, 0, err
+	}
+	return e.votingResponse(ctx, meetSnapshot.Projection, votes, uid), votes.Sequence, nil
+}
+
+func (e *Endpoint) votingResponse(ctx context.Context, meet meetcache.Projection, votes votecache.Snapshot, uid string) votingSnapshotResponse {
+	optionIDs := append([]string(nil), meet.CandidateVenueIDs...)
 	optionIDs = append(optionIDs, "any")
 	sort.Strings(optionIDs)
 	optionUsers := make(map[string]map[string]struct{}, len(optionIDs))
@@ -1029,84 +1053,6 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 	}
 	visibleUsers := make(map[string]votecache.VoterProfile)
 	if e.Profiles != nil && len(allUserIDs) > 0 {
-		userIDs := make([]string, 0, len(allUserIDs))
-		for userID := range allUserIDs {
-			userIDs = append(userIDs, userID)
-		}
-		sort.Strings(userIDs)
-		visibleUsers = e.Profiles.VisibleProfiles(r.Context(), userIDs)
-	}
-	selectedOptionIDs := make([]string, 0)
-	for optionID, userIDs := range votes.Votes {
-		for _, userID := range userIDs {
-			if userID == principal.UID {
-				selectedOptionIDs = append(selectedOptionIDs, optionID)
-				break
-			}
-		}
-	}
-	sort.Strings(selectedOptionIDs)
-	options := make([]votingOptionResponse, 0, len(optionIDs))
-	for _, optionID := range optionIDs {
-		uniqueUsers := optionUsers[optionID]
-		voterUIDs := make([]string, 0, len(uniqueUsers))
-		for userID := range uniqueUsers {
-			if _, ok := visibleUsers[userID]; ok {
-				voterUIDs = append(voterUIDs, userID)
-			}
-		}
-		sort.Strings(voterUIDs)
-		voters := make([]voterSummary, 0, len(voterUIDs))
-		for _, userID := range voterUIDs {
-			profile := visibleUsers[userID]
-			voters = append(voters, voterSummary{ID: profile.ID, Name: profile.Name, PhotoURL: profile.PhotoURL})
-		}
-		options = append(options, votingOptionResponse{
-			ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voters), Voters: voters,
-		})
-	}
-	revisionText := ""
-	var revisionPointer *string
-	if votes.Revision != nil {
-		revisionText = votes.Revision.UTC().Format(time.RFC3339Nano)
-		revisionPointer = &revisionText
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs, VoteRevision: revisionPointer})
-}
-
-func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (votingSnapshotResponse, int64, error) {
-	meetSnapshot, err := e.Reader.Get(ctx, meetID)
-	if err != nil {
-		return votingSnapshotResponse{}, 0, err
-	}
-	allowed, err := e.Groups.CanRead(ctx, uid, meetSnapshot.Projection.GroupID)
-	if err != nil || !allowed {
-		return votingSnapshotResponse{}, 0, meetcache.ErrNotFound
-	}
-	votes, err := e.Voting.Get(ctx, meetSnapshot.Projection.ID)
-	if err != nil {
-		return votingSnapshotResponse{}, 0, err
-	}
-	optionIDs := append([]string(nil), meetSnapshot.Projection.CandidateVenueIDs...)
-	optionIDs = append(optionIDs, "any")
-	sort.Strings(optionIDs)
-	optionUsers := make(map[string]map[string]struct{}, len(optionIDs))
-	allUserIDs := make(map[string]struct{})
-	for _, optionID := range optionIDs {
-		uniqueUsers := make(map[string]struct{})
-		for _, userID := range votes.Votes[optionID] {
-			if userID != "" {
-				uniqueUsers[userID] = struct{}{}
-				allUserIDs[userID] = struct{}{}
-			}
-		}
-		optionUsers[optionID] = uniqueUsers
-	}
-	visibleUsers := make(map[string]votecache.VoterProfile)
-	if len(allUserIDs) > 0 {
 		userIDs := make([]string, 0, len(allUserIDs))
 		for userID := range allUserIDs {
 			userIDs = append(userIDs, userID)
@@ -1146,7 +1092,7 @@ func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (voti
 		revisionText := votes.Revision.UTC().Format(time.RFC3339Nano)
 		revisionPointer = &revisionText
 	}
-	return votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs, VoteRevision: revisionPointer}, votes.Sequence, nil
+	return votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs, VoteRevision: revisionPointer}
 }
 
 func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {

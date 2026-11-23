@@ -2,6 +2,7 @@ package votecleanup
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"strings"
@@ -10,6 +11,30 @@ import (
 
 	"cloud.google.com/go/firestore"
 )
+
+type cleanupRepositoryStub struct {
+	targetUID string
+	result    Result
+	err       error
+}
+
+func (repository *cleanupRepositoryStub) RemoveUser(_ context.Context, targetUID string) (Result, error) {
+	repository.targetUID = targetUID
+	return repository.result, repository.err
+}
+
+func TestCleanerValidatesAndDelegates(t *testing.T) {
+	want := errors.New("repository error")
+	repository := &cleanupRepositoryStub{result: Result{UpdatedDocuments: 2}, err: want}
+	cleaner := &FirestoreCleaner{repository: repository}
+	if _, err := cleaner.RemoveUser(context.Background(), ""); err == nil || repository.targetUID != "" {
+		t.Fatalf("empty target error=%v repository target=%q", err, repository.targetUID)
+	}
+	result, err := cleaner.RemoveUser(context.Background(), "target")
+	if !errors.Is(err, want) || result.UpdatedDocuments != 2 || repository.targetUID != "target" {
+		t.Fatalf("result=%+v error=%v repository target=%q", result, err, repository.targetUID)
+	}
+}
 
 func TestFirestoreCleanerRemovesTargetVotesIdempotently(t *testing.T) {
 	if testing.Short() {

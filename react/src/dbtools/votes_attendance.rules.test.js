@@ -36,6 +36,8 @@ beforeEach(async () => {
         const adminDb = context.firestore();
         await setDoc(doc(adminDb, "votes", "meet-1"), {});
         await setDoc(doc(adminDb, "attendance", "meet-1"), {});
+        await setDoc(doc(adminDb, "roles", "admin"), { "admin-1": true });
+        await setDoc(doc(adminDb, "roles", "canCreatePoll"), { "admin-1": true });
     });
 });
 
@@ -57,6 +59,14 @@ describe("votes and attendance rules", () => {
 
     it("denies an authenticated member deleting a votes document", async () => {
         const db = testEnv.authenticatedContext("member-1").firestore();
+        await assertFails(deleteDoc(doc(db, "votes", "meet-1")));
+    });
+
+    it("denies privileged clients every votes operation", async () => {
+        const db = testEnv.authenticatedContext("admin-1").firestore();
+        await assertFails(getDoc(doc(db, "votes", "meet-1")));
+        await assertFails(updateDoc(doc(db, "votes", "meet-1"), { any: ["admin-1"] }));
+        await assertFails(setDoc(doc(db, "votes", "meet-without-votes"), {}));
         await assertFails(deleteDoc(doc(db, "votes", "meet-1")));
     });
 

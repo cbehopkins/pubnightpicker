@@ -405,6 +405,23 @@ func TestVotingSnapshotHTTPAgainstAuthAndFirestoreEmulators(t *testing.T) {
 	t.Run("stream reconnect and membership revocation", func(t *testing.T) {
 		testVotingStreamReconnectAndRevocation(t, ctx, client, baseURL, idToken, callerUID, privateGroup, firestoreClient)
 	})
+
+	if _, err := mainMeet.Update(ctx, []firestore.Update{{Path: "completed", Value: true}}); err != nil {
+		t.Fatal(err)
+	}
+	completedDelete := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/vote-meet/votes/any", "Bearer "+idToken, "")
+	completedBody := readVenueResponseBody(t, completedDelete)
+	if completedDelete.StatusCode != http.StatusNoContent || completedDelete.Header.Get("X-Vote-Revision") == "" {
+		t.Fatalf("completed-Meet DELETE status=%d revision=%q body=%s, want HTTP 204 with revision", completedDelete.StatusCode, completedDelete.Header.Get("X-Vote-Revision"), completedBody)
+	}
+	completedDelete.Body.Close()
+	completedVotes, err := votes.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := completedVotes.Data()["any"]; exists {
+		t.Fatal("completed-Meet DELETE did not remove the caller's vote")
+	}
 }
 
 func testVotingStreamReconnectAndRevocation(t *testing.T, ctx context.Context, client *http.Client, baseURL, idToken, callerUID string, group *firestore.DocumentRef, firestoreClient *firestore.Client) {

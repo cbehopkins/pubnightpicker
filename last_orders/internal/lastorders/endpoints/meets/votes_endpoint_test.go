@@ -227,7 +227,11 @@ func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
 		}}},
 		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
 		Voting: votingSnapshotReaderStub{snapshot: votecache.Snapshot{
-			Votes: map[string][]string{"venue-1": {"verified-user", "voter-a"}},
+			Votes: map[string][]string{
+				"venue-1": {"verified-user", "voter-a", "voter-a"},
+				"removed": {"verified-user"},
+			},
+			Revision: &revision,
 		}},
 		Profiles:    votingProfilesStub{"verified-user": true},
 		Cursors:     codec,
@@ -276,8 +280,38 @@ func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
 	if !strings.Contains(body, `"name":"Name verified-user"`) {
 		t.Fatalf("initial voting stream omitted visible voter summary: %s", body)
 	}
-	if _, err := time.Parse(time.RFC3339Nano, revision.UTC().Format(time.RFC3339Nano)); err != nil {
+	var streamSnapshot votingSnapshotResponse
+	for _, line := range strings.Split(body, "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			if err := json.Unmarshal([]byte(data), &streamSnapshot); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if streamSnapshot.Cursor == "" {
+		t.Fatal("stream snapshot omitted cursor")
+	}
+	streamSnapshot.Cursor = ""
+	httpResponse := httptest.NewRecorder()
+	mux.ServeHTTP(httpResponse, authenticatedPastRequest("/api/meet/meet-a/votes"))
+	if httpResponse.Code != http.StatusOK {
+		t.Fatalf("voting snapshot GET status=%d body=%s", httpResponse.Code, httpResponse.Body)
+	}
+	var httpSnapshot votingSnapshotResponse
+	if err := json.Unmarshal(httpResponse.Body.Bytes(), &httpSnapshot); err != nil {
 		t.Fatal(err)
+	}
+	streamJSON, err := json.Marshal(streamSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpJSON, err := json.Marshal(httpSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(streamJSON) != string(httpJSON) {
+		t.Fatalf("stream snapshot=%s, HTTP snapshot=%s", streamJSON, httpJSON)
 	}
 }
 

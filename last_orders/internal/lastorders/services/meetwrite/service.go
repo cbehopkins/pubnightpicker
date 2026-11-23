@@ -66,13 +66,19 @@ type RescheduleInput struct {
 
 type Service struct {
 	client *firestore.Client
+	votes  voteRepository
+}
+
+type voteRepository interface {
+	ChangeVote(context.Context, string, string, string, bool) (absentDelete bool, err error)
+	Revision(context.Context, string) (*time.Time, error)
 }
 
 func New(client *firestore.Client) (*Service, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &Service{client: client}, nil
+	return &Service{client: client, votes: &firestoreVoteRepository{client: client}}, nil
 }
 
 func (s *Service) Create(ctx context.Context, groupID, date, actorUID string) (Meet, error) {
@@ -506,131 +512,18 @@ func (s *Service) ChangeVote(ctx context.Context, meetID, venueID, voterUID stri
 	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(voterUID) == "" {
 		return VoteResult{}, ErrInvalidInput
 	}
-	meetRef := s.client.Collection(meetCollection).Doc(meetID)
-	votesRef := s.client.Collection("votes").Doc(meetID)
-	result := VoteResult{}
-	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		meet, err := tx.Get(meetRef)
-		if status.Code(err) == codes.NotFound {
-			return ErrMeetNotFound
-		}
-		if err != nil {
-			return err
-		}
-		groupID, ok := meet.Data()["groupId"].(string)
-		if !ok || strings.TrimSpace(groupID) == "" {
-			return ErrInvalidState
-		}
-
-		if add && venueID != "any" {
-			candidates, _ := meet.Data()["pubs"].(map[string]any)
-			if candidates == nil {
-				return ErrVenueNotFound
-			}
-			candidate, active := candidates[venueID]
-			if !active || candidate == false {
-				return ErrVenueNotFound
-			}
-			venue, err := tx.Get(s.client.Collection("pubs").Doc(venueID))
-			if status.Code(err) == codes.NotFound {
-				return ErrVenueNotFound
-			}
-			if err != nil {
-				return err
-			}
-			if deleted, exists := venue.Data()["deleted_on"]; exists && deleted != nil {
-				return ErrVenueNotFound
-			}
-		}
-
-		votes, err := tx.Get(votesRef)
-		votesData := map[string]any{}
-		exists := true
-		if status.Code(err) == codes.NotFound {
-			exists = false
-		} else if err != nil {
-			return err
-		} else {
-			votesData = votes.Data()
-		}
-
-		current, valid := readStringSlice(votesData[venueID])
-		if len(votesData) > 0 && !valid {
-			return ErrInvalidState
-		}
-		found := false
-		for _, uid := range current {
-			if uid == voterUID {
-				found = true
-				break
-			}
-		}
-
-		if add {
-			if found {
-				if exists {
-					updateTime := votes.UpdateTime
-					result.UpdateTime = &updateTime
-				}
-				return nil
-			}
-			updated := append(slices.Clone(current), voterUID)
-			slices.Sort(updated)
-			if exists {
-				if err := tx.Update(votesRef, []firestore.Update{{Path: venueID, Value: updated}}); err != nil {
-					return err
-				}
-			} else {
-				if err := tx.Create(votesRef, map[string]any{venueID: updated}); err != nil {
-					return err
-				}
-			}
-			result.UpdateTime = nil
-			return nil
-		}
-
-		if !exists || !found {
-			result.UpdateTime = nil
-			if exists {
-				updateTime := votes.UpdateTime
-				result.UpdateTime = &updateTime
-			}
-			return nil
-		}
-		updated := make([]string, 0, len(current)-1)
-		for _, uid := range current {
-			if uid != voterUID {
-				updated = append(updated, uid)
-			}
-		}
-		if len(updated) == 0 {
-			if err := tx.Update(votesRef, []firestore.Update{{Path: venueID, Value: firestore.Delete}}); err != nil {
-				return err
-			}
-		} else {
-			if err := tx.Update(votesRef, []firestore.Update{{Path: venueID, Value: updated}}); err != nil {
-				return err
-			}
-		}
-		result.UpdateTime = nil
-		return nil
-	})
+	absentDelete, err := s.votes.ChangeVote(ctx, meetID, venueID, voterUID, add)
 	if err != nil {
 		return VoteResult{}, err
 	}
-
-	if result.UpdateTime == nil {
-		committed, err := s.client.Collection("votes").Doc(meetID).Get(ctx)
-		if status.Code(err) == codes.NotFound {
-			return VoteResult{}, nil
-		}
-		if err != nil {
-			return VoteResult{}, err
-		}
-		updateTime := committed.UpdateTime
-		result.UpdateTime = &updateTime
+	if absentDelete {
+		return VoteResult{}, nil
 	}
-	return result, nil
+	revision, err := s.votes.Revision(ctx, meetID)
+	if err != nil {
+		return VoteResult{}, err
+	}
+	return VoteResult{UpdateTime: revision}, nil
 }
 
 func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID string, add bool) (Meet, error) {
