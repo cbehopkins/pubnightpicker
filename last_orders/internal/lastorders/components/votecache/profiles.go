@@ -11,6 +11,12 @@ type ProfileReader struct {
 	client *firestore.Client
 }
 
+type VoterProfile struct {
+	ID       string
+	Name     *string
+	PhotoURL *string
+}
+
 func NewFirestoreProfileReader(client *firestore.Client) (*ProfileReader, error) {
 	if client == nil {
 		return nil, fmt.Errorf("Firestore client is required")
@@ -18,8 +24,8 @@ func NewFirestoreProfileReader(client *firestore.Client) (*ProfileReader, error)
 	return &ProfileReader{client: client}, nil
 }
 
-func (r *ProfileReader) VisibleUIDs(ctx context.Context, userIDs []string) map[string]bool {
-	visible := make(map[string]bool)
+func (r *ProfileReader) VisibleProfiles(ctx context.Context, userIDs []string) map[string]VoterProfile {
+	visible := make(map[string]VoterProfile)
 	if len(userIDs) == 0 {
 		return visible
 	}
@@ -35,14 +41,21 @@ func (r *ProfileReader) VisibleUIDs(ctx context.Context, userIDs []string) map[s
 		if !document.Exists() {
 			continue
 		}
-		preference, present := document.Data()["votesVisible"]
-		if !present || preference == nil {
-			visible[document.Ref.ID] = true
+		data := document.Data()
+		preference, present := data["votesVisible"]
+		if present && preference != nil && preference != true {
 			continue
 		}
-		if preference, ok := preference.(bool); ok && preference {
-			visible[document.Ref.ID] = true
+		profile := VoterProfile{ID: document.Ref.ID}
+		if name, ok := data["name"].(string); ok {
+			profile.Name = &name
 		}
+		if photoURL, ok := data["customPhotoUrl"].(string); ok && photoURL != "" {
+			profile.PhotoURL = &photoURL
+		} else if photoURL, ok := data["photoUrl"].(string); ok {
+			profile.PhotoURL = &photoURL
+		}
+		visible[profile.ID] = profile
 	}
 	return visible
 }

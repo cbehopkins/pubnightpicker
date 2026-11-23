@@ -6,7 +6,7 @@ import PollVote from "./PollVote";
 import ActivePoll from "./ActivePoll";
 import { removeVenueFromMeet } from "../../dbtools/polls";
 
-const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, useVotesMock, useVisibleVoterProfilesMock, changeVoteMock, retryVoteMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
+const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, useVotesMock, changeVoteMock, retryVoteMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
     showAttendanceMock: vi.fn(() => <div data-testid="show-attendance" />),
     useSelectorMock: vi.fn(),
     useAttendanceMock: vi.fn(),
@@ -14,7 +14,6 @@ const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, use
     useUserPrivateDataMock: vi.fn(),
     useUsersMock: vi.fn(),
     useVotesMock: vi.fn(),
-    useVisibleVoterProfilesMock: vi.fn(),
     changeVoteMock: vi.fn(async () => true),
     retryVoteMock: vi.fn(async () => true),
     onSnapshotMock: vi.fn(),
@@ -59,10 +58,6 @@ vi.mock("../../hooks/useUserPrivateData", () => ({
 
 vi.mock("../../hooks/useUsers", () => ({
     default: useUsersMock,
-}));
-
-vi.mock("../../hooks/useVisibleVoterProfiles", () => ({
-    default: useVisibleVoterProfilesMock,
 }));
 
 vi.mock("../../dbtools/polls", () => ({
@@ -147,6 +142,10 @@ describe("PollVote attendance display mode", () => {
                 any: { total: 0, anonymousCount: 0, voterUids: [] },
                 "venue-1": { total: 0, anonymousCount: 0, voterUids: [] },
             },
+            voterProfiles: {
+                "user-1": { uid: "user-1", name: "Alice" },
+                "user-2": { uid: "user-2", name: "Bob" },
+            },
             selectedOptionIds: [],
             pendingOptionIds: [],
             retrySelections: {},
@@ -169,7 +168,6 @@ describe("PollVote attendance display mode", () => {
             "user-1": { uid: "user-1", name: "Alice", votesVisible: true },
             "user-2": { uid: "user-2", name: "Bob", votesVisible: true },
         });
-        useVisibleVoterProfilesMock.mockImplementation(() => useUsersMock());
     });
 
     afterEach(() => {
@@ -193,6 +191,7 @@ describe("PollVote attendance display mode", () => {
                 any: { total: 1, anonymousCount: 0, voterUids: ["user-1"] },
                 "venue-1": { total: 1, anonymousCount: 0, voterUids: ["user-1"] },
             },
+            voterProfiles: { "user-1": { uid: "user-1", name: "Alice" } },
             selectedOptionIds: ["any", "venue-1"],
             pendingOptionIds: [],
             retrySelections: {},
@@ -252,6 +251,7 @@ describe("PollVote attendance display mode", () => {
     it("shows a disabled pending state while a vote is being saved", () => {
         useVotesMock.mockReturnValue({
             optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
             selectedOptionIds: [],
             pendingOptionIds: ["venue-1"],
             retrySelections: {},
@@ -266,9 +266,28 @@ describe("PollVote attendance display mode", () => {
         expect(within(row).getByRole("button", { name: "Saving..." }).disabled).toBe(true);
     });
 
+    it("lets voters withdraw a preserved vote for a removed option", async () => {
+        useVotesMock.mockReturnValue({
+            optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
+            selectedOptionIds: ["removed-venue"],
+            pendingOptionIds: [],
+            retrySelections: {},
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "",
+        });
+        renderPollVote(false);
+
+        fireEvent.click(screen.getByRole("button", { name: "Withdraw vote for removed-venue (removed)" }));
+
+        await waitFor(() => expect(changeVoteMock).toHaveBeenCalledWith("removed-venue", false));
+    });
+
     it("keeps a removed-option withdrawal available for retry", async () => {
         useVotesMock.mockReturnValue({
             optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
             selectedOptionIds: [],
             pendingOptionIds: [],
             retrySelections: { "removed-venue": false },

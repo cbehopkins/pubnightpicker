@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -192,7 +193,7 @@ func (l *Listener) applyPublicUsers(ctx context.Context, changes []notificationp
 		return fmt.Errorf("%w: %w", errPersistence, err)
 	}
 	if l.hub != nil && len(mutations) > 0 {
-		l.hub.PublishChangedPrefix("voting:", 1)
+		l.hub.PublishChangedPrefix("voting:", math.MaxInt64)
 	}
 	return nil
 }

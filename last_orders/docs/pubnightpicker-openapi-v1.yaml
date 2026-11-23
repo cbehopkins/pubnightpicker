@@ -1207,7 +1207,7 @@ paths:
       tags: [Voting]
       operationId: getVoteSnapshot
       summary: Read a privacy-safe voting snapshot
-      description: Requires authentication and the existing Meet visibility permission. Voting permission is not required. Returns active candidates and `any`, with distinct totals, anonymous counts and visible voter UIDs. The caller's selected option IDs also include removed candidates and are sorted by ID.
+      description: Requires authentication and the existing Meet visibility permission. Voting permission is not required. Returns active candidates and `any`, with distinct totals, anonymous counts and visible voter summaries. Hidden or unavailable voter profiles count anonymously. The caller's selected option IDs also include removed candidates and are sorted by ID.
       security:
         - bearerAuth: []
       responses:
@@ -1216,37 +1216,51 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [options, selected_option_ids]
-                properties:
-                  options:
-                    type: array
-                    items:
-                      type: object
-                      required: [id, total, anonymous_count, voter_uids]
-                      properties:
-                        id:
-                          type: string
-                        total:
-                          type: integer
-                          minimum: 0
-                        anonymous_count:
-                          type: integer
-                          minimum: 0
-                        voter_uids:
-                          type: array
-                          items:
-                            type: string
-                  selected_option_ids:
-                    type: array
-                    items:
-                      type: string
+                $ref: '#/components/schemas/VotingSnapshot'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The voting projection or authoritative Meet access decision is temporarily unavailable.
+  /meet/{meet_id}/votes/stream:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Voting]
+      operationId: streamVoteSnapshots
+      summary: Stream privacy-safe voting snapshots
+      description: Requires authentication and Meet access. Each voting_snapshot event contains a complete VotingSnapshot and an opaque cursor, including on connection and reconnect. Vote, candidate and public profile changes trigger updates. Authorization changes may produce a view_reset event and close the stream.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of complete voting snapshots.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                id: opaque-cursor
+                event: voting_snapshot
+                data: {"cursor":"opaque-cursor","options":[{"id":"any","total":2,"anonymous_count":1,"voters":[{"id":"user-id","name":"Display name"}]}],"selected_option_ids":[]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '503':
           description: The voting projection or authoritative Meet access decision is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
@@ -1635,6 +1649,47 @@ components:
               code: internal_error
               message: An unexpected error occurred.
   schemas:
+    VotingSnapshot:
+      type: object
+      required: [options, selected_option_ids]
+      properties:
+        options:
+          type: array
+          items:
+            type: object
+            required: [id, total, anonymous_count, voters]
+            properties:
+              id:
+                type: string
+              total:
+                type: integer
+                minimum: 0
+              anonymous_count:
+                type: integer
+                minimum: 0
+              voters:
+                type: array
+                description: Visible voters, ordered by user ID.
+                items:
+                  type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    photo_url:
+                      type: string
+        selected_option_ids:
+          type: array
+          items:
+            type: string
+        vote_revision:
+          type: string
+          nullable: true
+        cursor:
+          type: string
+          description: Opaque cursor included in stream events.
     ErrorResponse:
       type: object
       required: [error]

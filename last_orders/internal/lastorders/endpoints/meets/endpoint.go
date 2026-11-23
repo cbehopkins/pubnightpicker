@@ -50,7 +50,7 @@ type votingReader interface {
 }
 
 type voterVisibilityReader interface {
-	VisibleUIDs(context.Context, []string) map[string]bool
+	VisibleProfiles(context.Context, []string) map[string]votecache.VoterProfile
 }
 
 type pastMeetsReader interface {
@@ -119,11 +119,17 @@ type currentMeetsResponse struct {
 	Meets  []meetResponse `json:"meets"`
 }
 
+type voterSummary struct {
+	ID       string  `json:"id"`
+	Name     *string `json:"name,omitempty"`
+	PhotoURL *string `json:"photo_url,omitempty"`
+}
+
 type votingOptionResponse struct {
-	ID             string   `json:"id"`
-	Total          int      `json:"total"`
-	AnonymousCount int      `json:"anonymous_count"`
-	VoterUIDs      []string `json:"voter_uids"`
+	ID             string         `json:"id"`
+	Total          int            `json:"total"`
+	AnonymousCount int            `json:"anonymous_count"`
+	Voters         []voterSummary `json:"voters"`
 }
 
 type votingSnapshotResponse struct {
@@ -1021,14 +1027,14 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 		}
 		optionUsers[optionID] = uniqueUsers
 	}
-	visibleUsers := make(map[string]bool)
+	visibleUsers := make(map[string]votecache.VoterProfile)
 	if e.Profiles != nil && len(allUserIDs) > 0 {
 		userIDs := make([]string, 0, len(allUserIDs))
 		for userID := range allUserIDs {
 			userIDs = append(userIDs, userID)
 		}
 		sort.Strings(userIDs)
-		visibleUsers = e.Profiles.VisibleUIDs(r.Context(), userIDs)
+		visibleUsers = e.Profiles.VisibleProfiles(r.Context(), userIDs)
 	}
 	selectedOptionIDs := make([]string, 0)
 	for optionID, userIDs := range votes.Votes {
@@ -1045,13 +1051,18 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 		uniqueUsers := optionUsers[optionID]
 		voterUIDs := make([]string, 0, len(uniqueUsers))
 		for userID := range uniqueUsers {
-			if visibleUsers[userID] {
+			if _, ok := visibleUsers[userID]; ok {
 				voterUIDs = append(voterUIDs, userID)
 			}
 		}
 		sort.Strings(voterUIDs)
+		voters := make([]voterSummary, 0, len(voterUIDs))
+		for _, userID := range voterUIDs {
+			profile := visibleUsers[userID]
+			voters = append(voters, voterSummary{ID: profile.ID, Name: profile.Name, PhotoURL: profile.PhotoURL})
+		}
 		options = append(options, votingOptionResponse{
-			ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voterUIDs), VoterUIDs: voterUIDs,
+			ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voters), Voters: voters,
 		})
 	}
 	revisionText := ""
@@ -1094,14 +1105,14 @@ func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (voti
 		}
 		optionUsers[optionID] = uniqueUsers
 	}
-	visibleUsers := make(map[string]bool)
+	visibleUsers := make(map[string]votecache.VoterProfile)
 	if len(allUserIDs) > 0 {
 		userIDs := make([]string, 0, len(allUserIDs))
 		for userID := range allUserIDs {
 			userIDs = append(userIDs, userID)
 		}
 		sort.Strings(userIDs)
-		visibleUsers = e.Profiles.VisibleUIDs(ctx, userIDs)
+		visibleUsers = e.Profiles.VisibleProfiles(ctx, userIDs)
 	}
 	selectedOptionIDs := make([]string, 0)
 	for optionID, userIDs := range votes.Votes {
@@ -1118,12 +1129,17 @@ func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (voti
 		uniqueUsers := optionUsers[optionID]
 		voterUIDs := make([]string, 0, len(uniqueUsers))
 		for userID := range uniqueUsers {
-			if visibleUsers[userID] {
+			if _, ok := visibleUsers[userID]; ok {
 				voterUIDs = append(voterUIDs, userID)
 			}
 		}
 		sort.Strings(voterUIDs)
-		options = append(options, votingOptionResponse{ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voterUIDs), VoterUIDs: voterUIDs})
+		voters := make([]voterSummary, 0, len(voterUIDs))
+		for _, userID := range voterUIDs {
+			profile := visibleUsers[userID]
+			voters = append(voters, voterSummary{ID: profile.ID, Name: profile.Name, PhotoURL: profile.PhotoURL})
+		}
+		options = append(options, votingOptionResponse{ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voters), Voters: voters})
 	}
 	var revisionPointer *string
 	if votes.Revision != nil {

@@ -1,12 +1,11 @@
 // @ts-check
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { NavLink, useSearchParams } from "react-router-dom";
 import { usePastMeets, useCurrentMeets } from "../../hooks/useMeets";
 import useVenues from "../../hooks/useVenues";
 import useVotes from "../../hooks/useVotes";
-import useVisibleVoterProfiles from "../../hooks/useVisibleVoterProfiles";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
 import useAdmin from "../../hooks/useAdmin";
@@ -384,12 +383,7 @@ function CurrentMeet({
   const canReadProtectedMeetData = Boolean(normalizedUserId);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const { isOnline } = useOnlineStatus();
-  const { optionsById: votes } = useVotes(meetId, normalizedUserId, canReadProtectedMeetData);
-  const visibleVoterUids = useMemo(
-    () => [...new Set(Object.values(votes).flatMap((option) => option?.voterUids || []))],
-    [votes]
-  );
-  const voterProfiles = useVisibleVoterProfiles(visibleVoterUids);
+  const { optionsById: votes, voterProfiles } = useVotes(meetId, normalizedUserId, canReadProtectedMeetData);
   const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
     meetId,
     canReadProtectedMeetData

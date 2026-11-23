@@ -34,11 +34,12 @@ func (reader votingSnapshotReaderStub) Get(context.Context, string) (votecache.S
 
 type votingProfilesStub map[string]bool
 
-func (profiles votingProfilesStub) VisibleUIDs(_ context.Context, userIDs []string) map[string]bool {
-	visible := make(map[string]bool)
+func (profiles votingProfilesStub) VisibleProfiles(_ context.Context, userIDs []string) map[string]votecache.VoterProfile {
+	visible := make(map[string]votecache.VoterProfile)
 	for _, userID := range userIDs {
 		if profiles[userID] {
-			visible[userID] = true
+			name := "Name " + userID
+			visible[userID] = votecache.VoterProfile{ID: userID, Name: &name}
 		}
 	}
 	return visible
@@ -186,10 +187,10 @@ func TestVoteSnapshotReturnsActiveOptionsAndCallerSelections(t *testing.T) {
 	}
 	var payload struct {
 		Options []struct {
-			ID             string   `json:"id"`
-			Total          int      `json:"total"`
-			AnonymousCount int      `json:"anonymous_count"`
-			VoterUIDs      []string `json:"voter_uids"`
+			ID             string         `json:"id"`
+			Total          int            `json:"total"`
+			AnonymousCount int            `json:"anonymous_count"`
+			Voters         []voterSummary `json:"voters"`
 		} `json:"options"`
 		SelectedOptionIDs []string `json:"selected_option_ids"`
 	}
@@ -199,7 +200,7 @@ func TestVoteSnapshotReturnsActiveOptionsAndCallerSelections(t *testing.T) {
 	if len(payload.Options) != 2 || payload.Options[0].ID != "any" || payload.Options[1].ID != "venue-1" {
 		t.Fatalf("options=%+v, want sorted active candidates plus any", payload.Options)
 	}
-	if payload.Options[1].Total != 2 || payload.Options[1].AnonymousCount != 2 || len(payload.Options[1].VoterUIDs) != 0 {
+	if payload.Options[1].Total != 2 || payload.Options[1].AnonymousCount != 2 || len(payload.Options[1].Voters) != 0 {
 		t.Fatalf("venue option=%+v, want two anonymous distinct votes", payload.Options[1])
 	}
 	if strings.Contains(response.Body.String(), "voter-a") || strings.Contains(response.Body.String(), "inactive") {
@@ -272,12 +273,15 @@ func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
 	if strings.Contains(body, "voter-a") {
 		t.Fatalf("initial voting stream leaked hidden UID: %s", body)
 	}
+	if !strings.Contains(body, `"name":"Name verified-user"`) {
+		t.Fatalf("initial voting stream omitted visible voter summary: %s", body)
+	}
 	if _, err := time.Parse(time.RFC3339Nano, revision.UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestVoteSnapshotIncludesOnlyVisibleProfileUIDs(t *testing.T) {
+func TestVoteSnapshotIncludesOnlyVisibleProfiles(t *testing.T) {
 	endpoint := &Endpoint{
 		Auth: pastMeetAuthStub{},
 		Reader: votingMeetReaderStub{snapshot: meetcache.Snapshot{Projection: meetcache.Projection{
@@ -300,10 +304,10 @@ func TestVoteSnapshotIncludesOnlyVisibleProfileUIDs(t *testing.T) {
 	}
 	var payload struct {
 		Options []struct {
-			ID             string   `json:"id"`
-			Total          int      `json:"total"`
-			AnonymousCount int      `json:"anonymous_count"`
-			VoterUIDs      []string `json:"voter_uids"`
+			ID             string         `json:"id"`
+			Total          int            `json:"total"`
+			AnonymousCount int            `json:"anonymous_count"`
+			Voters         []voterSummary `json:"voters"`
 		} `json:"options"`
 		SelectedOptionIDs []string `json:"selected_option_ids"`
 	}
@@ -311,9 +315,10 @@ func TestVoteSnapshotIncludesOnlyVisibleProfileUIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	venueOption := payload.Options[1]
-	if venueOption.Total != 4 || venueOption.AnonymousCount != 2 || len(venueOption.VoterUIDs) != 2 ||
-		venueOption.VoterUIDs[0] != "default-user" || venueOption.VoterUIDs[1] != "visible-user" {
-		t.Fatalf("venue option=%+v, want four votes, two anonymous, and sorted visible UIDs", venueOption)
+	if venueOption.Total != 4 || venueOption.AnonymousCount != 2 || len(venueOption.Voters) != 2 ||
+		venueOption.Voters[0].ID != "default-user" || venueOption.Voters[1].ID != "visible-user" ||
+		venueOption.Voters[1].Name == nil || *venueOption.Voters[1].Name != "Name visible-user" {
+		t.Fatalf("venue option=%+v, want four votes, two anonymous, and sorted visible summaries", venueOption)
 	}
 	if len(payload.SelectedOptionIDs) != 2 || payload.SelectedOptionIDs[0] != "any" || payload.SelectedOptionIDs[1] != "removed" {
 		t.Fatalf("selected option IDs=%v, want any and removed", payload.SelectedOptionIDs)

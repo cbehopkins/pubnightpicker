@@ -314,6 +314,14 @@ Then("Bob sees the vote through the API without Claire's UID", async function ()
     assert.ok(!bobTraffic.responses.includes(this.hiddenVoteUid), "the hidden voter UID must not reach Bob's browser");
 });
 
+Then("Claire receives Bob's public voter summary through the API", async function () {
+    const claire = this.actors.get("Claire");
+    await claire.waitForFunction(() => window.__voteApiResponses?.includes('"name":"Bob"'));
+    const responses = await claire.evaluate(() => window.__voteApiResponses);
+    assert.ok(!responses.includes(this.hiddenVoteUid), "the hidden voter UID must not appear in voting API responses");
+    assert.ok(!responses.includes('"name":"Claire"'), "the hidden voter name must not appear in voting API responses");
+});
+
 When("the application clock advances to {string} London time", async function (localTime) {
     const instant = londonInstant(this.pollDate, localTime);
     const acknowledgement = await this.advanceApplicationTime(instant);

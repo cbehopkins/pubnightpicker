@@ -1,14 +1,16 @@
 // @ts-check
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { LastOrdersApiError, requestLastOrders, streamLastOrders } from "../utils/lastOrdersApi";
 
-/** @typedef {{ total: number, anonymousCount: number, voterUids: string[] }} VotingOption */
+/** @typedef {{ uid: string, name?: string, photoUrl?: string }} VoterProfile */
+/** @typedef {{ total: number, anonymousCount: number, voterUids: string[], voters: VoterProfile[] }} VotingOption */
 /** @typedef {Record<string, VotingOption>} VotingOptionsMap */
 
 /**
  * @typedef {Object} VoteState
  * @property {VotingOptionsMap} optionsById
+ * @property {Record<string, VoterProfile>} voterProfiles
  * @property {string[]} selectedOptionIds
  * @property {string[]} pendingOptionIds
  * @property {Record<string, boolean>} retrySelections
@@ -31,15 +33,24 @@ function parseVotingSnapshot(value) {
   const optionsById = {};
   for (const option of payload.options) {
     if (!option || typeof option !== "object") return null;
-    const entry = /** @type {{ id?: unknown, total?: unknown, anonymous_count?: unknown, voter_uids?: unknown }} */ (option);
+    const entry = /** @type {{ id?: unknown, total?: unknown, anonymous_count?: unknown, voters?: unknown }} */ (option);
     if (typeof entry.id !== "string" || typeof entry.total !== "number" || !Number.isInteger(entry.total)
       || typeof entry.anonymous_count !== "number" || !Number.isInteger(entry.anonymous_count)
-      || !Array.isArray(entry.voter_uids)) return null;
-    if (entry.total < 0 || entry.anonymous_count < 0 || entry.anonymous_count > entry.total || !entry.voter_uids.every((uid) => typeof uid === "string")) return null;
+      || !Array.isArray(entry.voters)) return null;
+    if (entry.total < 0 || entry.anonymous_count < 0 || entry.anonymous_count > entry.total) return null;
+    /** @type {VoterProfile[]} */
+    const voters = [];
+    for (const voter of entry.voters) {
+      if (!voter || typeof voter !== "object" || typeof voter.id !== "string" || !voter.id
+        || (voter.name !== undefined && typeof voter.name !== "string")
+        || (voter.photo_url !== undefined && typeof voter.photo_url !== "string")) return null;
+      voters.push({ uid: voter.id, name: voter.name, photoUrl: voter.photo_url });
+    }
     optionsById[entry.id] = {
       total: entry.total,
       anonymousCount: entry.anonymous_count,
-      voterUids: entry.voter_uids,
+      voterUids: voters.map((voter) => voter.uid),
+      voters,
     };
   }
   if (!payload.selected_option_ids.every((id) => typeof id === "string")) return null;
@@ -61,6 +72,9 @@ function useVotes(pollId, userId, enabled = true) {
   const pendingRef = useRef(new Set());
   const retryRef = useRef(/** @type {Record<string, boolean>} */({}));
   const streamSequenceRef = useRef(0);
+  const voterProfiles = useMemo(() => Object.fromEntries(
+    Object.values(optionsById).flatMap((option) => option.voters.map((voter) => [voter.uid, voter]))
+  ), [optionsById]);
 
   const setSelection = useCallback((next) => {
     selectedRef.current = next;
@@ -167,15 +181,7 @@ function useVotes(pollId, userId, enabled = true) {
       try {
         const snapshot = await requestLastOrders(snapshotPath, { method: "GET", signal: snapshotController.signal });
         if (active && streamSequenceRef.current === observedSequence) {
-          const parsed = applySnapshot(snapshot);
-          if (parsed) {
-            const activeOptionIds = new Set(Object.keys(parsed.optionsById));
-            for (const optionId of parsed.selectedOptionIds) {
-              if (!activeOptionIds.has(optionId) && optionId !== "any") {
-                void changeVote(optionId, false);
-              }
-            }
-          }
+          applySnapshot(snapshot);
         }
       } catch (error) {
         if (active && !snapshotController.signal.aborted) {
@@ -226,12 +232,6 @@ function useVotes(pollId, userId, enabled = true) {
             const parsed = applySnapshot(payload);
             if (!parsed) return;
             streamSequenceRef.current += 1;
-            const activeOptionIds = new Set(Object.keys(parsed.optionsById));
-            for (const optionId of parsed.selectedOptionIds) {
-              if (!activeOptionIds.has(optionId) && optionId !== "any") {
-                void changeVote(optionId, false);
-              }
-            }
           },
           onclose: () => {
             if (!controller.signal.aborted) throw new Error("Voting updates closed unexpectedly.");
@@ -267,7 +267,7 @@ function useVotes(pollId, userId, enabled = true) {
     };
   }, [applySnapshot, changeVote, enabled, pollId, setSelection, userId]);
 
-  return { optionsById, selectedOptionIds, pendingOptionIds, retrySelections, isLoading, errorMessage, changeVote, retryVote };
+  return { optionsById, voterProfiles, selectedOptionIds, pendingOptionIds, retrySelections, isLoading, errorMessage, changeVote, retryVote };
 }
 
 export default useVotes;

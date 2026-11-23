@@ -3,7 +3,6 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
-import useVisibleVoterProfiles from "../../hooks/useVisibleVoterProfiles";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
@@ -565,12 +564,7 @@ function PollVote(props) {
   const privateData = useUserPrivateData(currUserId);
   const defaultEta = normalizeArrivalTime(privateData?.defaultArrivalTime);
   const voteState = useVotes(props.poll_id, currUserId, canReadProtectedPollData);
-  const { optionsById: votes, selectedOptionIds, pendingOptionIds, retrySelections, errorMessage, changeVote, retryVote } = voteState;
-  const visibleVoterUids = useMemo(
-    () => [...new Set(Object.values(votes).flatMap((option) => option?.voterUids || []))],
-    [votes]
-  );
-  const voterProfiles = useVisibleVoterProfiles(visibleVoterUids);
+  const { optionsById: votes, voterProfiles, selectedOptionIds, pendingOptionIds, retrySelections, errorMessage, changeVote, retryVote } = voteState;
   const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus, setEta, clearEta] = useAttendance(
     props.poll_id,
     canReadProtectedPollData
@@ -586,6 +580,9 @@ function PollVote(props) {
   // Get sorted poll rows
   const rowEntries = usePollRows(props.poll_data, props.venues);
   const visibleOptionIds = new Set(rowEntries.map(([, optionId]) => optionId));
+  const removedSelections = selectedOptionIds.filter((optionId) =>
+    optionId !== "any" && !visibleOptionIds.has(optionId) && !(optionId in votes) && !(optionId in retrySelections)
+  );
   const removedOptionRetries = Object.entries(retrySelections)
     .filter(([optionId]) => !visibleOptionIds.has(optionId));
 
@@ -749,6 +746,22 @@ function PollVote(props) {
           </tbody>
         </table>
       </div>
+      {canVote && removedSelections.length > 0 && (
+        <div className="mt-2">
+          {removedSelections.map((optionId) => (
+            <Button
+              key={optionId}
+              type="button"
+              variant="outline-secondary"
+              disabled={pendingOptionIds.includes(optionId)}
+              aria-busy={pendingOptionIds.includes(optionId)}
+              onClick={() => changeVote(optionId, false)}
+            >
+              Withdraw vote for {props.venues?.[optionId]?.name || optionId} (removed)
+            </Button>
+          ))}
+        </div>
+      )}
       {(errorMessage || removedOptionRetries.length > 0) && (
         <div className="alert alert-warning mt-2" role="status">
           {errorMessage && <p className="mb-2">{errorMessage}</p>}

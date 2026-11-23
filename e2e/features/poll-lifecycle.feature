@@ -58,6 +58,7 @@ Feature: Members organise and chat about a meet
       | venue            | votes |
       | Journey Red Lion | 2     |
       | Journey Crown    | 1     |
+    And Claire receives Bob's public voter summary through the API
     When Claire completes the poll by choosing "Journey Red Lion"
     Then Claire no longer sees the poll on Active Polls
     And Bob no longer sees the poll on Active Polls
