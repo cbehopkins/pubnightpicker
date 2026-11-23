@@ -32,13 +32,20 @@ Then("Last Orders rejects {word}'s venue creation with forbidden", function (nam
     assert.equal(this.venueWriteResponse.status, 403, `${name}'s Venue API write response: ${this.venueWriteResponse.body}`);
 });
 
-Given("a venue is available to current and past meets", async function () {
+Given("a venue is available to open, current and past meets", async function () {
     const fixtureId = randomUUID();
     this.publicVenueId = `public-access-${fixtureId}`;
     this.publicVenueName = `Public Access Venue ${fixtureId}`;
     const today = londonDate();
 
     await withEmulatorAdmin(async (db, auth) => {
+        const groupResponse = await fetch(new URL("api/groups?name=ampubnight", process.env.VITE_LAST_ORDERS_API_BASE_URL));
+        const groupBody = await groupResponse.text();
+        assert.equal(groupResponse.status, 200, groupBody);
+        const groups = JSON.parse(groupBody).groups;
+        assert.equal(groups.length, 1, "expected exactly one public default Group");
+        const groupId = groups[0].id;
+
         const venueResponse = await fetch(new URL("api/venues", process.env.VITE_LAST_ORDERS_API_BASE_URL), {
             method: "POST",
             headers: {
@@ -56,18 +63,37 @@ Given("a venue is available to current and past meets", async function () {
         this.publicVenueId = JSON.parse(venueBody).id;
 
         await Promise.all([
+            setDoc(doc(db, "polls", `public-open-${fixtureId}`), {
+                date: today,
+                completed: false,
+                groupId,
+                pubs: { [this.publicVenueId]: true },
+            }),
             setDoc(doc(db, "polls", `public-current-${fixtureId}`), {
                 date: today,
                 completed: true,
+                groupId,
                 selected: this.publicVenueId,
             }),
             setDoc(doc(db, "polls", `public-past-${fixtureId}`), {
                 date: shiftDate(today, -1),
                 completed: true,
+                groupId,
                 selected: this.publicVenueId,
             }),
         ]);
     });
+});
+
+When("{word} views the public venue in Open Meets", async function (name) {
+    const page = this.actors.get(name) ?? await this.openActor(name);
+    await page.goto(`${BASE_URL}/active_polls`);
+    await page.getByRole("heading", { name: "Active Polls", exact: true }).waitFor();
+});
+
+Then("{word} sees the public venue in Open Meets", async function (name) {
+    const page = this.actors.get(name);
+    await page.getByText(this.publicVenueName, { exact: true }).waitFor();
 });
 
 When("{word} views the public venue in Current Meets", async function (name) {

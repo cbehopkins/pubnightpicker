@@ -10,6 +10,9 @@ Handpump will make backend authorisation decisions using permission data current
 
 The existing permission model uses a `roles` collection. Each role is represented by a document whose fields are keyed by user ID. A user has a role when the corresponding field is `true`; absent or non-true values do not grant that permission.
 
+Group membership is stored in `groups/{group_id}.members`, also as a UID-to-
+boolean map, with only `true` granting membership.
+
 Role changes are infrequent. However, permission revocation must not depend solely on a long-lived cache, particularly where a permission allows destructive or otherwise sensitive operations.
 
 Handpump may run as multiple independent instances. Each instance therefore has its own process-local state and must not assume that another instance has refreshed its cache.
@@ -57,13 +60,13 @@ The cache:
 
 The cache is disposable and does not require persistence or reconstruction across process restarts.
 
-The initial implementation should use a simple in-memory structure keyed by user ID and role. It does not need to reproduce Firestore's physical storage layout.
-
-V1 migrates the existing implicit `ampubnight` Group and does not implement
-Group support. Its cache key is user ID and role. When explicit Groups are
-implemented, group-scoped entries extend this key with Group ID; global
-permissions remain unscoped. Group-specific role listeners and cache
-invalidation are part of that later Group implementation, not a V1 dependency.
+For Group-scoped Meet reads, the cache holds Group authority documents by Group
+ID and global administrator decisions by UID. Public visibility grants anonymous
+and authenticated callers access to open, current and past collections and
+current/open streams. Individual Meet details require authentication. Private
+Groups require a `true` membership value or global administrator authority.
+Visibility never implies membership, and group-scoped administrator authority
+is not included in this policy.
 
 ### 4. Permission-cache expiry
 
@@ -75,40 +78,45 @@ When an entry expires, Handpump must refresh the relevant permission state from 
 
 If that refresh fails, Handpump must fail closed for the protected operation. It must not extend the validity of an expired grant because the authoritative store is unavailable. A failed refresh is not an authoritative denial and must not be cached as one for the normal TTL. Retry the Firestore refresh after a short failure-retry interval, initially **1 second**, so permission checks can recover promptly when Firestore becomes available again. The current operation remains denied even if a subsequent retry succeeds.
 
+For Group-scoped Meet authority, a failed refresh is returned as `503` and is
+not cached; a later request may try again. A lookup invalidated while in flight
+is discarded and retried once. If that retry cannot establish a fresh decision,
+the current request fails closed with `503`.
+
 ### 5. Listener-driven invalidation
 
-Each Handpump instance listens for changes to the authoritative Firestore roles collection.
+Each HandPump instance reuses its Groups collection watch to invalidate the
+cached authority entry for each changed Group. A newly established baseline,
+including after reconnect, invalidates all Group-scoped entries before the
+listener is considered current. The instance also watches the `roles/admin`
+document; any observed change invalidates cached global administrator
+decisions. Changes observed by one instance do not directly invalidate another
+instance; each instance receives Firestore changes through its own listener.
+The 10-second TTL remains the fallback for requests on an instance that has not
+yet observed a change.
 
-For the initial implementation, any observed role-document addition, modification or deletion invalidates the entire local authorisation cache.
-
-Every Handpump instance runs its own Firestore roles listener and applies this
-invalidation to its own process-local cache. For active SSE streams, the
-listener also publishes post-observation invalidation to that instance's
-stream hub for each UID whose effective authorization may have changed. The
-hub signals that UID's streams to reset and close as specified in CDD-0014 and
-CDD-0017. A change observed by one instance does not directly invalidate
-another instance; each instance receives the Firestore change through its own
-listener. Listener delay can therefore temporarily leave another instance's
-cache or streams unchanged, with the TTL remaining the fallback for subsequent
-authorization checks.
-
-Clearing the whole permission cache does not require identifying the affected
-users. To close only the affected SSE streams, the listener must compare the
-previous and newly observed role-document values and publish invalidation for
-UIDs whose effective permissions changed. If it cannot establish that set, it
-must conservatively invalidate all active authenticated streams on that
-instance. Targeted permission-cache invalidation may be considered later if
-whole-cache invalidation becomes a measurable performance problem.
+For `roles/admin`, the listener compares the previous and current effective
+UID grants and invalidates those UIDs' active authenticated streams through
+the local stream hub. A new baseline after reconnect cannot identify changes
+missed while disconnected, so it invalidates all active authenticated streams
+on that instance. The stream handler sends a generic reset at its next event
+boundary and closes; reconnect performs a fresh authorisation check.
 
 Invalidation means that cached permission results must no longer be relied upon. It does not itself establish whether a user is authorised or unauthorised.
 
-A permission lookup that began before an invalidation must not reinsert a stale result afterwards. The implementation must protect against this race, for example by using a cache-generation counter and only storing a fetched result if the generation has not changed since the lookup began.
+A permission lookup that began before an invalidation must not authorise a
+request or repopulate the cache afterwards. Generation changes discard the
+result and trigger one fresh attempt; a second invalidation before a fresh
+decision is established fails closed.
 
 ### 6. Listener failures and recovery
 
 Listener notifications are an optimisation for prompt invalidation. Cache expiry remains necessary as a fallback.
 
-When a listener reconnects after a disconnection, the instance must invalidate its local cache before relying on cached permissions again.
+When a listener reconnects after a disconnection, the instance must invalidate
+its relevant local cache before relying on cached authority again. A Groups
+watch baseline invalidates Group-scoped entries; a `roles/admin` watch baseline
+invalidates global administrator entries.
 
 Because changes may have occurred while disconnected, the instance must also
 reset and close all of its active authenticated SSE streams when the listener

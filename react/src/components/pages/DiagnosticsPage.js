@@ -25,6 +25,8 @@ import {
     POLL_ACTION_COMPLETE,
     POLL_ACTION_CREATE,
     POLL_ACTION_DELETE_VENUE,
+    POLL_ACTION_RESCHEDULE,
+    POLL_ACTION_DELETE,
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
@@ -324,6 +326,12 @@ export function PollActionAuditPanel() {
         if (actionFilter === POLL_ACTION_DELETE_VENUE) {
             return "Showing venue delete events";
         }
+        if (actionFilter === POLL_ACTION_RESCHEDULE) {
+            return "Showing Meet reschedule events";
+        }
+        if (actionFilter === POLL_ACTION_DELETE) {
+            return "Showing Meet deletion events";
+        }
         return "Showing all poll action events";
     }, [actionFilter]);
 
@@ -347,6 +355,8 @@ export function PollActionAuditPanel() {
                         <option value={POLL_ACTION_COMPLETE}>Complete</option>
                         <option value={POLL_ACTION_ADD_VENUE}>Add venue</option>
                         <option value={POLL_ACTION_DELETE_VENUE}>Delete venue</option>
+                        <option value={POLL_ACTION_RESCHEDULE}>Reschedule Meet</option>
+                        <option value={POLL_ACTION_DELETE}>Delete Meet</option>
                     </select>
                 </div>
                 <div className="col-12 col-md-4">

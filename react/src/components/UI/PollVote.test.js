@@ -3,9 +3,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PollVote from "./PollVote";
+import ActivePoll from "./ActivePoll";
 import { removeVenueFromMeet } from "../../dbtools/polls";
 
-const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock } = vi.hoisted(() => ({
+const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
     showAttendanceMock: vi.fn(() => <div data-testid="show-attendance" />),
     useSelectorMock: vi.fn(),
     useAttendanceMock: vi.fn(),
@@ -15,6 +16,10 @@ const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, use
     onSnapshotMock: vi.fn(),
     updateDocMock: vi.fn(async () => undefined),
     setGlobalAttendanceMock: vi.fn(),
+    runTransactionMock: vi.fn(async (_db, callback) => callback({
+        get: vi.fn(async () => ({ exists: () => true })),
+        set: vi.fn(async (ref, payload) => updateDocMock(ref, payload)),
+    })),
 }));
 
 vi.mock("react-redux", () => ({
@@ -29,6 +34,7 @@ vi.mock("firebase/firestore", () => ({
     updateDoc: updateDocMock,
     arrayUnion: (value) => `arrayUnion:${value}`,
     arrayRemove: (value) => `arrayRemove:${value}`,
+    runTransaction: runTransactionMock,
 }));
 
 vi.mock("../../hooks/useAttendance", () => ({
@@ -48,8 +54,16 @@ vi.mock("../../hooks/useUsers", () => ({
 }));
 
 vi.mock("../../dbtools/polls", () => ({
+    addVenueToMeet: vi.fn(),
+    deleteMeet: vi.fn(),
     removeVenueFromMeet: vi.fn(async () => undefined),
 }));
+
+vi.mock("../../hooks/useOnlineStatus", () => ({ default: () => ({ isOnline: true }) }));
+vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
+    default: () => ({ mostVisited: [], leastVisited: [], random: [], isLoading: false }),
+}));
+vi.mock("../../hooks/useAutopopulateAction", () => ({ default: () => ({ handleAutopopulate: vi.fn() }) }));
 
 vi.mock("./ShowAttendance", () => ({
     default: showAttendanceMock,
@@ -170,6 +184,25 @@ describe("PollVote attendance display mode", () => {
         expect(screen.getByText("Global")).toBeTruthy();
     });
 
+    it("renders a streamed candidate using its catalogue name", () => {
+        const { rerender } = render(<ActivePoll
+            poll_id="poll-1"
+            poll_data={{ date: "2026-05-11", venues: { "venue-1": true } }}
+            venues={{}}
+            on_complete={vi.fn()}
+        />);
+
+        expect(within(screen.getByRole("table")).getByText("Unknown venue")).toBeTruthy();
+        rerender(<ActivePoll
+            poll_id="poll-1"
+            poll_data={{ date: "2026-05-11", venues: { "venue-1": true } }}
+            venues={{ "venue-1": { name: "Venue 1" } }}
+            on_complete={vi.fn()}
+        />);
+
+        expect(within(screen.getByRole("table")).getByText("Venue 1")).toBeTruthy();
+    });
+
     it("votes for a Meet venue", async () => {
         renderPollVote(false);
         const row = screen.getByText("Venue 1").closest("tr");
@@ -185,7 +218,7 @@ describe("PollVote attendance display mode", () => {
 
         fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
 
-        await waitFor(() => expect(removeVenueFromMeet).toHaveBeenCalledWith("poll-1", "venue-1", "2026-05-11", "Venue 1"));
+        await waitFor(() => expect(removeVenueFromMeet).toHaveBeenCalledWith("poll-1", "venue-1"));
     });
 
     it("sets attendance for every Meet venue", async () => {

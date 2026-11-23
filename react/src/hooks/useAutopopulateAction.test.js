@@ -39,9 +39,9 @@ describe("useAutopopulateAction", () => {
         await result.current.handleAutopopulate();
 
         expect(addVenueToMeetMock).toHaveBeenCalledTimes(3);
-        expect(addVenueToMeetMock).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
-        expect(addVenueToMeetMock).toHaveBeenCalledWith("v2", "poll-1", expect.any(Object), "2026-05-11");
-        expect(addVenueToMeetMock).toHaveBeenCalledWith("v3", "poll-1", expect.any(Object), "2026-05-11");
+        expect(addVenueToMeetMock).toHaveBeenCalledWith("v1", "poll-1");
+        expect(addVenueToMeetMock).toHaveBeenCalledWith("v2", "poll-1");
+        expect(addVenueToMeetMock).toHaveBeenCalledWith("v3", "poll-1");
         expect(notifyInfoMock).toHaveBeenCalledWith("Added 3 venues to poll");
     });
 
@@ -59,7 +59,7 @@ describe("useAutopopulateAction", () => {
         await result.current.handleAutopopulate();
 
         expect(addVenueToMeetMock).toHaveBeenCalledTimes(1);
-        expect(addVenueToMeetMock).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
+        expect(addVenueToMeetMock).toHaveBeenCalledWith("v1", "poll-1");
         expect(notifyInfoMock).toHaveBeenCalledWith("Added 1 venue to poll");
     });
 

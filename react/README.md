@@ -148,17 +148,27 @@ failures block entry and show a retry option. The resolved opaque Group ID is
 kept in memory only, so a fresh load discovers it again.
 
 For local development, use Last Orders with a demo-project emulator and seed the
-default Group before opening the frontend. This preparation does not change
-existing Meet reads, permissions or access to Meets without a `groupId`. New
-Meets created by the frontend and Last Orders Event Venue recurrence receive
-the resolved Group ID in their initial Firestore write; the Group-scoped Meet
-API remains deferred.
+default Group before opening the frontend. Current Meets reads the resolved
+Group's completed Meets dated today or later in Europe/London. Active Polls
+reads the same Group's voting-open Meets regardless of scheduled date; London
+midnight alone does not change that view. Meets without a `groupId` are excluded
+from both. Complete the existing-Meet migration before relying on Group-scoped
+Meet views. New Meets created by the frontend and Last Orders Event Venue
+recurrence receive the resolved Group ID in their initial Firestore write.
+Votes and attendance remain separate Firestore interfaces.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
 does not authorise production migration or deployment. A gap between migration
 and writer deployment may require a separate catch-up migration, outside this
 work.
+
+Voting and attendance remain separate from Meet writes. The frontend reads
+missing `votes/{meetId}` or `attendance/{meetId}` documents as empty and reports
+snapshot/read failures. Its first writes use Firestore transactions that verify
+`polls/{meetId}` exists, then merge with `set(..., { merge: true })`; this
+initialises missing child documents without replacing concurrent updates or
+creating orphan child data after Meet deletion.
 
 ## Firestore Index Drift Check
 

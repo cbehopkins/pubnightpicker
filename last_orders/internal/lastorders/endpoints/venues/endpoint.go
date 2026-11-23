@@ -43,13 +43,14 @@ type decodedVenueWrite struct {
 }
 
 type Endpoint struct {
-	Reader       reader
-	Ready        <-chan struct{}
-	Hub          *sse.Hub
-	Cursors      *sse.CursorCodec
-	EditTokens   *EditTokenCodec
-	DeleteTokens *DeleteTokenCodec
-	Auth         firebaseauth.Verifier
+	Reader            reader
+	Ready             <-chan struct{}
+	Hub               *sse.Hub
+	OnCommittedChange func(context.Context, string)
+	Cursors           *sse.CursorCodec
+	EditTokens        *EditTokenCodec
+	DeleteTokens      *DeleteTokenCodec
+	Auth              firebaseauth.Verifier
 }
 
 type venue struct {
@@ -275,7 +276,7 @@ func (e *Endpoint) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue.")
 		return
 	}
-	e.publishVenueChange(r.Context())
+	e.publishVenueChange(r.Context(), item.ID)
 	w.Header().Set("Location", "/api/venues/"+item.ID)
 	result, err := e.represent(item)
 	if err != nil {
@@ -347,7 +348,7 @@ func (e *Endpoint) patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to update venue.")
 		return
 	}
-	e.publishVenueChange(r.Context())
+	e.publishVenueChange(r.Context(), item.ID)
 	result, err := e.represent(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to create venue response.")
@@ -397,11 +398,14 @@ func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to delete venue.")
 		return
 	}
-	e.publishVenueChange(r.Context())
+	e.publishVenueChange(r.Context(), venueID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (e *Endpoint) publishVenueChange(ctx context.Context) {
+func (e *Endpoint) publishVenueChange(ctx context.Context, venueID string) {
+	if e.OnCommittedChange != nil {
+		e.OnCommittedChange(ctx, venueID)
+	}
 	if e.Hub == nil {
 		return
 	}

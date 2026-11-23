@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"last_orders/internal/lastorders/components/firebaseauth"
 )
 
 // Handler is the endpoint adapter for one complete-view stream. UID is empty
@@ -27,8 +29,12 @@ type Handler struct {
 	// default. The inherited server deadline is cleared for this stream only,
 	// then a fresh deadline is applied and cleared around each frame.
 	WriteTimeout time.Duration
-	Authorize    func(context.Context) (allowed bool, deniedStatus int)
-	Snapshot     func(context.Context, CursorInput) (ViewSnapshot, error)
+	// SnapshotFailureStatus overrides the status used when a view snapshot is
+	// unavailable. Zero defaults to HTTP 500.
+	SnapshotFailureStatus int
+	Authorize             func(context.Context) (allowed bool, deniedStatus int)
+	Snapshot              func(context.Context, CursorInput) (ViewSnapshot, error)
+	Accepted              func(context.Context) error
 }
 
 // ViewSnapshot is one consistent replacement and its synchronization cursor.
@@ -51,18 +57,18 @@ const DefaultWriteTimeout = 15 * time.Second
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.valid() {
-		http.Error(w, "SSE handler is not configured", http.StatusInternalServerError)
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "The stream handler is not configured.")
 		return
 	}
 	select {
 	case <-h.Ready:
 	default:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "stream is starting", http.StatusServiceUnavailable)
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "The requested stream is starting.")
 		return
 	}
 	if _, ok := w.(http.Flusher); !ok {
-		http.Error(w, "streaming is unsupported", http.StatusInternalServerError)
+		firebaseauth.WriteError(w, http.StatusInternalServerError, "stream_unsupported", "The server cannot stream this response.")
 		return
 	}
 
@@ -88,11 +94,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cursor, supplied := RequestCursor(r)
 	initial, err := h.Snapshot(r.Context(), CursorInput{Value: cursor, Supplied: supplied})
 	if err != nil {
-		http.Error(w, "view is unavailable", http.StatusInternalServerError)
+		firebaseauth.WriteError(w, h.snapshotFailureStatus(), "view_unavailable", "The requested view is temporarily unavailable.")
 		return
 	}
 	if !validSnapshot(initial) {
-		http.Error(w, "view is unavailable", http.StatusInternalServerError)
+		firebaseauth.WriteError(w, h.snapshotFailureStatus(), "view_unavailable", "The requested view is temporarily unavailable.")
 		return
 	}
 	if h.stopping(sub) {
@@ -101,6 +107,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.invalidated(sub) {
 		h.writeReset(w)
 		return
+	}
+	if !h.authorized(r.Context(), w) {
+		return
+	}
+	if h.Accepted != nil {
+		if err := h.Accepted(r.Context()); err != nil {
+			w.Header().Set("Retry-After", "1")
+			firebaseauth.WriteError(w, http.StatusServiceUnavailable, "view_unavailable", "The requested view is temporarily unavailable.")
+			return
+		}
 	}
 	sub.DiscardChangesThrough(initial.Sequence)
 
@@ -131,6 +147,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.writeReset(w)
 				return
 			}
+			if allowed, _ := h.Authorize(r.Context()); !allowed {
+				h.writeReset(w)
+				return
+			}
 			if !h.writeHeartbeat(w) {
 				return
 			}
@@ -143,7 +163,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.writeReset(w)
 				return
 			}
-			if !h.authorized(r.Context(), w) {
+			allowed, _ := h.Authorize(r.Context())
+			if !allowed {
+				h.writeReset(w)
 				return
 			}
 			view, err := h.Snapshot(r.Context(), CursorInput{})
@@ -188,6 +210,13 @@ func (h *Handler) writeTimeout() time.Duration {
 	return h.WriteTimeout
 }
 
+func (h *Handler) snapshotFailureStatus() int {
+	if h.SnapshotFailureStatus < 400 || h.SnapshotFailureStatus > 599 {
+		return http.StatusInternalServerError
+	}
+	return h.SnapshotFailureStatus
+}
+
 func (h *Handler) authorized(ctx context.Context, w http.ResponseWriter) bool {
 	allowed, status := h.Authorize(ctx)
 	if allowed {
@@ -196,7 +225,18 @@ func (h *Handler) authorized(ctx context.Context, w http.ResponseWriter) bool {
 	if status < 400 || status > 599 {
 		status = http.StatusNotFound
 	}
-	http.Error(w, http.StatusText(status), status)
+	code := "authorization_denied"
+	switch status {
+	case http.StatusUnauthorized:
+		code = "unauthenticated"
+	case http.StatusForbidden:
+		code = "forbidden"
+	case http.StatusNotFound:
+		code = "not_found"
+	case http.StatusServiceUnavailable:
+		code = "authorization_unavailable"
+	}
+	firebaseauth.WriteError(w, status, code, http.StatusText(status)+".")
 	return false
 }
 

@@ -170,7 +170,7 @@ describe("ActivePoll autopopulate", () => {
         fireEvent.click(screen.getByRole("button", { name: /add venue to poll/i }));
 
         await waitFor(() => {
-            expect(addVenueToMeet).toHaveBeenCalledWith("v1", "poll-1", expect.any(Object), "2026-05-11");
+            expect(addVenueToMeet).toHaveBeenCalledWith("v1", "poll-1");
         });
 
         expect(screen.getByRole("alert").textContent).toMatch(/marked as banned/i);

@@ -47,6 +47,37 @@ func (s *Store) Get(ctx context.Context, venueID string) (VenueProjection, error
 	return projection, nil
 }
 
+func (s *Store) GetForMeet(ctx context.Context, venueID string) (VenueProjection, bool, error) {
+	projection, deleted, err := readVenue(ctx, s.base.DB(), venueID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VenueProjection{}, false, ErrCacheMiss
+	}
+	if err != nil {
+		return VenueProjection{}, false, err
+	}
+	if deleted && projection.DeletedOn == "" {
+		return VenueProjection{}, true, nil
+	}
+	return projection, false, nil
+}
+
+// GetForMeetInTx reads retained Venue details using the caller's SQLite
+// snapshot. A missing local row is an unconfirmed cache miss, not proof that
+// the authoritative Venue is absent.
+func (s *Store) GetForMeetInTx(ctx context.Context, tx *sql.Tx, venueID string) (VenueProjection, bool, error) {
+	projection, deleted, err := readVenue(ctx, tx, venueID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VenueProjection{}, false, ErrCacheMiss
+	}
+	if err != nil {
+		return VenueProjection{}, false, err
+	}
+	if deleted && projection.DeletedOn == "" {
+		return VenueProjection{}, false, nil
+	}
+	return projection, true, nil
+}
+
 // Snapshot returns the complete public venue collection and its committed
 // projection position from one SQLite read transaction.
 func (s *Store) Snapshot(ctx context.Context) ([]VenueProjection, basestore.SyncState, error) {
@@ -117,7 +148,7 @@ func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (
 	err := queryer.QueryRowContext(ctx, `
 		SELECT venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
-			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json, deleted,
+			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json, previous_venue_ids_json, deleted, deleted_on,
 			firestore_update_time
 		FROM venue_cache WHERE venue_id = ?
 	`, venueID).Scan(
@@ -126,7 +157,7 @@ func readVenue(ctx context.Context, queryer contextQueryRower, venueID string) (
 		&projection.RecurrenceJSON, &projection.NextOccurrenceDate,
 		&projection.Notes, &projection.Parking, &projection.Food,
 		&projection.DogFriendly, &projection.BeerGarden, &projection.OutOfTown,
-		&projection.Banned, &visibleGroupIDsJSON, &previousVenueIDsJSON, &deleted, &updateTime,
+		&projection.Banned, &visibleGroupIDsJSON, &previousVenueIDsJSON, &deleted, &projection.DeletedOn, &updateTime,
 	)
 	if err == nil {
 		projection.UpdateTime, err = parseUpdateTime(updateTime)
@@ -153,6 +184,36 @@ func parseUpdateTime(value string) (time.Time, error) {
 
 func (s *Store) Put(ctx context.Context, projection VenueProjection) error {
 	return s.ApplyBatch(ctx, []Mutation{{ID: projection.ID, Projection: &projection}}, false)
+}
+
+func (s *Store) PutIfAbsent(ctx context.Context, projection VenueProjection) (bool, error) {
+	normalised, err := normaliseVenue(projection)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.base.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var exists int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM venue_cache WHERE venue_id = ?`, normalised.ID).Scan(&exists)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err := s.put(ctx, tx, normalised); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ApplyBatch applies one source batch atomically. A baseline replaces the
@@ -189,7 +250,7 @@ func (s *Store) ApplyBatch(ctx context.Context, mutations []Mutation, baseline b
 	defer tx.Rollback()
 
 	if baseline {
-		rows, err := tx.QueryContext(ctx, `SELECT venue_id FROM venue_cache WHERE deleted = 0 ORDER BY venue_id`)
+		rows, err := tx.QueryContext(ctx, `SELECT venue_id FROM venue_cache ORDER BY venue_id`)
 		if err != nil {
 			return err
 		}
@@ -236,7 +297,12 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && !deleted && current.Equal(projection) {
+	if err == nil && !current.UpdateTime.IsZero() &&
+		(projection.UpdateTime.IsZero() || projection.UpdateTime.Before(current.UpdateTime)) {
+		return nil
+	}
+	deletedOn := projection.DeletedOn != ""
+	if err == nil && deleted == deletedOn && current.Equal(projection) {
 		return nil
 	}
 	sequence, err := s.base.NextSequence(ctx, tx)
@@ -260,8 +326,8 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 			venue_id, name, venue_type, website, map, address, location_id, photo_url,
 			recurrence_json, next_occurrence_date, notes, parking, food,
 			dog_friendly, beer_garden, out_of_town, banned, visible_group_ids_json,
-			previous_venue_ids_json, change_version, firestore_update_time
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			previous_venue_ids_json, change_version, firestore_update_time, deleted, deleted_on
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(venue_id) DO UPDATE SET
 			name = excluded.name,
 			venue_type = excluded.venue_type,
@@ -283,13 +349,14 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, projection VenueProjection)
 			previous_venue_ids_json = excluded.previous_venue_ids_json,
 			change_version = excluded.change_version,
 			firestore_update_time = excluded.firestore_update_time,
-			deleted = 0
+			deleted = excluded.deleted,
+			deleted_on = excluded.deleted_on
 	`, projection.ID, projection.Name, projection.VenueType, projection.Website,
 		projection.Map, projection.Address, projection.LocationID, projection.PhotoURL,
 		projection.RecurrenceJSON, projection.NextOccurrenceDate, projection.Notes,
 		projection.Parking, projection.Food, projection.DogFriendly,
 		projection.BeerGarden, projection.OutOfTown, projection.Banned,
-		string(visibleGroupIDsJSON), string(previousVenueIDsJSON), sequence, updateTime)
+		string(visibleGroupIDsJSON), string(previousVenueIDsJSON), sequence, updateTime, deletedOn, projection.DeletedOn)
 	return err
 }
 
@@ -299,8 +366,9 @@ func (s *Store) Delete(ctx context.Context, venueID string) error {
 
 func (s *Store) remove(ctx context.Context, tx *sql.Tx, venueID string) error {
 	var deleted bool
-	err := tx.QueryRowContext(ctx, `SELECT deleted FROM venue_cache WHERE venue_id = ?`, venueID).Scan(&deleted)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && deleted) {
+	var deletedOn string
+	err := tx.QueryRowContext(ctx, `SELECT deleted, deleted_on FROM venue_cache WHERE venue_id = ?`, venueID).Scan(&deleted, &deletedOn)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && deleted && deletedOn == "") {
 		return nil
 	}
 	if err != nil {
@@ -310,7 +378,7 @@ func (s *Store) remove(ctx context.Context, tx *sql.Tx, venueID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE venue_cache SET deleted = 1, change_version = ? WHERE venue_id = ?`, sequence, venueID)
+	_, err = tx.ExecContext(ctx, `UPDATE venue_cache SET deleted = 1, deleted_on = '', change_version = ? WHERE venue_id = ?`, sequence, venueID)
 	return err
 }
 

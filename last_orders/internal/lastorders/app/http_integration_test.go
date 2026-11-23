@@ -379,8 +379,8 @@ func TestSplitLandlordAndHandPumpEmailHistoryEndToEnd(t *testing.T) {
 		t.Fatalf("create HandPump: %v", err)
 	}
 	defer handPump.Close()
-	if handPump.CellarStore() != nil {
-		t.Fatal("HandPump constructed a Cellar worker store")
+	if handPump.CellarStore() == nil {
+		t.Fatal("HandPump did not construct its Cellar housekeeping store")
 	}
 
 	db := openSQLite(t, landlordDBPath)

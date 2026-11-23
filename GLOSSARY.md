@@ -12,6 +12,12 @@ _Avoid_: Event, poll as a name for the gathering
 **Poll**:
 The voting activity for a Meet.
 
+**Voting Option**:
+A choice in a Poll: a specific candidate Venue or an indication that any candidate Venue is acceptable.
+
+**Vote**:
+One user's selection of one Voting Option in a Poll. A user can select multiple Voting Options in the same Poll.
+
 **Venue**:
 A place or event that can be a choice for a Meet, including a pub or restaurant.
 

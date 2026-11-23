@@ -802,6 +802,104 @@ paths:
                 type: string
         '503':
           description: The venue projection is not ready.
+  /meets/{group_id}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    post:
+      tags: [Meets]
+      operationId: createMeet
+      summary: Create an open Meet
+      description: Requires `canCreatePoll`, global-admin inheritance and Group visibility. Past or future calendar dates are valid. Multiple manual Meets may exist for the same Group/date.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date:
+                  type: string
+                  format: date
+      responses:
+        '201':
+          description: Committed Meet, empty votes and attendance documents, and creation audit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}/candidates/{venue_id}:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+      - in: path
+        name: venue_id
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [Voting]
+      operationId: addMeetCandidate
+      summary: Add a Venue candidate
+      description: Requires `canAddPubToPoll`. The operation is atomic and a duplicate is a no-op while voting remains open.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Committed Meet state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Voting]
+      operationId: removeMeetCandidate
+      summary: Remove a Venue candidate
+      description: Requires `canAddPubToPoll`. Removed-candidate votes remain stored; an absent candidate is a no-op while voting remains open.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Committed Meet state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /meets/{group_id}/current:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -810,14 +908,17 @@ paths:
       operationId: listCurrentMeets
       summary: List current Meets for a group
       description: |
-        Returns completed voting-phase Meets whose local date is today or in the
-        future, together with the venue and attendance summary needed by the
-        current-Meets view. Public Group Meet details are available without
-        authentication. The response includes an opaque cursor from the same
-        consistent local snapshot, suitable for starting the corresponding stream.
+        Authentication is optional; invalid supplied credentials return 401.
+        Returns completed voting-phase Meets whose local date is today or in
+        the future, ordered by date then Meet ID, together with selected Venue
+        summaries. Anonymous and authenticated callers may read public Groups;
+        private Groups require membership or global administrator authority.
+        Votes and attendance are separate concerns. The response includes an
+        opaque cursor from the same consistent local snapshot, suitable for
+        starting the corresponding stream.
       security:
-        - bearerAuth: []
         - {}
+        - bearerAuth: []
       responses:
         '200':
           description: Current Meets snapshot.
@@ -839,6 +940,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
   /meets/{group_id}/current/stream:
     parameters:
       - $ref: '#/components/parameters/GroupId'
@@ -847,18 +950,21 @@ paths:
       operationId: streamCurrentMeets
       summary: Stream changes to current Meets
       description: |
-        Server-Sent Events. `after` is an opaque cursor from a snapshot;
+        Authentication is optional; invalid supplied credentials return 401.
+        Public Groups permit anonymous streams; private Groups require membership
+        or global administrator authority. Server-Sent Events. `after` is an opaque cursor from a snapshot;
         Last-Event-ID may be used on reconnect and takes precedence if both are
         supplied. Every connection receives a complete current-Meets replacement
         snapshot and a fresh cursor, then another complete replacement after each
-        relevant change. Invalid cursors recover with the same replacement, not
-        an error. The subscriber is registered before the consistent snapshot
-        read, so concurrent changes are not missed. SSE is unavailable until
-        backend startup readiness checks complete; this does not imply Firebase
-        is globally caught up.
+        relevant Meet or selected Venue change. Votes and attendance do not
+        trigger this stream. Invalid cursors recover with the same replacement,
+        not an error. The subscriber is registered before the consistent
+        snapshot read, so concurrent changes are not missed. SSE is unavailable
+        until backend readiness and the requested entry's baseline are ready;
+        this does not imply Firebase is globally caught up.
       security:
-        - bearerAuth: []
         - {}
+        - bearerAuth: []
       parameters:
         - name: after
           in: query
@@ -890,10 +996,10 @@ paths:
                 description: |
                   Each message follows SSE framing. Event IDs are opaque cursors.
                   `event: current_meets` data is a complete replacement snapshot
-                  of the collection. A generic `event: view_reset` is sent at
-                  a committed authorization change or London midnight, then the
-                  connection closes. The reset has no ID and carries
-                  `data: {}`.
+                  of the collection. A generic `event: view_reset` is sent for
+                  retirement, a detected required-watch failure, a committed
+                  authorization change or London midnight, then the connection
+                  closes. The reset has no ID and carries `data: {}`.
               example: |
                 id: eyJ2IjoxLCJzdHJlYW0iOiJjdXJyZW50LW1lZXRzLXYxIn0.signature
                 event: current_meets
@@ -905,7 +1011,111 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Backend startup readiness checks have not completed. Retry after the backend is ready.
+          description: Backend readiness, the requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+  /meets/{group_id}/open:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: listOpenMeets
+      summary: List voting-open Meets for a group
+      description: |
+        Authentication is optional; invalid supplied credentials return 401.
+        Returns voting-open Meets belonging to the requested Group, regardless
+        of scheduled date, ordered by date then Meet ID. The response includes
+        candidate Venue IDs but no votes or attendance data. The opaque cursor
+        corresponds to the same consistent local snapshot used by the stream.
+        Time passing at London midnight does not change open-Meet membership.
+        Anonymous and authenticated callers may read public Groups; private
+        Groups require membership or global administrator authority.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Open Meets snapshot.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenMeetsSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection or authoritative Meet access decision is temporarily unavailable.
+  /meets/{group_id}/open/stream:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: streamOpenMeets
+      summary: Stream changes to voting-open Meets
+      description: |
+        Authentication is optional; invalid supplied credentials return 401.
+        Public Groups permit anonymous streams; private Groups require membership
+        or global administrator authority. Server-Sent Events. Every authorised connection receives a complete
+        open-Meets replacement snapshot and a fresh opaque cursor, then another
+        replacement when open-Meet membership or displayed data changes. Voting
+        and attendance changes do not trigger this stream. Open membership is
+        independent of scheduled date and does not change at London midnight.
+        Invalid cursors recover with a complete replacement. The subscriber is
+        registered before the consistent snapshot read. Successful authorised
+        connections renew the shared Group view's six-hour deadline.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of open-Meets collection changes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: 'no'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  `event: open_meets` carries a complete replacement snapshot
+                  with an opaque cursor. `event: view_reset` has no ID and
+                  carries `data: {}` before a retired, failed or newly
+                  unauthorised stream closes.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Backend readiness, the requested projection, or authoritative Meet access decision is temporarily unavailable.
           headers:
             Retry-After:
               schema:
@@ -918,10 +1128,10 @@ paths:
       tags: [Meets]
       operationId: listPastMeets
       summary: List past Meets for a group
-      description: Returns completed Meets with a local date before today, newest first. No stream is provided for this historical collection.
+      description: Authentication is optional; invalid supplied credentials return 401. Returns voting-complete Meets for the requested Group with a scheduled date before today in Europe/London, newest first, ordered by date descending and Meet ID ascending for ties. Anonymous and authenticated callers may read public Groups; private Groups require membership or global administrator authority. Historical results are queried directly and do not admit individual Meet projections. Votes and attendance are omitted; no stream is provided for this collection.
       security:
-        - bearerAuth: []
         - {}
+        - bearerAuth: []
       parameters:
         - name: limit
           in: query
@@ -934,7 +1144,7 @@ paths:
         - name: before
           in: query
           required: false
-          description: Opaque pagination cursor from the previous page.
+          description: Stable opaque pagination cursor from the previous page, scoped to this Group and London date. This is not a stream cursor.
           schema:
             type: string
       responses:
@@ -953,8 +1163,16 @@ paths:
                 $ref: '#/components/schemas/PastMeetsPage'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: The authoritative query, required Venue details, or authoritative Meet access decision is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/InternalError'
   /meet/{meet_id}:
@@ -964,10 +1182,9 @@ paths:
       tags: [Meets]
       operationId: getMeet
       summary: Get a Meet
-      description: Returns the Meet details visible to the caller, including its current voting/completion information.
+      description: Requires authentication. Public Group Meets are readable by any authenticated caller; private Group Meets require membership or global administrator authority. Only a true UID entry in the Group members map grants membership. Votes and attendance are separate concerns.
       security:
         - bearerAuth: []
-        - {}
       responses:
         '200':
           description: Meet details.
@@ -981,6 +1198,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -1023,6 +1242,27 @@ paths:
       responses:
         '204':
           description: Vote removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /meet/{meet_id}:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    delete:
+      tags: [Meets]
+      operationId: deleteMeet
+      summary: Delete an open or completed Meet
+      description: Requires `canCreatePoll`. Atomically deletes the Meet and existing votes, attendance and open-action documents, and creates a deletion audit. Missing child documents are safe; chat and unrelated derived records are retained.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Meet deleted and deletion audit committed.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1076,7 +1316,7 @@ paths:
       tags: [Meets]
       operationId: rescheduleMeet
       summary: Change the selected venue or restaurant details
-      description: Requires the caller's group permission to reschedule a Meet. The prior selected venue is appended to `previous_venue_ids`; history is retained as a list.
+      description: Requires the caller's group permission to reschedule a completed Meet. The supplied date is rejected. Omitted restaurant fields are preserved; clearing the restaurant clears its time. The prior selected venue is appended to `previous_venue_ids` whenever it changes, preserving order and duplicates.
       security:
         - bearerAuth: []
       requestBody:
@@ -1721,19 +1961,36 @@ components:
           type: [string, 'null']
     VenueSummary:
       type: object
-      required: [id, name, address]
+      description: Current details for an active or soft-deleted Venue referenced by a Meet.
+      required: [id, status, name, address]
       properties:
         id:
           type: string
+        status:
+          type: string
+          enum: [active, deleted]
         name:
           type: string
         address:
           type: string
+        website_url:
+          type: [string, 'null']
+          format: uri
         image_url:
           type: [string, 'null']
           format: uri
         venue_type:
           $ref: '#/components/schemas/VenueType'
+    MissingVenueReference:
+      type: object
+      description: The authoritative Venue document is confirmed absent; no details are invented.
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [missing]
     AttendanceCounts:
       type: object
       required: [attending_count, not_attending_count]
@@ -1746,7 +2003,7 @@ components:
           minimum: 0
     Meet:
       type: object
-      required: [id, group_id, date, voting_complete, previous_venue_ids, attendance]
+      required: [id, group_id, date, voting_complete, previous_venue_ids]
       properties:
         id:
           type: string
@@ -1761,7 +2018,14 @@ components:
         venue:
           oneOf:
             - $ref: '#/components/schemas/VenueSummary'
+            - $ref: '#/components/schemas/MissingVenueReference'
             - type: 'null'
+          description: Null when no Venue is selected; missing references retain their Venue ID.
+        candidate_venue_ids:
+          type: array
+          description: Active Venue candidates for the Meet; excludes the reserved `any` voting option.
+          items:
+            type: string
         restaurant_id:
           type: [string, 'null']
         restaurant_time:
@@ -1772,8 +2036,21 @@ components:
           type: array
           items:
             type: string
-        attendance:
-          $ref: '#/components/schemas/AttendanceCounts'
+    PastMeet:
+      type: object
+      required: [id, date, venue]
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+          format: date
+        venue:
+          oneOf:
+            - $ref: '#/components/schemas/VenueSummary'
+            - $ref: '#/components/schemas/MissingVenueReference'
+            - type: 'null'
+          description: Null when no Venue is selected; missing references retain their Venue ID.
     CurrentMeetsSnapshot:
       type: object
       required: [cursor, meets]
@@ -1785,6 +2062,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Meet'
+    OpenMeetsSnapshot:
+      type: object
+      required: [cursor, meets]
+      properties:
+        cursor:
+          type: string
+          description: Opaque stream cursor corresponding to this consistent open-Meets snapshot.
+        meets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meet'
     PastMeetsPage:
       type: object
       required: [meets, next_cursor]
@@ -1792,7 +2080,7 @@ components:
         meets:
           type: array
           items:
-            $ref: '#/components/schemas/Meet'
+            $ref: '#/components/schemas/PastMeet'
         next_cursor:
           type: [string, 'null']
     CompleteMeetRequest:
@@ -1834,10 +2122,7 @@ components:
         restaurant_time:
           type: [string, 'null']
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
-        date:
-          type: string
-          format: date
-      description: Supply the fields being changed. If restaurant_id is non-null, restaurant_time is required. Clearing restaurant_id also clears restaurant_time.
+      description: Supply only fields being changed. A supplied date is rejected. If restaurant_id is non-null, supply a restaurant_time or preserve the existing time for a time-only update. Clearing restaurant_id also clears restaurant_time. Venue-only changes do not reopen voting.
       additionalProperties: false
     AttendanceStatus:
       type: string

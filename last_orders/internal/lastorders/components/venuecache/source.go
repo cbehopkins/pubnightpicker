@@ -211,7 +211,14 @@ func (s *FirestoreSource) SoftDeleteIfUnchanged(ctx context.Context, venueID str
 	if err != nil {
 		return current, err
 	}
-	return Document{}, nil
+	updated, err := ref.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return Document{}, ErrNotFound
+	}
+	if err != nil {
+		return Document{}, err
+	}
+	return Document{ID: updated.Ref.ID, Data: updated.Data(), UpdateTime: updated.UpdateTime}, nil
 }
 
 func (s *FirestoreSource) CanManage(ctx context.Context, uid string) (bool, error) {

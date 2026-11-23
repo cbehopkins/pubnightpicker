@@ -182,9 +182,12 @@ streams; it does not invalidate cursors held by disconnected clients.
 - Projection stores own resource versions and deletion markers. Shared
 	infrastructure owns only the global sequence allocator, used within the
 	projection write transaction.
-- V1 retains deletion markers indefinitely. A V2 maintenance task may introduce
-	cleanup, together with a retention boundary that requires older cursors to
-	perform a full refresh.
+- V1 retains deletion markers indefinitely except for disposable on-demand Meet
+	entries covered by [CDD-0019](0019-on-demand-meet-projections.md). Their
+	evicted data and per-entry history may be discarded because V1 reconnects
+	always receive complete views. Future incremental resume for those entries
+	requires a retention boundary or equivalent recovery. Other cleanup remains a
+	V2 maintenance task requiring older cursors to perform a full refresh.
 - Each SQLite database generation has a persistent identity. Ordinary process
 	restarts preserve that identity; rebuilding or replacing the read model must
 	establish a new generation. Cursors from a different generation require a
@@ -239,18 +242,20 @@ data or push credentials.
   ID, database generation and global sequence. Current-Meets cursors also bind
   to the `Europe/London` calendar date. Use the separate
   `LAST_ORDERS_CURSOR_HMAC_KEY` runtime secret, containing at least 32 random
-  bytes encoded as unpadded base64url, and keep it stable across restarts. V1
-  has no expiry while tombstones remain indefinite. Invalid, tampered, future,
+	bytes encoded as unpadded base64url, and keep it stable across restarts. V1
+	has no cursor expiry and always returns a complete view, including after
+	on-demand Meet entry eviction. Invalid, tampered, future,
   wrong-scope, wrong-generation or date-mismatched cursors return a complete
   current view. Key rotation likewise causes a full view.
 - `Last-Event-ID` takes precedence over `after`; past-Meet pagination cursors
 	are separate. Bound each subscriber's buffer and close the stream on overflow.
 - Do not accept SSE until local projection startup readiness checks complete;
-	this does not assert Firebase is globally caught up. V1 assumes one backend
+	on-demand Meet entries instead require their own baseline when requested, not
+	eager admission at startup. This does not assert Firebase is globally caught up. V1 assumes one backend
 	instance and one persistent SQLite database. Active streams close at shutdown.
-- Anonymous reads of public Group Meets expose attendance counts but no attendee
-	identities. Authenticated attendance GET responses may include attendee
-	details.
+- Anonymous attendance responses for public Group Meets expose counts but no
+	attendee identities. Authenticated attendance GET responses may include attendee
+	details. Meet responses do not include attendance or votes.
 - On an effective authorization change, publish a post-commit invalidation to
 	the in-memory stream hub for the affected UID. The hub signals all registered
 	streams without closing their channels. Each handler sends a generic

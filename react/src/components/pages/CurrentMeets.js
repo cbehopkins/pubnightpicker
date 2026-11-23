@@ -41,7 +41,8 @@ import { buildCurrentMeetViewModel } from "../../utils/currentMeetViewModel";
 
 /** @typedef {{ name?: string, website?: string, image?: string, address?: string }} VenueEntry */
 /** @typedef {Record<string, VenueEntry | undefined>} VenueMap */
-/** @typedef {{ selectedVenueId?: string, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
+/** @typedef {{ id?: string, status?: string, name?: string, address?: string, website?: string | null, image?: string | null, website_url?: string | null, image_url?: string | null }} SelectedVenueSummary */
+/** @typedef {{ selectedVenueId?: string, selectedVenueSummary?: SelectedVenueSummary | null, restaurantId?: string | null, restaurantTime?: string | null, date?: string }} MeetValue */
 /** @typedef {{ sortedByDate: (reverse?: boolean) => Iterable<[string, MeetValue]> }} SortedMeetCollection */
 
 /** @typedef {import("../../store").RootState} RootState */
@@ -84,7 +85,7 @@ function normalizeImageUrl(value) {
 /**
  * @param {{ value: MeetValue, venues: VenueMap, meetId: string, canChat: boolean }} props
  */
-function PastMeet({ value, venues, meetId, canChat }) {
+function PastMeet({ value, meetId, canChat }) {
   const currUserId = useSelector(
     /** @param {RootState} state */
     (state) => {
@@ -96,8 +97,8 @@ function PastMeet({ value, venues, meetId, canChat }) {
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const venue = venues[value.selectedVenueId];
-  const venueName = venue?.name;
+  const venue = value.selectedVenueSummary;
+  const venueName = venue?.name || (venue?.status === "missing" ? "Venue unavailable" : "No venue recorded");
   const venueWebsite = venue?.website;
   const venueImage = normalizeImageUrl(venue?.image);
   const userEta = (currUserId && venue && attendance[value.selectedVenueId]?.eta?.[currUserId]) || null;
@@ -105,10 +106,6 @@ function PastMeet({ value, venues, meetId, canChat }) {
   useEffect(() => {
     setHasImageLoadError(false);
   }, [venueImage]);
-
-  if (!venue) {
-    return <div></div>;
-  }
 
   const shouldShowImage = venueImage && !hasImageLoadError;
 
@@ -181,22 +178,42 @@ function PastMeet({ value, venues, meetId, canChat }) {
 
 export function PastMeets() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const groupId = useSelector(
+    /** @param {RootState} state */
+    (state) => state.group?.groupId ?? null
+  );
+  const [cursorGroupId, setCursorGroupId] = useState(groupId);
+  const groupChanged = cursorGroupId !== groupId;
   const pageSizeParam = Number(searchParams.get("pastPageSize"));
   const pageSize = [5, 10, 20].includes(pageSizeParam) ? pageSizeParam : 5;
   const cursorTrail = (searchParams.get("pastCursorTrail") || "")
     .split(",")
     .filter(Boolean);
-  const currentCursorId = cursorTrail[cursorTrail.length - 1] || null;
+  const currentCursorId = groupChanged ? null : cursorTrail[cursorTrail.length - 1] || null;
 
-  const { meetData, hasNextPage, lastVisibleId, isLoading } = usePastMeets(
+  const {
+    meetData,
+    hasNextPage: pageHasNext,
+    nextCursor: pageNextCursor,
+    isLoading: pageIsLoading,
+    errorMessage: pageErrorMessage,
+    errorCode,
+    retry,
+  } = usePastMeets(
+    groupId,
     pageSize,
     currentCursorId
   );
 
-  const hasPreviousPage = cursorTrail.length > 0;
-  const pageIndex = cursorTrail.length;
-  const venues = useVenues();
-  const sortedMeetsByDate = [...meetData.sortedByDate(true)];
+  const hasNextPage = !groupChanged && pageHasNext;
+  const nextCursor = groupChanged ? null : pageNextCursor;
+  const isLoading = groupChanged || pageIsLoading;
+  const errorMessage = groupChanged ? null : pageErrorMessage;
+  const hasPreviousPage = !groupChanged && cursorTrail.length > 0;
+  const pageIndex = groupChanged ? 0 : cursorTrail.length;
+  const sortedMeetsByDate = groupChanged ? [] : Object.entries(meetData.meets).sort(
+    ([leftID, leftMeet], [rightID, rightMeet]) => rightMeet.date.localeCompare(leftMeet.date) || leftID.localeCompare(rightID)
+  );
   const canChat = useRole("canChat");
   const canViewStats = useAdmin();
 
@@ -214,6 +231,17 @@ export function PastMeets() {
     [searchParams, setSearchParams]
   );
 
+  useEffect(() => {
+    if (!groupChanged) return;
+    if (cursorTrail.length > 0) writePaginationParams(pageSize, []);
+    if (!pageIsLoading) setCursorGroupId(groupId);
+  }, [groupChanged, groupId, pageSize, pageIsLoading, cursorTrail.length, writePaginationParams]);
+
+  useEffect(() => {
+    if (errorCode !== "invalid_cursor" || cursorTrail.length === 0) return;
+    writePaginationParams(pageSize, []);
+  }, [errorCode, cursorTrail.length, pageSize, writePaginationParams]);
+
   const selectPageSizeHandler = useCallback(
     (event) => {
       event.preventDefault();
@@ -223,11 +251,11 @@ export function PastMeets() {
   );
 
   const goToNextPage = useCallback(() => {
-    if (!hasNextPage || !lastVisibleId || isLoading) {
+    if (!hasNextPage || !nextCursor || isLoading) {
       return;
     }
-    writePaginationParams(pageSize, [...cursorTrail, lastVisibleId]);
-  }, [hasNextPage, lastVisibleId, isLoading, writePaginationParams, pageSize, cursorTrail]);
+    writePaginationParams(pageSize, [...cursorTrail, nextCursor]);
+  }, [hasNextPage, nextCursor, isLoading, writePaginationParams, pageSize, cursorTrail]);
 
   const goToPreviousPage = useCallback(() => {
     if (!hasPreviousPage || isLoading) {
@@ -273,9 +301,19 @@ export function PastMeets() {
           </div>
         </div>
 
+        {isLoading && <p role="status">Loading Past Meets...</p>}
+        {errorMessage && (
+          <div className="alert alert-warning" role="alert">
+            <p className="mb-2">{errorMessage}</p>
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={retry}>
+              Retry
+            </button>
+          </div>
+        )}
+
         <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
           {sortedMeetsByDate.map(([key, value]) => {
-            return <PastMeet key={key} meetId={key} value={value} venues={venues} canChat={canChat} />;
+            return <PastMeet key={key} meetId={key} value={value} canChat={canChat} />;
           })}
         </div>
 
@@ -309,6 +347,7 @@ export function PastMeets() {
  * @param {{
  *  meetId: string,
  *  currentVenueId: string,
+ *  selectedVenueSummary?: SelectedVenueSummary | null,
  *  restaurantId: string | null | undefined,
  *  restaurantTime: string | null | undefined,
  *  date: string,
@@ -324,6 +363,7 @@ export function PastMeets() {
 function CurrentMeet({
   meetId,
   currentVenueId,
+  selectedVenueSummary,
   restaurantId,
   restaurantTime,
   date,
@@ -348,11 +388,28 @@ function CurrentMeet({
     meetId,
     canReadProtectedMeetData
   );
+  let currentMeetVenues = venues;
+  if (selectedVenueSummary?.status === "active" || selectedVenueSummary?.status === "deleted") {
+    currentMeetVenues = {
+      ...venues,
+      [currentVenueId]: {
+        name: selectedVenueSummary.name,
+        address: selectedVenueSummary.address,
+        website: selectedVenueSummary.website_url || undefined,
+        image: selectedVenueSummary.image_url || undefined,
+      },
+    };
+  } else if (selectedVenueSummary?.status === "missing") {
+    currentMeetVenues = {
+      ...venues,
+      [currentVenueId]: { name: "Venue details unavailable" },
+    };
+  }
   const meetViewModel = buildCurrentMeetViewModel({
     currentVenueId,
     restaurantId,
     restaurantTime,
-    venues,
+    venues: currentMeetVenues,
     votes,
     attendance,
     currUserId: normalizedUserId,
@@ -402,6 +459,9 @@ function CurrentMeet({
               ) : (
                 <h2 className="h4 mb-1">{mainVenue.name}</h2>
               )}
+              {selectedVenueSummary?.status === "deleted" && (
+                <span className="badge text-bg-secondary ms-2">Deleted</span>
+              )}
               <p className="text-body-secondary mb-0">{date}</p>
             </div>
             {canChat && (
@@ -417,6 +477,9 @@ function CurrentMeet({
           </div>
 
           {mainVenue.address && <p className="mb-3">{mainVenue.address}</p>}
+          {selectedVenueSummary?.status === "missing" && (
+            <p className="text-body-secondary mb-3">This Meet references a Venue that is no longer available.</p>
+          )}
 
           {shouldShowMainImage && (
             <div className="mb-3">
@@ -577,9 +640,15 @@ function CurrentMeets() {
       return typeof uid === "string" && uid.length > 0 ? uid : null;
     }
   );
+  const groupId = useSelector(
+    /** @param {RootState} state */
+    (state) => state.group?.groupId ?? null
+  );
   const privateData = useUserPrivateData(currUserId);
   const etaDefaultTime = normalizeArrivalTime(privateData?.defaultArrivalTime);
-  const meetData = useCurrentMeets();
+  const currentMeetsState = useCurrentMeets(groupId, currUserId);
+  const meetData = currentMeetsState.meetData ?? currentMeetsState;
+  const currentMeetEntries = [...meetData.sortedByDate()];
   const venues = useVenues();
   const canReschedule = useRole("canCompletePoll");
   const canDeleteMeet = useRole("canCreatePoll");
@@ -596,6 +665,19 @@ function CurrentMeets() {
             Upcoming Meet details and attendance tracking.
           </p>
         </div>
+        {currentMeetsState.isLoading && <p role="status">Loading Current Meets...</p>}
+        {currentMeetsState.errorMessage && (
+          <div className="alert alert-warning" role="alert">
+            <p className="mb-2">{currentMeetsState.errorMessage}</p>
+            {currentMeetsState.isStale && <p className="mb-2">Showing the last received snapshot.</p>}
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={currentMeetsState.retry}>
+              Retry
+            </button>
+          </div>
+        )}
+        {!currentMeetsState.isLoading && !currentMeetsState.errorMessage && currentMeetEntries.length === 0 && (
+          <p className="text-body-secondary">There are no current Meets for this Group.</p>
+        )}
         {rescheduleState.isRescheduling && (
           <RescheduleMeetModal
             selectedVenueId={rescheduleState.selectedVenueId}
@@ -611,12 +693,13 @@ function CurrentMeets() {
             onCancel={rescheduleState.cancelReschedule}
           />
         )}
-        {[...meetData.sortedByDate()].map(([key, value]) => {
+        {currentMeetEntries.map(([key, value]) => {
           return (
             <CurrentMeet
               key={key}
               meetId={key}
               currentVenueId={value.selectedVenueId}
+              selectedVenueSummary={value.selectedVenueSummary}
               restaurantId={value.restaurantId}
               restaurantTime={value.restaurantTime}
               date={value.date}

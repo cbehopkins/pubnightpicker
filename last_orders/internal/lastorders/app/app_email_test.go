@@ -346,7 +346,7 @@ type exceptionTokens struct{ calls atomic.Int64 }
 func (s *exceptionTokens) Acquire() int                    { s.calls.Add(1); return 0 }
 func (s *exceptionTokens) AcquireN(count int) (int, error) { s.calls.Add(int64(count)); return 0, nil }
 
-func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
+func TestObservedPollOpeningsStaySilencedWhileCompleterReceivesLiveNotifications(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "actor-exceptions.db")
 	logs := &syncBuffer{}
 	cfg := testConfig(t, dbPath, firebaseidempotencytest.NewInMemoryRemoteStandIn(true))
@@ -357,7 +357,7 @@ func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
 		return ctx.Err()
 	}
 	date := time.Now().Add(48 * time.Hour).Format(time.DateOnly)
-	cfg.NewPollSource = &newpollstest.Source{Changes: []newpolls.Change{{Kind: newpolls.ChangeAdded, Doc: newpolls.Document{ID: "opened-actor", Data: map[string]any{"date": date, "createdByUid": "alice"}}}}}
+	cfg.NewPollSource = &newpollstest.Source{Changes: []newpolls.Change{{Kind: newpolls.ChangeAdded, Doc: newpolls.Document{ID: "opened-actor", Data: map[string]any{"date": date}}}}}
 	cfg.CompletedPollSource = &completedpollstest.Source{Changes: []completedpolls.Change{{Kind: completedpolls.ChangeAdded, Doc: completedpolls.Document{ID: "completed-actor", Data: map[string]any{"date": date, "selected": "pub-1", "completedByUid": "bob"}}}}}
 	venues := venuecachetest.New()
 	venues.Changes = []venuecache.Change{{Kind: venuecache.ChangeAdded, Doc: venuecache.Document{ID: "pub-1", Data: map[string]any{"name": "Red Lion"}}}}
@@ -386,19 +386,24 @@ func TestObservedPollActorsReceiveOnlyTheirLiveNotifications(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE pmuid NOT LIKE 'suppressed:%'`).Scan(&live); err != nil {
 		t.Fatal(err)
 	}
-	if live != 2 || emailQuota.calls.Load() != 2 || pushQuota.calls.Load() != 3 {
+	if live != 1 || emailQuota.calls.Load() != 1 || pushQuota.calls.Load() != 1 {
 		t.Fatalf("live emails=%d email quota=%d push quota=%d", live, emailQuota.calls.Load(), pushQuota.calls.Load())
 	}
-	for _, expected := range []struct{ token, uid string }{{"poll-opened:opened-actor:actor:alice", "alice"}, {"poll-completed:completed-actor:pemail:pub-1:actor:bob", "bob"}} {
-		var email string
-		if err := db.QueryRow(`SELECT recipient FROM email_progress WHERE idempotency_token = ? AND pmuid NOT LIKE 'suppressed:%'`, expected.token).Scan(&email); err != nil {
-			t.Fatal(err)
-		}
-		if email != expected.uid+"@example.com" {
-			t.Fatalf("live recipient = %s", email)
-		}
+	var liveOpeningEmails int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM email_progress WHERE idempotency_token LIKE 'poll-opened:opened-actor:%' AND pmuid NOT LIKE 'suppressed:%'`).Scan(&liveOpeningEmails); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 3 {
+	if liveOpeningEmails != 0 {
+		t.Fatalf("live opening emails=%d, want none", liveOpeningEmails)
+	}
+	var email string
+	if err := db.QueryRow(`SELECT recipient FROM email_progress WHERE idempotency_token = ? AND pmuid NOT LIKE 'suppressed:%'`, "poll-completed:completed-actor:pemail:pub-1:actor:bob").Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	if email != "bob@example.com" {
+		t.Fatalf("live recipient = %s, want bob@example.com", email)
+	}
+	if strings.Count(logs.String(), `"msg":"dummy push sent"`) != 1 {
 		t.Fatalf("live pushes: %s", logs.String())
 	}
 }

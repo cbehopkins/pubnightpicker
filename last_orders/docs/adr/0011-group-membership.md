@@ -86,7 +86,11 @@ A Group has one of two visibility values:
 - `public`
 - `private`
 
-Visibility determines discoverability. It does not, by itself, grant membership or write access.
+Visibility determines discoverability. Anonymous and authenticated callers may
+read open, current and past Meet collections and their current/open streams in
+public Groups. Individual Meet details require authentication. Private Group
+Meets require membership or global-administrator authority. Visibility does not
+grant membership or write access.
 
 ### 4.1 Discovery rules
 
@@ -133,7 +137,21 @@ Removing or demoting the last Group administrator must be rejected unless anothe
 
 Membership changes and their permission consequences must be handled consistently. Removing a member must not leave stale group-scoped permission assignments behind.
 
-### 5.2 API
+### 5.2 Meet-read authority representation
+
+For Group-scoped Meet reads, the Firestore `groups/{group_id}.members` field is
+a map from UID to boolean. Only the boolean value `true` grants membership;
+missing entries, `false`, and values of any other type do not. Group visibility
+does not imply membership.
+
+Global administrator authority remains in `roles/admin`, using the same
+UID-to-boolean representation and grant rule. Anonymous and authenticated
+callers may read public Group open, current and past collections and current/open
+streams. Individual Meet details require authentication. Private-Group Meets
+require membership or global-administrator authority. Group-scoped administrator
+authority is out of scope for this read policy.
+
+### 5.3 API
 
 ```http
 GET    /groups/{group_id}/members

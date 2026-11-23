@@ -23,6 +23,50 @@
             "queryScope": "COLLECTION",
             "fields": [
                 {
+                    "fieldPath": "groupId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "completed",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "date",
+                    "order": "DESCENDING"
+                },
+                {
+                    "fieldPath": "__name__",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "polls",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "groupId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "completed",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "date",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "__name__",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "polls",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
                     "fieldPath": "completed",
                     "order": "ASCENDING"
                 },

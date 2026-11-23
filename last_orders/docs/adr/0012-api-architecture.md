@@ -106,15 +106,19 @@ Anonymous access is permitted for public Group discovery and public Venue/Locati
 
 ### 3.3 Meet access
 
-Meet-related reads require authentication and Group membership, including:
+Anonymous and authenticated callers may read open, current and past Meet
+collections and current/open streams for public Groups. Invalid supplied
+credentials still return `401`; they never fall back to anonymous access.
+Individual Meet details require authentication and are readable when the Group
+is public or the caller is a member of its private Group. Other Meet-related
+reads require Group membership, including:
 
-- Current and past Meet collections.
-- Individual Meet details.
 - Voting snapshots and vote operations.
 - Attendance snapshots and updates.
-- Attendance and current-Meet streams.
+- Attendance streams.
 
-Global administrators may access these resources through inherited administrative authority.
+Global administrators may access all Meet resources through inherited
+administrative authority.
 
 Authentication establishes identity only. It does not automatically grant membership or resource permissions.
 
@@ -216,10 +220,13 @@ The current page needs enough information to avoid an N+1 pattern of per-Meet re
 - Completion/voting state.
 - Selected Venue summary where present.
 - Venue name, address and image where available.
-- Attendance counts.
-- Information needed to render the caller's attendance state and actions.
 
-The exact DTO should be finalised in OpenAPI, but the read model should be shaped around the page's needs.
+Meet responses do not contain votes or attendance, including counts or
+caller-specific state. Venue candidates are Meet data; votes are voting data.
+The frontend composes the separate interfaces with independent loading and
+error states. Live voting updates require a separately designed voting API.
+Current Meets are ordered by scheduled date, earliest first, then Meet ID.
+See [CDD-0019](../cdd/0019-on-demand-meet-projections.md) for view composition.
 
 ### 6.4 Past Meet response
 
@@ -274,6 +281,13 @@ Rules:
 
 The ability to choose a Venue outside the candidate list is intentional: the final plan may change to another nearby Venue.
 
+`POST /meet/{meet_id}/complete` is a first-commit-wins transition. An open Meet
+may be completed once; a later API attempt, whether identical or different,
+returns conflict. During backend-first migration, the existing direct frontend
+writer may still compete with automatic completion. The completed-state
+transaction prevents overwrites, but full cross-writer first-commit guarantees
+begin only after the frontend cutover.
+
 ### 7.2 Rescheduling endpoint: compatibility semantics
 
 ```http
@@ -289,8 +303,11 @@ Rules:
 - The scheduled date remains unchanged.
 - Voting does not reopen.
 - The caller needs the same permission as completion; there is no separate reschedule permission.
-- When the selected Venue changes, the previous Venue ID is appended to `previous_venue_ids`.
+- When the selected Venue changes, the actual previous Venue ID is appended to `previous_venue_ids`, preserving order and duplicates.
 - Changing restaurant details alone does not append a previous Venue ID.
+- Omitted restaurant fields are preserved; clearing the restaurant also clears its time.
+- A time-only update is valid for an existing restaurant.
+- A supplied date is rejected.
 - Venue history is retained.
 
 The exact request schema should be documented in OpenAPI to make the Venue-only semantics explicit and avoid future confusion.
@@ -522,7 +539,14 @@ Global administrators can always see and edit every Venue. A caller with `canMan
 
 Venue deletion is soft deletion using `deleted_on`. Location deletion is not supported.
 
-Normal discovery and ordinary operational queries exclude deleted records. Historical Meets must continue to reference the resources they used.
+Normal discovery and ordinary operational queries exclude deleted records.
+Meet views retain references to soft-deleted Venues and display their retained
+details and deleted status. The shared Venue projection must retain those details
+on a fresh baseline and expose them to an internal Meet-view read, without
+changing ordinary Venue discovery or GET visibility. A confirmed missing Venue is
+represented by its ID and missing status, not fabricated details. Temporary
+source failure is not proof of absence. See
+[CDD-0019](../cdd/0019-on-demand-meet-projections.md#41-venue-composition).
 
 A Venue's `banned` state is distinct from deletion. Banning indicates that PubNightPicker should not visit the Venue because of a moderation or operational reason; it does not mean the record has been deleted.
 

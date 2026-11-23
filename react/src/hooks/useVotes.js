@@ -1,7 +1,7 @@
 // @ts-check
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { arrayUnion, arrayRemove, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { arrayUnion, arrayRemove, doc, onSnapshot, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
 
@@ -38,18 +38,27 @@ function useVotes(pollId, enabled = true) {
     }, snapshotErrorHandler);
   }, [docRef, enabled]);
 
+  const updateVoteDocument = useCallback(async (venueId, userId, operation) => {
+    await runTransaction(db, async (transaction) => {
+      const meetRef = doc(db, "polls", pollId);
+      const meetSnapshot = await transaction.get(meetRef);
+      if (!meetSnapshot.exists()) {
+        throw new Error("This Meet no longer exists.");
+      }
+      transaction.set(docRef, {
+        [venueId]: operation === "add" ? arrayUnion(userId) : arrayRemove(userId),
+      }, { merge: true });
+    });
+  }, [docRef, pollId]);
+
   /** @type {(venueId: string, userId: string) => Promise<void>} */
   const makeVote = useCallback(async (venueId, userId) => {
-    await updateDoc(docRef, {
-      [venueId]: arrayUnion(userId)
-    })
-  }, [docRef]);
+    await updateVoteDocument(venueId, userId, "add");
+  }, [updateVoteDocument]);
   /** @type {(venueId: string, userId: string) => Promise<void>} */
   const clearVote = useCallback(async (venueId, userId) => {
-    await updateDoc(docRef, {
-      [venueId]: arrayRemove(userId)
-    })
-  }, [docRef]);
+    await updateVoteDocument(venueId, userId, "remove");
+  }, [updateVoteDocument]);
 
   return [votes, makeVote, clearVote];
 }

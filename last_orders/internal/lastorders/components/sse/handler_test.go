@@ -261,6 +261,50 @@ func TestHandlerReadinessCancellationAndShutdown(t *testing.T) {
 	}
 }
 
+func TestHandlerUsesAPIErrorEnvelopeForPreStreamFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*Handler)
+		code    string
+	}{
+		{
+			name: "snapshot",
+			prepare: func(handler *Handler) {
+				handler.SnapshotFailureStatus = http.StatusServiceUnavailable
+				handler.Snapshot = func(context.Context, CursorInput) (ViewSnapshot, error) {
+					return ViewSnapshot{}, errors.New("snapshot source unavailable")
+				}
+			},
+			code: "view_unavailable",
+		},
+		{
+			name: "acceptance",
+			prepare: func(handler *Handler) {
+				handler.Accepted = func(context.Context) error { return errors.New("view lease failed") }
+			},
+			code: "view_unavailable",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := testHandler(NewHub(), closedSignal())
+			test.prepare(handler)
+			response := newStreamWriter()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/stream", nil))
+			var payload struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(response.body()), &payload); err != nil {
+				t.Fatalf("error body is not JSON: %q, err=%v", response.body(), err)
+			}
+			if response.statusCode() != http.StatusServiceUnavailable || payload.Error.Code != test.code || response.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("status=%d content-type=%q error=%+v", response.statusCode(), response.Header().Get("Content-Type"), payload.Error)
+			}
+		})
+	}
+}
+
 func TestAnonymousViewStreamsOnlyAdapterSuppliedAggregate(t *testing.T) {
 	hub := NewHub()
 	handler := testHandler(hub, closedSignal())

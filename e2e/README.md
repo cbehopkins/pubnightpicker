@@ -182,7 +182,9 @@ fresh per run, not reset between scenarios.
 The `@last_orders` poll-lifecycle journey keeps Bob, Claire and the admin in
 separate browser contexts. Bob and Claire register through the UI, and the admin grants both
 Can Add/Delete Poll Pubs, Can Create/Delete Poll and Can Chat; only Claire
-receives Can Complete/Reschedule. Bob creates tomorrow's poll, filters the venue picker
+receives Can Complete/Reschedule. After Bob creates the poll through the UI,
+the admin opens Logs and verifies exactly one creation audit row for that poll,
+with its date and Bob's display name. Bob creates tomorrow's poll, filters the venue picker
 to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
 for both; Bob sees those totals and adds his vote. Claire chooses the winning
 pub, both users see the poll disappear from Active Polls, and both find the

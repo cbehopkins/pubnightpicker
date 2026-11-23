@@ -9,6 +9,7 @@ import (
 	"time"
 
 	component "last_orders/internal/lastorders/components/groupcache"
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/database/listeners/projectionwatch"
 )
@@ -19,16 +20,23 @@ var ErrNoGroups = errors.New("authoritative Groups collection is empty")
 var ErrMalformedDocument = errors.New("malformed Group document")
 
 type Listener struct {
-	service   *component.Service
-	store     *component.Store
-	logger    *slog.Logger
-	ready     chan struct{}
-	failed    chan error
-	readyOnce sync.Once
+	service       *component.Service
+	store         *component.Store
+	logger        *slog.Logger
+	hub           *sse.Hub
+	authorization AuthorizationInvalidator
+	ready         chan struct{}
+	failed        chan error
+	readyOnce     sync.Once
 	lifecycle.Controller
 }
 
-func New(service *component.Service, store *component.Store, logger *slog.Logger) (*Listener, error) {
+type AuthorizationInvalidator interface {
+	InvalidateGroup(string)
+	InvalidateAllGroups()
+}
+
+func New(service *component.Service, store *component.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("group cache service is required")
 	}
@@ -38,7 +46,11 @@ func New(service *component.Service, store *component.Store, logger *slog.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}, nil
+	listener := &Listener{service: service, store: store, logger: logger, ready: make(chan struct{}), failed: make(chan error, 1)}
+	if len(hubs) > 0 {
+		listener.hub = hubs[0]
+	}
+	return listener, nil
 }
 
 func (l *Listener) Ready() <-chan struct{} {
@@ -47,6 +59,10 @@ func (l *Listener) Ready() <-chan struct{} {
 
 func (l *Listener) Errors() <-chan error {
 	return l.failed
+}
+
+func (l *Listener) SetAuthorizationInvalidator(invalidator AuthorizationInvalidator) {
+	l.authorization = invalidator
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -72,8 +88,16 @@ func (l *Listener) watch(ctx context.Context) {
 }
 
 func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, baseline bool) error {
+	if baseline && l.authorization != nil {
+		l.authorization.InvalidateAllGroups()
+	}
+	if baseline && l.hub != nil {
+		l.hub.InvalidateAllAuthenticated()
+	}
 	mutations := make([]component.Mutation, 0, len(changes))
+	changedIDs := make([]component.GroupID, 0, len(changes))
 	for _, change := range changes {
+		changedIDs = append(changedIDs, component.GroupID(change.Doc.ID))
 		mutation := component.Mutation{ID: component.GroupID(change.Doc.ID)}
 		if change.Kind != component.ChangeRemoved {
 			group, err := component.GroupFromDocument(change.Doc)
@@ -88,6 +112,13 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 		}
 		mutations = append(mutations, mutation)
 	}
+	if l.authorization != nil {
+		if !baseline {
+			for _, groupID := range changedIDs {
+				l.authorization.InvalidateGroup(string(groupID))
+			}
+		}
+	}
 	if baseline && len(mutations) == 0 {
 		return ErrNoGroups
 	}
@@ -96,6 +127,12 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 			return fmt.Errorf("validate and persist Group baseline: %w", err)
 		}
 		return fmt.Errorf("persist Group projection changes: %w", err)
+	}
+	if !baseline && l.hub != nil {
+		for _, mutation := range mutations {
+			l.hub.InvalidateScope("current-meets-group:" + string(mutation.ID))
+			l.hub.InvalidateScope("open-meets-group:" + string(mutation.ID))
+		}
 	}
 	return nil
 }

@@ -24,6 +24,7 @@ type Config[T any] struct {
 	Open            OpenStream[T]
 	Apply           ApplyBatch[T]
 	BaselineApplied func()
+	SourceFailed    func(error)
 	RetryDelay      time.Duration
 	Logger          *slog.Logger
 }
@@ -61,6 +62,9 @@ func Run[T any](ctx context.Context, cfg Config[T]) error {
 				return err
 			}
 		} else if ctx.Err() == nil {
+			if cfg.SourceFailed != nil {
+				cfg.SourceFailed(err)
+			}
 			cfg.Logger.Error("open projection watch stream failed", "stream", cfg.Name, "err", err)
 		}
 
@@ -93,6 +97,9 @@ func consume[T any](ctx context.Context, cfg Config[T], stream Stream[T]) error 
 	for ctx.Err() == nil {
 		changes, err := stream.Next()
 		if err != nil {
+			if cfg.SourceFailed != nil {
+				cfg.SourceFailed(err)
+			}
 			return err
 		}
 		if err := cfg.Apply(ctx, changes, baseline); err != nil {

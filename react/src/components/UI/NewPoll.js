@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useSelector } from "react-redux";
 
-import { doc, collection, addDoc, setDoc } from "firebase/firestore";
-import { auth, db } from "../../firebase";
 import Button from "../UI/Button";
-import { logPollActionAudit, POLL_ACTION_CREATE } from "../../dbtools/pollActionAudit";
+import { requestLastOrders } from "../../utils/lastOrdersApi";
+import { getUserFacingErrorMessage } from "../../permissions";
+import { notifyError } from "../../utils/notify";
 
 /** @typedef {{ polls: Set<string> }} NewPollProps */
 
@@ -32,29 +32,19 @@ function NewPoll(params) {
 
     try {
       if (!groupId) throw new Error("No resolved Group for poll creation.");
-      const createdByUid = auth.currentUser?.uid;
-      if (!createdByUid) throw new Error("No authenticated poll creator.");
-      const docRef = await addDoc(collection(db, "polls"), {
-        date: enteredDate,
-        completed: false,
-        createdByUid,
-        groupId,
+      await requestLastOrders(`api/meets/${encodeURIComponent(groupId)}`, {
+        method: "POST",
+        body: { date: enteredDate },
       });
       setEnteredDate("");
-      // This is important to do here as the permissions should be set on the database
-      // Such that only those who create polls can write vs update
-      await setDoc(doc(db, "votes", docRef.id), { any: [] });
-      await setDoc(doc(db, "attendance", docRef.id), {});
-      try {
-        await logPollActionAudit(POLL_ACTION_CREATE, {
-          pollId: docRef.id,
-          pollDate: enteredDate,
-        });
-      } catch (auditErr) {
-        console.warn("Poll created but audit logging failed", auditErr);
-      }
     } catch (err) {
-      console.error("Error adding document: ", err);
+      const uncertain = err?.code === "connection_error"
+        || err?.code === "internal_error"
+        || err?.code === "backend_error"
+        || err?.code === "invalid_response";
+      notifyError(uncertain
+        ? "Meet creation outcome is uncertain. Refresh the open Meets view before retrying."
+        : getUserFacingErrorMessage(err, "Unable to create this meet."));
     }
   };
   const validateDate = () => {

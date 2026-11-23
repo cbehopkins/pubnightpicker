@@ -149,6 +149,16 @@ func (h *Hub) InvalidateScope(scopeKey string) {
 	}
 }
 
+func (h *Hub) ResetView(viewKey string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.streams {
+		if s.viewKey == viewKey {
+			signal(s.reset)
+		}
+	}
+}
+
 // Shutdown ends all subscriptions. Closing the shared done channel is safe;
 // per-subscription channels remain open.
 func (h *Hub) Shutdown() {

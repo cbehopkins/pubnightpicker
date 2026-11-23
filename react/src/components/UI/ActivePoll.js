@@ -144,7 +144,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
         async (event) => {
             event.preventDefault();
             try {
-                await addVenueToMeet(selectedVenue, poll_id, venues, poll_data.date);
+                await addVenueToMeet(selectedVenue, poll_id);
                 if (venues[selectedVenue]?.banned) {
                     const selectedVenueName = venues[selectedVenue]?.name || "Selected venue";
                     setManualAddWarning(`${selectedVenueName} is marked as banned. Please only keep it in the poll if you really need to.`);
@@ -156,14 +156,12 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
                 notifyError(getUserFacingErrorMessage(error, "Unable to add the venue to this poll."));
             }
         },
-        [selectedVenue, poll_id, venues, poll_data.date]
+        [selectedVenue, poll_id, venues]
     );
 
     const { handleAutopopulate } = useAutopopulateAction({
         pollId: poll_id,
-        pollDate: poll_data.date,
         pollVenues: poll_data.venues,
-        venueParameters: venues,
         mostVisited,
         leastVisited,
         randomVenues,
@@ -284,6 +282,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
                 <PollVote
                     poll_data={poll_data}
                     poll_id={poll_id}
+                    venues={venues}
                     on_complete={on_complete}
                 />
             </div>
