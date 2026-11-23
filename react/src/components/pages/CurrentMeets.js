@@ -580,7 +580,7 @@ function CurrentMeet({
                 <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
                   <ShowAttendance
                     voters={restaurantVenue.dedupedVotes}
-                      voterProfiles={voterProfiles}
+                    voterProfiles={voterProfiles}
                     canCome={restaurantVenue.canCome}
                     cannotCome={restaurantVenue.cannotCome}
                     eta={restaurantVenue.etaMap}

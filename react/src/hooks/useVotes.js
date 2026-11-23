@@ -51,15 +51,15 @@ function parseVotingSnapshot(value) {
 
 /** @param {string} pollId @param {string | null} userId @param {boolean} [enabled=true] @returns {VoteState} */
 function useVotes(pollId, userId, enabled = true) {
-  const [optionsById, setOptionsById] = useState(/** @type {VotingOptionsMap} */ ({}));
-  const [selectedOptionIds, setSelectedOptionIds] = useState(/** @type {string[]} */ ([]));
-  const [pendingOptionIds, setPendingOptionIds] = useState(/** @type {string[]} */ ([]));
-  const [retrySelections, setRetrySelections] = useState(/** @type {Record<string, boolean>} */ ({}));
+  const [optionsById, setOptionsById] = useState(/** @type {VotingOptionsMap} */({}));
+  const [selectedOptionIds, setSelectedOptionIds] = useState(/** @type {string[]} */([]));
+  const [pendingOptionIds, setPendingOptionIds] = useState(/** @type {string[]} */([]));
+  const [retrySelections, setRetrySelections] = useState(/** @type {Record<string, boolean>} */({}));
   const [isLoading, setIsLoading] = useState(Boolean(enabled && userId));
   const [errorMessage, setErrorMessage] = useState("");
-  const selectedRef = useRef(/** @type {string[]} */ ([]));
+  const selectedRef = useRef(/** @type {string[]} */([]));
   const pendingRef = useRef(new Set());
-  const retryRef = useRef(/** @type {Record<string, boolean>} */ ({}));
+  const retryRef = useRef(/** @type {Record<string, boolean>} */({}));
   const streamSequenceRef = useRef(0);
 
   const setSelection = useCallback((next) => {

@@ -46,7 +46,7 @@ vi.mock("../../hooks/useAttendance", () => ({
 }));
 
 vi.mock("../../hooks/useVotes", () => ({
-        default: useVotesMock,
+    default: useVotesMock,
 }));
 
 vi.mock("../../hooks/useRole", () => ({
