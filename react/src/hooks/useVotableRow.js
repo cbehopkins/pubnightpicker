@@ -8,7 +8,8 @@ import { runAttendanceAction } from "../utils/asyncErrorHandler";
 import { getEffectiveAttendanceState } from "../utils/attendanceState";
 
 /** @typedef {"canCome" | "cannotCome"} AttendanceStatus */
-/** @typedef {Record<string, string[]>} VotesMap */
+/** @typedef {{ total: number, voterUids: string[] }} VotingOption */
+/** @typedef {Record<string, VotingOption | undefined>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 
 /**
@@ -24,12 +25,15 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @property {boolean} allowGlobalAttendanceControls
  * @property {boolean} hasAttendanceData
  * @property {string | undefined} userEta
- * @property {() => Promise<void>} voteHandler
+ * @property {() => Promise<boolean>} voteHandler
  * @property {(status: AttendanceStatus) => Promise<void>} setAttendanceStatusHandler
  * @property {() => Promise<void>} clearAttendanceHandler
  * @property {(eta: string) => Promise<void>} setEtaHandler
  * @property {() => Promise<void>} clearEtaHandler
  * @property {() => Promise<void>} deleteHandler
+ * @property {boolean} votePending
+ * @property {boolean | undefined} retrySelection
+ * @property {() => Promise<boolean>} retryVoteHandler
  */
 
 /**
@@ -38,22 +42,25 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @param {string} venueId
  * @param {string | null | undefined} currUserId
  * @param {VotesMap} votes
+ * @param {string[]} selectedOptionIds
+ * @param {string[]} pendingOptionIds
+ * @param {Record<string, boolean>} retrySelections
  * @param {AttendanceMap | null | undefined} attendance
  * @param {(venueId: string, userId: string, status: AttendanceStatus) => Promise<void>} setAttendanceStatus
  * @param {(venueId: string, userId: string) => Promise<void>} clearAttendance
- * @param {(venueId: string, userId: string) => Promise<void>} makeVote
- * @param {(venueId: string, userId: string) => Promise<void>} clearVote
+ * @param {(venueId: string, selected: boolean) => Promise<boolean>} changeVote
+ * @param {(venueId: string) => Promise<boolean>} retryVote
  * @param {(venueId: string, userId: string, eta: string) => Promise<void>} setEta
  * @param {(venueId: string, userId: string) => Promise<void>} clearEta
  * @param {string} pollId
  * @returns {VotableRowState}
  */
-export function useVotableRow(venueId, currUserId, votes, attendance, setAttendanceStatus, clearAttendance, makeVote, clearVote, setEta, clearEta, pollId) {
-  const safeUserId = currUserId || "";
-
+export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pendingOptionIds, retrySelections, attendance, setAttendanceStatus, clearAttendance, changeVote, retryVote, setEta, clearEta, pollId) {
   // Vote-related derived state
-  const voteCount = venueId in votes ? votes[venueId].length : 0;
-  const votedFor = venueId in votes && votes[venueId].includes(safeUserId);
+  const voteCount = votes[venueId]?.total || 0;
+  const votedFor = selectedOptionIds.includes(venueId);
+  const votePending = pendingOptionIds.includes(venueId);
+  const retrySelection = retrySelections[venueId];
 
   // Attendance-related derived state
   const attendanceForVenue = getEffectiveAttendanceState(attendance, venueId, currUserId);
@@ -71,13 +78,11 @@ export function useVotableRow(venueId, currUserId, votes, attendance, setAttenda
 
   // Vote handler
   const voteHandler = useCallback(async () => {
-    if (!currUserId) return;
-    if (votedFor) {
-      await clearVote(venueId, currUserId);
-    } else {
-      await makeVote(venueId, currUserId);
-    }
-  }, [makeVote, clearVote, venueId, currUserId, votedFor]);
+    if (!currUserId) return false;
+    return changeVote(venueId, !votedFor);
+  }, [changeVote, venueId, currUserId, votedFor]);
+
+  const retryVoteHandler = useCallback(async () => retryVote(venueId), [retryVote, venueId]);
 
   // Attendance status handler
   /** @type {(status: AttendanceStatus) => Promise<void>} */
@@ -117,6 +122,9 @@ export function useVotableRow(venueId, currUserId, votes, attendance, setAttenda
     // Vote state
     voteCount,
     votedFor,
+    votePending,
+    retrySelection,
+    retryVoteHandler,
     // Attendance state
     userCanCome,
     userCannotCome,

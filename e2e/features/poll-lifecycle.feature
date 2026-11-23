@@ -20,13 +20,16 @@ Feature: Members organise and chat about a meet
       | permission               |
       | Can Add/Delete Poll Pubs |
       | Can Create/Delete Poll   |
+      | Can Vote                 |
       | Can Chat                 |
     And the admin grants Claire the following permissions:
       | permission               |
       | Can Add/Delete Poll Pubs |
       | Can Create/Delete Poll   |
+      | Can Vote                 |
       | Can Complete/Reschedule  |
       | Can Chat                 |
+    And Claire hides her votes from other members
     And Claire opens Active Polls
     And Bob creates a poll on a clear date
     Then Claire sees the poll on Active Polls
@@ -47,6 +50,7 @@ Feature: Members organise and chat about a meet
       | venue            | votes |
       | Journey Red Lion | 1     |
       | Journey Crown    | 1     |
+    Then Bob sees the vote through the API without Claire's UID
     When Bob votes for the following pubs:
       | venue            |
       | Journey Red Lion |

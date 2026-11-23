@@ -145,15 +145,24 @@ describe("PrivacyPage", () => {
             }),
         });
 
-        requestLastOrdersMock
-            .mockResolvedValueOnce({
-                venues: [{ id: "venueA", name: "Venue A", address: "1 Main St" }],
-                next_cursor: "next-page",
-            })
-            .mockResolvedValueOnce({
-                venues: [{ id: "venueB", name: "Venue B", address: "2 High St" }],
-                next_cursor: null,
-            });
+        requestLastOrdersMock.mockImplementation(async (path, options) => {
+            if (path === "api/venues" && options.query.cursor === undefined) {
+                return {
+                    venues: [{ id: "venueA", name: "Venue A", address: "1 Main St" }],
+                    next_cursor: "next-page",
+                };
+            }
+            if (path === "api/venues") {
+                return {
+                    venues: [{ id: "venueB", name: "Venue B", address: "2 High St" }],
+                    next_cursor: null,
+                };
+            }
+            if (path === "api/meet/poll-1/votes") {
+                return { options: [], selected_option_ids: ["any", "venueA"] };
+            }
+            throw new Error(`Unexpected Last Orders request: ${path}`);
+        });
 
         getDocsMock.mockImplementation(async (target) => {
             if (target.kind === "collection" && target.name === "votes") {
@@ -331,7 +340,7 @@ describe("PrivacyPage", () => {
         expect(payload.expanded.votes["poll-1"].event.pollId).toBe("poll-1");
         expect(payload.expanded.votes["poll-1"].event.completed).toBe(true);
         expect(payload.expanded.votes["poll-1"].event.rawPoll).toEqual(payload.lookup.polls["poll-1"].rawPoll);
-        expect(payload.expanded.votes["poll-1"].votes[0].venue.name).toBe("Venue A");
+        expect(payload.expanded.votes["poll-1"].votes.find((vote) => vote.venue.venueId === "venueA").venue.name).toBe("Venue A");
         expect(payload.expanded.attendance["poll-1"].attendance[1].venue.name).toBe("Venue B");
         expect(payload.expanded.messages[0].sentAt).toBe("2026-04-13T14:00:00.000Z");
 
@@ -345,6 +354,8 @@ describe("PrivacyPage", () => {
             method: "GET",
             query: { limit: "100", cursor: "next-page" },
         });
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meet/poll-1/votes", { method: "GET" });
+        expect(collectionMock.mock.calls.some(([, name]) => name === "votes")).toBe(false);
         expect(collectionMock.mock.calls.some(([, name]) => name === "pubs")).toBe(false);
     });
 

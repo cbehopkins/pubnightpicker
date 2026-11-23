@@ -6,6 +6,7 @@ import { store } from "./store";
 
 export const PERMISSIONS = {
     canChat: "canChat",
+    canVote: "canVote",
     canAddPubToPoll: "canAddPubToPoll",
     canCreatePoll: "canCreatePoll",
     canCompletePoll: "canCompletePoll",
@@ -16,6 +17,7 @@ export const PERMISSIONS = {
 
 export const CONSOLIDATED_PERMISSION_COLUMNS = [
     { key: PERMISSIONS.canChat, label: "Can Chat" },
+    { key: PERMISSIONS.canVote, label: "Can Vote" },
     { key: PERMISSIONS.canAddPubToPoll, label: "Can Add/Delete Poll Pubs" },
     { key: PERMISSIONS.canCreatePoll, label: "Can Create/Delete Poll" },
     { key: PERMISSIONS.canCompletePoll, label: "Can Complete/Reschedule" },
@@ -26,6 +28,7 @@ export const CONSOLIDATED_PERMISSION_COLUMNS = [
 
 export const ADMIN_DEFAULT_PERMISSIONS = [
     PERMISSIONS.canChat,
+    PERMISSIONS.canVote,
     PERMISSIONS.canAddPubToPoll,
     PERMISSIONS.canCreatePoll,
     PERMISSIONS.canCompletePoll,

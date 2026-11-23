@@ -12,6 +12,7 @@ import {
     getFirestore,
     query,
     terminate,
+    updateDoc,
     where,
     writeBatch,
 } from "firebase/firestore";
@@ -20,6 +21,36 @@ import { waitForBackendRecord } from "../support/backend-evidence.js";
 import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
+
+async function captureVoteApi(page) {
+    await page.evaluate(() => {
+        if (window.__voteApiCaptureInstalled) return;
+        window.__voteApiCaptureInstalled = true;
+        window.__voteApiRequests = [];
+        window.__voteApiResponses = "";
+        const nativeFetch = window.fetch.bind(window);
+        window.fetch = async (input, init = {}) => {
+            const url = input instanceof Request ? input.url : String(input);
+            const method = String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+            const response = await nativeFetch(input, init);
+            if (/\/api\/meet\/[^/]+\/votes(?:\/[^/?]+)?(?:\?.*)?$/.test(url)) {
+                window.__voteApiRequests.push({ url, method });
+                const reader = response.clone().body?.getReader();
+                if (reader) {
+                    void (async () => {
+                        const decoder = new TextDecoder();
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            window.__voteApiResponses += decoder.decode(value, { stream: true });
+                        }
+                    })().catch(() => undefined);
+                }
+            }
+            return response;
+        };
+    });
+}
 
 function journeyPoll(world, actor, date = world.pollDate) {
     return world.actors.get(actor)
@@ -47,6 +78,7 @@ function applicationTimePollID(world, dayOffset) {
 
 async function createPoll(world, date) {
     const bob = world.actors.get("Bob");
+    await captureVoteApi(bob);
     world.pollDate = date;
     assert.notEqual(bob.context(), world.actors.get("Claire")?.context());
     await bob.getByRole("link", { name: "Active Polls", exact: true }).click();
@@ -169,8 +201,19 @@ When("the admin grants {word} the following permissions:", async function (name,
     }
 });
 
+When("Claire hides her votes from other members", async function () {
+    const profile = await withEmulatorAdmin((db) => getDocsFromServer(query(
+        collection(db, "user-public"),
+        where("name", "==", "Claire"),
+    )));
+    assert.equal(profile.size, 1, "Claire must have one public profile in the Auth/Firestore emulators");
+    this.hiddenVoteUid = profile.docs[0].id;
+    await withEmulatorAdmin((db) => updateDoc(doc(db, "user-public", this.hiddenVoteUid), { votesVisible: false }));
+});
+
 When("{word} opens Active Polls", async function (name) {
     const page = this.actors.get(name);
+    await captureVoteApi(page);
     await page.getByRole("link", { name: "Active Polls", exact: true }).click();
     await page.getByRole("heading", { name: "Active Polls", exact: true }).waitFor();
     await page.getByRole("heading", { name: "Add Poll", exact: true }).waitFor();
@@ -252,6 +295,23 @@ Then("{word} sees the following vote totals:", async function (name, table) {
     for (const { venue, votes } of table.hashes()) {
         await venueRow(this, name, venue).getByRole("cell", { name: votes, exact: true }).waitFor();
     }
+});
+
+Then("Bob sees the vote through the API without Claire's UID", async function () {
+    const bob = this.actors.get("Bob");
+    const claire = this.actors.get("Claire");
+    const votePath = `/api/meet/${this.pollId}/votes/`;
+    await bob.waitForFunction(() => window.__voteApiResponses?.length > 0);
+    const bobTraffic = await bob.evaluate(() => ({
+        requests: window.__voteApiRequests,
+        responses: window.__voteApiResponses,
+    }));
+    const claireRequests = await claire.evaluate(() => window.__voteApiRequests);
+    assert.ok(claireRequests.some(({ url, method }) => url.includes(votePath) && method === "PUT"), `Claire vote requests: ${JSON.stringify(claireRequests)}`);
+    assert.ok(bobTraffic.responses.includes('"anonymous_count":1'), `expected an anonymous vote in API responses: ${bobTraffic.responses}`);
+    assert.ok(bobTraffic.requests.some(({ url }) => url.endsWith(`${votePath.slice(0, -1)}/stream`)));
+    assert.ok(bobTraffic.requests.some(({ url, method }) => url.endsWith(votePath.slice(0, -1)) && method === "GET"));
+    assert.ok(!bobTraffic.responses.includes(this.hiddenVoteUid), "the hidden voter UID must not reach Bob's browser");
 });
 
 When("the application clock advances to {string} London time", async function (localTime) {

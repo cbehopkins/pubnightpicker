@@ -3,6 +3,7 @@
 import { useSelector } from "react-redux";
 import styles from "./PollVote.module.css";
 import useVotes from "../../hooks/useVotes";
+import useVisibleVoterProfiles from "../../hooks/useVisibleVoterProfiles";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import useAttendance from "../../hooks/useAttendance";
 import useRole from "../../hooks/useRole";
@@ -20,7 +21,8 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
 /** @typedef {import("../../store").RootState} RootState */
 
-/** @typedef {Record<string, string[]>} VotesMap */
+/** @typedef {{ total: number, anonymousCount: number, voterUids: string[] }} VotingOption */
+/** @typedef {Record<string, VotingOption | undefined>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 /** @typedef {{ name?: string }} PollVenueEntry */
 /** @typedef {{ venues?: Record<string, PollVenueEntry | boolean>, date?: string }} PollData */
@@ -29,12 +31,16 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
 /**
  * @typedef {Object} RespondMenuProps
  * @property {boolean} votedFor
+ * @property {boolean} canVote
+ * @property {boolean} votePending
+ * @property {boolean | undefined} retrySelection
  * @property {boolean} userCanCome
  * @property {boolean} userCannotCome
  * @property {string | undefined} userEta
  * @property {boolean} allowAttendanceControls
  * @property {boolean} allowGlobalAttendanceControls
- * @property {() => Promise<void>} onVote
+ * @property {() => Promise<boolean>} onVote
+ * @property {() => Promise<boolean>} onRetryVote
  * @property {(status: "canCome" | "cannotCome") => Promise<void>} onSetAttendanceStatus
  * @property {() => Promise<void>} onClearAttendance
  * @property {(eta: string) => Promise<void>} onSetEta
@@ -50,10 +56,15 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @property {string} venueName
  * @property {string | null | undefined} currUserId
  * @property {VotesMap} votes
+ * @property {string[]} selectedOptionIds
+ * @property {string[]} pendingOptionIds
+ * @property {Record<string, boolean>} retrySelections
+ * @property {Record<string, UserEntry>} voterProfiles
+ * @property {boolean} canCastVote
  * @property {AttendanceMap} attendance
  * @property {boolean} canShowAttendance
- * @property {(venueId: string, userId: string) => Promise<void>} makeVote
- * @property {(venueId: string, userId: string) => Promise<void>} clearVote
+ * @property {(venueId: string, selected: boolean) => Promise<boolean>} changeVote
+ * @property {(venueId: string) => Promise<boolean>} retryVote
  * @property {(venueId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
  * @property {(venueId: string, userId: string) => Promise<void>} clearAttendance
  * @property {(venueId: string, userId: string, eta: string) => Promise<void>} setEta
@@ -112,12 +123,16 @@ function formatPeople(ids, usersByUid, etaMap = {}) {
 /** @param {RespondMenuProps} props */
 function RespondMenu({
   votedFor,
+  canVote,
+  votePending,
+  retrySelection,
   userCanCome,
   userCannotCome,
   userEta,
   allowAttendanceControls,
   allowGlobalAttendanceControls,
   onVote,
+  onRetryVote,
   onSetAttendanceStatus,
   onClearAttendance,
   onSetEta,
@@ -251,18 +266,32 @@ function RespondMenu({
           className={styles.respondPanel}
           style={panelStyle ?? undefined}
         >
-          <Button
+          {canVote && <Button
             type="button"
             variant={votedFor ? "warning" : "success"}
             className={`${styles.voteButton} ${votedFor ? styles.voted : ""}`}
+            disabled={votePending}
+            aria-busy={votePending}
             onClick={async () => {
-              await onVote();
-              setShowActions(false);
+              if (await onVote()) setShowActions(false);
             }}
             title={votedFor ? "Cancel your vote" : "Vote for this venue"}
           >
-            {votedFor ? "Cancel Vote" : "Vote Up"}
-          </Button>
+            {votePending ? "Saving..." : votedFor ? "Cancel Vote" : "Vote Up"}
+          </Button>}
+          {canVote && retrySelection !== undefined && (
+            <Button
+              type="button"
+              variant="warning"
+              className={styles.voteButton}
+              onClick={async () => {
+                if (await onRetryVote()) setShowActions(false);
+              }}
+              title="Retry the unconfirmed vote change"
+            >
+              {retrySelection ? "Retry Vote" : "Retry Withdrawal"}
+            </Button>
+          )}
           {allowAttendanceControls && (
             <AttendanceActions
               canComeSelected={userCanCome}
@@ -335,10 +364,14 @@ function VotableVenue({
   venueName,
   currUserId,
   votes,
+  selectedOptionIds,
+  pendingOptionIds,
+  retrySelections,
   attendance,
   canShowAttendance,
-  makeVote,
-  clearVote,
+  canCastVote,
+  changeVote,
+  retryVote,
   setAttendanceStatus,
   clearAttendance,
   setEta,
@@ -354,16 +387,20 @@ function VotableVenue({
   completeHandler,
   showAttendanceColumns,
   usersByUid,
+  voterProfiles,
 }) {
   const rowData = useVotableRow(
     venueId,
     currUserId,
     votes,
+    selectedOptionIds,
+    pendingOptionIds,
+    retrySelections,
     attendance,
     setAttendanceStatus,
     clearAttendance,
-    makeVote,
-    clearVote,
+    changeVote,
+    retryVote,
     setEta,
     clearEta,
     pollId
@@ -379,7 +416,7 @@ function VotableVenue({
 
       const rowEtaMap = rowAttendance.eta || {};
 
-      const rowVoters = (votes[venueId] || []).filter((id) => usersByUid[normalizeUserId(id)]?.votesVisible !== false);
+      const rowVoters = (votes[venueId]?.voterUids || []).filter((id) => voterProfiles[normalizeUserId(id)]?.votesVisible !== false);
 
       const rowCanCome = rowAttendance.canCome || [];
 
@@ -388,7 +425,7 @@ function VotableVenue({
 
       return [
 
-        formatPeople(rowVoters, usersByUid),
+        formatPeople(rowVoters, voterProfiles),
 
         formatPeople(rowCanCome, usersByUid),
 
@@ -461,12 +498,16 @@ function VotableVenue({
           <div className={styles.actionButtons}>
             <RespondMenu
               votedFor={rowData.votedFor}
+              canVote={canCastVote}
+              votePending={rowData.votePending}
+              retrySelection={rowData.retrySelection}
               userCanCome={rowData.userCanCome}
               userCannotCome={rowData.userCannotCome}
               userEta={rowData.userEta}
               allowAttendanceControls={rowData.allowAttendanceControls}
               allowGlobalAttendanceControls={allowGlobalAttendanceControls}
               onVote={rowData.voteHandler}
+              onRetryVote={rowData.retryVoteHandler}
               onSetAttendanceStatus={rowData.setAttendanceStatusHandler}
               onClearAttendance={rowData.clearAttendanceHandler}
               onSetEta={rowData.setEtaHandler}
@@ -484,7 +525,8 @@ function VotableVenue({
                 </>}
               >
                 <ShowAttendance
-                  voters={votes[venueId] || []}
+                  voters={votes[venueId]?.voterUids || []}
+                  voterProfiles={voterProfiles}
                   canCome={rowData.canCome}
                   cannotCome={rowData.cannotCome}
                   eta={attendance[venueId]?.eta}
@@ -517,11 +559,18 @@ function PollVote(props) {
   const allowDelete = useRole("canAddPubToPoll");
   const allowCompletePoll = useRole("canCompletePoll");
   const canShowAttendance = useRole("canShowVoters");
-  const canVote = Boolean(currUserId);
-  const canReadProtectedPollData = canVote;
+  const canRespond = Boolean(currUserId);
+  const canVote = useRole("canVote");
+  const canReadProtectedPollData = canRespond;
   const privateData = useUserPrivateData(currUserId);
   const defaultEta = normalizeArrivalTime(privateData?.defaultArrivalTime);
-  const [votes, makeVote, clearVote] = useVotes(props.poll_id, canReadProtectedPollData);
+  const voteState = useVotes(props.poll_id, currUserId, canReadProtectedPollData);
+  const { optionsById: votes, selectedOptionIds, pendingOptionIds, retrySelections, errorMessage, changeVote, retryVote } = voteState;
+  const visibleVoterUids = useMemo(
+    () => [...new Set(Object.values(votes).flatMap((option) => option?.voterUids || []))],
+    [votes]
+  );
+  const voterProfiles = useVisibleVoterProfiles(visibleVoterUids);
   const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus, setEta, clearEta] = useAttendance(
     props.poll_id,
     canReadProtectedPollData
@@ -536,6 +585,9 @@ function PollVote(props) {
 
   // Get sorted poll rows
   const rowEntries = usePollRows(props.poll_data, props.venues);
+  const visibleOptionIds = new Set(rowEntries.map(([, optionId]) => optionId));
+  const removedOptionRetries = Object.entries(retrySelections)
+    .filter(([optionId]) => !visibleOptionIds.has(optionId));
 
   // Get ballot actions (batch attendance handlers)
   const { pollVenueIds, setAllAttendanceToCanCome, setAllAttendanceToCannotCome } = useBallotActions(
@@ -631,7 +683,7 @@ function PollVote(props) {
       }
       window.removeEventListener("resize", syncOverflowState);
     };
-  }, [rowEntries.length, canVote, canShowAttendance, allowDelete, mobile, wideModeMinWidth]);
+  }, [rowEntries.length, canRespond, canShowAttendance, allowDelete, mobile, wideModeMinWidth]);
 
   return (
     <>
@@ -645,8 +697,8 @@ function PollVote(props) {
               {allowDelete && <th className={styles.deleteCol}></th>}
               <th className={styles.venueCol}>Venue Name</th>
               <th className={styles.voteCol}>Votes</th>
-              {canVote && <th className={styles.statusCol}></th>}
-              {canVote && <th className={styles.actionsCol}>Actions</th>}
+              {canRespond && <th className={styles.statusCol}></th>}
+              {canRespond && <th className={styles.actionsCol}>Actions</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Voted</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Can come</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Cannot come</th>}
@@ -663,10 +715,15 @@ function PollVote(props) {
                   venueName={venueName}
                   currUserId={currUserId}
                   votes={votes}
+                  selectedOptionIds={selectedOptionIds}
+                  pendingOptionIds={pendingOptionIds}
+                  retrySelections={retrySelections}
+                  canCastVote={canVote}
+                  voterProfiles={voterProfiles}
                   attendance={attendance}
                   canShowAttendance={canShowAttendance}
-                  makeVote={makeVote}
-                  clearVote={clearVote}
+                  changeVote={changeVote}
+                  retryVote={retryVote}
                   setAttendanceStatus={setAttendanceStatus}
                   clearAttendance={clearAttendance}
                   setEta={setEta}
@@ -692,6 +749,24 @@ function PollVote(props) {
           </tbody>
         </table>
       </div>
+      {(errorMessage || removedOptionRetries.length > 0) && (
+        <div className="alert alert-warning mt-2" role="status">
+          {errorMessage && <p className="mb-2">{errorMessage}</p>}
+          {removedOptionRetries.map(([optionId, selected]) => (
+            <Button
+              key={optionId}
+              type="button"
+              variant="warning"
+              disabled={pendingOptionIds.includes(optionId)}
+              aria-busy={pendingOptionIds.includes(optionId)}
+              onClick={() => retryVote(optionId)}
+              title="Retry a vote change for a removed option"
+            >
+              {selected ? "Retry vote for removed option" : "Retry withdrawal for a removed option"}
+            </Button>
+          ))}
+        </div>
+      )}
     </>
   );
 }

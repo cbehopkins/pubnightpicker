@@ -65,6 +65,8 @@ vi.mock("../../hooks/useVotes", () => {
   };
 });
 
+vi.mock("../../hooks/useVisibleVoterProfiles", () => ({ default: () => ({}) }));
+
 vi.mock("../../hooks/useAttendance", () => {
   return {
     default: useAttendanceMock,
@@ -183,7 +185,7 @@ describe("CurrentMeets", () => {
       auth: { uid: "user-1" },
       group: { groupId: currentGroup.value },
     }));
-    useVotesMock.mockReturnValue([{}]);
+    useVotesMock.mockReturnValue({ optionsById: {} });
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
     useAdminMock.mockReturnValue(false);
