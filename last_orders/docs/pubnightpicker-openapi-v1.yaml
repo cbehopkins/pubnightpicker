@@ -1200,6 +1200,55 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
+  /meet/{meet_id}/votes:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Voting]
+      operationId: getVoteSnapshot
+      summary: Read a privacy-safe voting snapshot
+      description: Requires authentication and the existing Meet visibility permission. Voting permission is not required. Returns active candidates and `any`, with distinct totals, anonymous counts and visible voter UIDs. The caller's selected option IDs also include removed candidates and are sorted by ID.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current voting snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [options, selected_option_ids]
+                properties:
+                  options:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, total, anonymous_count, voter_uids]
+                      properties:
+                        id:
+                          type: string
+                        total:
+                          type: integer
+                          minimum: 0
+                        anonymous_count:
+                          type: integer
+                          minimum: 0
+                        voter_uids:
+                          type: array
+                          items:
+                            type: string
+                  selected_option_ids:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: The voting projection or authoritative Meet access decision is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
     parameters:
       - $ref: '#/components/parameters/MeetId'

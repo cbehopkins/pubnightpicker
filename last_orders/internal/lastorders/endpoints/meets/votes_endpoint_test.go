@@ -1,0 +1,160 @@
+package meets
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"last_orders/internal/lastorders/components/meetcache"
+	"last_orders/internal/lastorders/components/votecache"
+)
+
+type votingMeetReaderStub struct {
+	snapshot meetcache.Snapshot
+}
+
+func (reader votingMeetReaderStub) Get(context.Context, string) (meetcache.Snapshot, error) {
+	return reader.snapshot, nil
+}
+
+type votingSnapshotReaderStub struct {
+	snapshot votecache.Snapshot
+}
+
+func (reader votingSnapshotReaderStub) Get(context.Context, string) (votecache.Snapshot, error) {
+	return reader.snapshot, nil
+}
+
+type votingProfilesStub map[string]bool
+
+func (profiles votingProfilesStub) VisibleUIDs(_ context.Context, userIDs []string) map[string]bool {
+	visible := make(map[string]bool)
+	for _, userID := range userIDs {
+		if profiles[userID] {
+			visible[userID] = true
+		}
+	}
+	return visible
+}
+
+func TestRegisterVoteSnapshotUnavailableWithoutProjection(t *testing.T) {
+	mux := http.NewServeMux()
+	(&Endpoint{Auth: pastMeetAuthStub{}}).Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meet/meet-a/votes"))
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("voting snapshot GET status=%d body=%s, want HTTP 503", response.Code, response.Body)
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Error.Code != "projection_unavailable" {
+		t.Fatalf("error code=%q, want projection_unavailable", payload.Error.Code)
+	}
+}
+
+func TestVoteSnapshotReturnsActiveOptionsAndCallerSelections(t *testing.T) {
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Reader: votingMeetReaderStub{snapshot: meetcache.Snapshot{Projection: meetcache.Projection{
+			ID: "meet-a", GroupID: "public-group", CandidateVenueIDs: []string{"venue-1"},
+		}}},
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "verified-user" && groupID == "public-group", nil
+		}),
+		Voting: votingSnapshotReaderStub{snapshot: votecache.Snapshot{Votes: map[string][]string{
+			"venue-1":       {"verified-user", "voter-a", "voter-a"},
+			"removed-venue": {"verified-user"},
+			"inactive":      {"other-voter"},
+		}}},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meet/meet-a/votes"))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("voting snapshot GET status=%d body=%s, want HTTP 200", response.Code, response.Body)
+	}
+	var payload struct {
+		Options []struct {
+			ID             string   `json:"id"`
+			Total          int      `json:"total"`
+			AnonymousCount int      `json:"anonymous_count"`
+			VoterUIDs      []string `json:"voter_uids"`
+		} `json:"options"`
+		SelectedOptionIDs []string `json:"selected_option_ids"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Options) != 2 || payload.Options[0].ID != "any" || payload.Options[1].ID != "venue-1" {
+		t.Fatalf("options=%+v, want sorted active candidates plus any", payload.Options)
+	}
+	if payload.Options[1].Total != 2 || payload.Options[1].AnonymousCount != 2 || len(payload.Options[1].VoterUIDs) != 0 {
+		t.Fatalf("venue option=%+v, want two anonymous distinct votes", payload.Options[1])
+	}
+	if strings.Contains(response.Body.String(), "voter-a") || strings.Contains(response.Body.String(), "inactive") {
+		t.Fatalf("snapshot leaked an unconfirmed identity or inactive option: %s", response.Body)
+	}
+	if len(payload.SelectedOptionIDs) != 2 || payload.SelectedOptionIDs[0] != "removed-venue" || payload.SelectedOptionIDs[1] != "venue-1" {
+		t.Fatalf("selected option IDs=%v, want removed and active selections", payload.SelectedOptionIDs)
+	}
+}
+
+func TestVoteSnapshotIncludesOnlyVisibleProfileUIDs(t *testing.T) {
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Reader: votingMeetReaderStub{snapshot: meetcache.Snapshot{Projection: meetcache.Projection{
+			ID: "meet-a", GroupID: "public-group", CandidateVenueIDs: []string{"venue-1"},
+		}}},
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Voting: votingSnapshotReaderStub{snapshot: votecache.Snapshot{Votes: map[string][]string{
+			"venue-1": {"visible-user", "default-user", "hidden-user", "unavailable-user", "visible-user"},
+			"any":     {"verified-user"},
+			"removed": {"verified-user"},
+		}}},
+		Profiles: votingProfilesStub{"visible-user": true, "default-user": true, "verified-user": true},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, authenticatedPastRequest("/api/meet/meet-a/votes"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("voting snapshot GET status=%d body=%s, want HTTP 200", response.Code, response.Body)
+	}
+	var payload struct {
+		Options []struct {
+			ID             string   `json:"id"`
+			Total          int      `json:"total"`
+			AnonymousCount int      `json:"anonymous_count"`
+			VoterUIDs      []string `json:"voter_uids"`
+		} `json:"options"`
+		SelectedOptionIDs []string `json:"selected_option_ids"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	venueOption := payload.Options[1]
+	if venueOption.Total != 4 || venueOption.AnonymousCount != 2 || len(venueOption.VoterUIDs) != 2 ||
+		venueOption.VoterUIDs[0] != "default-user" || venueOption.VoterUIDs[1] != "visible-user" {
+		t.Fatalf("venue option=%+v, want four votes, two anonymous, and sorted visible UIDs", venueOption)
+	}
+	if len(payload.SelectedOptionIDs) != 2 || payload.SelectedOptionIDs[0] != "any" || payload.SelectedOptionIDs[1] != "removed" {
+		t.Fatalf("selected option IDs=%v, want any and removed", payload.SelectedOptionIDs)
+	}
+	for _, privateUID := range []string{"hidden-user", "unavailable-user"} {
+		if strings.Contains(response.Body.String(), privateUID) {
+			t.Fatalf("snapshot leaked private UID %q: %s", privateUID, response.Body)
+		}
+	}
+}

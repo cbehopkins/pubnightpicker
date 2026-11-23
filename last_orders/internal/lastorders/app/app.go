@@ -35,6 +35,7 @@ import (
 	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/components/sse"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/components/votecache"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
@@ -159,6 +160,7 @@ type Config struct {
 	RecurrenceService         RecurrenceService
 	VenueSource               venuecache.Source
 	GroupSource               groupcache.Source
+	VotingSource              votecache.Source
 	NotificationProfileSource notificationprofile.Source
 	EventVenueSource          eventvenuelistener.Source
 	NewPollSource             newpolllistener.Source
@@ -194,6 +196,8 @@ type App struct {
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
 	meetCacheService            *meetcache.Service
+	votingCacheService          *votecache.Service
+	votingProfileReader         *votecache.ProfileReader
 	currentMeetCacheService     *currentmeetcache.Service
 	groupCacheStore             *groupcache.Store
 	groupCacheService           *groupcache.Service
@@ -396,6 +400,8 @@ func New(cfg Config) (application *App, err error) {
 	}
 	venueStreamHub := sse.NewHub()
 	var meetCacheService *meetcache.Service
+	var votingCacheService *votecache.Service
+	var votingProfileReader *votecache.ProfileReader
 	if firestoreClient != nil && cfg.Component != "landlord" {
 		meetCacheStore, err := meetcache.NewStore(baseStore)
 		if err != nil {
@@ -406,6 +412,25 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		meetCacheService, err = meetcache.NewService(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		votingCacheStore, err := votecache.NewStore(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init voting cache store: %w", err)
+		}
+		votingSource := cfg.VotingSource
+		if votingSource == nil {
+			votingSource, err = votecache.NewFirestoreSource(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
+		votingCacheService, err = votecache.NewService(votingCacheStore, votingSource, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		votingProfileReader, err = votecache.NewFirestoreProfileReader(firestoreClient)
 		if err != nil {
 			return nil, err
 		}
@@ -488,6 +513,13 @@ func New(cfg Config) (application *App, err error) {
 			}
 			periodicTimers = append(periodicTimers, timer)
 		}
+		if votingCacheService != nil {
+			timer, err := registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, timer)
+		}
 		if currentMeetCacheService != nil {
 			housekeepingTimer, err := registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
 			if err != nil {
@@ -510,6 +542,8 @@ func New(cfg Config) (application *App, err error) {
 			venueCacheStore:             venueCacheStore,
 			venueCacheService:           venueCacheService,
 			meetCacheService:            meetCacheService,
+			votingCacheService:          votingCacheService,
+			votingProfileReader:         votingProfileReader,
 			currentMeetCacheService:     currentMeetCacheService,
 			groupCacheStore:             groupCacheStore,
 			groupCacheService:           groupCacheService,
@@ -819,9 +853,16 @@ func New(cfg Config) (application *App, err error) {
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay, Clock: cfg.Clock})
 	var meetProjectionTimer *cellar.Timer
+	var votingProjectionTimer *cellar.Timer
 	var currentMeetProjectionTimer *cellar.Timer
 	if meetCacheService != nil {
 		meetProjectionTimer, err = registerMeetProjectionHousekeeping(cellarRuntime, meetCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if votingCacheService != nil {
+		votingProjectionTimer, err = registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, err
 		}
@@ -1022,6 +1063,9 @@ func New(cfg Config) (application *App, err error) {
 	if meetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, meetProjectionTimer)
 	}
+	if votingProjectionTimer != nil {
+		periodicTimers = append(periodicTimers, votingProjectionTimer)
+	}
 	if currentMeetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, currentMeetProjectionTimer)
 	}
@@ -1094,6 +1138,8 @@ func New(cfg Config) (application *App, err error) {
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
 		meetCacheService:            meetCacheService,
+		votingCacheService:          votingCacheService,
+		votingProfileReader:         votingProfileReader,
 		currentMeetCacheService:     currentMeetCacheService,
 		groupCacheStore:             groupCacheStore,
 		groupCacheService:           groupCacheService,
@@ -1251,6 +1297,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	}
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
+		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
@@ -1287,6 +1334,28 @@ func registerMeetProjectionHousekeeping(runtime *cellar.Cellar, service *meetcac
 	}, func(ctx context.Context) error {
 		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
 			logger.Error("Meet projection housekeeping failed", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
+}
+
+func registerVotingProjectionHousekeeping(runtime *cellar.Cellar, service *votecache.Service, clock cellar.Clock, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewTimer("voting-projection.housekeeping", cellar.TimerConfig{
+		Interval: time.Minute,
+		Mode:     cellar.TimerFixedRate,
+	}, func(ctx context.Context) error {
+		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
+			logger.Error("voting projection housekeeping failed", "err", err)
 		}
 		return nil
 	})
@@ -1806,6 +1875,9 @@ func (a *App) Close() error {
 	a.shutdownHTTP()
 	if a.meetCacheService != nil {
 		a.meetCacheService.Close()
+	}
+	if a.votingCacheService != nil {
+		a.votingCacheService.Close()
 	}
 	if a.currentMeetCacheService != nil {
 		a.currentMeetCacheService.Close()
