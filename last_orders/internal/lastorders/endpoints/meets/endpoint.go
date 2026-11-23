@@ -81,6 +81,8 @@ type Endpoint struct {
 	Past         pastMeetsReader
 	Voting       votingReader
 	Profiles     voterVisibilityReader
+	VotingHub    *sse.Hub
+	VotingReady  <-chan struct{}
 	Writer       MeetWriter
 	WriteAccess  WriteAuthorizer
 }
@@ -127,6 +129,8 @@ type votingOptionResponse struct {
 type votingSnapshotResponse struct {
 	Options           []votingOptionResponse `json:"options"`
 	SelectedOptionIDs []string               `json:"selected_option_ids"`
+	VoteRevision      *string                `json:"vote_revision"`
+	Cursor            string                 `json:"cursor"`
 }
 
 type pastMeetsResponse struct {
@@ -158,6 +162,7 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meet/{meet_id}/votes", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.votes)))
+	mux.Handle("GET /api/meet/{meet_id}/votes/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.voteStream)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
 	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.currentStream)))
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
@@ -910,6 +915,64 @@ func writeCurrentReadError(w http.ResponseWriter, err error) {
 	firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to read current Meets.")
 }
 
+func (e *Endpoint) voteStream(w http.ResponseWriter, r *http.Request) {
+	if e.Voting == nil || e.Reader == nil || e.Groups == nil || e.Profiles == nil || e.Cursors == nil || e.VotingHub == nil || e.VotingReady == nil {
+		w.Header().Set("Retry-After", "1")
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Voting snapshots are temporarily unavailable.")
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	principal, ok := firebaseauth.FromContext(r.Context())
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
+		return
+	}
+	stream := &sse.Handler{
+		Hub: e.VotingHub, Ready: e.VotingReady,
+		ViewKey: "voting:" + meetID, AuthorizationScope: "meet:" + meetID,
+		UID: currentUID(r.Context()), EventName: "voting_snapshot",
+		SnapshotFailureStatus: http.StatusServiceUnavailable,
+		Authorize: func(ctx context.Context) (bool, int) {
+			meetSnapshot, err := e.Reader.Get(ctx, meetID)
+			if err != nil {
+				return false, http.StatusServiceUnavailable
+			}
+			allowed, err := e.Groups.CanRead(ctx, currentUID(ctx), meetSnapshot.Projection.GroupID)
+			if err != nil {
+				return false, http.StatusServiceUnavailable
+			}
+			if !allowed {
+				return false, http.StatusNotFound
+			}
+			return true, http.StatusNotFound
+		},
+		Snapshot: func(ctx context.Context, cursor sse.CursorInput) (sse.ViewSnapshot, error) {
+			response, sequence, err := e.votingSnapshot(ctx, meetID, principal.UID)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			if cursor.Supplied {
+				_, _ = e.Cursors.Validate(cursor.Value, sse.CursorExpectation{
+					Stream: "voting-v1", Resource: meetID, Generation: "voting-v1", HighWater: sequence,
+				})
+			}
+			token, err := e.Cursors.Encode(sse.CursorClaims{
+				Stream: "voting-v1", Resource: meetID, Generation: "voting-v1", Sequence: sequence,
+			})
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			response.Cursor = token
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			return sse.ViewSnapshot{Data: encoded, Cursor: token, Sequence: sequence}, nil
+		},
+	}
+	stream.ServeHTTP(w, r)
+}
+
 func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 	principal, ok := firebaseauth.FromContext(r.Context())
 	if !ok {
@@ -991,10 +1054,83 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 			ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voterUIDs), VoterUIDs: voterUIDs,
 		})
 	}
+	revisionText := ""
+	var revisionPointer *string
+	if votes.Revision != nil {
+		revisionText = votes.Revision.UTC().Format(time.RFC3339Nano)
+		revisionPointer = &revisionText
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs})
+	_ = json.NewEncoder(w).Encode(votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs, VoteRevision: revisionPointer})
+}
+
+func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (votingSnapshotResponse, int64, error) {
+	meetSnapshot, err := e.Reader.Get(ctx, meetID)
+	if err != nil {
+		return votingSnapshotResponse{}, 0, err
+	}
+	allowed, err := e.Groups.CanRead(ctx, uid, meetSnapshot.Projection.GroupID)
+	if err != nil || !allowed {
+		return votingSnapshotResponse{}, 0, meetcache.ErrNotFound
+	}
+	votes, err := e.Voting.Get(ctx, meetSnapshot.Projection.ID)
+	if err != nil {
+		return votingSnapshotResponse{}, 0, err
+	}
+	optionIDs := append([]string(nil), meetSnapshot.Projection.CandidateVenueIDs...)
+	optionIDs = append(optionIDs, "any")
+	sort.Strings(optionIDs)
+	optionUsers := make(map[string]map[string]struct{}, len(optionIDs))
+	allUserIDs := make(map[string]struct{})
+	for _, optionID := range optionIDs {
+		uniqueUsers := make(map[string]struct{})
+		for _, userID := range votes.Votes[optionID] {
+			if userID != "" {
+				uniqueUsers[userID] = struct{}{}
+				allUserIDs[userID] = struct{}{}
+			}
+		}
+		optionUsers[optionID] = uniqueUsers
+	}
+	visibleUsers := make(map[string]bool)
+	if len(allUserIDs) > 0 {
+		userIDs := make([]string, 0, len(allUserIDs))
+		for userID := range allUserIDs {
+			userIDs = append(userIDs, userID)
+		}
+		sort.Strings(userIDs)
+		visibleUsers = e.Profiles.VisibleUIDs(ctx, userIDs)
+	}
+	selectedOptionIDs := make([]string, 0)
+	for optionID, userIDs := range votes.Votes {
+		for _, userID := range userIDs {
+			if userID == uid {
+				selectedOptionIDs = append(selectedOptionIDs, optionID)
+				break
+			}
+		}
+	}
+	sort.Strings(selectedOptionIDs)
+	options := make([]votingOptionResponse, 0, len(optionIDs))
+	for _, optionID := range optionIDs {
+		uniqueUsers := optionUsers[optionID]
+		voterUIDs := make([]string, 0, len(uniqueUsers))
+		for userID := range uniqueUsers {
+			if visibleUsers[userID] {
+				voterUIDs = append(voterUIDs, userID)
+			}
+		}
+		sort.Strings(voterUIDs)
+		options = append(options, votingOptionResponse{ID: optionID, Total: len(uniqueUsers), AnonymousCount: len(uniqueUsers) - len(voterUIDs), VoterUIDs: voterUIDs})
+	}
+	var revisionPointer *string
+	if votes.Revision != nil {
+		revisionText := votes.Revision.UTC().Format(time.RFC3339Nano)
+		revisionPointer = &revisionText
+	}
+	return votingSnapshotResponse{Options: options, SelectedOptionIDs: selectedOptionIDs, VoteRevision: revisionPointer}, votes.Sequence, nil
 }
 
 func (e *Endpoint) get(w http.ResponseWriter, r *http.Request) {

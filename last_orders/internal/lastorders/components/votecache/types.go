@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 )
 
 type Projection struct {
@@ -12,13 +13,16 @@ type Projection struct {
 }
 
 type Snapshot struct {
-	Votes map[string][]string
+	Votes    map[string][]string
+	Revision *time.Time
+	Sequence int64
 }
 
 type Document struct {
-	ID     string
-	Exists bool
-	Data   map[string]any
+	ID      string
+	Exists  bool
+	Data    map[string]any
+	Version time.Time
 }
 
 type Stream interface {
@@ -81,3 +85,4 @@ func ProjectionFromDocument(document Document) (Projection, error) {
 var ErrNotFound = errors.New("Meet ID is required")
 var ErrUnavailable = errors.New("voting projection unavailable")
 var ErrRetired = errors.New("voting projection entry retired")
+var ErrStale = errors.New("stale vote source update")

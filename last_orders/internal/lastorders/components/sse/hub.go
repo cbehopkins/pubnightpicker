@@ -84,6 +84,19 @@ func (h *Hub) PublishChanged(viewKey string, sequence int64) {
 	}
 }
 
+func (h *Hub) PublishChangedPrefix(prefix string, sequence int64) {
+	if prefix == "" || sequence <= 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.streams {
+		if len(s.viewKey) >= len(prefix) && s.viewKey[:len(prefix)] == prefix {
+			s.recordChange(sequence)
+		}
+	}
+}
+
 // TakeChanged returns the greatest pending sequence and clears its wake-up.
 func (s *Subscription) TakeChanged() int64 {
 	s.changeMu.Lock()

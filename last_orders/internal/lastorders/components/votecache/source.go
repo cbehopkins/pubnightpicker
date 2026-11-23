@@ -40,7 +40,7 @@ func (s *firestoreStream) Next() (Document, error) {
 	if !snapshot.Exists() {
 		return Document{ID: snapshot.Ref.ID}, nil
 	}
-	return Document{ID: snapshot.Ref.ID, Exists: true, Data: snapshot.Data()}, nil
+	return Document{ID: snapshot.Ref.ID, Exists: true, Data: snapshot.Data(), Version: snapshot.UpdateTime}, nil
 }
 
 func (s *firestoreStream) Stop() {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/components/sourcewatch"
+	"last_orders/internal/lastorders/components/sse"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +27,7 @@ type Service struct {
 	logger      *slog.Logger
 	now         func() time.Time
 	diagnostics bool
+	hub         *sse.Hub
 	mu          sync.Mutex
 	entries     map[string]*entry
 	closed      bool
@@ -46,6 +48,10 @@ type entry struct {
 }
 
 func NewService(store *Store, source Source, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	return NewServiceWithHub(store, source, nil, logger, now)
+}
+
+func NewServiceWithHub(store *Store, source Source, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("voting projection store is required")
 	}
@@ -64,6 +70,7 @@ func NewService(store *Store, source Source, logger *slog.Logger, now func() tim
 		logger:      logger,
 		now:         now,
 		diagnostics: os.Getenv("LAST_ORDERS_VOTING_PROJECTION_DIAGNOSTICS") == "true",
+		hub:         hub,
 		entries:     make(map[string]*entry),
 	}, nil
 }
@@ -183,7 +190,11 @@ func (s *Service) observe(current *entry) {
 		}
 		projection, err := ProjectionFromDocument(document)
 		if err == nil {
-			err = s.apply(current, projection)
+			var snapshot Snapshot
+			snapshot, err = s.apply(current, projection, document.Version)
+			if err == nil && s.hub != nil && snapshot.Sequence > 0 {
+				s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
+			}
 		}
 		if err != nil {
 			stopStream()
@@ -204,7 +215,11 @@ func (s *Service) observe(current *entry) {
 			}
 			projection, err = ProjectionFromDocument(document)
 			if err == nil {
-				err = s.apply(current, projection)
+				var snapshot Snapshot
+				snapshot, err = s.apply(current, projection, document.Version)
+				if err == nil && s.hub != nil && snapshot.Sequence > 0 {
+					s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
+				}
 			}
 			if err != nil {
 				stopStream()
@@ -219,13 +234,13 @@ func (s *Service) observe(current *entry) {
 	}
 }
 
-func (s *Service) apply(current *entry, projection Projection) error {
+func (s *Service) apply(current *entry, projection Projection, sourceVersion time.Time) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.entries[current.id] != current || current.retired {
-		return ErrRetired
+		return Snapshot{}, ErrRetired
 	}
-	return s.store.Apply(current.ctx, current.id, current.owner, projection)
+	return s.store.Apply(current.ctx, current.id, current.owner, projection, sourceVersion)
 }
 
 func (s *Service) setStream(current *entry, watch *sourcewatch.Watch) {
@@ -276,6 +291,9 @@ func (s *Service) markUnavailable(current *entry, err error) {
 	if !current.failureLogged {
 		s.logger.Warn("voting projection source unavailable", "meet_id", maskedMeetID(current.id), "error_type", fmt.Sprintf("%T", err))
 		current.failureLogged = true
+	}
+	if s.hub != nil {
+		s.hub.ResetView("voting:" + current.id)
 	}
 	if s.diagnostics {
 		s.logger.Info("voting projection baseline attempt failed", "meet_id", maskedMeetID(current.id), "err", err)

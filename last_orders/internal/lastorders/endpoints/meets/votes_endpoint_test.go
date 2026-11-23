@@ -12,6 +12,7 @@ import (
 	"last_orders/internal/lastorders/services/meetwrite"
 
 	"last_orders/internal/lastorders/components/meetcache"
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/votecache"
 )
 
@@ -206,6 +207,73 @@ func TestVoteSnapshotReturnsActiveOptionsAndCallerSelections(t *testing.T) {
 	}
 	if len(payload.SelectedOptionIDs) != 2 || payload.SelectedOptionIDs[0] != "removed-venue" || payload.SelectedOptionIDs[1] != "venue-1" {
 		t.Fatalf("selected option IDs=%v, want removed and active selections", payload.SelectedOptionIDs)
+	}
+}
+
+func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
+	codec, err := sse.NewCursorCodec([]byte("test-only-voting-snapshot-cursor-signing-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := sse.NewHub()
+	ready := make(chan struct{})
+	close(ready)
+	revision := time.Date(2026, 11, 23, 13, 40, 15, 123, time.UTC)
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Reader: votingMeetReaderStub{snapshot: meetcache.Snapshot{Projection: meetcache.Projection{
+			ID: "meet-a", GroupID: "public-group", CandidateVenueIDs: []string{"venue-1"},
+		}}},
+		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Voting: votingSnapshotReaderStub{snapshot: votecache.Snapshot{
+			Votes: map[string][]string{"venue-1": {"verified-user", "voter-a"}},
+		}},
+		Profiles:    votingProfilesStub{"verified-user": true},
+		Cursors:     codec,
+		VotingHub:   hub,
+		VotingReady: ready,
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/meet/meet-a/votes/stream", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+	streamCtx, cancelStream := context.WithCancel(request.Context())
+	request = request.WithContext(streamCtx)
+	response := &flushableRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(response, request)
+		close(done)
+	}()
+	select {
+	case <-response.flushed:
+		cancelStream()
+	case <-time.After(time.Second):
+		cancelStream()
+		t.Fatal("voting snapshot stream did not flush an initial frame")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("voting snapshot stream did not stop after cancellation")
+	}
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("voting snapshot stream status=%d body=%s, want HTTP 200", response.Code, response.Body)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/event-stream; charset=utf-8" {
+		t.Fatalf("stream content type=%q, want text/event-stream", got)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "event: voting_snapshot") || !strings.Contains(body, "selected_option_ids") {
+		t.Fatalf("initial voting stream frame=%q, want snapshot event", body)
+	}
+	if strings.Contains(body, "voter-a") {
+		t.Fatalf("initial voting stream leaked hidden UID: %s", body)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, revision.UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
 	}
 }
 

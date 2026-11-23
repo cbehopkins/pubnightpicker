@@ -155,10 +155,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-sub.Changed():
-			changedThrough := sub.TakeChanged()
-			if changedThrough <= lastSequence {
-				continue
-			}
+			sub.TakeChanged()
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
@@ -169,22 +166,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			view, err := h.Snapshot(r.Context(), CursorInput{})
-			if err != nil || !validSnapshot(view) || view.Sequence < changedThrough {
+			if err != nil || !validSnapshot(view) {
 				return
 			}
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
 			}
-			if view.Sequence <= lastSequence {
-				sub.DiscardChangesThrough(view.Sequence)
-				continue
-			}
 			sub.DiscardChangesThrough(view.Sequence)
 			if !h.writeEvent(w, h.EventName, view.Data, view.Cursor) {
 				return
 			}
-			lastSequence = view.Sequence
+			if view.Sequence > lastSequence {
+				lastSequence = view.Sequence
+			}
 		}
 	}
 }

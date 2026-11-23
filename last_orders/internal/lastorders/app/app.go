@@ -225,6 +225,8 @@ type App struct {
 	groupCacheStarted           bool
 	venueStreamHub              *sse.Hub
 	venueCursorCodec            *sse.CursorCodec
+	votingStreamHub             *sse.Hub
+	votingStreamReady           chan struct{}
 	notificationProfileListener *notificationprofilelistener.Listener
 	httpServer                  *http.Server
 	httpListener                net.Listener
@@ -399,6 +401,9 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	venueStreamHub := sse.NewHub()
+	votingStreamHub := sse.NewHub()
+	votingStreamReady := make(chan struct{})
+	close(votingStreamReady)
 	var meetCacheService *meetcache.Service
 	var votingCacheService *votecache.Service
 	var votingProfileReader *votecache.ProfileReader
@@ -411,7 +416,7 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
-		meetCacheService, err = meetcache.NewService(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now)
+		meetCacheService, err = meetcache.NewServiceWithHub(meetCacheStore, meetSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +431,7 @@ func New(cfg Config) (application *App, err error) {
 				return nil, err
 			}
 		}
-		votingCacheService, err = votecache.NewService(votingCacheStore, votingSource, cfg.Logger, cfg.Clock.Now)
+		votingCacheService, err = votecache.NewServiceWithHub(votingCacheStore, votingSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
 		if err != nil {
 			return nil, err
 		}
@@ -498,7 +503,7 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	notificationProfileListener, err := notificationprofilelistener.New(notificationProfileService, notificationProfileStore, cfg.Logger)
+	notificationProfileListener, err := notificationprofilelistener.NewWithHub(notificationProfileService, notificationProfileStore, votingStreamHub, cfg.Logger)
 	if err != nil {
 		return nil, err
 	}
@@ -551,6 +556,8 @@ func New(cfg Config) (application *App, err error) {
 			notificationProfileService:  notificationProfileService,
 			venueCacheListener:          venueCacheListener,
 			venueStreamHub:              venueStreamHub,
+			votingStreamHub:             votingStreamHub,
+			votingStreamReady:           votingStreamReady,
 			groupCacheListener:          groupCacheListener,
 			notificationProfileListener: notificationProfileListener,
 			periodicTimers:              periodicTimers,
@@ -1168,6 +1175,8 @@ func New(cfg Config) (application *App, err error) {
 		venueCacheListener:          venueCacheListener,
 		groupCacheListener:          groupCacheListener,
 		venueStreamHub:              venueStreamHub,
+		votingStreamHub:             votingStreamHub,
+		votingStreamReady:           votingStreamReady,
 		notificationProfileListener: notificationProfileListener,
 	}
 
@@ -1302,6 +1311,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
+		VotingHub: application.votingStreamHub, VotingReady: application.votingStreamReady,
 		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
@@ -1911,6 +1921,9 @@ func (a *App) closeListeners() error {
 	var closeErrs []error
 	if a.venueStreamHub != nil {
 		a.venueStreamHub.Shutdown()
+	}
+	if a.votingStreamHub != nil {
+		a.votingStreamHub.Shutdown()
 	}
 	if a.diagnosticsConfiguration != nil {
 		closeErrs = append(closeErrs, a.diagnosticsConfiguration.Close())
