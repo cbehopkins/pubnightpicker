@@ -36,6 +36,7 @@ type Service struct {
 	location        *time.Location
 	diagnostics     bool
 	openDiagnostics bool
+	retirementMu    sync.Mutex
 	mu              sync.Mutex
 	entries         map[string]*entry
 	closed          bool
@@ -345,6 +346,8 @@ func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
 }
 
 func (s *Service) RetireBefore(ctx context.Context, date string) error {
+	s.retirementMu.Lock()
+	defer s.retirementMu.Unlock()
 	s.mu.Lock()
 	var retired []ExpiredEntry
 	var watches []*sourcewatch.Watch
@@ -367,9 +370,14 @@ func (s *Service) RetireBefore(ctx context.Context, date string) error {
 		watch.Stop()
 	}
 	for _, expired := range retired {
-		if err := s.store.DeleteIfOwner(ctx, expired); err != nil {
-			return fmt.Errorf("retire current-Meets projection at London midnight: %w", err)
-		}
+		entry := expired
+		go func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.store.DeleteIfOwner(cleanupCtx, entry); err != nil {
+				s.logger.Warn("best-effort current-Meets projection cleanup failed", "group_id", maskID(entry.GroupID), "date", entry.Date, "error_type", fmt.Sprintf("%T", err))
+			}
+		}()
 	}
 	return nil
 }
@@ -491,18 +499,7 @@ func (s *Service) observe(current *entry) {
 
 func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 	if current.kind == CurrentView && current.date != s.CurrentDate() {
-		s.mu.Lock()
-		var watch *sourcewatch.Watch
-		if s.entries[entryKey(current.kind, current.groupID, current.date)] == current && !current.retired {
-			s.retireLocked(current)
-			watch = current.watch
-			current.watch = nil
-		}
-		s.mu.Unlock()
-		if watch != nil {
-			watch.Stop()
-		}
-		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
+		_ = s.RetireBefore(context.Background(), s.CurrentDate())
 		return ErrRetired
 	}
 	projections, err := validateSnapshot(current.groupID, ViewQuery{Kind: current.kind, Date: current.date}, snapshot)
@@ -515,14 +512,8 @@ func (s *Service) apply(current *entry, snapshot QuerySnapshot) error {
 		return ErrRetired
 	}
 	if current.kind == CurrentView && current.date != s.CurrentDate() {
-		s.retireLocked(current)
-		watch := current.watch
-		current.watch = nil
 		s.mu.Unlock()
-		if watch != nil {
-			watch.Stop()
-		}
-		_ = s.store.DeleteIfOwner(context.Background(), ExpiredEntry{Kind: current.kind, GroupID: current.groupID, Date: current.date, Owner: current.owner})
+		_ = s.RetireBefore(context.Background(), s.CurrentDate())
 		return ErrRetired
 	}
 	sequence, changed, err := s.store.Apply(current.ctx, current.kind, current.groupID, current.date, current.owner, projections, snapshot.ReadTime)
