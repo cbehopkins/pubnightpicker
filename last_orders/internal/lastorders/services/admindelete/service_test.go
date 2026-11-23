@@ -12,6 +12,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"google.golang.org/api/googleapi"
+	"last_orders/internal/lastorders/services/votecleanup"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -46,9 +47,45 @@ type fakeAuth struct {
 	err   error
 }
 
+type fakeVoteCleaner struct {
+	calls int
+	uid   string
+	err   error
+}
+
+func (c *fakeVoteCleaner) RemoveUser(_ context.Context, uid string) (votecleanup.Result, error) {
+	c.calls++
+	c.uid = uid
+	return votecleanup.Result{}, c.err
+}
+
 func (a *fakeAuth) DeleteUser(context.Context, string) error {
 	a.calls++
 	return a.err
+}
+
+func TestEvaluatorRetriesVoteCleanupBeforeAuthDelete(t *testing.T) {
+	repository := &fakeRepository{status: "pending", exists: true}
+	auth := &fakeAuth{}
+	cleaner := &fakeVoteCleaner{err: errors.New("Firestore unavailable")}
+	evaluator := newEvaluator(t, Options{
+		Enabled: true, DryRun: false, EnableRealAuthDelete: true,
+		Repository: repository, Auth: auth, VoteCleaner: cleaner,
+	})
+
+	result := evaluator.Handle(context.Background(), validTruth())
+	if _, ok := result.(cellar.RetrySequence); !ok {
+		t.Fatalf("cleanup failure result=%#v, want retry", result)
+	}
+	if cleaner.calls != 1 || cleaner.uid != validTruth().Request.TargetUID {
+		t.Fatalf("cleaner calls=%d uid=%q", cleaner.calls, cleaner.uid)
+	}
+	if auth.calls != 0 {
+		t.Fatalf("Auth calls=%d, want 0 before successful cleanup", auth.calls)
+	}
+	if len(repository.persisted) != 0 {
+		t.Fatalf("persisted outcomes=%d, want 0", len(repository.persisted))
+	}
 }
 
 func TestEvaluatorValidatesRequestBeforeAuthAndPersistsDryRun(t *testing.T) {

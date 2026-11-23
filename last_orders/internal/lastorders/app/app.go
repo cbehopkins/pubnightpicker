@@ -49,6 +49,7 @@ import (
 	roleauthorizationlistener "last_orders/internal/lastorders/database/listeners/roleauthorization"
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
+	accountcleanupendpoint "last_orders/internal/lastorders/endpoints/accountcleanup"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	groupsendpoint "last_orders/internal/lastorders/endpoints/groups"
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
@@ -69,6 +70,7 @@ import (
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	meetwritesvc "last_orders/internal/lastorders/services/meetwrite"
+	"last_orders/internal/lastorders/services/votecleanup"
 	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
@@ -778,12 +780,20 @@ func New(cfg Config) (application *App, err error) {
 				return nil, err
 			}
 		}
+		var voteCleaner admindeletesvc.VoteCleaner
+		if firestoreClient != nil {
+			voteCleaner, err = votecleanup.NewFirestoreCleaner(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
 		adminDeleteEvaluator, err = admindeletesvc.New(admindeletesvc.Options{
 			Enabled:              cfg.AdminDeleteEnabled,
 			DryRun:               cfg.AdminDeleteDryRun,
 			EnableRealAuthDelete: cfg.EnableRealAuthDelete,
 			Repository:           adminDeleteRepository,
 			Auth:                 adminDeleteAuth,
+			VoteCleaner:          voteCleaner,
 			Logger:               cfg.Logger,
 		})
 		if err != nil {
@@ -1225,6 +1235,13 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
 	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
 	(&groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}).Register(apiMux)
+	if application.firestoreClient != nil {
+		voteCleaner, err := votecleanup.NewFirestoreCleaner(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
+	}
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
 		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")

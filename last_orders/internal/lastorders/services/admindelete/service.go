@@ -13,6 +13,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"last_orders/internal/lastorders/services/votecleanup"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -37,6 +38,10 @@ type AuthClient interface {
 	DeleteUser(context.Context, string) error
 }
 
+type VoteCleaner interface {
+	RemoveUser(context.Context, string) (votecleanup.Result, error)
+}
+
 type Repository interface {
 	RequestStatus(context.Context, string) (string, bool, error)
 	IsPaused(context.Context) (bool, error)
@@ -50,6 +55,7 @@ type Options struct {
 	EnableRealAuthDelete bool
 	Repository           Repository
 	Auth                 AuthClient
+	VoteCleaner          VoteCleaner
 	Logger               *slog.Logger
 }
 
@@ -59,6 +65,7 @@ type Evaluator struct {
 	enableRealAuthDelete bool
 	repository           Repository
 	auth                 AuthClient
+	voteCleaner          VoteCleaner
 	logger               *slog.Logger
 }
 
@@ -73,6 +80,7 @@ type OutcomePayload struct {
 	RealDelete          bool      `json:"real_delete"`
 	UsersDocExists      bool      `json:"users_doc_exists"`
 	UserPublicDocExists bool      `json:"user_public_doc_exists"`
+	VotesDocsUpdated    int       `json:"votes_docs_updated"`
 	At                  time.Time `json:"at"`
 }
 
@@ -92,6 +100,7 @@ func New(options Options) (*Evaluator, error) {
 		enableRealAuthDelete: options.EnableRealAuthDelete,
 		repository:           options.Repository,
 		auth:                 options.Auth,
+		voteCleaner:          options.VoteCleaner,
 		logger:               options.Logger,
 	}, nil
 }
@@ -131,6 +140,13 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 	if snapshot.SchemaVersion != 1 || strings.TrimSpace(snapshot.TargetUID) == "" {
 		outcome.Outcome = OutcomeInvalidRequest
 		return e.persistCell(outcome)
+	}
+	if e.voteCleaner != nil {
+		voteResult, err := e.voteCleaner.RemoveUser(ctx, snapshot.TargetUID)
+		if err != nil {
+			return retryLater(e.logger, "clean Firebase votes before admin account deletion", err)
+		}
+		outcome.VotesDocsUpdated = voteResult.UpdatedDocuments
 	}
 	usersDocExists, publicDocExists, err := e.repository.ApplicationDataExists(ctx, snapshot.TargetUID)
 	if err != nil {
