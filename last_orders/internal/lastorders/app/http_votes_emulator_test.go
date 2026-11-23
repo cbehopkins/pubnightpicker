@@ -98,6 +98,9 @@ func TestVotingSnapshotHTTPAgainstAuthAndFirestoreEmulators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := firestoreClient.Collection("roles").Doc("canVote").Set(ctx, map[string]any{callerUID: true}); err != nil {
+		t.Fatal(err)
+	}
 	votes := firestoreClient.Collection("votes").Doc("vote-meet")
 	if _, err := votes.Set(ctx, map[string]any{
 		"venue-1":            []string{"visible-voter", "default-voter", "hidden-voter", "unconfirmed-voter", "visible-voter"},
@@ -226,6 +229,68 @@ func TestVotingSnapshotHTTPAgainstAuthAndFirestoreEmulators(t *testing.T) {
 	if got := strings.Count(logs.String(), "voting projection admitted"); got != 1 {
 		t.Fatalf("concurrent GET admitted %d voting projections, want one", got)
 	}
+	putResponse := doVenueRequest(t, client, http.MethodPut, baseURL+"/api/meet/vote-meet/votes/venue-1", "Bearer "+idToken, "")
+	putBody := readVenueResponseBody(t, putResponse)
+	if putResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("PUT vote status=%d body=%s, want HTTP 204", putResponse.StatusCode, putBody)
+	}
+	putRevision := putResponse.Header.Get("X-Vote-Revision")
+	if _, err := time.Parse(time.RFC3339Nano, putRevision); err != nil || putRevision == "" {
+		t.Fatalf("PUT vote revision=%q, want UTC RFC3339Nano", putRevision)
+	}
+	putResponse.Body.Close()
+
+	retryResponse := doVenueRequest(t, client, http.MethodPut, baseURL+"/api/meet/vote-meet/votes/venue-1", "Bearer "+idToken, "")
+	retryBody := readVenueResponseBody(t, retryResponse)
+	if retryResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("idempotent PUT vote status=%d body=%s, want HTTP 204", retryResponse.StatusCode, retryBody)
+	}
+	if retryResponse.Header.Get("X-Vote-Revision") == "" {
+		t.Fatal("idempotent PUT vote omitted X-Vote-Revision")
+	}
+	retryResponse.Body.Close()
+
+	deleteResponse := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/vote-meet/votes/venue-1", "Bearer "+idToken, "")
+	deleteBody := readVenueResponseBody(t, deleteResponse)
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE vote status=%d body=%s, want HTTP 204", deleteResponse.StatusCode, deleteBody)
+	}
+	if deleteResponse.Header.Get("X-Vote-Revision") == "" {
+		t.Fatal("DELETE vote omitted X-Vote-Revision")
+	}
+	deleteResponse.Body.Close()
+
+	withdrawResponse := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/vote-meet/votes/removed-candidate", "Bearer "+idToken, "")
+	withdrawBody := readVenueResponseBody(t, withdrawResponse)
+	if withdrawResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("removed-candidate withdrawal status=%d body=%s, want HTTP 204", withdrawResponse.StatusCode, withdrawBody)
+	}
+	withdrawResponse.Body.Close()
+
+	missingDelete := doVenueRequest(t, client, http.MethodDelete, baseURL+"/api/meet/missing-votes-meet/votes/venue-2", "Bearer "+idToken, "")
+	missingDeleteBody := readVenueResponseBody(t, missingDelete)
+	if missingDelete.StatusCode != http.StatusNoContent {
+		t.Fatalf("missing-document DELETE status=%d body=%s, want HTTP 204", missingDelete.StatusCode, missingDeleteBody)
+	}
+	if missingDelete.Header.Get("X-Vote-Revision") != "" {
+		t.Fatalf("missing-document DELETE revision=%q, want none", missingDelete.Header.Get("X-Vote-Revision"))
+	}
+	missingDelete.Body.Close()
+	missingVotesSnapshot, err := firestoreClient.Collection("votes").Doc("missing-votes-meet").Get(ctx)
+	if status.Code(err) != codes.NotFound {
+		if err == nil && missingVotesSnapshot.Exists() {
+			t.Fatal("missing-document DELETE created a votes document")
+		}
+		t.Fatalf("check missing-document removal: %v", err)
+	}
+
+	deletedMeetResponse := doVenueRequest(t, client, http.MethodPut, baseURL+"/api/meet/deleted-vote-meet/votes/venue-1", "Bearer "+idToken, "")
+	deletedMeetBody := readVenueResponseBody(t, deletedMeetResponse)
+	if deletedMeetResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted-Meet PUT status=%d body=%s, want HTTP 404", deletedMeetResponse.StatusCode, deletedMeetBody)
+	}
+	deletedMeetResponse.Body.Close()
+
 	if got := strings.Count(logs.String(), "voting projection watch opened"); got != 1 {
 		t.Fatalf("concurrent GET opened %d vote document watches, want one", got)
 	}
@@ -254,8 +319,8 @@ func TestVotingSnapshotHTTPAgainstAuthAndFirestoreEmulators(t *testing.T) {
 		venueOption.VoterUIDs[0] != "default-voter" || venueOption.VoterUIDs[1] != "visible-voter" {
 		t.Fatalf("venue option=%+v, want four distinct votes, two anonymous, and visible UIDs", venueOption)
 	}
-	if len(snapshot.SelectedOptionIDs) != 2 || snapshot.SelectedOptionIDs[0] != "any" || snapshot.SelectedOptionIDs[1] != "removed-candidate" {
-		t.Fatalf("caller selections=%v, want any and removed-candidate", snapshot.SelectedOptionIDs)
+	if len(snapshot.SelectedOptionIDs) != 1 || snapshot.SelectedOptionIDs[0] != "any" {
+		t.Fatalf("caller selections=%v, want any after removed-candidate withdrawal", snapshot.SelectedOptionIDs)
 	}
 	for _, privateValue := range []string{
 		"hidden-voter", "unconfirmed-voter", "inactive-voter", "Caller Display Name", "Visible Display Name", "Default Display Name", "Hidden Display Name",

@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"last_orders/internal/lastorders/services/meetwrite"
 
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/votecache"
@@ -38,6 +41,101 @@ func (profiles votingProfilesStub) VisibleUIDs(_ context.Context, userIDs []stri
 		}
 	}
 	return visible
+}
+
+func TestChangeVoteUsesVerifiedUIDAndReturnsRevision(t *testing.T) {
+	resultTime := time.Date(2026, 11, 23, 12, 30, 45, 123, time.UTC)
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "verified-user" && groupID == "public-group", nil
+		}),
+		WriteAccess: writeAuthorizerStub(func(_ context.Context, uid, permission string) (bool, error) {
+			return uid == "verified-user" && permission == "canVote", nil
+		}),
+		Writer: &voteWriterStub{groupID: "public-group", result: meetwrite.VoteResult{UpdateTime: &resultTime}},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	for _, test := range []struct {
+		method  string
+		wantAdd bool
+	}{
+		{method: http.MethodPut, wantAdd: true},
+		{method: http.MethodDelete, wantAdd: false},
+	} {
+		method := test.method
+		writer := endpoint.Writer.(*voteWriterStub)
+		writer.addCalls = nil
+		request := httptest.NewRequest(method, "/api/meet/meet-a/votes/venue-1", nil)
+		request.Header.Set("Authorization", "Bearer valid-token")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("%s vote status=%d body=%s, want HTTP 204", method, response.Code, response.Body)
+		}
+		if got := response.Header().Get("X-Vote-Revision"); got != "2026-11-23T12:30:45.000000123Z" {
+			t.Fatalf("%s vote revision=%q, want committed UTC RFC3339Nano", method, got)
+		}
+		if len(writer.addCalls) != 1 || writer.addCalls[0] != test.wantAdd {
+			t.Fatalf("%s vote add argument=%v, want %v", method, writer.addCalls, test.wantAdd)
+		}
+	}
+}
+
+type voteWriterStub struct {
+	groupID  string
+	result   meetwrite.VoteResult
+	addCalls []bool
+}
+
+func (w voteWriterStub) Create(context.Context, string, string, string) (meetwrite.Meet, error) {
+	return meetwrite.Meet{}, nil
+}
+func (w voteWriterStub) GroupID(context.Context, string) (string, error) { return w.groupID, nil }
+func (w voteWriterStub) ChangeCandidate(context.Context, string, string, string, bool) (meetwrite.Meet, error) {
+	return meetwrite.Meet{}, nil
+}
+func (w voteWriterStub) Complete(context.Context, string, string, string, string, string) (meetwrite.Meet, error) {
+	return meetwrite.Meet{}, nil
+}
+func (w voteWriterStub) Reschedule(context.Context, string, meetwrite.RescheduleInput, string) (meetwrite.Meet, error) {
+	return meetwrite.Meet{}, nil
+}
+func (w voteWriterStub) Delete(context.Context, string, string) error { return nil }
+func (w *voteWriterStub) ChangeVote(_ context.Context, _, venueID, uid string, add bool) (meetwrite.VoteResult, error) {
+	if uid != "verified-user" || venueID != "venue-1" {
+		return meetwrite.VoteResult{}, meetwrite.ErrInvalidInput
+	}
+	w.addCalls = append(w.addCalls, add)
+	return w.result, nil
+}
+
+func TestChangeVoteRequiresCanVotePermission(t *testing.T) {
+	writer := &voteWriterStub{groupID: "public-group"}
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Groups: groupAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "verified-user" && groupID == "public-group", nil
+		}),
+		WriteAccess: writeAuthorizerStub(func(_ context.Context, uid, permission string) (bool, error) {
+			return false, nil
+		}),
+		Writer: writer,
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	request := httptest.NewRequest(http.MethodPut, "/api/meet/meet-a/votes/venue-1", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("vote status=%d body=%s, want HTTP 403", response.Code, response.Body)
+	}
+	if len(writer.addCalls) != 0 {
+		t.Fatalf("denied vote reached mutation writer: %v", writer.addCalls)
+	}
 }
 
 func TestRegisterVoteSnapshotUnavailableWithoutProjection(t *testing.T) {

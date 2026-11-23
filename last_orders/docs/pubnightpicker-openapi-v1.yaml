@@ -1268,7 +1268,12 @@ paths:
         - bearerAuth: []
       responses:
         '204':
-          description: Vote recorded.
+          description: Vote recorded. State-changing and no-op writes against an existing document return the current Firestore document revision in `X-Vote-Revision` as UTC RFC3339Nano. Removal from an absent votes document has no revision header.
+          headers:
+            X-Vote-Revision:
+              description: UTC RFC3339Nano Firestore votes document revision. Absent for an absent-document removal no-op.
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1290,7 +1295,12 @@ paths:
         - bearerAuth: []
       responses:
         '204':
-          description: Vote removed.
+          description: Vote removed or already absent. State-changing and no-op writes against an existing document return the current Firestore document revision in `X-Vote-Revision` as UTC RFC3339Nano. Removal from an absent votes document has no revision header.
+          headers:
+            X-Vote-Revision:
+              description: UTC RFC3339Nano Firestore votes document revision. Absent for an absent-document removal no-op.
+              schema:
+                type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

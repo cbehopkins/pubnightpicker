@@ -125,6 +125,10 @@ func (w meetWriterStub) Reschedule(context.Context, string, meetwrite.Reschedule
 
 func (meetWriterStub) Delete(context.Context, string, string) error { return nil }
 
+func (meetWriterStub) ChangeVote(context.Context, string, string, string, bool) (meetwrite.VoteResult, error) {
+	return meetwrite.VoteResult{}, nil
+}
+
 func TestCompleteMeetHTTPReturnsSelectedVenue(t *testing.T) {
 	endpoint := &Endpoint{
 		Writer: meetWriterStub{meet: meetwrite.Meet{

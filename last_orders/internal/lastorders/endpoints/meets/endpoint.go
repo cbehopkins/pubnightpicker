@@ -65,6 +65,7 @@ type MeetWriter interface {
 	Complete(context.Context, string, string, string, string, string) (meetwrite.Meet, error)
 	Reschedule(context.Context, string, meetwrite.RescheduleInput, string) (meetwrite.Meet, error)
 	Delete(context.Context, string, string) error
+	ChangeVote(context.Context, string, string, string, bool) (meetwrite.VoteResult, error)
 }
 
 type Endpoint struct {
@@ -153,6 +154,8 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/meet/{meet_id}/complete", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.complete)))
 	mux.Handle("POST /api/meet/{meet_id}/reschedule", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.reschedule)))
 	mux.Handle("DELETE /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.delete)))
+	mux.Handle("PUT /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.addVote)))
+	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meet/{meet_id}/votes", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.votes)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
@@ -322,6 +325,48 @@ func (e *Endpoint) addCandidate(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoint) removeCandidate(w http.ResponseWriter, r *http.Request) {
 	e.changeCandidate(w, r, false)
+}
+
+func (e *Endpoint) addVote(w http.ResponseWriter, r *http.Request) {
+	e.changeVote(w, r, true)
+}
+
+func (e *Endpoint) removeVote(w http.ResponseWriter, r *http.Request) {
+	e.changeVote(w, r, false)
+}
+
+func (e *Endpoint) changeVote(w http.ResponseWriter, r *http.Request, add bool) {
+	if e.Writer == nil || e.Groups == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "meet_write_unavailable", "Meet writes are temporarily unavailable.")
+		return
+	}
+	meetID, venueID := r.PathValue("meet_id"), r.PathValue("venue_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	uid := currentUID(r.Context())
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), uid, "canVote")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Vote access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to vote.")
+		return
+	}
+	result, err := e.Writer.ChangeVote(r.Context(), meetID, venueID, uid, add)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if result.UpdateTime != nil {
+		w.Header().Set("X-Vote-Revision", result.UpdateTime.UTC().Format(time.RFC3339Nano))
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (e *Endpoint) changeCandidate(w http.ResponseWriter, r *http.Request, add bool) {
