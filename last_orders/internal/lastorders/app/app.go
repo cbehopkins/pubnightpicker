@@ -489,11 +489,16 @@ func New(cfg Config) (application *App, err error) {
 			periodicTimers = append(periodicTimers, timer)
 		}
 		if currentMeetCacheService != nil {
-			timer, err := registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
+			housekeepingTimer, err := registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
 			if err != nil {
 				return nil, err
 			}
-			periodicTimers = append(periodicTimers, timer)
+			periodicTimers = append(periodicTimers, housekeepingTimer)
+			midnightTimer, err := registerCurrentMeetProjectionMidnightRetirement(cellarRuntime, currentMeetCacheService, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, midnightTimer)
 		}
 		application = &App{
 			logger:                      cfg.Logger,
@@ -821,8 +826,13 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 	}
+	var currentMeetMidnightTimer *cellar.Timer
 	if currentMeetCacheService != nil {
 		currentMeetProjectionTimer, err = registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+		currentMeetMidnightTimer, err = registerCurrentMeetProjectionMidnightRetirement(cellarRuntime, currentMeetCacheService, cfg.Logger)
 		if err != nil {
 			return nil, err
 		}
@@ -1014,6 +1024,9 @@ func New(cfg Config) (application *App, err error) {
 	}
 	if currentMeetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, currentMeetProjectionTimer)
+	}
+	if currentMeetMidnightTimer != nil {
+		periodicTimers = append(periodicTimers, currentMeetMidnightTimer)
 	}
 
 	newPollListener, err := newpolllistener.New(newpolllistener.Config{
@@ -1297,6 +1310,26 @@ func registerCurrentMeetProjectionHousekeeping(runtime *cellar.Cellar, service *
 		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
 			logger.Error("current-Meets projection housekeeping failed", "err", err)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
+}
+
+func registerCurrentMeetProjectionMidnightRetirement(runtime *cellar.Cellar, service *currentmeetcache.Service, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewCalendarTimer("current-meet-projection.midnight-retirement", cellar.TimerConfig{
+		Mode:     cellar.TimerDailyCalendar,
+		DailyAt:  "00:00",
+		Location: "Europe/London",
+	}, func(ctx context.Context, _ time.Time) error {
 		if err := service.RetireBefore(ctx, service.CurrentDate()); err != nil {
 			logger.Error("current-Meets midnight retirement failed", "err", err)
 		}

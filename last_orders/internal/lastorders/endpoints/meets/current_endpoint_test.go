@@ -17,6 +17,7 @@ import (
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/services/meetwrite"
 )
 
 type currentReaderStub struct {
@@ -90,6 +91,122 @@ type groupAuthorizerStub func(context.Context, string, string) (bool, error)
 
 func (a groupAuthorizerStub) CanRead(ctx context.Context, uid, groupID string) (bool, error) {
 	return a(ctx, uid, groupID)
+}
+
+type writeAuthorizerStub func(context.Context, string, string) (bool, error)
+
+func (a writeAuthorizerStub) CanWrite(ctx context.Context, uid, permission string) (bool, error) {
+	return a(ctx, uid, permission)
+}
+
+type meetWriterStub struct {
+	meet meetwrite.Meet
+}
+
+func (w meetWriterStub) Create(context.Context, string, string, string) (meetwrite.Meet, error) {
+	return w.meet, nil
+}
+
+func (meetWriterStub) GroupID(context.Context, string) (string, error) {
+	return "public-group", nil
+}
+
+func (w meetWriterStub) ChangeCandidate(context.Context, string, string, string, bool) (meetwrite.Meet, error) {
+	return w.meet, nil
+}
+
+func (w meetWriterStub) Complete(context.Context, string, string, string, string, string) (meetwrite.Meet, error) {
+	return w.meet, nil
+}
+
+func (w meetWriterStub) Reschedule(context.Context, string, meetwrite.RescheduleInput, string) (meetwrite.Meet, error) {
+	return w.meet, nil
+}
+
+func (meetWriterStub) Delete(context.Context, string, string) error { return nil }
+
+func TestCompleteMeetHTTPReturnsSelectedVenue(t *testing.T) {
+	endpoint := &Endpoint{
+		Writer: meetWriterStub{meet: meetwrite.Meet{
+			ID: "meet-1", GroupID: "public-group", Date: "2026-11-18", VotingComplete: true,
+			SelectedVenueID: "venue-1", SelectedVenue: &meetwrite.VenueSummary{
+				ID: "venue-1", Status: "active", Name: "The Crown", VenueType: "pub",
+			}, CandidateVenueIDs: []string{}, PreviousVenueIDs: []string{},
+		}},
+		Groups:      groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		WriteAccess: writeAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Auth:        pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	request := httptest.NewRequest(http.MethodPost, "/api/meet/meet-1/complete", strings.NewReader(`{"venue_id":"venue-1"}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	wantBody := `{"id":"meet-1","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-1","status":"active","name":"The Crown","address":"","website_url":null,"image_url":null,"venue_type":"pub"},"candidate_venue_ids":[],"restaurant_id":null,"restaurant_time":null,"previous_venue_ids":[]}`
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != wantBody {
+		t.Fatalf("completion status=%d body=%s, want HTTP 200 and %s", response.Code, response.Body, wantBody)
+	}
+}
+
+func TestCompleteMeetHTTPRejectsUnresolvedSelectedVenue(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		selectedVenueID string
+		venue           *meetwrite.VenueSummary
+	}{
+		{name: "mismatched ID", selectedVenueID: "venue-1", venue: &meetwrite.VenueSummary{ID: "venue-other", Status: "active", Name: "The Other Crown"}},
+		{name: "unresolved selected ID", selectedVenueID: "venue-1"},
+		{name: "completed without selection"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			endpoint := &Endpoint{
+				Writer: meetWriterStub{meet: meetwrite.Meet{
+					ID: "meet-1", GroupID: "public-group", Date: "2026-11-18", VotingComplete: true,
+					SelectedVenueID: test.selectedVenueID, SelectedVenue: test.venue,
+				}},
+				Groups:      groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+				WriteAccess: writeAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+				Auth:        pastMeetAuthStub{},
+			}
+			mux := http.NewServeMux()
+			endpoint.Register(mux)
+			request := httptest.NewRequest(http.MethodPost, "/api/meet/meet-1/complete", strings.NewReader(`{"venue_id":"venue-1"}`))
+			request.Header.Set("Authorization", "Bearer valid-token")
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+
+			if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), `"venue":null`) {
+				t.Fatalf("completion status=%d body=%s, want a non-success response without a null Venue", response.Code, response.Body)
+			}
+		})
+	}
+}
+
+func TestRescheduleMeetHTTPReturnsConfirmedMissingVenue(t *testing.T) {
+	endpoint := &Endpoint{
+		Writer: meetWriterStub{meet: meetwrite.Meet{
+			ID: "meet-1", GroupID: "public-group", Date: "2026-11-18", VotingComplete: true,
+			SelectedVenueID: "venue-1", SelectedVenueMissing: true,
+			RestaurantID: "restaurant-1", RestaurantTime: "19:15",
+			CandidateVenueIDs: []string{}, PreviousVenueIDs: []string{},
+		}},
+		Groups:      groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		WriteAccess: writeAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
+		Auth:        pastMeetAuthStub{},
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	request := httptest.NewRequest(http.MethodPost, "/api/meet/meet-1/reschedule", strings.NewReader(`{"restaurant_time":"19:15"}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	wantBody := `{"id":"meet-1","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-1","status":"missing"},"candidate_venue_ids":[],"restaurant_id":"restaurant-1","restaurant_time":"19:15","previous_venue_ids":[]}`
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != wantBody {
+		t.Fatalf("reschedule status=%d body=%s, want HTTP 200 and %s", response.Code, response.Body, wantBody)
+	}
 }
 
 type flushableRecorder struct {

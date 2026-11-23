@@ -345,11 +345,35 @@ func (e *Endpoint) writeServiceError(w http.ResponseWriter, err error) bool {
 }
 
 func (e *Endpoint) writeMeet(w http.ResponseWriter, statusCode int, meet meetwrite.Meet) {
+	if meet.VotingComplete && meet.SelectedVenueID == "" {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "write_response_unavailable", "The Meet was saved, but its Venue response could not be completed.")
+		return
+	}
 	response := meetResponse{
 		ID: meet.ID, GroupID: meet.GroupID, Date: meet.Date,
 		VotingComplete: meet.VotingComplete, CandidateVenueIDs: meet.CandidateVenueIDs,
 		Venue: nil, RestaurantID: optionalValue(meet.RestaurantID),
 		RestaurantTime: optionalValue(meet.RestaurantTime), PreviousVenueIDs: meet.PreviousVenueIDs,
+	}
+	if meet.SelectedVenueID != "" {
+		switch {
+		case meet.SelectedVenueMissing && meet.SelectedVenue == nil:
+			response.Venue = missingVenueReference{ID: meet.SelectedVenueID, Status: "missing"}
+		case meet.SelectedVenue != nil && meet.SelectedVenue.ID == meet.SelectedVenueID &&
+			meet.SelectedVenue.Name != "" && (meet.SelectedVenue.Status == "active" || meet.SelectedVenue.Status == "deleted"):
+			venue := meet.SelectedVenue
+			venueType := venue.VenueType
+			if venueType == "" {
+				venueType = "pub"
+			}
+			response.Venue = venueSummary{
+				ID: venue.ID, Status: venue.Status, Name: venue.Name, Address: venue.Address,
+				WebsiteURL: optionalValue(venue.WebsiteURL), ImageURL: optionalValue(venue.ImageURL), VenueType: venueType,
+			}
+		default:
+			firebaseauth.WriteError(w, http.StatusServiceUnavailable, "write_response_unavailable", "The Meet was saved, but its Venue response could not be completed.")
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
