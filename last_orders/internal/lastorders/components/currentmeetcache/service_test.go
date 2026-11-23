@@ -306,6 +306,134 @@ func TestOpenViewStreamRenewalProtectsItsWatchUntilRenewedExpiry(t *testing.T) {
 	}
 }
 
+func TestCurrentDateUsesLondonAcrossDSTTransitions(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venues, err := venuecache.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &trackedViewWatchSource{calls: make(chan trackedViewWatchCall, 1), stopped: make(chan trackedViewWatchCall, 1)}
+
+	for _, test := range []struct {
+		name    string
+		instant time.Time
+		want    string
+	}{
+		{name: "spring DST at London midnight", instant: time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC), want: "2026-03-29"},
+		{name: "autumn DST at London midnight", instant: time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC), want: "2026-10-25"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clock := test.instant
+			service, err := NewService(store, source, venues, sse.NewHub(), slog.New(slog.NewTextHandler(io.Discard, nil)), func() time.Time { return clock })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := service.CurrentDate(); got != test.want {
+				t.Fatalf("CurrentDate()=%q, want %q", got, test.want)
+			}
+			service.Close()
+		})
+	}
+}
+
+func TestNewDateAdmissionRacesRetirementAndCannotUseStaleWatch(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := basestore.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venues, err := venuecache.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	source := &trackedViewWatchSource{
+		calls:   make(chan trackedViewWatchCall, 4),
+		stopped: make(chan trackedViewWatchCall, 4),
+		snapshotFor: func(query ViewQuery) QuerySnapshot {
+			meetID := "meet-a"
+			date := "2026-11-20"
+			if query.Date == "2026-11-21" {
+				meetID = "meet-b"
+				date = "2026-11-21"
+			}
+			return QuerySnapshot{Documents: []meetcache.Document{{
+				ID: meetID, Exists: true, Version: clock, Data: map[string]any{
+					"groupId": "group-a", "date": date, "completed": true,
+				},
+			}}, ReadTime: clock}
+		},
+	}
+	service, err := NewService(store, source, venues, sse.NewHub(), slog.New(slog.NewTextHandler(io.Discard, nil)), func() time.Time { return clock })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := service.Get(ctx, "group-a"); err != nil {
+		t.Fatalf("admit stale current-Meets view: %v", err)
+	}
+	clock = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	retireErr := make(chan error, 1)
+	getErr := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		retireErr <- service.RetireBefore(ctx, service.CurrentDate())
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := service.Get(ctx, "group-a")
+		getErr <- err
+	}()
+	wg.Wait()
+	if err := <-retireErr; err != nil {
+		t.Fatalf("retire before racing admission: %v", err)
+	}
+	if err := <-getErr; err != nil {
+		t.Fatalf("racing new-date admission: %v", err)
+	}
+
+	foundReplacement := false
+	for {
+		select {
+		case call := <-source.calls:
+			if call.query.Kind == CurrentView && call.query.Date == "2026-11-21" {
+				foundReplacement = true
+			}
+		default:
+			if !foundReplacement {
+				t.Fatal("new-date admission did not open a 2026-11-21 watch")
+			}
+			return
+		}
+	}
+}
+
 func TestRetireBeforeRetiresOnlyStaleCurrentMeetsAndStopsWatch(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -458,15 +586,20 @@ type trackedViewWatchCall struct {
 }
 
 type trackedViewWatchSource struct {
-	calls     chan trackedViewWatchCall
-	stopped   chan trackedViewWatchCall
-	snapshots map[ViewKind]QuerySnapshot
+	calls       chan trackedViewWatchCall
+	stopped     chan trackedViewWatchCall
+	snapshots   map[ViewKind]QuerySnapshot
+	snapshotFor func(ViewQuery) QuerySnapshot
 }
 
 func (source *trackedViewWatchSource) Watch(ctx context.Context, groupID string, query ViewQuery) (Stream, error) {
 	call := trackedViewWatchCall{groupID: groupID, query: query}
 	source.calls <- call
-	return &trackedViewSnapshotStream{ctx: ctx, call: call, snapshot: source.snapshots[query.Kind], stopped: source.stopped}, nil
+	snapshot := source.snapshots[query.Kind]
+	if source.snapshotFor != nil {
+		snapshot = source.snapshotFor(query)
+	}
+	return &trackedViewSnapshotStream{ctx: ctx, call: call, snapshot: snapshot, stopped: source.stopped}, nil
 }
 
 type trackedViewSnapshotStream struct {
