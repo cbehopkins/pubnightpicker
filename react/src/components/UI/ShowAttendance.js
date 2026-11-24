@@ -22,6 +22,7 @@ function normalizeUserId(value) {
 /**
  * @typedef {Object} ShowAttendanceProps
  * @property {string[]=} voters
+ * @property {Record<string, UserEntry>=} voterProfiles
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
  * @property {Record<string, string>=} eta
@@ -91,6 +92,7 @@ function ShowAttendanceContent(params) {
     const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
     const cannotCome = (params.cannotCome || []).map(normalizeUserId).filter(Boolean);
     const etaMap = params.eta || {};
+    const voterProfiles = params.voterProfiles;
 
     const usersByUid = useMemo(() => {
         /** @type {Record<string, UserEntry>} */
@@ -111,14 +113,21 @@ function ShowAttendanceContent(params) {
         return map;
     }, [users]);
 
-    const visibleVoters = voters.filter((id) => usersByUid[id]?.votesVisible !== false);
+    const visibleVoters = voters.filter((id) => voterProfiles
+        ? Boolean(voterProfiles[id]) && voterProfiles[id]?.votesVisible !== false
+        : usersByUid[id]?.votesVisible !== false);
     const votersSet = useMemo(() => new Set(visibleVoters), [visibleVoters]);
     const canComeSet = useMemo(() => new Set(canCome), [canCome]);
     const cannotComeSet = useMemo(() => new Set(cannotCome), [cannotCome]);
 
     const allUserIds = [...new Set([...visibleVoters, ...canCome, ...cannotCome])];
     const sortedUsers = allUserIds
-        .map((id) => ({ id, name: usersByUid[id]?.name || "No Name Recorded" }))
+        .map((id) => ({
+            id,
+            name: (votersSet.has(id) ? voterProfiles?.[id]?.name : undefined)
+                || usersByUid[id]?.name
+                || "No Name Recorded",
+        }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
     const showVoters = visibleVoters.length > 0;

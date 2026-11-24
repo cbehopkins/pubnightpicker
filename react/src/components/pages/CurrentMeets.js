@@ -383,7 +383,7 @@ function CurrentMeet({
   const canReadProtectedMeetData = Boolean(normalizedUserId);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const { isOnline } = useOnlineStatus();
-  const [votes] = useVotes(meetId, canReadProtectedMeetData);
+  const { optionsById: votes, voterProfiles } = useVotes(meetId, normalizedUserId, canReadProtectedMeetData);
   const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
     meetId,
     canReadProtectedMeetData
@@ -529,6 +529,7 @@ function CurrentMeet({
               <QuestionRender className={styles.actionBlock} question="Show venue attendance">
                 <ShowAttendance
                   voters={mainVenue.dedupedVotes}
+                  voterProfiles={voterProfiles}
                   canCome={mainVenue.canCome}
                   cannotCome={mainVenue.cannotCome}
                   eta={mainVenue.etaMap}
@@ -573,6 +574,7 @@ function CurrentMeet({
                 <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
                   <ShowAttendance
                     voters={restaurantVenue.dedupedVotes}
+                    voterProfiles={voterProfiles}
                     canCome={restaurantVenue.canCome}
                     cannotCome={restaurantVenue.cannotCome}
                     eta={restaurantVenue.etaMap}

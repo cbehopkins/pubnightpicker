@@ -28,8 +28,8 @@ describe("currentMeetViewModel", () => {
         },
       },
       votes: {
-        "venue-1": ["user-1", "user-2"],
-        any: ["user-2", "user-3"],
+        "venue-1": { total: 2, voterUids: ["user-1", "user-2"] },
+        any: { total: 2, voterUids: ["user-2", "user-3"] },
       },
       attendance: {
         "venue-1": {
@@ -59,8 +59,8 @@ describe("currentMeetViewModel", () => {
         "venue-2": { name: "Bistro 12", address: "12 Market Street" },
       },
       votes: {
-        any: ["user-1"],
-        "venue-2": ["user-2"],
+        any: { total: 1, voterUids: ["user-1"] },
+        "venue-2": { total: 1, voterUids: ["user-2"] },
       },
       attendance: {
         "venue-2": {
@@ -86,8 +86,8 @@ describe("currentMeetViewModel", () => {
 
   it("dedupes venue-specific votes with the any bucket", () => {
     expect(getDedupedVotesForVenue({
-      venueA: ["user-1", "user-2"],
-      any: ["user-2", "user-3"],
+      venueA: { total: 2, voterUids: ["user-1", "user-2"] },
+      any: { total: 2, voterUids: ["user-2", "user-3"] },
     }, "venueA")).toEqual(["user-1", "user-2", "user-3"]);
   });
 

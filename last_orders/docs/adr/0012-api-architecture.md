@@ -274,9 +274,9 @@ Rules:
 - If no `restaurant_id` is provided, no restaurant time is supplied.
 - Any valid Venue may be selected at completion, even if it is not an active voting candidate.
 - The special vote key `any` is not a Venue and cannot be selected as the Meet's Venue.
-- Completion selects the Venue and closes voting.
+- Completion selects the Venue and closes voting in the frontend.
 - Completing a Meet does not mean the real-world Meet has ended.
-- Voting stays closed permanently after completion.
+- The frontend does not reopen voting after completion. The backend does not enforce this restriction: vote changes after completion do not alter the selected Venue, and enforcing closure would add complexity without benefit.
 - Existing votes may be retained as history.
 
 The ability to choose a Venue outside the candidate list is intentional: the final plan may change to another nearby Venue.
@@ -301,7 +301,7 @@ The endpoint name is retained for compatibility.
 Rules:
 
 - The scheduled date remains unchanged.
-- Voting does not reopen.
+- The frontend does not reopen voting.
 - The caller needs the same permission as completion; there is no separate reschedule permission.
 - When the selected Venue changes, the actual previous Venue ID is appended to `previous_venue_ids`, preserving order and duplicates.
 - Changing restaurant details alone does not append a previous Venue ID.
@@ -349,14 +349,24 @@ These operations are bodyless. The caller's identity comes from the validated Fi
 Rules:
 
 - The caller must be a Group member.
-- Voting must be open.
+- The frontend offers voting only while it is open; the backend accepts otherwise valid vote changes after completion.
 - A normal Venue vote requires that Venue to be an active candidate.
 - The special key `any` is allowed and is not a Venue ID.
 - `PUT` and `DELETE` should be idempotent.
 
 Venue IDs are opaque and must not collide with the reserved `any` vote key.
 
-### 8.3 Voting snapshot
+### 8.3 Vote persistence ownership
+The voting cache is a read projection, not the sole owner of vote documents. Backend operations may modify votes for distinct purposes:
+
+* Vote operations add or remove the caller’s selection.
+* User deletion removes the user’s votes.
+* Meet creation and deletion create or delete the associated vote document.
+* Event recurrence creates a vote document with the new Meet.
+
+These operations do not write through the cache. Meet lifecycle changes must preserve their atomic transactions, and the cache observes committed changes through its Firestore watch.
+
+### 8.4 Voting snapshot
 
 The voting snapshot should include active candidate Venues and, for each candidate:
 
@@ -379,6 +389,14 @@ Voter identities use the shared minimal public user summary:
 ```
 
 `photo_url` is optional. Do not expose Firebase credentials, provider details or unrelated profile fields.
+
+### 8.5 Voting stream
+
+```http
+GET /meets/{group_id}/votes/stream?meet_id={meet_id}&meet_id={meet_id}
+```
+
+Live voting updates use one stream per Group covering the Meets the client lists, rather than one stream per Meet. Browsers allow only six concurrent HTTP/1.1 connections per origin, so a page holding one long-lived stream per Meet could exhaust them and leave ordinary API requests queued indefinitely. Each event carries a complete voting snapshot for every listed Meet. The client reconnects with a new list when the Meets it shows change. Every listed Meet must belong to the Group. The list is bounded at 50 Meets.
 
 ## 9. Attendance
 

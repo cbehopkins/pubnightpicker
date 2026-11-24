@@ -71,6 +71,9 @@ beforeEach(async () => {
 
         // Seed an existing message from user-b for cross-user delete tests
         await setDoc(doc(adminDb, "messages", "other-msg"), globalMessage({ uid: "user-b" }));
+
+        // A user without chat access must still be able to clean up their own messages.
+        await setDoc(doc(adminDb, "messages", "self-only-msg"), globalMessage({ uid: "user-no-role" }));
     });
 });
 
@@ -88,6 +91,17 @@ describe("messages firestore rules — reads", () => {
     it("denies reads for users without canChat role", async () => {
         const db = testEnv.authenticatedContext("user-no-role").firestore();
         await assertFails(getDoc(doc(db, "messages", "existing-msg")));
+    });
+
+    it("allows users without canChat to query only their own messages", async () => {
+        const db = testEnv.authenticatedContext("user-no-role").firestore();
+        const ownMessages = await assertSucceeds(
+            getDocs(query(collection(db, "messages"), where("uid", "==", "user-no-role")))
+        );
+        expect(ownMessages.size).toBe(1);
+        await assertFails(
+            getDocs(query(collection(db, "messages"), where("uid", "==", "user-a")))
+        );
     });
 });
 

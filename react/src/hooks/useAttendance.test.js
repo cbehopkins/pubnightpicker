@@ -145,8 +145,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.canCome": "arrayUnion:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
+                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
             },
         );
 
@@ -157,9 +156,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.canCome": "arrayRemove:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
-                "pub-1.eta.user-1": "deleteField",
+                "pub-1": { canCome: "arrayRemove:user-1", cannotCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
             },
         );
     });
@@ -185,9 +182,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.cannotCome": "arrayUnion:user-1",
-                "pub-1.canCome": "arrayRemove:user-1",
-                "pub-1.eta.user-1": "deleteField",
+                "pub-1": { cannotCome: "arrayUnion:user-1", canCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
             },
         );
     });
@@ -211,8 +206,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.canCome": "arrayUnion:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
+                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
             },
         );
     });
@@ -229,10 +223,8 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.canCome": "arrayUnion:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
-                "pub-2.canCome": "arrayUnion:user-1",
-                "pub-2.cannotCome": "arrayRemove:user-1",
+                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
+                "pub-2": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
             },
         );
     });
@@ -261,12 +253,9 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "any.canCome": "arrayUnion:user-1",
-                "any.cannotCome": "arrayRemove:user-1",
-                "pub-1.canCome": "arrayUnion:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
-                "pub-2.canCome": "arrayUnion:user-1",
-                "pub-2.cannotCome": "arrayRemove:user-1",
+                "any": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
+                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
+                "pub-2": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
             },
         );
     });
@@ -299,9 +288,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.canCome": "arrayRemove:user-1",
-                "pub-1.cannotCome": "arrayRemove:user-1",
-                "pub-1.eta.user-1": "deleteField",
+                "pub-1": { canCome: "arrayRemove:user-1", cannotCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
             },
         );
     });
@@ -318,9 +305,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
             {
-                "pub-1.cannotCome": "arrayUnion:user-1",
-                "pub-1.canCome": "arrayRemove:user-1",
-                "pub-1.eta.user-1": "deleteField",
+                "pub-1": { cannotCome: "arrayUnion:user-1", canCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
             },
         );
     });
@@ -335,7 +320,7 @@ describe("useAttendance", () => {
         });
 
         const payload = updateDocMock.mock.calls[0][1];
-        expect(payload).not.toHaveProperty("pub-1.eta.user-1");
+        expect(payload["pub-1"]).not.toHaveProperty("eta");
     });
 
     it("setEta writes the HH:MM string to the eta sub-map", async () => {
@@ -349,7 +334,7 @@ describe("useAttendance", () => {
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
-            { "pub-1.eta.user-1": "18:30" },
+            { "pub-1": { eta: { "user-1": "18:30" } } },
         );
     });
 
@@ -364,7 +349,7 @@ describe("useAttendance", () => {
 
         expect(updateDocMock).toHaveBeenCalledWith(
             { id: "attendance-doc-ref" },
-            { "pub-1.eta.user-1": "deleteField" },
+            { "pub-1": { eta: { "user-1": "deleteField" } } },
         );
     });
 });

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/components/sourcewatch"
+	"last_orders/internal/lastorders/components/sse"
 
 	"github.com/google/uuid"
 )
@@ -27,6 +28,7 @@ type Service struct {
 	logger      *slog.Logger
 	now         func() time.Time
 	diagnostics bool
+	hub         *sse.Hub
 	mu          sync.Mutex
 	entries     map[string]*entry
 	closed      bool
@@ -48,6 +50,10 @@ type entry struct {
 }
 
 func NewService(store *Store, source Source, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	return NewServiceWithHub(store, source, nil, logger, now)
+}
+
+func NewServiceWithHub(store *Store, source Source, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("meet projection store is required")
 	}
@@ -66,6 +72,7 @@ func NewService(store *Store, source Source, logger *slog.Logger, now func() tim
 		logger:      logger,
 		now:         now,
 		diagnostics: os.Getenv("LAST_ORDERS_MEET_PROJECTION_DIAGNOSTICS") == "true",
+		hub:         hub,
 		entries:     make(map[string]*entry),
 	}, nil
 }
@@ -201,13 +208,15 @@ func (s *Service) observe(current *entry) {
 			}
 			continue
 		}
-		if _, err := s.apply(current, projection, document.Version); err != nil {
+		if snapshot, err := s.apply(current, projection, document.Version); err != nil {
 			stopStream()
 			s.markUnavailable(current, err)
 			if !waitRetry(current.ctx) {
 				return
 			}
 			continue
+		} else if snapshot.Sequence > 0 && s.hub != nil {
+			s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
 		}
 		s.markAvailable(current)
 
@@ -225,7 +234,11 @@ func (s *Service) observe(current *entry) {
 			}
 			projection, err = ProjectionFromDocument(document)
 			if err == nil {
-				_, err = s.apply(current, projection, document.Version)
+				var snapshot Snapshot
+				snapshot, err = s.apply(current, projection, document.Version)
+				if err == nil && snapshot.Sequence > 0 && s.hub != nil {
+					s.hub.PublishChanged("voting:"+current.id, 1)
+				}
 			}
 			if err != nil {
 				stopStream()
@@ -301,6 +314,9 @@ func (s *Service) markUnavailable(current *entry, err error) {
 	if !current.failureLogged {
 		s.logger.Warn("Meet projection source unavailable", "meet_id", maskedMeetID(current.id), "error_type", fmt.Sprintf("%T", err))
 		current.failureLogged = true
+	}
+	if s.hub != nil {
+		s.hub.ResetView("voting:" + current.id)
 	}
 	if s.diagnostics {
 		s.logger.Info("Meet projection baseline attempt failed", "meet_id", maskedMeetID(current.id), "err", err)

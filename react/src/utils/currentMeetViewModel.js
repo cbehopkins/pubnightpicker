@@ -2,7 +2,8 @@
 
 import { getEffectiveAttendanceState } from "./attendanceState";
 
-/** @typedef {Record<string, string[]>} VotesMap */
+/** @typedef {{ total: number, voterUids: string[] }} VotingOption */
+/** @typedef {Record<string, VotingOption | undefined>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
 
 /**
@@ -54,10 +55,10 @@ export function getDedupedVotesForVenue(votes, venueId) {
     const allVotes = [];
 
     if (venueId && votes[venueId]) {
-        allVotes.push(...votes[venueId]);
+        allVotes.push(...votes[venueId].voterUids);
     }
     if (venueId && votes.any) {
-        allVotes.push(...votes.any);
+        allVotes.push(...votes.any.voterUids);
     }
 
     return [...new Set(allVotes)];

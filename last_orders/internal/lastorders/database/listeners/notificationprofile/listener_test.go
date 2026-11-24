@@ -17,6 +17,7 @@ import (
 
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/sse"
 
 	_ "modernc.org/sqlite"
 )
@@ -105,6 +106,23 @@ func newTestHarness(t *testing.T, source *fakeSource) (*notificationprofile.Stor
 	}
 	store, listener, _ := newSourceHarness(t, source)
 	return store, listener
+}
+
+func TestPublicProfileChangeSurvivesVoteSnapshotSequence(t *testing.T) {
+	_, listener := newTestHarness(t, &fakeSource{})
+	hub := sse.NewHub()
+	listener.hub = hub
+	subscription := hub.Register("voting:meet-a", "meet:meet-a", "user")
+	t.Cleanup(hub.Shutdown)
+	if err := listener.applyPublicUsers(context.Background(), []notificationprofile.Change{
+		userChange(notificationprofile.ChangeAdded, "user", map[string]any{"name": "Updated"}),
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	subscription.DiscardChangesThrough(42)
+	if subscription.TakeChanged() == 0 {
+		t.Fatal("profile change was discarded by an unrelated vote sequence")
+	}
 }
 
 func newSourceHarness(t *testing.T, source notificationprofile.Source) (*notificationprofile.Store, *Listener, *sql.DB) {

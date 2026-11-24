@@ -32,6 +32,26 @@ func TestHubRoutesChangesAndInvalidations(t *testing.T) {
 	}
 }
 
+func TestMultiViewSubscriptionFollowsEachView(t *testing.T) {
+	hub := NewHub()
+	t.Cleanup(hub.Shutdown)
+	sub := hub.RegisterViews([]string{"voting:a", "voting:b"}, "scope", "uid")
+	other := hub.Register("voting:c", "scope", "uid")
+
+	hub.PublishChanged("voting:b", 3)
+	if sub.TakeChanged() != 3 || count(other.Changed()) != 0 {
+		t.Fatal("change to one of several views was not routed")
+	}
+	hub.PublishChangedPrefix("voting:", 4)
+	if sub.TakeChanged() != 4 || other.TakeChanged() != 4 {
+		t.Fatal("prefix change did not reach every matching subscription")
+	}
+	hub.ResetView("voting:a")
+	if count(sub.Invalidated()) != 1 || count(other.Invalidated()) != 0 {
+		t.Fatal("reset of one view did not reset only its subscriptions")
+	}
+}
+
 func TestSubscriptionDiscardsChangesCoveredBySnapshot(t *testing.T) {
 	hub := NewHub()
 	sub := hub.Register("view", "scope", "uid")

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,9 +17,11 @@ import (
 // for a public anonymous view. Authorization returns the ordinary HTTP status
 // to use when access is denied (typically 401 or 404).
 type Handler struct {
-	Hub                *Hub
-	Ready              <-chan struct{}
-	ViewKey            string
+	Hub     *Hub
+	Ready   <-chan struct{}
+	ViewKey string
+	// ViewKeys replaces ViewKey for a view composed of several hub views.
+	ViewKeys           []string
 	AuthorizationScope string
 	UID                string
 	EventName          string
@@ -73,7 +76,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register before authorization so a racing invalidation is retained.
-	sub := h.Hub.Register(h.ViewKey, h.AuthorizationScope, h.UID)
+	sub := h.Hub.RegisterViews(h.viewKeys(), h.AuthorizationScope, h.UID)
 	defer sub.Unregister()
 	if h.stopping(sub) {
 		return
@@ -155,10 +158,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-sub.Changed():
-			changedThrough := sub.TakeChanged()
-			if changedThrough <= lastSequence {
-				continue
-			}
+			sub.TakeChanged()
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
@@ -169,31 +169,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			view, err := h.Snapshot(r.Context(), CursorInput{})
-			if err != nil || !validSnapshot(view) || view.Sequence < changedThrough {
+			if err != nil || !validSnapshot(view) {
 				return
 			}
 			if h.invalidated(sub) {
 				h.writeReset(w)
 				return
 			}
-			if view.Sequence <= lastSequence {
-				sub.DiscardChangesThrough(view.Sequence)
-				continue
-			}
 			sub.DiscardChangesThrough(view.Sequence)
 			if !h.writeEvent(w, h.EventName, view.Data, view.Cursor) {
 				return
 			}
-			lastSequence = view.Sequence
+			if view.Sequence > lastSequence {
+				lastSequence = view.Sequence
+			}
 		}
 	}
 }
 
 func (h *Handler) valid() bool {
-	if h == nil || h.Hub == nil || h.Ready == nil || h.ViewKey == "" || h.AuthorizationScope == "" || h.EventName == "" || h.Authorize == nil || h.Snapshot == nil || h.WriteTimeout < 0 || h.HeartbeatInterval < 0 {
+	if h == nil || h.Hub == nil || h.Ready == nil || h.AuthorizationScope == "" || h.EventName == "" || h.Authorize == nil || h.Snapshot == nil || h.WriteTimeout < 0 || h.HeartbeatInterval < 0 {
+		return false
+	}
+	if (h.ViewKey == "") == (len(h.ViewKeys) == 0) {
+		return false
+	}
+	if slices.Contains(h.ViewKeys, "") {
 		return false
 	}
 	return !strings.ContainsAny(h.EventName, "\r\n\x00")
+}
+
+func (h *Handler) viewKeys() []string {
+	if h.ViewKey != "" {
+		return []string{h.ViewKey}
+	}
+	return h.ViewKeys
 }
 
 func (h *Handler) heartbeatInterval() time.Duration {

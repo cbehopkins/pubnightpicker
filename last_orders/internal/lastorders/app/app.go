@@ -35,6 +35,7 @@ import (
 	"last_orders/internal/lastorders/components/recurrence"
 	"last_orders/internal/lastorders/components/sse"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
+	"last_orders/internal/lastorders/components/votecache"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
@@ -48,6 +49,7 @@ import (
 	roleauthorizationlistener "last_orders/internal/lastorders/database/listeners/roleauthorization"
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
+	accountcleanupendpoint "last_orders/internal/lastorders/endpoints/accountcleanup"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	groupsendpoint "last_orders/internal/lastorders/endpoints/groups"
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
@@ -68,6 +70,7 @@ import (
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	meetwritesvc "last_orders/internal/lastorders/services/meetwrite"
+	"last_orders/internal/lastorders/services/votecleanup"
 	"last_orders/internal/lastorders/truths"
 
 	"cloud.google.com/go/firestore"
@@ -159,6 +162,7 @@ type Config struct {
 	RecurrenceService         RecurrenceService
 	VenueSource               venuecache.Source
 	GroupSource               groupcache.Source
+	VotingSource              votecache.Source
 	NotificationProfileSource notificationprofile.Source
 	EventVenueSource          eventvenuelistener.Source
 	NewPollSource             newpolllistener.Source
@@ -194,6 +198,8 @@ type App struct {
 	venueCacheStore             *venuecache.Store
 	venueCacheService           *venuecache.Service
 	meetCacheService            *meetcache.Service
+	votingCacheService          *votecache.Service
+	votingProfileReader         *votecache.ProfileReader
 	currentMeetCacheService     *currentmeetcache.Service
 	groupCacheStore             *groupcache.Store
 	groupCacheService           *groupcache.Service
@@ -221,6 +227,8 @@ type App struct {
 	groupCacheStarted           bool
 	venueStreamHub              *sse.Hub
 	venueCursorCodec            *sse.CursorCodec
+	votingStreamHub             *sse.Hub
+	votingStreamReady           chan struct{}
 	notificationProfileListener *notificationprofilelistener.Listener
 	httpServer                  *http.Server
 	httpListener                net.Listener
@@ -395,7 +403,12 @@ func New(cfg Config) (application *App, err error) {
 		return nil, err
 	}
 	venueStreamHub := sse.NewHub()
+	votingStreamHub := sse.NewHub()
+	votingStreamReady := make(chan struct{})
+	close(votingStreamReady)
 	var meetCacheService *meetcache.Service
+	var votingCacheService *votecache.Service
+	var votingProfileReader *votecache.ProfileReader
 	if firestoreClient != nil && cfg.Component != "landlord" {
 		meetCacheStore, err := meetcache.NewStore(baseStore)
 		if err != nil {
@@ -405,7 +418,26 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
-		meetCacheService, err = meetcache.NewService(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now)
+		meetCacheService, err = meetcache.NewServiceWithHub(meetCacheStore, meetSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		votingCacheStore, err := votecache.NewStore(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init voting cache store: %w", err)
+		}
+		votingSource := cfg.VotingSource
+		if votingSource == nil {
+			votingSource, err = votecache.NewFirestoreSource(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
+		votingCacheService, err = votecache.NewServiceWithHub(votingCacheStore, votingSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		votingProfileReader, err = votecache.NewFirestoreProfileReader(firestoreClient)
 		if err != nil {
 			return nil, err
 		}
@@ -473,7 +505,7 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	notificationProfileListener, err := notificationprofilelistener.New(notificationProfileService, notificationProfileStore, cfg.Logger)
+	notificationProfileListener, err := notificationprofilelistener.NewWithHub(notificationProfileService, notificationProfileStore, votingStreamHub, cfg.Logger)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +515,13 @@ func New(cfg Config) (application *App, err error) {
 		var periodicTimers []*cellar.Timer
 		if meetCacheService != nil {
 			timer, err := registerMeetProjectionHousekeeping(cellarRuntime, meetCacheService, cfg.Clock, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, timer)
+		}
+		if votingCacheService != nil {
+			timer, err := registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
 			if err != nil {
 				return nil, err
 			}
@@ -510,6 +549,8 @@ func New(cfg Config) (application *App, err error) {
 			venueCacheStore:             venueCacheStore,
 			venueCacheService:           venueCacheService,
 			meetCacheService:            meetCacheService,
+			votingCacheService:          votingCacheService,
+			votingProfileReader:         votingProfileReader,
 			currentMeetCacheService:     currentMeetCacheService,
 			groupCacheStore:             groupCacheStore,
 			groupCacheService:           groupCacheService,
@@ -517,6 +558,8 @@ func New(cfg Config) (application *App, err error) {
 			notificationProfileService:  notificationProfileService,
 			venueCacheListener:          venueCacheListener,
 			venueStreamHub:              venueStreamHub,
+			votingStreamHub:             votingStreamHub,
+			votingStreamReady:           votingStreamReady,
 			groupCacheListener:          groupCacheListener,
 			notificationProfileListener: notificationProfileListener,
 			periodicTimers:              periodicTimers,
@@ -737,12 +780,20 @@ func New(cfg Config) (application *App, err error) {
 				return nil, err
 			}
 		}
+		var voteCleaner admindeletesvc.VoteCleaner
+		if firestoreClient != nil {
+			voteCleaner, err = votecleanup.NewFirestoreCleaner(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
 		adminDeleteEvaluator, err = admindeletesvc.New(admindeletesvc.Options{
 			Enabled:              cfg.AdminDeleteEnabled,
 			DryRun:               cfg.AdminDeleteDryRun,
 			EnableRealAuthDelete: cfg.EnableRealAuthDelete,
 			Repository:           adminDeleteRepository,
 			Auth:                 adminDeleteAuth,
+			VoteCleaner:          voteCleaner,
 			Logger:               cfg.Logger,
 		})
 		if err != nil {
@@ -819,9 +870,16 @@ func New(cfg Config) (application *App, err error) {
 
 	cellarRuntime := cellar.New(cellarStore, cellar.Config{PollDelay: cfg.PollDelay, Clock: cfg.Clock})
 	var meetProjectionTimer *cellar.Timer
+	var votingProjectionTimer *cellar.Timer
 	var currentMeetProjectionTimer *cellar.Timer
 	if meetCacheService != nil {
 		meetProjectionTimer, err = registerMeetProjectionHousekeeping(cellarRuntime, meetCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if votingCacheService != nil {
+		votingProjectionTimer, err = registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, err
 		}
@@ -1022,6 +1080,9 @@ func New(cfg Config) (application *App, err error) {
 	if meetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, meetProjectionTimer)
 	}
+	if votingProjectionTimer != nil {
+		periodicTimers = append(periodicTimers, votingProjectionTimer)
+	}
 	if currentMeetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, currentMeetProjectionTimer)
 	}
@@ -1094,6 +1155,8 @@ func New(cfg Config) (application *App, err error) {
 		venueCacheStore:             venueCacheStore,
 		venueCacheService:           venueCacheService,
 		meetCacheService:            meetCacheService,
+		votingCacheService:          votingCacheService,
+		votingProfileReader:         votingProfileReader,
 		currentMeetCacheService:     currentMeetCacheService,
 		groupCacheStore:             groupCacheStore,
 		groupCacheService:           groupCacheService,
@@ -1122,6 +1185,8 @@ func New(cfg Config) (application *App, err error) {
 		venueCacheListener:          venueCacheListener,
 		groupCacheListener:          groupCacheListener,
 		venueStreamHub:              venueStreamHub,
+		votingStreamHub:             votingStreamHub,
+		votingStreamReady:           votingStreamReady,
 		notificationProfileListener: notificationProfileListener,
 	}
 
@@ -1170,6 +1235,13 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
 	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
 	(&groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}).Register(apiMux)
+	if application.firestoreClient != nil {
+		voteCleaner, err := votecleanup.NewFirestoreCleaner(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
+	}
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
 		venueCursorSecret := os.Getenv("LAST_ORDERS_CURSOR_HMAC_KEY")
@@ -1251,10 +1323,12 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	}
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
+		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
+		VotingHub: application.votingStreamHub, VotingReady: application.votingStreamReady,
 		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
@@ -1287,6 +1361,28 @@ func registerMeetProjectionHousekeeping(runtime *cellar.Cellar, service *meetcac
 	}, func(ctx context.Context) error {
 		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
 			logger.Error("Meet projection housekeeping failed", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
+}
+
+func registerVotingProjectionHousekeeping(runtime *cellar.Cellar, service *votecache.Service, clock cellar.Clock, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewTimer("voting-projection.housekeeping", cellar.TimerConfig{
+		Interval: time.Minute,
+		Mode:     cellar.TimerFixedRate,
+	}, func(ctx context.Context) error {
+		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
+			logger.Error("voting projection housekeeping failed", "err", err)
 		}
 		return nil
 	})
@@ -1807,6 +1903,9 @@ func (a *App) Close() error {
 	if a.meetCacheService != nil {
 		a.meetCacheService.Close()
 	}
+	if a.votingCacheService != nil {
+		a.votingCacheService.Close()
+	}
 	if a.currentMeetCacheService != nil {
 		a.currentMeetCacheService.Close()
 	}
@@ -1839,6 +1938,9 @@ func (a *App) closeListeners() error {
 	var closeErrs []error
 	if a.venueStreamHub != nil {
 		a.venueStreamHub.Shutdown()
+	}
+	if a.votingStreamHub != nil {
+		a.votingStreamHub.Shutdown()
 	}
 	if a.diagnosticsConfiguration != nil {
 		closeErrs = append(closeErrs, a.diagnosticsConfiguration.Close())

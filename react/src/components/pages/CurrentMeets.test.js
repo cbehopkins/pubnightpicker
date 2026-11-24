@@ -183,7 +183,7 @@ describe("CurrentMeets", () => {
       auth: { uid: "user-1" },
       group: { groupId: currentGroup.value },
     }));
-    useVotesMock.mockReturnValue([{}]);
+    useVotesMock.mockReturnValue({ optionsById: {}, voterProfiles: {} });
     useAttendanceMock.mockReturnValue([{}, setAttendanceStatusMock, clearAttendanceMock]);
     useRoleMock.mockReturnValue(false);
     useAdminMock.mockReturnValue(false);

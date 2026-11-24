@@ -1,0 +1,378 @@
+package votecache
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"log/slog"
+	"os"
+	"sync"
+	"time"
+
+	"last_orders/internal/lastorders/components/sourcewatch"
+	"last_orders/internal/lastorders/components/sse"
+
+	"github.com/google/uuid"
+)
+
+const (
+	entryLifetime = 6 * time.Hour
+	retryDelay    = 5 * time.Second
+	initialWait   = 5 * time.Second
+)
+
+type Service struct {
+	store       *Store
+	source      Source
+	logger      *slog.Logger
+	now         func() time.Time
+	diagnostics bool
+	hub         *sse.Hub
+	mu          sync.Mutex
+	entries     map[string]*entry
+	closed      bool
+}
+
+type entry struct {
+	id            string
+	owner         string
+	validUntil    time.Time
+	ctx           context.Context
+	cancel        context.CancelFunc
+	changed       chan struct{}
+	ready         bool
+	available     bool
+	retired       bool
+	failureLogged bool
+	watch         *sourcewatch.Watch
+}
+
+func NewService(store *Store, source Source, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	return NewServiceWithHub(store, source, nil, logger, now)
+}
+
+func NewServiceWithHub(store *Store, source Source, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	if store == nil {
+		return nil, fmt.Errorf("voting projection store is required")
+	}
+	if source == nil {
+		return nil, fmt.Errorf("vote source is required")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &Service{
+		store:       store,
+		source:      source,
+		logger:      logger,
+		now:         now,
+		diagnostics: os.Getenv("LAST_ORDERS_VOTING_PROJECTION_DIAGNOSTICS") == "true",
+		hub:         hub,
+		entries:     make(map[string]*entry),
+	}, nil
+}
+
+func (s *Service) Get(ctx context.Context, meetID string) (Snapshot, error) {
+	if meetID == "" {
+		return Snapshot{}, ErrNotFound
+	}
+	current, err := s.admit(meetID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	timer := time.NewTimer(initialWait)
+	defer timer.Stop()
+	for {
+		s.mu.Lock()
+		if current.retired {
+			s.mu.Unlock()
+			return Snapshot{}, ErrUnavailable
+		}
+		if current.ready && current.available {
+			snapshot, readErr := s.store.Get(ctx, meetID, current.owner)
+			if readErr == nil {
+				s.mu.Unlock()
+				return snapshot, nil
+			}
+			if ctx.Err() != nil {
+				s.mu.Unlock()
+				return Snapshot{}, ctx.Err()
+			}
+			current.available = false
+			watch := current.watch
+			signal(current)
+			s.mu.Unlock()
+			if watch != nil {
+				watch.Stop()
+			}
+			s.markUnavailable(current, readErr)
+			continue
+		}
+		changed := current.changed
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		case <-timer.C:
+			return Snapshot{}, ErrUnavailable
+		case <-changed:
+		}
+	}
+}
+
+func (s *Service) admit(meetID string) (*entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrUnavailable
+	}
+	if current := s.entries[meetID]; current != nil && !current.retired {
+		return current, nil
+	}
+	owner := uuid.NewString()
+	validUntil := s.now().Add(entryLifetime)
+	storeCtx, cancelStore := context.WithTimeout(context.Background(), 5*time.Second)
+	err := s.store.Admit(storeCtx, meetID, owner, validUntil)
+	cancelStore()
+	if err != nil {
+		s.logger.Warn("voting projection admission failed", "meet_id", maskedMeetID(meetID), "error_type", fmt.Sprintf("%T", err))
+		if s.diagnostics {
+			s.logger.Info("voting projection admission failure detail", "meet_id", maskedMeetID(meetID), "err", err)
+		}
+		return nil, fmt.Errorf("%w: persist voting projection admission: %v", ErrUnavailable, err)
+	}
+	watchCtx, cancel := context.WithCancel(context.Background())
+	current := &entry{
+		id:         meetID,
+		owner:      owner,
+		validUntil: validUntil,
+		ctx:        watchCtx,
+		cancel:     cancel,
+		changed:    make(chan struct{}),
+	}
+	s.entries[meetID] = current
+	if s.diagnostics {
+		s.logger.Info("voting projection admitted", "meet_id", maskedMeetID(meetID), "valid_until", validUntil)
+	}
+	go s.observe(current)
+	return current, nil
+}
+
+func (s *Service) observe(current *entry) {
+	for current.ctx.Err() == nil {
+		watchCtx, cancelWatch := context.WithCancel(current.ctx)
+		stream, err := s.source.Watch(watchCtx, current.id)
+		if err != nil {
+			cancelWatch()
+			s.markUnavailable(current, err)
+			if !waitRetry(current.ctx) {
+				return
+			}
+			continue
+		}
+		watch := sourcewatch.New(cancelWatch, stream)
+		stopStream := func() {
+			watch.Stop()
+			s.clearStream(current, watch)
+		}
+		s.setStream(current, watch)
+		document, err := stream.Next()
+		if err != nil {
+			stopStream()
+			s.markUnavailable(current, err)
+			if !waitRetry(current.ctx) {
+				return
+			}
+			continue
+		}
+		projection, err := ProjectionFromDocument(document)
+		if err == nil {
+			var snapshot Snapshot
+			snapshot, err = s.apply(current, projection, document.Version)
+			if err == nil && s.hub != nil && snapshot.Sequence > 0 {
+				s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
+			}
+		}
+		if err != nil {
+			stopStream()
+			s.markUnavailable(current, err)
+			if !waitRetry(current.ctx) {
+				return
+			}
+			continue
+		}
+		s.markAvailable(current)
+
+		for current.ctx.Err() == nil {
+			document, err = stream.Next()
+			if err != nil {
+				stopStream()
+				s.markUnavailable(current, err)
+				break
+			}
+			projection, err = ProjectionFromDocument(document)
+			if err == nil {
+				var snapshot Snapshot
+				snapshot, err = s.apply(current, projection, document.Version)
+				if err == nil && s.hub != nil && snapshot.Sequence > 0 {
+					s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
+				}
+			}
+			if err != nil {
+				stopStream()
+				s.markUnavailable(current, err)
+				break
+			}
+		}
+		stopStream()
+		if !waitRetry(current.ctx) {
+			return
+		}
+	}
+}
+
+func (s *Service) apply(current *entry, projection Projection, sourceVersion time.Time) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries[current.id] != current || current.retired {
+		return Snapshot{}, ErrRetired
+	}
+	return s.store.Apply(current.ctx, current.id, current.owner, projection, sourceVersion)
+}
+
+func (s *Service) setStream(current *entry, watch *sourcewatch.Watch) {
+	s.mu.Lock()
+	if s.entries[current.id] != current || current.retired {
+		s.mu.Unlock()
+		watch.Stop()
+		return
+	}
+	current.watch = watch
+	if s.diagnostics {
+		s.logger.Info("voting projection watch opened", "meet_id", maskedMeetID(current.id))
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) clearStream(current *entry, watch *sourcewatch.Watch) {
+	s.mu.Lock()
+	if current.watch == watch {
+		current.watch = nil
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) markAvailable(current *entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries[current.id] != current || current.retired {
+		return
+	}
+	current.ready = true
+	current.available = true
+	current.failureLogged = false
+	signal(current)
+	if s.diagnostics {
+		s.logger.Info("voting projection baseline committed", "meet_id", maskedMeetID(current.id))
+	}
+}
+
+func (s *Service) markUnavailable(current *entry, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries[current.id] != current || current.retired {
+		return
+	}
+	current.available = false
+	signal(current)
+	if !current.failureLogged {
+		s.logger.Warn("voting projection source unavailable", "meet_id", maskedMeetID(current.id), "error_type", fmt.Sprintf("%T", err))
+		current.failureLogged = true
+	}
+	if s.hub != nil {
+		s.hub.ResetView("voting:" + current.id)
+	}
+	if s.diagnostics {
+		s.logger.Info("voting projection baseline attempt failed", "meet_id", maskedMeetID(current.id), "err", err)
+	}
+}
+
+func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {
+	s.mu.Lock()
+	entries, err := s.store.Expired(ctx, now)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	watches := make([]*sourcewatch.Watch, 0, len(entries))
+	for _, expired := range entries {
+		if current := s.entries[expired.ID]; current != nil && current.owner == expired.Owner {
+			delete(s.entries, expired.ID)
+			current.retired = true
+			current.cancel()
+			if current.watch != nil {
+				watches = append(watches, current.watch)
+				current.watch = nil
+			}
+			signal(current)
+		}
+	}
+	s.mu.Unlock()
+	for _, watch := range watches {
+		watch.Stop()
+	}
+	for _, expired := range entries {
+		if err := s.store.DeleteIfOwner(ctx, expired.ID, expired.Owner); err != nil {
+			return fmt.Errorf("evict voting projection %q: %w", maskedMeetID(expired.ID), err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	watches := make([]*sourcewatch.Watch, 0, len(s.entries))
+	for id, current := range s.entries {
+		delete(s.entries, id)
+		current.retired = true
+		current.cancel()
+		if current.watch != nil {
+			watches = append(watches, current.watch)
+			current.watch = nil
+		}
+		signal(current)
+	}
+	s.mu.Unlock()
+	for _, watch := range watches {
+		watch.Stop()
+	}
+}
+
+func waitRetry(ctx context.Context) bool {
+	timer := time.NewTimer(retryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func signal(current *entry) {
+	close(current.changed)
+	current.changed = make(chan struct{})
+}
+
+func maskedMeetID(meetID string) string {
+	digest := sha256.Sum256([]byte(meetID))
+	return fmt.Sprintf("%x", digest[:4])
+}

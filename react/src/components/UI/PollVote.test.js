@@ -6,13 +6,16 @@ import PollVote from "./PollVote";
 import ActivePoll from "./ActivePoll";
 import { removeVenueFromMeet } from "../../dbtools/polls";
 
-const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
+const { showAttendanceMock, useSelectorMock, useAttendanceMock, useRoleMock, useUserPrivateDataMock, useUsersMock, useVotesMock, changeVoteMock, retryVoteMock, onSnapshotMock, updateDocMock, setGlobalAttendanceMock, runTransactionMock } = vi.hoisted(() => ({
     showAttendanceMock: vi.fn(() => <div data-testid="show-attendance" />),
     useSelectorMock: vi.fn(),
     useAttendanceMock: vi.fn(),
     useRoleMock: vi.fn(),
     useUserPrivateDataMock: vi.fn(),
     useUsersMock: vi.fn(),
+    useVotesMock: vi.fn(),
+    changeVoteMock: vi.fn(async () => true),
+    retryVoteMock: vi.fn(async () => true),
     onSnapshotMock: vi.fn(),
     updateDocMock: vi.fn(async () => undefined),
     setGlobalAttendanceMock: vi.fn(),
@@ -39,6 +42,10 @@ vi.mock("firebase/firestore", () => ({
 
 vi.mock("../../hooks/useAttendance", () => ({
     default: useAttendanceMock,
+}));
+
+vi.mock("../../hooks/useVotes", () => ({
+    default: useVotesMock,
 }));
 
 vi.mock("../../hooks/useRole", () => ({
@@ -130,9 +137,21 @@ describe("PollVote attendance display mode", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         useSelectorMock.mockReturnValue("user-1");
-        onSnapshotMock.mockImplementation((_ref, onNext) => {
-            onNext({ data: () => ({ any: [], "venue-1": [] }) });
-            return () => { };
+        useVotesMock.mockReturnValue({
+            optionsById: {
+                any: { total: 0, anonymousCount: 0, voterUids: [] },
+                "venue-1": { total: 0, anonymousCount: 0, voterUids: [] },
+            },
+            voterProfiles: {
+                "user-1": { uid: "user-1", name: "Alice" },
+                "user-2": { uid: "user-2", name: "Bob" },
+            },
+            selectedOptionIds: [],
+            pendingOptionIds: [],
+            retrySelections: {},
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "",
         });
         useAttendanceMock.mockReturnValue([
             {},
@@ -143,7 +162,7 @@ describe("PollVote attendance display mode", () => {
             vi.fn(),
             vi.fn(),
         ]);
-        useRoleMock.mockImplementation((roleName) => roleName === "canShowVoters");
+        useRoleMock.mockImplementation((roleName) => roleName === "canShowVoters" || roleName === "canVote");
         useUserPrivateDataMock.mockReturnValue(null);
         useUsersMock.mockReturnValue({
             "user-1": { uid: "user-1", name: "Alice", votesVisible: true },
@@ -167,9 +186,18 @@ describe("PollVote attendance display mode", () => {
     });
 
     it("keeps the modal trigger on compact screens", () => {
-        onSnapshotMock.mockImplementation((_ref, onNext) => {
-            onNext({ data: () => ({ any: ["user-1"], "venue-1": ["user-1"] }) });
-            return () => { };
+        useVotesMock.mockReturnValue({
+            optionsById: {
+                any: { total: 1, anonymousCount: 0, voterUids: ["user-1"] },
+                "venue-1": { total: 1, anonymousCount: 0, voterUids: ["user-1"] },
+            },
+            voterProfiles: { "user-1": { uid: "user-1", name: "Alice" } },
+            selectedOptionIds: ["any", "venue-1"],
+            pendingOptionIds: [],
+            retrySelections: {},
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "",
         });
         renderPollVote(true);
 
@@ -208,7 +236,71 @@ describe("PollVote attendance display mode", () => {
         const row = screen.getByText("Venue 1").closest("tr");
         fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
         fireEvent.click(within(row).getByRole("button", { name: "Vote Up" }));
-        await waitFor(() => expect(updateDocMock).toHaveBeenCalledWith("votes/poll-1", { "venue-1": "arrayUnion:user-1" }));
+        await waitFor(() => expect(changeVoteMock).toHaveBeenCalledWith("venue-1", true));
+    });
+
+    it("keeps the any option independently selectable", async () => {
+        renderPollVote(false);
+        const row = screen.getByText("Global").closest("tr");
+        fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
+        fireEvent.click(within(row).getByRole("button", { name: "Vote Up" }));
+
+        await waitFor(() => expect(changeVoteMock).toHaveBeenCalledWith("any", true));
+    });
+
+    it("shows a disabled pending state while a vote is being saved", () => {
+        useVotesMock.mockReturnValue({
+            optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
+            selectedOptionIds: [],
+            pendingOptionIds: ["venue-1"],
+            retrySelections: {},
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "",
+        });
+        renderPollVote(false);
+        const row = screen.getByText("Venue 1").closest("tr");
+        fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
+
+        expect(within(row).getByRole("button", { name: "Saving..." }).disabled).toBe(true);
+    });
+
+    it("lets voters withdraw a preserved vote for a removed option", async () => {
+        useVotesMock.mockReturnValue({
+            optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
+            selectedOptionIds: ["removed-venue"],
+            pendingOptionIds: [],
+            retrySelections: {},
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "",
+        });
+        renderPollVote(false);
+
+        fireEvent.click(screen.getByRole("button", { name: "Withdraw vote for removed-venue (removed)" }));
+
+        await waitFor(() => expect(changeVoteMock).toHaveBeenCalledWith("removed-venue", false));
+    });
+
+    it("keeps a removed-option withdrawal available for retry", async () => {
+        useVotesMock.mockReturnValue({
+            optionsById: { "venue-1": { total: 0, anonymousCount: 0, voterUids: [] } },
+            voterProfiles: {},
+            selectedOptionIds: [],
+            pendingOptionIds: [],
+            retrySelections: { "removed-venue": false },
+            changeVote: changeVoteMock,
+            retryVote: retryVoteMock,
+            errorMessage: "Your vote could not be confirmed.",
+        });
+        renderPollVote(false);
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry withdrawal for a removed option" }));
+
+        await waitFor(() => expect(retryVoteMock).toHaveBeenCalledWith("removed-venue"));
+        expect(screen.getByRole("status").textContent).toContain("Your vote could not be confirmed.");
     });
 
     it("removes a Meet venue when permitted", async () => {

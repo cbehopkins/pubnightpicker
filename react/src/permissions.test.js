@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
     PermissionError,
+    ADMIN_DEFAULT_PERMISSIONS,
+    CONSOLIDATED_PERMISSION_COLUMNS,
+    PERMISSIONS,
     getUserFacingErrorMessage,
     hasPermissionInRoles,
 } from "./permissions";
 
 describe("permissions helpers", () => {
+    it("exposes the backend voting permission to administrators", () => {
+        expect(PERMISSIONS.canVote).toBe("canVote");
+        expect(CONSOLIDATED_PERMISSION_COLUMNS).toContainEqual({ key: "canVote", label: "Can Vote" });
+        expect(ADMIN_DEFAULT_PERMISSIONS).toContain("canVote");
+    });
+
     it("returns false when roles or uid are missing", () => {
         expect(hasPermissionInRoles(null, "canChat", "user-1")).toBe(false);
         expect(hasPermissionInRoles({}, "canChat", "")).toBe(false);

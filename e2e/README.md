@@ -64,13 +64,15 @@ From `e2e/`, run `npm ci` to install dependencies and Chromium, then run:
 npm run test:journey
 ```
 
-The default command (also `npm test` and root `./run-tests.ps1 -E2E`) runs both
-mandatory groups sequentially:
+The default command (also `npm test` and root `./run-tests.ps1 -E2E`) runs the
+two standard groups sequentially. Real Auth deletion is an opt-in acceptance
+run and is not included in the default command:
 
 | Group | Cucumber selection | Infrastructure |
 | --- | --- | --- |
 | Frontend-only | `not @last_orders` | Fresh emulators and Vite; no backend |
 | Backend-dependent | `@last_orders` | Different fresh emulators, Vite and Last Orders |
+| Account deletion (opt-in) | `@last_orders and @account_deletion` | Fresh emulators, Vite and Last Orders with real Auth deletion enabled only for this group |
 
 Frontend-only scenarios fulfil the default Group discovery request at the
 browser boundary with a synthetic public `ampubnight` Group. This fixture is
@@ -78,10 +80,13 @@ installed for every actor context and does not intercept other API requests.
 Backend-dependent scenarios use the real Group API and the Group created by
 the emulator bootstrap; their discovery requests are never intercepted.
 
-Both groups must discover scenarios. A build, startup, scenario or cleanup
-failure fails the command rather than skipping the backend group. In the default
+Both standard groups must discover scenarios. A build, startup, scenario or cleanup
+failure fails the command rather than skipping a group. Select
+`npm run test:journey:account-deletion` to run the separate account-deletion
+acceptance journey, or `python run_gherkin_e2e.py --group all` to explicitly run
+all groups. In the default
 `group` lifecycle, Last Orders is built before services start and runs once for
-the backend-dependent group, using a temporary SQLite database. Emulator data
+each backend-dependent group, using a temporary SQLite database. Emulator data
 is not imported, exported or reset between scenarios in this shared lifecycle.
 The initial poll-history floor is UTC today; expected recurrence dates use
 Europe/London. A London midnight crossing explicitly fails the recurrence
@@ -92,6 +97,7 @@ Focused developer commands, from `e2e/`:
 ```bash
 npm run test:journey:frontend
 npm run test:journey:last-orders
+npm run test:journey:account-deletion
 npm run test:journey:last-orders -- --name "monthly Event"
 npm run test:journey:last-orders -- --lifecycle scenario --name "monthly Event"
 npm run test:harness
@@ -166,8 +172,10 @@ not inherited credentials or provider/deployment settings. An E2E Vite wrapper
 also disables developer env-file loading. The backend uses explicit loopback
 Firestore/Auth endpoints and Auth-emulator permission, a generated cursor key,
 dummy push, and dummy email verified from structured startup evidence. Admin
-deletion stays disabled and dry-run stays enabled. No backend VAPID private key
-or real-delivery configuration is supplied.
+deletion stays disabled and dry-run stays enabled outside the account-deletion
+group. The default E2E command never runs that group. The opt-in group enables
+real Auth deletion only for the isolated Auth emulator and still supplies no
+backend VAPID private key or real-delivery configuration.
 
 The runner discovers all `features/**/*.feature` files. The chat-permissions
 journey registers Alice through the UI, checks that she has no Chat Page link,

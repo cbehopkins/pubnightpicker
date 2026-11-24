@@ -12,6 +12,7 @@ import {
     where,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { requestLastOrders } from "../utils/lastOrdersApi";
 
 export const DELETED_USER_UID = "__deleted_user__";
 export const DELETED_USER_NAME = "Deleted User";
@@ -20,6 +21,7 @@ export const DELETED_USER_MESSAGE = "{user deleted}";
 /**
  * @typedef {Object} DeletionSummary
  * @property {number} votesDocsUpdated
+ * @property {boolean} votesBackendPending
  * @property {number} attendanceDocsUpdated
  * @property {number} messagesAnonymized
  * @property {number} pushEndpointsDeleted
@@ -29,7 +31,7 @@ export const DELETED_USER_MESSAGE = "{user deleted}";
 
 /**
  * @param {{
- *  votes?: { updatedDocs?: number },
+ *  votes?: { updatedDocs?: number, backendPending?: boolean },
  *  attendance?: { updatedDocs?: number },
  *  messages?: { updatedDocs?: number },
  *  pushEndpoints?: { deletedDocs?: number },
@@ -41,6 +43,7 @@ export const DELETED_USER_MESSAGE = "{user deleted}";
 export function summarizeDeletionResult(result) {
     return {
         votesDocsUpdated: Number(result?.votes?.updatedDocs || 0),
+        votesBackendPending: result?.votes?.backendPending === true,
         attendanceDocsUpdated: Number(result?.attendance?.updatedDocs || 0),
         messagesAnonymized: Number(result?.messages?.updatedDocs || 0),
         pushEndpointsDeleted: Number(result?.pushEndpoints?.deletedDocs || 0),
@@ -54,26 +57,15 @@ export function summarizeDeletionResult(result) {
  */
 export function deletionSummaryLines(summary) {
     return [
-        `Votes docs updated: ${summary.votesDocsUpdated}`,
+        summary.votesBackendPending
+            ? "Votes cleanup: queued for trusted backend"
+            : `Votes docs updated: ${summary.votesDocsUpdated}`,
         `Attendance docs updated: ${summary.attendanceDocsUpdated}`,
         `Messages anonymized: ${summary.messagesAnonymized}`,
         `Push endpoints deleted: ${summary.pushEndpointsDeleted}`,
         `Role docs updated: ${summary.roleDocsUpdated}`,
         `Profile docs deleted: ${summary.profileDocsDeleted}`,
     ];
-}
-
-/**
- * @param {Record<string, unknown>} votesDocData
- * @param {string} targetUid
- */
-function buildVotesUpdate(votesDocData, targetUid) {
-    return Object.entries(votesDocData || {}).reduce((payload, [venueId, voterIds]) => {
-        if (Array.isArray(voterIds) && voterIds.includes(targetUid)) {
-            payload[venueId] = arrayRemove(targetUid);
-        }
-        return payload;
-    }, {});
 }
 
 /**
@@ -99,25 +91,6 @@ function buildAttendanceUpdate(attendanceDocData, targetUid) {
         }
         return payload;
     }, {});
-}
-
-/**
- * @param {string} targetUid
- */
-export async function removeUserFromVotes(targetUid) {
-    const votesSnapshot = await getDocs(collection(db, "votes"));
-    let updatedDocs = 0;
-
-    for (const voteDoc of votesSnapshot.docs) {
-        const payload = buildVotesUpdate(voteDoc.data(), targetUid);
-        if (Object.keys(payload).length === 0) {
-            continue;
-        }
-        await updateDoc(voteDoc.ref, payload);
-        updatedDocs += 1;
-    }
-
-    return { updatedDocs };
 }
 
 /**
@@ -209,12 +182,19 @@ export async function removeUserFromRoles(targetUid) {
 export async function deleteUserAppData(targetUid, options = {}) {
     const removeRoles = options.removeRoles === true;
 
-    const [votes, attendance, messages, pushEndpoints] = await Promise.all([
-        removeUserFromVotes(targetUid),
+    const [votesResult, attendance, messages, pushEndpoints] = await Promise.all([
+        removeRoles
+            ? Promise.resolve({ updatedDocuments: 0, backendPending: true })
+            : requestLastOrders("api/account/votes/cleanup", { method: "POST" }),
         removeUserFromAttendance(targetUid),
         anonymizeUserMessages(targetUid),
         deleteUserPushEndpoints(targetUid),
     ]);
+
+    const votes = {
+        updatedDocs: Number(votesResult?.updatedDocuments || 0),
+        backendPending: votesResult?.backendPending === true,
+    };
 
     const roles = removeRoles ? await removeUserFromRoles(targetUid) : { updatedRoleDocs: 0 };
     const profiles = await deleteUserProfileDocs(targetUid);

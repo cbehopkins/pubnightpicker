@@ -66,23 +66,25 @@ function useAttendance(meetId, enabled = true) {
     const setAttendanceStatus = useCallback(async (venueId, userId, status) => {
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
         /** @type {Record<string, unknown>} */
-        const payload = {
-            [`${venueId}.${status}`]: arrayUnion(userId),
-            [`${venueId}.${oppositeStatus}`]: arrayRemove(userId),
+        const venueAttendance = {
+            [status]: arrayUnion(userId),
+            [oppositeStatus]: arrayRemove(userId),
         };
         // ETA only makes sense alongside canCome; clear it when switching to cannotCome
         if (status === "cannotCome") {
-            payload[`${venueId}.eta.${userId}`] = deleteField();
+            venueAttendance.eta = { [userId]: deleteField() };
         }
-        await updateAttendanceDoc(payload);
+        await updateAttendanceDoc({ [venueId]: venueAttendance });
     }, [updateAttendanceDoc]);
 
     /** @type {(venueId: string, userId: string) => Promise<void>} */
     const clearAttendance = useCallback(async (venueId, userId) => {
         await updateAttendanceDoc({
-            [`${venueId}.canCome`]: arrayRemove(userId),
-            [`${venueId}.cannotCome`]: arrayRemove(userId),
-            [`${venueId}.eta.${userId}`]: deleteField(),
+            [venueId]: {
+                canCome: arrayRemove(userId),
+                cannotCome: arrayRemove(userId),
+                eta: { [userId]: deleteField() },
+            },
         });
     }, [updateAttendanceDoc]);
 
@@ -96,8 +98,10 @@ function useAttendance(meetId, enabled = true) {
         /** @type {Record<string, unknown>} */
         const payload = {};
         for (const venueId of venueIds) {
-            payload[`${venueId}.${status}`] = arrayUnion(userId);
-            payload[`${venueId}.${oppositeStatus}`] = arrayRemove(userId);
+            payload[venueId] = {
+                [status]: arrayUnion(userId),
+                [oppositeStatus]: arrayRemove(userId),
+            };
         }
 
         await updateAttendanceDoc(payload);
@@ -108,13 +112,17 @@ function useAttendance(meetId, enabled = true) {
         const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
         /** @type {Record<string, unknown>} */
         const payload = {
-            [`${ATTENDANCE_GLOBAL_KEY}.${status}`]: arrayUnion(userId),
-            [`${ATTENDANCE_GLOBAL_KEY}.${oppositeStatus}`]: arrayRemove(userId),
+            [ATTENDANCE_GLOBAL_KEY]: {
+                [status]: arrayUnion(userId),
+                [oppositeStatus]: arrayRemove(userId),
+            },
         };
 
         for (const venueId of venueIds || []) {
-            payload[`${venueId}.${status}`] = arrayUnion(userId);
-            payload[`${venueId}.${oppositeStatus}`] = arrayRemove(userId);
+            payload[venueId] = {
+                [status]: arrayUnion(userId),
+                [oppositeStatus]: arrayRemove(userId),
+            };
         }
 
         await updateAttendanceDoc(payload);
@@ -123,14 +131,14 @@ function useAttendance(meetId, enabled = true) {
     /** @type {(venueId: string, userId: string, eta: string) => Promise<void>} */
     const setEta = useCallback(async (venueId, userId, eta) => {
         await updateAttendanceDoc({
-            [`${venueId}.eta.${userId}`]: eta,
+            [venueId]: { eta: { [userId]: eta } },
         });
     }, [updateAttendanceDoc]);
 
     /** @type {(venueId: string, userId: string) => Promise<void>} */
     const clearEta = useCallback(async (venueId, userId) => {
         await updateAttendanceDoc({
-            [`${venueId}.eta.${userId}`]: deleteField(),
+            [venueId]: { eta: { [userId]: deleteField() } },
         });
     }, [updateAttendanceDoc]);
 

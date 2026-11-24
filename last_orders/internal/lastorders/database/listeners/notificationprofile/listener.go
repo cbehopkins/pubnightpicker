@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"last_orders/internal/lastorders/components/notificationprofile"
+	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/database/listeners/projectionwatch"
 )
@@ -30,12 +32,17 @@ type Listener struct {
 	ready      chan struct{}
 	failed     chan error
 	unloaded   atomic.Int32
+	hub        *sse.Hub
 	lifecycle.Controller
 }
 
 // New constructs a new notification profile Listener.
 // see CDD 0009-notification-profile.md for design details.
 func New(service *notificationprofile.Service, store *notificationprofile.Store, logger *slog.Logger) (*Listener, error) {
+	return NewWithHub(service, store, nil, logger)
+}
+
+func NewWithHub(service *notificationprofile.Service, store *notificationprofile.Store, hub *sse.Hub, logger *slog.Logger) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("notification profile service is required")
 	}
@@ -45,7 +52,7 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1)}
+	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1), hub: hub}
 	listener.unloaded.Store(3)
 	return listener, nil
 }
@@ -184,6 +191,9 @@ func (l *Listener) applyPublicUsers(ctx context.Context, changes []notificationp
 	}
 	if err := l.store.ApplyPublicUsers(ctx, mutations, baseline); err != nil {
 		return fmt.Errorf("%w: %w", errPersistence, err)
+	}
+	if l.hub != nil && len(mutations) > 0 {
+		l.hub.PublishChangedPrefix("voting:", math.MaxInt64)
 	}
 	return nil
 }

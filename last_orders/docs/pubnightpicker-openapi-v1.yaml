@@ -1200,6 +1200,96 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
+  /meet/{meet_id}/votes:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Voting]
+      operationId: getVoteSnapshot
+      summary: Read a privacy-safe voting snapshot
+      description: Requires authentication and the existing Meet visibility permission. Voting permission is not required. Returns active candidates and `any`, with distinct totals, anonymous counts and visible voter summaries. Hidden or unavailable voter profiles count anonymously. The caller's selected option IDs also include removed candidates and are sorted by ID.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current voting snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VotingSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: The voting projection or authoritative Meet access decision is temporarily unavailable.
+  /meets/{group_id}/votes/stream:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Voting]
+      operationId: streamGroupVoteSnapshots
+      summary: Stream privacy-safe voting snapshots for listed Meets in a Group
+      description: |
+        Requires authentication and Group access. One connection follows the
+        votes of every listed Meet, so a page showing several Meets needs only
+        one long-lived connection (browsers allow six HTTP/1.1 connections per
+        origin). Each voting_snapshots event contains, for every listed Meet,
+        its `meet_id` with the VotingSnapshot fields (without a per-Meet
+        cursor), plus one opaque cursor, including on connection and reconnect.
+        Vote, candidate and public
+        profile changes to any listed Meet trigger a replacement. Clients
+        reconnect with the new list when the Meets they show change. A listed
+        Meet that is unknown or outside the Group returns 404. Authorization
+        changes may produce a view_reset event and close the stream.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: meet_id
+          in: query
+          required: true
+          description: Repeat once for each Meet to follow; between 1 and 50 distinct, non-empty IDs.
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 50
+            uniqueItems: true
+            items:
+              type: string
+              minLength: 1
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of complete voting snapshots for the listed Meets.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                id: opaque-cursor
+                event: voting_snapshots
+                data: {"cursor":"opaque-cursor","meets":[{"meet_id":"meet-id","options":[{"id":"any","total":2,"anonymous_count":1,"voters":[{"id":"user-id","name":"Display name"}]}],"selected_option_ids":[],"vote_revision":null}]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The voting projection or authoritative Meet access decision is temporarily unavailable.
   /meet/{meet_id}/votes/{venue_id}:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -1219,7 +1309,12 @@ paths:
         - bearerAuth: []
       responses:
         '204':
-          description: Vote recorded.
+          description: Vote recorded. State-changing and no-op writes against an existing document return the current Firestore document revision in `X-Vote-Revision` as UTC RFC3339Nano. Removal from an absent votes document has no revision header.
+          headers:
+            X-Vote-Revision:
+              description: UTC RFC3339Nano Firestore votes document revision. Absent for an absent-document removal no-op.
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1241,7 +1336,12 @@ paths:
         - bearerAuth: []
       responses:
         '204':
-          description: Vote removed.
+          description: Vote removed or already absent. State-changing and no-op writes against an existing document return the current Firestore document revision in `X-Vote-Revision` as UTC RFC3339Nano. Removal from an absent votes document has no revision header.
+          headers:
+            X-Vote-Revision:
+              description: UTC RFC3339Nano Firestore votes document revision. Absent for an absent-document removal no-op.
+              schema:
+                type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1576,6 +1676,47 @@ components:
               code: internal_error
               message: An unexpected error occurred.
   schemas:
+    VotingSnapshot:
+      type: object
+      required: [options, selected_option_ids]
+      properties:
+        options:
+          type: array
+          items:
+            type: object
+            required: [id, total, anonymous_count, voters]
+            properties:
+              id:
+                type: string
+              total:
+                type: integer
+                minimum: 0
+              anonymous_count:
+                type: integer
+                minimum: 0
+              voters:
+                type: array
+                description: Visible voters, ordered by user ID.
+                items:
+                  type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    photo_url:
+                      type: string
+        selected_option_ids:
+          type: array
+          items:
+            type: string
+        vote_revision:
+          type: string
+          nullable: true
+        cursor:
+          type: string
+          description: Opaque cursor included in stream events.
     ErrorResponse:
       type: object
       required: [error]

@@ -6,10 +6,10 @@ export { LastOrdersApiError, lastOrdersApiURL } from "./lastOrdersApiURL";
 
 /**
  * @param {string} path
- * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit & { allowAnonymous?: boolean }} [options]
+ * @param {import("@microsoft/fetch-event-source").FetchEventSourceInit & { allowAnonymous?: boolean, query?: ConstructorParameters<typeof URLSearchParams>[0] | null }} [options]
  * @returns {Promise<void>}
  */
-export function streamLastOrders(path, { allowAnonymous = false, ...options } = {}) {
+export function streamLastOrders(path, { allowAnonymous = false, query = null, ...options } = {}) {
     const user = auth.currentUser;
     if (!user && !allowAnonymous) {
         throw new LastOrdersApiError("signed_out", "Please sign in before contacting Last Orders.");
@@ -45,7 +45,7 @@ export function streamLastOrders(path, { allowAnonymous = false, ...options } = 
             redirect: "error",
         });
     };
-    return fetchEventSource(lastOrdersApiURL(path), {
+    return fetchEventSource(lastOrdersApiURL(path, query), {
         ...options,
         headers: { Accept: "text/event-stream", ...options.headers },
         credentials: "omit",

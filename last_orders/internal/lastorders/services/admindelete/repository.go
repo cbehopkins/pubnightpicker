@@ -134,6 +134,7 @@ func (r *FirestoreRepository) PersistOutcome(ctx context.Context, payload Outcom
 			"idempotent":          payload.Idempotent,
 			"usersDocExists":      payload.UsersDocExists,
 			"userPublicDocExists": payload.UserPublicDocExists,
+			"votesDocsUpdated":    payload.VotesDocsUpdated,
 			"at":                  payload.At.UTC(),
 		}
 		if payload.Error != "" {

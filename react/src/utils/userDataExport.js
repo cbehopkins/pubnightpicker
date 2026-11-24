@@ -32,17 +32,19 @@ async function fetchPublicVenuesById() {
     return venuesById;
 }
 
-/**
- * @param {string} userId
- * @param {Record<string, string[]>} votesData
- */
-function extractVotesForUser(userId, votesData) {
-    return Object.entries(votesData || {}).reduce((acc, [venueId, voterIds]) => {
-        if (Array.isArray(voterIds) && voterIds.includes(userId)) {
-            acc[venueId] = true;
+/** @param {string[]} pollIds */
+async function fetchCurrentUserVotes(pollIds) {
+    const entries = await Promise.all(pollIds.map(async (pollId) => {
+        const snapshot = await requestLastOrders(`api/meet/${encodeURIComponent(pollId)}/votes`, { method: "GET" });
+        if (!Array.isArray(snapshot?.selected_option_ids) || !snapshot.selected_option_ids.every((id) => typeof id === "string")) {
+            throw new Error("Last Orders returned an unexpected voting snapshot.");
         }
-        return acc;
-    }, {});
+        const selected = [...new Set(snapshot.selected_option_ids)];
+        return selected.length > 0
+            ? [pollId, Object.fromEntries(selected.map((optionId) => [optionId, true]))]
+            : null;
+    }));
+    return Object.fromEntries(entries.filter(Boolean));
 }
 
 /**
@@ -252,10 +254,9 @@ function buildLookupSection(votesByPoll, attendanceByPoll, pollsById, pubsById) 
  * @param {string} uid
  */
 export async function buildCurrentUserDataExport(uid) {
-    const [privateUserDoc, publicUserSnapshot, votesSnapshot, attendanceSnapshot, pollsSnapshot, pubsById, messagesSnapshot] = await Promise.all([
+    const [privateUserDoc, publicUserSnapshot, attendanceSnapshot, pollsSnapshot, pubsById, messagesSnapshot] = await Promise.all([
         getUserDoc(uid),
         getDoc(doc(db, "user-public", uid)),
-        getDocs(collection(db, "votes")),
         getDocs(collection(db, "attendance")),
         getDocs(collection(db, "polls")),
         fetchPublicVenuesById(),
@@ -268,13 +269,7 @@ export async function buildCurrentUserDataExport(uid) {
         acc[pollDoc.id] = pollDoc.data();
         return acc;
     }, {});
-    const votesByPoll = votesSnapshot.docs.reduce((acc, voteDoc) => {
-        const userVotes = extractVotesForUser(uid, voteDoc.data());
-        if (Object.keys(userVotes).length > 0) {
-            acc[voteDoc.id] = userVotes;
-        }
-        return acc;
-    }, {});
+    const votesByPoll = await fetchCurrentUserVotes(pollsSnapshot.docs.map((pollDoc) => pollDoc.id));
 
     const attendanceByPoll = attendanceSnapshot.docs.reduce((acc, attendanceDoc) => {
         const userAttendance = extractAttendanceForUser(uid, attendanceDoc.data());

@@ -41,6 +41,10 @@ type Meet struct {
 	PreviousVenueIDs     []string
 }
 
+type VoteResult struct {
+	UpdateTime *time.Time
+}
+
 type VenueSummary struct {
 	ID         string
 	Status     string
@@ -62,13 +66,19 @@ type RescheduleInput struct {
 
 type Service struct {
 	client *firestore.Client
+	votes  voteRepository
+}
+
+type voteRepository interface {
+	ChangeVote(context.Context, string, string, string, bool) (absentDelete bool, err error)
+	Revision(context.Context, string) (*time.Time, error)
 }
 
 func New(client *firestore.Client) (*Service, error) {
 	if client == nil {
 		return nil, fmt.Errorf("firestore client is required")
 	}
-	return &Service{client: client}, nil
+	return &Service{client: client, votes: &firestoreVoteRepository{client: client}}, nil
 }
 
 func (s *Service) Create(ctx context.Context, groupID, date, actorUID string) (Meet, error) {
@@ -496,6 +506,24 @@ func setSelectedVenue(meet *Meet, venue VenueSummary, missing bool) {
 	if !missing {
 		meet.SelectedVenue = &venue
 	}
+}
+
+func (s *Service) ChangeVote(ctx context.Context, meetID, venueID, voterUID string, add bool) (VoteResult, error) {
+	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(voterUID) == "" {
+		return VoteResult{}, ErrInvalidInput
+	}
+	absentDelete, err := s.votes.ChangeVote(ctx, meetID, venueID, voterUID, add)
+	if err != nil {
+		return VoteResult{}, err
+	}
+	if absentDelete {
+		return VoteResult{}, nil
+	}
+	revision, err := s.votes.Revision(ctx, meetID)
+	if err != nil {
+		return VoteResult{}, err
+	}
+	return VoteResult{UpdateTime: revision}, nil
 }
 
 func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID string, add bool) (Meet, error) {

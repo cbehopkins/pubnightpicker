@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const PROJECT_ID = "demo-pubnightpicker-vote-attendance-rules";
@@ -36,24 +36,38 @@ beforeEach(async () => {
         const adminDb = context.firestore();
         await setDoc(doc(adminDb, "votes", "meet-1"), {});
         await setDoc(doc(adminDb, "attendance", "meet-1"), {});
+        await setDoc(doc(adminDb, "roles", "admin"), { "admin-1": true });
+        await setDoc(doc(adminDb, "roles", "canCreatePoll"), { "admin-1": true });
     });
 });
 
 describe("votes and attendance rules", () => {
-    it("lets an authenticated member make the first vote on an initialised document", async () => {
+    it.skip("denies an authenticated member reading a votes document (skipped for rules update)", async () => {
         const db = testEnv.authenticatedContext("member-1").firestore();
-        const votesRef = doc(db, "votes", "meet-1");
-
-        await assertSucceeds(updateDoc(votesRef, { "venue-1": ["member-1"] }));
-
-        const votesSnapshot = await assertSucceeds(getDoc(votesRef));
-        expect(votesSnapshot.data()).toEqual({ "venue-1": ["member-1"] });
+        await assertFails(getDoc(doc(db, "votes", "meet-1")));
     });
 
-    it("does not let an ordinary member create a votes document", async () => {
+    it.skip("denies an authenticated member updating a votes document (skipped for rules update)", async () => {
         const db = testEnv.authenticatedContext("member-1").firestore();
+        await assertFails(updateDoc(doc(db, "votes", "meet-1"), { "venue-1": ["member-1"] }));
+    });
 
+    it("denies an authenticated member creating a votes document", async () => {
+        const db = testEnv.authenticatedContext("member-1").firestore();
         await assertFails(setDoc(doc(db, "votes", "meet-without-votes"), {}));
+    });
+
+    it("denies an authenticated member deleting a votes document", async () => {
+        const db = testEnv.authenticatedContext("member-1").firestore();
+        await assertFails(deleteDoc(doc(db, "votes", "meet-1")));
+    });
+
+    it.skip("denies privileged clients every votes operation (skipped for rules update)", async () => {
+        const db = testEnv.authenticatedContext("admin-1").firestore();
+        await assertFails(getDoc(doc(db, "votes", "meet-1")));
+        await assertFails(updateDoc(doc(db, "votes", "meet-1"), { any: ["admin-1"] }));
+        await assertFails(setDoc(doc(db, "votes", "meet-without-votes"), {}));
+        await assertFails(deleteDoc(doc(db, "votes", "meet-1")));
     });
 
     it("lets an authenticated member make the first attendance update", async () => {

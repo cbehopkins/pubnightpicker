@@ -368,7 +368,8 @@ service cloud.firestore {
     
     // Admins can read/anonymize messages for account deletion; chat permissions remain separate.
     match /messages/{messageId} {
-      allow read: if isAdmin() || canChat();
+      allow read: if isAdmin() || canChat() ||
+                    (request.auth != null && request.auth.uid == resource.data.uid);
       allow create: if canChat() && isValidNewMessage();
       allow update: if (isAdmin() && isValidAdminMessageAnonymization()) ||
                       canDeleteAnyMessage() ||

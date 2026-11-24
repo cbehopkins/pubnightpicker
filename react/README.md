@@ -155,7 +155,9 @@ midnight alone does not change that view. Meets without a `groupId` are excluded
 from both. Complete the existing-Meet migration before relying on Group-scoped
 Meet views. New Meets created by the frontend and Last Orders Event Venue
 recurrence receive the resolved Group ID in their initial Firestore write.
-Votes and attendance remain separate Firestore interfaces.
+Voting uses the authenticated Last Orders API; attendance remains a Firestore
+interface. Raw vote documents remain accessible to the browser only for account
+deletion cleanup until ticket 05 moves that workflow to the backend.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
@@ -163,12 +165,14 @@ does not authorise production migration or deployment. A gap between migration
 and writer deployment may require a separate catch-up migration, outside this
 work.
 
-Voting and attendance remain separate from Meet writes. The frontend reads
-missing `votes/{meetId}` or `attendance/{meetId}` documents as empty and reports
-snapshot/read failures. Its first writes use Firestore transactions that verify
-`polls/{meetId}` exists, then merge with `set(..., { merge: true })`; this
-initialises missing child documents without replacing concurrent updates or
-creating orphan child data after Meet deletion.
+Voting and attendance remain separate from Meet writes. Voting snapshots,
+mutations, live updates and current-user export use Last Orders. Firestore keeps
+the existing `votes/{meetId}` shape as backend-owned state. Attendance continues
+to read Firestore documents and uses transactions that verify
+`polls/{meetId}` exists before initialising missing attendance documents without
+replacing concurrent updates or creating orphan child data after Meet deletion.
+The Firestore rules lockdown for vote documents is deferred until account
+deletion cleanup moves to the backend in ticket 05.
 
 ## Firestore Index Drift Check
 
