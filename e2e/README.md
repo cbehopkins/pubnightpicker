@@ -192,22 +192,26 @@ separate browser contexts. Bob and Claire register through the UI, and the admin
 Can Add/Delete Poll Pubs, Can Create/Delete Poll and Can Chat; only Claire
 receives Can Complete/Reschedule. After Bob creates the poll through the UI,
 the admin opens Logs and verifies exactly one creation audit row for that poll,
-with its date and Bob's display name. Bob creates tomorrow's poll, filters the venue picker
-to Pub and adds two pubs. Claire sees the poll and pubs arrive live and votes
-for both; Bob sees those totals and adds his vote. Claire chooses the winning
-pub, both users see the poll disappear from Active Polls, and both find the
-meet in Current Meets. They then exchange messages in global chat and Meet Chat,
+with its date and Bob's display name. Bob adds two pubs and a restaurant to
+tomorrow's poll. Claire votes for the pubs, then makes explicit Pub and
+restaurant attendance responses while Bob changes and withdraws his independent
+Any-Venue response. Emulator reads verify that the standing response is stored
+separately and does not overwrite Venue responses. Claire completes the poll
+with the restaurant selected; Current Meets verifies Pub inheritance, explicit
+overrides, restaurant isolation and fallback after a Venue exception is
+withdrawn. The two members then exchange messages in global chat and Meet Chat,
 verify that messages remain in their intended scope, and reopen Meet Chat to
 check persistence. Meet Chat retains the persisted `scopeType: "event"` value.
-Vote totals are checked without granting Can Show Voters or
-administrator access to either member.
+Vote totals are checked without granting Can Show Voters or administrator
+access to either member.
 
-Only the venue catalogue is seeded directly: two pubs and a restaurant, using
-the Firebase Web SDK authenticated as the bootstrapped admin against the
+Only the venue catalogue is seeded directly: one foodless main pub, one
+food-serving pub and a restaurant,
+using the Firebase Web SDK authenticated as the bootstrapped admin against the
 emulators. Unique venue names and account emails keep the fixture separate
 from other scenarios. The restaurant verifies that the Pub filter excludes
-other venue types. These fixture pubs serve food, so completion needs no
-separate restaurant plan. The journey uses a poll date that cannot collide
+other venue types and provides the completion restaurant choice. Other journey
+fixtures keep their food-serving defaults. The journey uses a poll date that cannot collide
 with recurrence-generated polls, then verifies Last Orders mirrors the
 completion request before the browser completes the poll. It does not test
 email or push delivery.

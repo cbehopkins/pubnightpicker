@@ -43,4 +43,20 @@ describe("attendanceState", () => {
 
         expect(result.canCome).toEqual(["user-1"]);
     });
+
+    it("does not apply standing attendance to a restaurant", () => {
+        const result = getEffectiveAttendanceState({
+            any: {
+                canCome: ["user-1"],
+                cannotCome: [],
+            },
+            "restaurant-1": {
+                canCome: ["user-2"],
+                cannotCome: [],
+            },
+        }, "restaurant-1", "user-1", "restaurant");
+
+        expect(result.canCome).toEqual(["user-2"]);
+        expect(result.userCanCome).toBe(false);
+    });
 });

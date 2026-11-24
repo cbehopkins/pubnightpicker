@@ -397,6 +397,7 @@ function CurrentMeet({
       [currentVenueId]: {
         name: selectedVenueSummary.name,
         address: selectedVenueSummary.address,
+        venueType: selectedVenueSummary.venue_type || "pub",
         website: selectedVenueSummary.website_url || undefined,
         image: selectedVenueSummary.image_url || undefined,
       },

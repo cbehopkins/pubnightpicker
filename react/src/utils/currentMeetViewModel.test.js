@@ -130,4 +130,42 @@ describe("currentMeetViewModel", () => {
     expect(result.mainVenue.userCannotCome).toBe(false);
     expect(result.mainVenue.canCome).toEqual(["user-1"]);
   });
+
+  it("keeps standing attendance off restaurants and applies one explicit response to a shared Venue", () => {
+    const separateVenues = buildCurrentMeetViewModel({
+      currentVenueId: "pub-1",
+      restaurantId: "restaurant-1",
+      venues: {
+        "pub-1": { name: "The Maypole", venueType: "pub" },
+        "restaurant-1": { name: "Bistro 12", venueType: "restaurant" },
+      },
+      votes: {},
+      attendance: {
+        any: { canCome: ["user-1"], cannotCome: [] },
+        "restaurant-1": { canCome: ["user-2"], cannotCome: [] },
+      },
+      currUserId: "user-1",
+      showVoters: true,
+    });
+
+    expect(separateVenues.mainVenue.userCanCome).toBe(true);
+    expect(separateVenues.restaurantVenue.userCanCome).toBe(false);
+    expect(separateVenues.restaurantVenue.canCome).toEqual(["user-2"]);
+
+    const sharedVenue = buildCurrentMeetViewModel({
+      currentVenueId: "shared-venue",
+      restaurantId: "shared-venue",
+      venues: { "shared-venue": { name: "The Bistro", venueType: "restaurant" } },
+      votes: {},
+      attendance: {
+        any: { canCome: [], cannotCome: ["user-1"] },
+        "shared-venue": { canCome: ["user-1"], cannotCome: [] },
+      },
+      currUserId: "user-1",
+      showVoters: true,
+    });
+
+    expect(sharedVenue.mainVenue.userCanCome).toBe(true);
+    expect(sharedVenue.restaurantVenue.userCanCome).toBe(true);
+  });
 });

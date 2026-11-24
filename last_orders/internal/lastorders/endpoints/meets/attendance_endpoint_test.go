@@ -46,15 +46,18 @@ func TestAttendanceMutationsRequireMembershipAndUseVerifiedUID(t *testing.T) {
 	endpoint.Register(mux)
 
 	for _, test := range []struct {
-		method string
-		body   string
-		want   string
+		method  string
+		venueID string
+		body    string
+		want    string
 	}{
-		{method: http.MethodPut, body: `{"status":"attending"}`, want: "set:meet-a:venue-1:verified-user:attending"},
-		{method: http.MethodPut, body: `{"status":"not_attending"}`, want: "set:meet-a:venue-1:verified-user:not_attending"},
-		{method: http.MethodDelete, want: "clear:meet-a:venue-1:verified-user"},
+		{method: http.MethodPut, venueID: "venue-1", body: `{"status":"attending"}`, want: "set:meet-a:venue-1:verified-user:attending"},
+		{method: http.MethodPut, venueID: "venue-1", body: `{"status":"not_attending"}`, want: "set:meet-a:venue-1:verified-user:not_attending"},
+		{method: http.MethodDelete, venueID: "venue-1", want: "clear:meet-a:venue-1:verified-user"},
+		{method: http.MethodPut, venueID: "any", body: `{"status":"attending"}`, want: "set:meet-a:any:verified-user:attending"},
+		{method: http.MethodDelete, venueID: "any", want: "clear:meet-a:any:verified-user"},
 	} {
-		request := httptest.NewRequest(test.method, "/api/meet/meet-a/attendance/venue-1", strings.NewReader(test.body))
+		request := httptest.NewRequest(test.method, "/api/meet/meet-a/attendance/"+test.venueID, strings.NewReader(test.body))
 		request.Header.Set("Authorization", "Bearer valid-token")
 		response := httptest.NewRecorder()
 		mux.ServeHTTP(response, request)

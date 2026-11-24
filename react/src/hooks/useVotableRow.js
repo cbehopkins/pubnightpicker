@@ -53,9 +53,10 @@ import { getEffectiveAttendanceState } from "../utils/attendanceState";
  * @param {(venueId: string, userId: string, eta: string) => Promise<void>} setEta
  * @param {(venueId: string, userId: string) => Promise<void>} clearEta
  * @param {string} pollId
+ * @param {string} [venueType="pub"]
  * @returns {VotableRowState}
  */
-export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pendingOptionIds, retrySelections, attendance, setAttendanceStatus, clearAttendance, changeVote, retryVote, setEta, clearEta, pollId) {
+export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pendingOptionIds, retrySelections, attendance, setAttendanceStatus, clearAttendance, changeVote, retryVote, setEta, clearEta, pollId, venueType = "pub") {
   // Vote-related derived state
   const voteCount = votes[venueId]?.total || 0;
   const votedFor = selectedOptionIds.includes(venueId);
@@ -63,7 +64,7 @@ export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pen
   const retrySelection = retrySelections[venueId];
 
   // Attendance-related derived state
-  const attendanceForVenue = getEffectiveAttendanceState(attendance, venueId, currUserId);
+  const attendanceForVenue = getEffectiveAttendanceState(attendance, venueId, currUserId, venueType);
   const canCome = attendanceForVenue.canCome;
   const cannotCome = attendanceForVenue.cannotCome;
   const userCanCome = attendanceForVenue.userCanCome;
@@ -93,7 +94,7 @@ export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pen
 
   // Clear attendance handler
   const clearAttendanceHandler = useCallback(async () => {
-    if (!currUserId || venueId === "any") return;
+    if (!currUserId) return;
     await clearAttendance(venueId, currUserId);
   }, [clearAttendance, currUserId, venueId]);
 

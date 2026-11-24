@@ -116,7 +116,7 @@ vi.mock("./PollVote.module.css", () => ({
     default: new Proxy({}, { get: (_, key) => String(key) }),
 }));
 
-function renderPollVote(mobile) {
+function renderPollVote(mobile, venues = {}) {
     return render(
         <PollVote
             poll_id="poll-1"
@@ -127,6 +127,7 @@ function renderPollVote(mobile) {
                     "venue-1": { name: "Venue 1" },
                 },
             }}
+            venues={venues}
             on_complete={vi.fn()}
             mobile={mobile}
         />
@@ -210,6 +211,56 @@ describe("PollVote attendance display mode", () => {
 
         expect(screen.getByText("Venue 1")).toBeTruthy();
         expect(screen.getByText("Global")).toBeTruthy();
+    });
+
+    it("keeps Any-Venue attendance off restaurant voting rows but shows explicit responses", () => {
+        const venue = { "venue-1": { name: "Bistro 12", venueType: "restaurant" } };
+        useAttendanceMock.mockReturnValue([
+            { any: { canCome: ["user-1"], cannotCome: [] } },
+            vi.fn(), vi.fn(), vi.fn(), setGlobalAttendanceMock, vi.fn(), vi.fn(),
+        ]);
+        const { rerender } = renderPollVote(false, venue);
+        const restaurantRow = screen.getByText("Bistro 12").closest("tr");
+        expect(within(restaurantRow).queryByTitle("You said you can come")).toBeNull();
+
+        useAttendanceMock.mockReturnValue([
+            {
+                any: { canCome: ["user-1"], cannotCome: [] },
+                "venue-1": { canCome: ["user-1"], cannotCome: [] },
+            },
+            vi.fn(), vi.fn(), vi.fn(), setGlobalAttendanceMock, vi.fn(), vi.fn(),
+        ]);
+        rerender(
+            <PollVote
+                poll_id="poll-1"
+                poll_data={{ date: "2026-05-11", venues: { any: {}, "venue-1": { name: "Venue 1" } } }}
+                venues={venue}
+                on_complete={vi.fn()}
+                mobile={false}
+            />
+        );
+
+        expect(within(screen.getByText("Bistro 12").closest("tr")).getByTitle("You said you can come")).toBeTruthy();
+    });
+
+    it("lets members withdraw their standing attendance response", async () => {
+        const clearAttendanceMock = vi.fn();
+        useAttendanceMock.mockReturnValue([
+            { any: { canCome: ["user-1"], cannotCome: [] } },
+            vi.fn(),
+            clearAttendanceMock,
+            vi.fn(),
+            setGlobalAttendanceMock,
+            vi.fn(),
+            vi.fn(),
+        ]);
+        renderPollVote(false);
+
+        const globalRow = screen.getByText("Global").closest("tr");
+        fireEvent.click(within(globalRow).getByRole("button", { name: "Respond" }));
+        fireEvent.click(await within(globalRow).findByRole("button", { name: "Clear response" }));
+
+        expect(clearAttendanceMock).toHaveBeenCalledWith("any", "user-1");
     });
 
     it("renders a streamed candidate using its catalogue name", () => {
@@ -317,7 +368,7 @@ describe("PollVote attendance display mode", () => {
         renderPollVote(false);
         const row = screen.getByText("Global").closest("tr");
         fireEvent.click(within(row).getByRole("button", { name: "Respond" }));
-        fireEvent.click(within(row).getByRole("button", { name: "I'm coming (all venues)" }));
+        fireEvent.click(within(row).getByRole("button", { name: "I'm coming (any venue)" }));
         await waitFor(() => expect(setGlobalAttendanceMock).toHaveBeenCalledWith(["venue-1"], "user-1", "canCome"));
     });
 });

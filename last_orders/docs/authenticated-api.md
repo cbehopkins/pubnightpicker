@@ -94,7 +94,7 @@ poll-completion sends are created. Mailing-list sends and historical records
 without ownership are excluded. Changing an address does not change ownership
 of previous sends; setting somebody else's address cannot reveal their history.
 
-## Venue Attendance Responses
+## Venue and Any-Venue Attendance Responses
 
 Authenticated attendance snapshots and live updates use Last Orders:
 
@@ -129,16 +129,28 @@ verified token UID is the only identity used; requests cannot name another user.
 response and also returns `204`. Both are idempotent. The Meet and attendance
 document are read and changed transactionally. Status arrays remain mutually
 exclusive, and switching to `not_attending` or withdrawing also removes only
-that caller's ETA.
+that caller's ETA. The literal `any` path segment sets or withdraws an
+independent Any-Venue response in `attendance/{meet_id}.any`; it never copies
+the response into Venue entries or overwrites them. A standing response is the
+fallback for main Venue candidates only. Explicit Venue responses take
+precedence, and restaurant attendance never inherits `any`. If one Venue serves
+both roles, its single explicit Venue response is used for both.
+
+Changing or withdrawing `any` also clears, in the same transaction, ETAs that
+no longer have effective can-come attendance. ETAs for explicit Venue can-come
+responses are retained. Existing Venue entries, including legacy copies whose
+origin cannot be distinguished, are preserved and treated as explicit
+responses. Older clients may continue reading and writing the existing
+attendance document shape; those writes remain visible through the API snapshot
+and Group stream.
 
 An open Meet accepts its candidate Venues. A completed Meet accepts its selected
 Venue and restaurant. A removed Venue can be withdrawn when the caller has a
 response for it or the Meet records its removal; an unrelated Venue is rejected.
-The `any` sentinel is not a Venue for these mutation routes. During this
-intermediate migration, ETA updates, `any` responses, and existing bulk/global
-attendance actions continue to use their legacy Firestore writes. The backend
-watch keeps API and legacy writes visible through the same snapshot and stream.
-Firestore rules are unchanged.
+The literal `any` is the independent standing-response target, not a Venue.
+ETA updates and other multi-Venue bulk writes remain on their legacy Firestore
+path during this migration. The backend watch keeps API and legacy writes
+visible through the same snapshot and stream. Firestore rules are unchanged.
 
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending

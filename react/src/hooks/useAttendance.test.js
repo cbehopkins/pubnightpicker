@@ -275,7 +275,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("sets global attendance sentinel and existing pubs in one update", async () => {
+    it("sets only the standing Any-Venue response through Last Orders", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -284,14 +284,25 @@ describe("useAttendance", () => {
             await result.current[4](["pub-1", "pub-2"], "user-1", "canCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "any": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-                "pub-2": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenLastCalledWith("/api/meet/poll-1/attendance/any", {
+            method: "PUT", body: { status: "attending" }, signal: expect.any(AbortSignal),
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
+    });
+
+    it("withdraws the standing Any-Venue response through Last Orders", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("poll-1"));
+
+        await act(async () => {
+            await result.current[2]("any", "user-1");
+        });
+
+        expect(requestLastOrdersMock).toHaveBeenLastCalledWith("/api/meet/poll-1/attendance/any", {
+            method: "DELETE", signal: expect.any(AbortSignal),
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
     it("propagates API errors when the Meet has been deleted", async () => {

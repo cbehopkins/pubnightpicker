@@ -215,7 +215,7 @@ Two routes are currently available:
    - Shows the most and least often selected winning venues from completed polls.
 2. Attendance Venue Stats (`/stats/attendance`)
    - Shows the highest and lowest attendance confirmation totals by venue.
-   - Global attendance marked against `any` is counted toward each venue in that poll.
+   - Any-Venue attendance is counted toward eligible main Venue candidates, never restaurants.
 
 Both pages use the same page-level controls:
 

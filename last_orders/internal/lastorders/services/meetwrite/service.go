@@ -527,16 +527,22 @@ func (s *Service) ChangeVote(ctx context.Context, meetID, venueID, voterUID stri
 }
 
 func (s *Service) SetAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string) error {
-	if !validID(meetID) || !validID(venueID) || venueID == "any" || strings.TrimSpace(uid) == "" ||
+	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" ||
 		(attendanceStatus != "attending" && attendanceStatus != "not_attending") {
 		return ErrInvalidInput
+	}
+	if venueID == "any" {
+		return s.changeStandingAttendance(ctx, meetID, uid, attendanceStatus, false)
 	}
 	return s.changeAttendance(ctx, meetID, venueID, uid, attendanceStatus, false)
 }
 
 func (s *Service) ClearAttendance(ctx context.Context, meetID, venueID, uid string) error {
-	if !validID(meetID) || !validID(venueID) || venueID == "any" || strings.TrimSpace(uid) == "" {
+	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" {
 		return ErrInvalidInput
+	}
+	if venueID == "any" {
+		return s.changeStandingAttendance(ctx, meetID, uid, "", true)
 	}
 	return s.changeAttendance(ctx, meetID, venueID, uid, "", true)
 }
@@ -625,6 +631,130 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 			updates = append(updates, firestore.Update{
 				FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete,
 			})
+		}
+		return tx.Update(attendanceRef, updates)
+	})
+}
+
+func (s *Service) changeStandingAttendance(ctx context.Context, meetID, uid, attendanceStatus string, clear bool) error {
+	meetRef := s.client.Collection(meetCollection).Doc(meetID)
+	attendanceRef := s.client.Collection("attendance").Doc(meetID)
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		meetSnapshot, err := tx.Get(meetRef)
+		if status.Code(err) == codes.NotFound {
+			return ErrMeetNotFound
+		}
+		if err != nil {
+			return err
+		}
+		meetData := meetSnapshot.Data()
+		attendanceSnapshot, err := tx.Get(attendanceRef)
+		attendanceExists := err == nil
+		if status.Code(err) == codes.NotFound {
+			err = nil
+		}
+		if err != nil {
+			return err
+		}
+		attendanceData := map[string]any{}
+		if attendanceExists {
+			attendanceData = attendanceSnapshot.Data()
+		}
+
+		rawStandingEntry, hasStandingEntry := attendanceData["any"]
+		standingEntry, valid := attendanceMap(rawStandingEntry)
+		if hasStandingEntry && !valid {
+			return ErrInvalidState
+		}
+		if !hasStandingEntry {
+			standingEntry = make(map[string]any)
+		}
+		canCome, valid := attendanceUsers(standingEntry["canCome"])
+		if !valid {
+			return ErrInvalidState
+		}
+		cannotCome, valid := attendanceUsers(standingEntry["cannotCome"])
+		if !valid {
+			return ErrInvalidState
+		}
+		if clear {
+			canCome = removeAttendanceUser(canCome, uid)
+			cannotCome = removeAttendanceUser(cannotCome, uid)
+		} else if attendanceStatus == "attending" {
+			canCome = addAttendanceUser(canCome, uid)
+			cannotCome = removeAttendanceUser(cannotCome, uid)
+		} else {
+			cannotCome = addAttendanceUser(cannotCome, uid)
+			canCome = removeAttendanceUser(canCome, uid)
+		}
+		standingEntry["canCome"] = canCome
+		standingEntry["cannotCome"] = cannotCome
+		if _, valid := attendanceETAs(standingEntry["eta"]); !valid {
+			return ErrInvalidState
+		}
+		if !attendanceExists {
+			if clear {
+				return nil
+			}
+			return tx.Create(attendanceRef, map[string]any{"any": standingEntry})
+		}
+
+		standingCanCome := !clear && attendanceStatus == "attending"
+		candidates, _ := meetData["pubs"].(map[string]any)
+		selectedVenueID, _ := meetData["selected"].(string)
+		completed, _ := meetData["completed"].(bool)
+		updates := []firestore.Update{
+			{FieldPath: firestore.FieldPath{"any", "canCome"}, Value: canCome},
+			{FieldPath: firestore.FieldPath{"any", "cannotCome"}, Value: cannotCome},
+		}
+		for venueID, rawEntry := range attendanceData {
+			if venueID == "any" {
+				continue
+			}
+			venueEntry, ok := attendanceMap(rawEntry)
+			if !ok {
+				return ErrInvalidState
+			}
+			etas, valid := attendanceETAs(venueEntry["eta"])
+			if !valid {
+				return ErrInvalidState
+			}
+			if _, hasETA := etas[uid]; !hasETA {
+				continue
+			}
+			venueCanCome, valid := attendanceUsers(venueEntry["canCome"])
+			if !valid {
+				return ErrInvalidState
+			}
+			venueCannotCome, valid := attendanceUsers(venueEntry["cannotCome"])
+			if !valid {
+				return ErrInvalidState
+			}
+			localCanCome := slices.Contains(venueCanCome, uid)
+			localCannotCome := slices.Contains(venueCannotCome, uid)
+			keepETA := localCanCome && !localCannotCome
+			if !localCanCome && !localCannotCome && standingCanCome {
+				isMainVenue := venueID == selectedVenueID
+				if !completed {
+					_, isMainVenue = candidates[venueID]
+				}
+				if isMainVenue {
+					venueSnapshot, readErr := tx.Get(s.client.Collection("pubs").Doc(venueID))
+					if status.Code(readErr) != codes.NotFound && readErr != nil {
+						return readErr
+					}
+					venueType := "pub"
+					if readErr == nil {
+						venueType, _ = venueSnapshot.Data()["venueType"].(string)
+					}
+					keepETA = venueType != "restaurant"
+				}
+			}
+			if !keepETA {
+				updates = append(updates, firestore.Update{
+					FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete,
+				})
+			}
 		}
 		return tx.Update(attendanceRef, updates)
 	})

@@ -34,7 +34,7 @@ function dedupe(values = []) {
  * @param {string | null | undefined} currentUserId
  * @returns {EffectiveAttendanceState}
  */
-export function getEffectiveAttendanceState(attendance, venueId, currentUserId) {
+export function getEffectiveAttendanceState(attendance, venueId, currentUserId, venueType = "pub") {
     /** @type {AttendanceMap} */
     const attendanceMap = attendance || {};
     const currentUserIdOrNull = currentUserId || null;
@@ -45,7 +45,7 @@ export function getEffectiveAttendanceState(attendance, venueId, currentUserId) 
     const localCannotCome = localAttendance.cannotCome || [];
 
     // The global sentinel should only apply to non-global rows.
-    const useGlobalFallback = Boolean(venueId) && venueId !== ATTENDANCE_GLOBAL_KEY;
+    const useGlobalFallback = Boolean(venueId) && venueId !== ATTENDANCE_GLOBAL_KEY && venueType !== "restaurant";
     const globalCanCome = useGlobalFallback ? (globalAttendance.canCome || []) : [];
     const globalCannotCome = useGlobalFallback ? (globalAttendance.cannotCome || []) : [];
 

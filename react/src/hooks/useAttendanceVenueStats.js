@@ -6,6 +6,9 @@ import { db } from "../firebase";
 import { getTodaysDate, MeetData } from "../utils/meetSorting";
 import { ATTENDANCE_GLOBAL_KEY, getEffectiveAttendanceState } from "../utils/attendanceState";
 
+/** @type {Record<string, { venueType?: string }>} */
+const EMPTY_VENUE_TYPES = {};
+
 function getDateYearsAgo(yearCount) {
     const normalizedYears = Number.isFinite(yearCount) && yearCount > 0 ? yearCount : 1;
     const date = new Date();
@@ -46,9 +49,10 @@ export function getVenueIdsForMeet(meet, attendanceMap) {
 /**
  * @param {Record<string, { selectedVenueId?: string, restaurantId?: string | null, date?: string, venues?: Record<string, unknown> }>} meets
  * @param {Record<string, Record<string, unknown>>} attendanceByMeet
+ * @param {Record<string, { venueType?: string }>} venueTypesById
  * @returns {{ countsByVenueId: Record<string, number>, lastDateByVenueId: Record<string, string | null> }}
  */
-export function aggregateVenueAttendance(meets, attendanceByMeet) {
+export function aggregateVenueAttendance(meets, attendanceByMeet, venueTypesById = EMPTY_VENUE_TYPES) {
     /** @type {Record<string, number>} */
     const countsByVenueId = {};
     /** @type {Record<string, string | null>} */
@@ -58,9 +62,10 @@ export function aggregateVenueAttendance(meets, attendanceByMeet) {
         const attendanceMap = attendanceByMeet[meetId] || {};
         const venueIds = getVenueIdsForMeet(meet, attendanceMap);
         for (const venueId of venueIds) {
-            // We intentionally resolve effective attendance per venue so the global "any"
-            // attendance state contributes to each venue in the shortlist for that Meet.
-            const effectiveAttendance = getEffectiveAttendanceState(attendanceMap, venueId, null);
+            const venueType = venueId === meet.restaurantId
+                ? "restaurant"
+                : venueTypesById[venueId]?.venueType || "pub";
+            const effectiveAttendance = getEffectiveAttendanceState(attendanceMap, venueId, null, venueType);
             const canComeCount = effectiveAttendance.canCome.length;
             if (!countsByVenueId[venueId]) {
                 countsByVenueId[venueId] = 0;
@@ -78,6 +83,7 @@ export function aggregateVenueAttendance(meets, attendanceByMeet) {
 
 /**
  * @param {number} yearCount
+ * @param {Record<string, { venueType?: string }>} [venueTypesById]
  * @returns {{
  *  countsByVenueId: Record<string, number>,
  *  lastDateByVenueId: Record<string, string | null>,
@@ -87,7 +93,7 @@ export function aggregateVenueAttendance(meets, attendanceByMeet) {
  *  endDate: string,
  * }}
  */
-export default function useAttendanceVenueStats(yearCount) {
+export default function useAttendanceVenueStats(yearCount, venueTypesById = EMPTY_VENUE_TYPES) {
     const endDate = getTodaysDate();
     const startDate = useMemo(() => getDateYearsAgo(yearCount), [yearCount]);
     const statsQuery = useMemo(
@@ -141,7 +147,8 @@ export default function useAttendanceVenueStats(yearCount) {
                 const attendanceByMeet = Object.fromEntries(attendanceEntries);
                 const { countsByVenueId: counts, lastDateByVenueId: lastDates } = aggregateVenueAttendance(
                     meetsById,
-                    attendanceByMeet
+                    attendanceByMeet,
+                    venueTypesById
                 );
 
                 setCountsByVenueId(counts);
@@ -159,7 +166,7 @@ export default function useAttendanceVenueStats(yearCount) {
         );
 
         return unsubscribe;
-    }, [statsQuery]);
+    }, [statsQuery, venueTypesById]);
 
     return {
         countsByVenueId,

@@ -1479,8 +1479,8 @@ paths:
     put:
       tags: [Attendance]
       operationId: setMyVenueAttendance
-      summary: Set the caller's response for one Venue
-      description: Requires an authenticated true member of the Meet's Group. Voting permission is not required. The server uses the verified UID and does not accept a caller-supplied identity. The Venue must belong to the Meet; completed Meets accept their selected Venue and restaurant. Repeating the same status is idempotent.
+      summary: Set the caller's response for a Venue or Any-Venue
+      description: Requires an authenticated true member of the Meet's Group. Voting permission is not required. The server uses the verified UID and does not accept a caller-supplied identity. A Venue must belong to the Meet; completed Meets accept their selected Venue and restaurant. The literal any sets an independent standing response without copying or overwriting Venue entries. It is the fallback for main Venue candidates, never restaurants; explicit Venue responses take precedence. Changing any also atomically clears ETAs without effective can-come attendance while preserving ETAs for explicit can-come responses. Repeating the same status is idempotent.
       security:
         - bearerAuth: []
       requestBody:
@@ -1491,7 +1491,7 @@ paths:
               $ref: '#/components/schemas/AttendanceUpdate'
       responses:
         '204':
-          description: The caller's Venue response was committed.
+          description: The caller's response was committed.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1509,13 +1509,13 @@ paths:
     delete:
       tags: [Attendance]
       operationId: withdrawMyVenueAttendance
-      summary: Withdraw the caller's response for one Venue
-      description: Requires an authenticated true member of the Meet's Group. Repeating a withdrawal is idempotent. A response for a removed Venue may be withdrawn when the caller has a response or the Meet records its removal; unrelated Venues are not accepted.
+      summary: Withdraw the caller's Venue or Any-Venue response
+      description: Requires an authenticated true member of the Meet's Group. Repeating a withdrawal is idempotent. The literal any withdraws the independent standing response and atomically clears ETAs that no longer have effective can-come attendance, preserving ETAs for explicit Venue can-come responses. A response for a removed Venue may be withdrawn when the caller has a response or the Meet records its removal; unrelated Venues are not accepted.
       security:
         - bearerAuth: []
       responses:
         '204':
-          description: The caller's Venue response was withdrawn.
+          description: The caller's response was withdrawn.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1637,6 +1637,7 @@ components:
       name: venue_id
       in: path
       required: true
+      description: Venue ID, or the literal any for the independent Any-Venue response.
       schema:
         type: string
         minLength: 1

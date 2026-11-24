@@ -391,24 +391,13 @@ function useAttendance(meetId, enabled = true) {
 
     /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setGlobalAttendanceStatus = useCallback(async (venueIds, userId, status) => {
-        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
-        /** @type {Record<string, unknown>} */
-        const payload = {
-            [ATTENDANCE_GLOBAL_KEY]: {
-                [status]: arrayUnion(userId),
-                [oppositeStatus]: arrayRemove(userId),
-            },
-        };
-
-        for (const venueId of venueIds || []) {
-            payload[venueId] = {
-                [status]: arrayUnion(userId),
-                [oppositeStatus]: arrayRemove(userId),
-            };
-        }
-
-        await updateAttendanceDoc(payload);
-    }, [updateAttendanceDoc]);
+        void venueIds;
+        void userId;
+        await writeVenueAttendance(ATTENDANCE_GLOBAL_KEY, {
+            method: "PUT",
+            body: { status: status === "canCome" ? "attending" : "not_attending" },
+        });
+    }, [writeVenueAttendance]);
 
     /** @type {(venueId: string, userId: string, eta: string) => Promise<void>} */
     const setEta = useCallback(async (venueId, userId, eta) => {

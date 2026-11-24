@@ -49,7 +49,7 @@ describe("completed Meet statistics Firestore boundary", () => {
     expect(result.current.attendance.countsByVenueId).toEqual({
       "venue-a": 1,
       "venue-b": 1,
-      "venue-r": 1,
+      "venue-r": 0,
     });
     expect(result.current.attendance.lastDateByVenueId["venue-r"]).toBe("2026-04-04");
     expect(docMock).toHaveBeenCalledWith(expect.anything(), "attendance", "meet-1");
@@ -133,5 +133,27 @@ describe("useAttendanceVenueStats helpers", () => {
 
     expect(countsByVenueId["venue-a"]).toBe(1);
     expect(countsByVenueId["venue-b"]).toBe(2);
+  });
+
+  it("does not count standing attendance for restaurant Venues", () => {
+    const { countsByVenueId } = aggregateVenueAttendance(
+      {
+        poll1: {
+          date: "2026-05-10",
+          selectedVenueId: "venue-pub",
+          restaurantId: "venue-restaurant",
+          venues: { "venue-pub": {}, "venue-restaurant": {} },
+        },
+      },
+      {
+        poll1: {
+          any: { canCome: ["u1"], cannotCome: [] },
+        },
+      },
+      { "venue-pub": { venueType: "pub" }, "venue-restaurant": { venueType: "restaurant" } }
+    );
+
+    expect(countsByVenueId["venue-pub"]).toBe(1);
+    expect(countsByVenueId["venue-restaurant"]).toBe(0);
   });
 });

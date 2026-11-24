@@ -26,7 +26,7 @@ const EMPTY_ATTENDANCE_PROFILES = {};
 /** @typedef {{ total: number, anonymousCount: number, voterUids: string[] }} VotingOption */
 /** @typedef {Record<string, VotingOption | undefined>} VotesMap */
 /** @typedef {Record<string, { canCome?: string[], cannotCome?: string[], eta?: Record<string, string> } | undefined>} AttendanceMap */
-/** @typedef {{ name?: string }} PollVenueEntry */
+/** @typedef {{ name?: string, venueType?: string }} PollVenueEntry */
 /** @typedef {{ venues?: Record<string, PollVenueEntry | boolean>, date?: string }} PollData */
 /** @typedef {{ uid?: string, name?: string, votesVisible?: boolean }} UserEntry */
 
@@ -56,6 +56,7 @@ const EMPTY_ATTENDANCE_PROFILES = {};
  * @typedef {Object} VotableVenueProps
  * @property {string} venueId
  * @property {string} venueName
+ * @property {string} venueType
  * @property {string | null | undefined} currUserId
  * @property {VotesMap} votes
  * @property {string[]} selectedOptionIds
@@ -342,9 +343,9 @@ function RespondMenu({
                   await onSetAllCanCome();
                   setShowActions(false);
                 }}
-                title="Set can come for every venue in this poll"
+                title="Set your standing response for any main Venue"
               >
-                I'm coming (all venues)
+                I'm coming (any venue)
               </Button>
               <Button
                 type="button"
@@ -354,10 +355,24 @@ function RespondMenu({
                   await onSetAllCannotCome();
                   setShowActions(false);
                 }}
-                title="Set cannot come for every venue in this poll"
+                title="Set your standing response for any main Venue"
               >
-                I can't come (all venues)
+                I can't come (any venue)
               </Button>
+              {(userCanCome || userCannotCome) && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className={styles.cannotComeAllButton}
+                  onClick={async () => {
+                    await onClearAttendance();
+                    setShowActions(false);
+                  }}
+                  title="Withdraw your Any-Venue response"
+                >
+                  Clear response
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -370,6 +385,7 @@ function RespondMenu({
 function VotableVenue({
   venueId,
   venueName,
+  venueType,
   currUserId,
   votes,
   selectedOptionIds,
@@ -413,11 +429,11 @@ function VotableVenue({
     retryVote,
     setEta,
     clearEta,
-    pollId
+    pollId,
+    venueType
   );
 
-  // Override allowGlobalAttendanceControls to include pollVenueIds length check
-  const allowGlobalAttendanceControls = rowData.canVote && venueId === "any" && pollVenueIds.length > 0;
+  const allowGlobalAttendanceControls = rowData.canVote && venueId === "any";
   const [votedNames, canComeNames, cannotComeNames, etaNames] = showAttendanceColumns
 
     ? (() => {
@@ -732,6 +748,7 @@ function PollVote(props) {
                   key={key}
                   venueId={key}
                   venueName={venueName}
+                  venueType={props.venues?.[key]?.venueType || "pub"}
                   currUserId={currUserId}
                   votes={votes}
                   selectedOptionIds={selectedOptionIds}

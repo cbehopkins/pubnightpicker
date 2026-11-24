@@ -7,10 +7,10 @@ Feature: Members organise and chat about a meet
   Scenario: Bob and Claire organise a future meet and exchange chat messages
     Given a fresh emulator database has been bootstrapped with the journey admin
     And the following journey venues are available:
-      | name             | type       |
-      | Journey Red Lion | pub        |
-      | Journey Crown    | pub        |
-      | Journey Bistro   | restaurant |
+      | name             | type       | food  |
+      | Journey Red Lion | pub        | false |
+      | Journey Crown    | pub        | true  |
+      | Journey Bistro   | restaurant | true  |
     When Bob creates an account
     Then Bob is logged in
     When Claire creates an account
@@ -38,7 +38,14 @@ Feature: Members organise and chat about a meet
     When Bob filters the venue picker to Pub and adds:
       | venue            |
       | Journey Red Lion |
-      | Journey Crown    |
+    When Bob sets the Any-Venue response to "Can come"
+    When Bob filters the venue picker to Pub and adds:
+      | venue         |
+      | Journey Crown |
+    When Bob filters the venue picker to Restaurant and adds:
+      | venue          |
+      | Journey Bistro |
+    Then Bob sees the standing response on "Journey Crown"
     Then Claire sees the following pubs in the poll:
       | venue            |
       | Journey Red Lion |
@@ -60,7 +67,18 @@ Feature: Members organise and chat about a meet
       | Journey Red Lion | 2     |
       | Journey Crown    | 1     |
     And Claire receives Bob's public voter summary through the API
-    When Claire completes the poll by choosing "Journey Red Lion"
+    And Claire marks "Journey Red Lion" as "Cannot come" while voting
+    And Claire marks "Journey Bistro" as "Can come" while voting
+    Then the Any-Venue response is stored separately from explicit Venue responses
+    And the poll stores ETAs for Bob's standing response and Claire's restaurant response
+    When Bob changes the Any-Venue response to "Cannot come"
+    Then the Any-Venue response is stored separately from explicit Venue responses
+    And the Any-Venue change clears Bob's invalid ETA and preserves Claire's restaurant ETA
+    When Bob withdraws the Any-Venue response
+    Then the withdrawal leaves explicit Venue responses untouched
+    And withdrawing Any-Venue preserves Claire's restaurant ETA
+    When Bob sets the Any-Venue response to "Can come"
+    When Claire completes the poll by choosing "Journey Red Lion" with restaurant "Journey Bistro"
     Then Claire no longer sees the poll on Active Polls
     And Bob no longer sees the poll on Active Polls
     When Claire opens Current Meets
@@ -69,9 +87,15 @@ Feature: Members organise and chat about a meet
     Then Bob sees the meet at "Journey Red Lion"
     When admin opens Current Meets
     Then Claire's browser used the attendance API to load the live view
-    And Bob marks "Journey Red Lion" as "Can come"
-    Then the admin sees "Bob" can come to "Journey Red Lion"
+    Then Bob sees Bob can come to "Journey Red Lion"
     And Claire sees Bob can come to "Journey Red Lion"
+    And Claire sees Claire cannot come to "Journey Red Lion"
+    And Claire sees Claire can come to "Journey Bistro"
+    And Bob has no attendance response at "Journey Bistro"
+    When Bob marks "Journey Red Lion" as "Cannot come"
+    Then Claire sees Bob cannot come to "Journey Red Lion"
+    When Bob withdraws attendance for "Journey Red Lion"
+    Then Claire sees Bob can come to "Journey Red Lion"
     When Claire reconnects to Current Meets
     Then Claire sees Bob can come to "Journey Red Lion"
     When Bob adds ETA "18:30" at "Journey Red Lion"
@@ -83,8 +107,7 @@ Feature: Members organise and chat about a meet
     And Claire sees Bob cannot come to "Journey Red Lion"
     And changing Bob's response clears only Bob's ETA
     When Bob withdraws attendance for "Journey Red Lion"
-    Then the admin sees "Bob" has no attendance response for "Journey Red Lion"
-    And Claire sees Bob has no attendance response for "Journey Red Lion"
+    Then Claire sees Bob can come to "Journey Red Lion"
     And Claire still sees "Journey Red Lion" as "Can come confirmed"
     And Bob's browser used the attendance API to set and withdraw responses for "Journey Red Lion"
     When Bob opens Chat Page

@@ -400,7 +400,7 @@ Live voting updates use one stream per Group covering the Meets the client lists
 
 ## 9. Attendance
 
-### 9.1 Per-Venue status mutations
+### 9.1 Per-Venue and Any-Venue status mutations
 
 ```http
 PUT    /meet/{meet_id}/attendance/{venue_id}
@@ -423,7 +423,18 @@ caller's response. Both operations are idempotent, maintain exclusive status
 arrays, and clear the caller's ETA when withdrawing or setting
 `not_attending`. A removed Venue can be withdrawn when the caller has a response
 for it or the Meet records its removal; unrelated Venues are rejected. The
-`any` sentinel is not a Venue on this API.
+literal `any` targets an independent standing response in the existing
+attendance document. It changes no Venue response. For main Venue candidates it
+is the fallback when no explicit Venue response exists; explicit responses
+override it, and restaurants never inherit it. A single explicit response
+applies when a Venue serves both roles. Existing Venue entries, including
+indistinguishable legacy copies, remain untouched and are treated as explicit
+responses. Older clients continue to interoperate through the existing
+document shape.
+
+Changing or withdrawing the standing response atomically clears ETAs that no
+longer have effective can-come attendance, while retaining ETAs for explicit
+Venue can-come responses.
 
 ### 9.2 Authenticated snapshots and Group stream
 
@@ -441,8 +452,8 @@ replacement snapshots with opaque cursors. Reconnect returns current state;
 authorization changes reset and close the view. Meet, attendance and public
 profile changes refresh it. Private profile fields are excluded.
 
-Per-Venue status writes continue to require true Group membership, independently
-of voting permission. ETA updates, `any` responses, and existing bulk/global
+Per-Venue and Any-Venue status writes require true Group membership,
+independently of voting permission. ETA updates and other multi-Venue bulk
 attendance actions continue to use legacy Firestore writes in this intermediate
 slice; rules are not tightened here.
 

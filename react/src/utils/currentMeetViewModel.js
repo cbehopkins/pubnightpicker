@@ -9,6 +9,7 @@ import { getEffectiveAttendanceState } from "./attendanceState";
 /**
  * @typedef {Object} VenueEntry
  * @property {string=} name
+ * @property {string=} venueType
  * @property {string=} website
  * @property {string=} image
  * @property {string=} address
@@ -93,7 +94,8 @@ export function buildCurrentMeetViewModel({
         return null;
     }
 
-    const mainAttendance = getEffectiveAttendanceState(attendance, currentVenueId, currUserId);
+    const mainVenueType = currentVenue.venueType || (currentVenueId === restaurantId ? "restaurant" : "pub");
+    const mainAttendance = getEffectiveAttendanceState(attendance, currentVenueId, currUserId, mainVenueType);
     const mainVotes = getDedupedVotesForVenue(votes, currentVenueId);
     const venueWasVotedFor = currentVenueId in votes || Boolean(votes.any);
     const mainEtaMap = (attendance && attendance[currentVenueId]?.eta) || {};
@@ -116,7 +118,7 @@ export function buildCurrentMeetViewModel({
     /** @type {RestaurantVenueViewModel | null} */
     let restaurantVenue = null;
     if (restaurantSource) {
-        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurantId, currUserId);
+        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurantId, currUserId, "restaurant");
         const restaurantVotes = getDedupedVotesForVenue(votes, restaurantId);
         const restaurantEtaMap = (attendance && restaurantId && attendance[restaurantId]?.eta) || {};
         restaurantVenue = {
