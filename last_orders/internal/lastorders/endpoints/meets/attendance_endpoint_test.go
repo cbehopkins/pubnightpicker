@@ -19,6 +19,19 @@ type attendanceWriterStub struct {
 	changes []string
 }
 
+func (writer *attendanceWriterStub) PatchAttendance(_ context.Context, meetID, venueID, uid, status string, etaPresent bool, eta *string) error {
+	etaText := ""
+	if etaPresent {
+		if eta == nil {
+			etaText = "clear"
+		} else {
+			etaText = *eta
+		}
+	}
+	writer.changes = append(writer.changes, strings.Join([]string{"patch", meetID, venueID, uid, status, etaText}, ":"))
+	return nil
+}
+
 func (writer *attendanceWriterStub) GroupID(context.Context, string) (string, error) {
 	return writer.groupID, nil
 }
@@ -66,6 +79,39 @@ func TestAttendanceMutationsRequireMembershipAndUseVerifiedUID(t *testing.T) {
 		}
 		if got := writer.changes[len(writer.changes)-1]; got != test.want {
 			t.Fatalf("%s mutation=%q, want %q", test.method, got, test.want)
+		}
+	}
+}
+
+func TestAttendancePatchSupportsOmittedStatusAndClearETA(t *testing.T) {
+	writer := &attendanceWriterStub{groupID: "private-group"}
+	endpoint := &Endpoint{
+		Auth: pastMeetAuthStub{},
+		Members: attendanceMemberAuthorizerStub(func(_ context.Context, uid, groupID string) (bool, error) {
+			return uid == "verified-user" && groupID == "private-group", nil
+		}),
+		Attendance: writer,
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	for _, test := range []struct {
+		body string
+		want string
+	}{
+		{body: `{"eta":"19:45"}`, want: "patch:meet-a:venue-1:verified-user::19:45"},
+		{body: `{"eta":null}`, want: "patch:meet-a:venue-1:verified-user::clear"},
+		{body: `{"status":"not_attending","eta":"19:45"}`, want: "patch:meet-a:venue-1:verified-user:not_attending:19:45"},
+	} {
+		request := httptest.NewRequest(http.MethodPatch, "/api/meet/meet-a/attendance/venue-1", strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer valid-token")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("PATCH status=%d body=%s, want HTTP 204", response.Code, response.Body)
+		}
+		if got := writer.changes[len(writer.changes)-1]; got != test.want {
+			t.Fatalf("PATCH mutation=%q, want %q", got, test.want)
 		}
 	}
 }

@@ -245,7 +245,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("sets attendance for multiple pubs in one update", async () => {
+    it("sets attendance for multiple pubs through separate API calls", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -254,13 +254,13 @@ describe("useAttendance", () => {
             await result.current[3](["pub-1", "pub-2"], "user-1", "canCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-                "pub-2": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "attending" }, signal: expect.any(AbortSignal),
+        });
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-2", {
+            method: "PUT", body: { status: "attending" }, signal: expect.any(AbortSignal),
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
     it("does not update when bulk helper receives no pubs", async () => {
@@ -469,7 +469,7 @@ describe("useAttendance", () => {
         expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("setEta writes the HH:MM string to the eta sub-map", async () => {
+    it("setEta writes the HH:MM string through the attendance API", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -478,13 +478,13 @@ describe("useAttendance", () => {
             await result.current[5]("pub-1", "user-1", "18:30");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            { "pub-1": { eta: { "user-1": "18:30" } } },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PATCH", body: { eta: "18:30" }, signal: expect.any(AbortSignal),
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("clearEta deletes the eta key for the user", async () => {
+    it("clearEta removes the ETA through the attendance API", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -493,9 +493,9 @@ describe("useAttendance", () => {
             await result.current[6]("pub-1", "user-1");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            { "pub-1": { eta: { "user-1": "deleteField" } } },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PATCH", body: { eta: null }, signal: expect.any(AbortSignal),
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 });

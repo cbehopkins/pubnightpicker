@@ -1476,6 +1476,36 @@ paths:
     parameters:
       - $ref: '#/components/parameters/MeetId'
       - $ref: '#/components/parameters/VenueId'
+    patch:
+      tags: [Attendance]
+      operationId: patchMyVenueAttendance
+      summary: Partially change the caller's response or ETA
+      description: Requires an authenticated true member of the Meet's Group. Status and ETA are optional and independent. An omitted ETA preserves it; null clears it. Setting a Venue ETA makes the caller able to come if necessary. Setting ETA on any is rejected. Repeating the same patch is idempotent.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendancePatch'
+      responses:
+        '204':
+          description: The caller's response or ETA was committed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Attendance or Group membership verification is unavailable.
+        '500':
+          $ref: '#/components/responses/InternalError'
     put:
       tags: [Attendance]
       operationId: setMyVenueAttendance
@@ -2312,6 +2342,16 @@ components:
     AttendanceStatus:
       type: string
       enum: [attending, not_attending]
+    AttendancePatch:
+      type: object
+      minProperties: 1
+      properties:
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        eta:
+          type: [string, 'null']
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      additionalProperties: false
     AttendanceUpdate:
       type: object
       required: [status]

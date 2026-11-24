@@ -1,9 +1,7 @@
 // @ts-check
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSelector } from "react-redux";
-import { arrayRemove, arrayUnion, deleteField, doc, runTransaction } from "firebase/firestore";
-import { db } from "../firebase";
 import { LastOrdersApiError, requestLastOrders, streamLastOrders } from "../utils/lastOrdersApi";
 import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
@@ -229,7 +227,6 @@ function useAttendance(meetId, enabled = true) {
     const [attendanceProfiles, setAttendanceProfiles] = useState(/** @type {AttendanceProfiles} */({}));
     const [isLoading, setIsLoading] = useState(Boolean(enabled));
     const [errorMessage, setErrorMessage] = useState("");
-    const docRef = useMemo(() => doc(db, "attendance", meetId), [meetId]);
     const streamSequenceRef = useRef(0);
     const refreshSnapshotRef = useRef(/** @type {(() => Promise<void>) | null} */(null));
 
@@ -246,18 +243,6 @@ function useAttendance(meetId, enabled = true) {
         setIsLoading(false);
         return true;
     }, [meetId]);
-
-    /** @type {(payload: Record<string, unknown>) => Promise<void>} */
-    const updateAttendanceDoc = useCallback(async (payload) => {
-        await runTransaction(db, async (transaction) => {
-            const meetRef = doc(db, "polls", meetId);
-            const meetSnapshot = await transaction.get(meetRef);
-            if (!meetSnapshot.exists()) {
-                throw new Error("This Meet no longer exists.");
-            }
-            transaction.set(docRef, payload, { merge: true });
-        });
-    }, [docRef, meetId]);
 
     useEffect(() => {
         if (!enabled) {
@@ -376,18 +361,11 @@ function useAttendance(meetId, enabled = true) {
             return;
         }
 
-        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
-        /** @type {Record<string, unknown>} */
-        const payload = {};
-        for (const venueId of venueIds) {
-            payload[venueId] = {
-                [status]: arrayUnion(userId),
-                [oppositeStatus]: arrayRemove(userId),
-            };
-        }
-
-        await updateAttendanceDoc(payload);
-    }, [updateAttendanceDoc]);
+        await Promise.all(venueIds.map((venueId) => writeVenueAttendance(venueId, {
+            method: "PUT",
+            body: { status: status === "canCome" ? "attending" : "not_attending" },
+        })));
+    }, [writeVenueAttendance]);
 
     /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setGlobalAttendanceStatus = useCallback(async (venueIds, userId, status) => {
@@ -400,18 +378,22 @@ function useAttendance(meetId, enabled = true) {
     }, [writeVenueAttendance]);
 
     /** @type {(venueId: string, userId: string, eta: string) => Promise<void>} */
-    const setEta = useCallback(async (venueId, userId, eta) => {
-        await updateAttendanceDoc({
-            [venueId]: { eta: { [userId]: eta } },
+    const setEta = useCallback(async (venueId, _userId, eta) => {
+        void _userId;
+        await writeVenueAttendance(venueId, {
+            method: "PATCH",
+            body: { eta },
         });
-    }, [updateAttendanceDoc]);
+    }, [writeVenueAttendance]);
 
     /** @type {(venueId: string, userId: string) => Promise<void>} */
-    const clearEta = useCallback(async (venueId, userId) => {
-        await updateAttendanceDoc({
-            [venueId]: { eta: { [userId]: deleteField() } },
+    const clearEta = useCallback(async (venueId, _userId) => {
+        void _userId;
+        await writeVenueAttendance(venueId, {
+            method: "PATCH",
+            body: { eta: null },
         });
-    }, [updateAttendanceDoc]);
+    }, [writeVenueAttendance]);
 
     return [
         attendance,

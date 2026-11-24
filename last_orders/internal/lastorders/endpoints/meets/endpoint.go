@@ -84,6 +84,7 @@ type MeetWriter interface {
 type AttendanceWriter interface {
 	GroupID(context.Context, string) (string, error)
 	SetAttendance(context.Context, string, string, string, string) error
+	PatchAttendance(context.Context, string, string, string, string, bool, *string) error
 	ClearAttendance(context.Context, string, string, string) error
 }
 
@@ -232,6 +233,7 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.addVote)))
 	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
 	mux.Handle("PUT /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.setAttendance)))
+	mux.Handle("PATCH /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.patchAttendance)))
 	mux.Handle("DELETE /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.clearAttendance)))
 	mux.Handle("GET /api/meet/{meet_id}/attendance", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.attendance)))
 	mux.Handle("GET /api/meets/{group_id}/attendance/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.groupAttendanceStream)))
@@ -247,6 +249,52 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 
 type attendanceUpdateRequest struct {
 	Status string `json:"status"`
+}
+
+func (e *Endpoint) patchAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	if err := decoder.Decode(&fields); err != nil || fields == nil || len(fields) == 0 || len(fields) > 2 {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	statusPresent, statusPointer, validStatus := decodeOptionalString(fields, "status")
+	etaPresent, etaPointer, validETA := decodeOptionalString(fields, "eta")
+	if len(fields) == 2 && (!statusPresent || !etaPresent) {
+		validStatus = false
+	}
+	if len(fields) == 1 && !statusPresent && !etaPresent {
+		validStatus = false
+	}
+	if !validStatus || (statusPresent && statusPointer != nil && *statusPointer != "attending" && *statusPointer != "not_attending") || !validETA {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	status := ""
+	if statusPresent {
+		if statusPointer == nil {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+			return
+		}
+		status = *statusPointer
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.PatchAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context()), status, etaPresent, etaPointer); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (e *Endpoint) setAttendance(w http.ResponseWriter, r *http.Request) {

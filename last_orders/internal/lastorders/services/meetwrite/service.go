@@ -526,6 +526,22 @@ func (s *Service) ChangeVote(ctx context.Context, meetID, venueID, voterUID stri
 	return VoteResult{UpdateTime: revision}, nil
 }
 
+func (s *Service) PatchAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string, etaPresent bool, eta *string) error {
+	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" {
+		return ErrInvalidInput
+	}
+	if venueID == "any" {
+		if etaPresent {
+			return ErrInvalidInput
+		}
+		if attendanceStatus == "" {
+			return ErrInvalidInput
+		}
+		return s.changeStandingAttendance(ctx, meetID, uid, attendanceStatus, false)
+	}
+	return s.changeAttendance(ctx, meetID, venueID, uid, attendanceStatus, false, etaPresent, eta)
+}
+
 func (s *Service) SetAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string) error {
 	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" ||
 		(attendanceStatus != "attending" && attendanceStatus != "not_attending") {
@@ -534,7 +550,7 @@ func (s *Service) SetAttendance(ctx context.Context, meetID, venueID, uid, atten
 	if venueID == "any" {
 		return s.changeStandingAttendance(ctx, meetID, uid, attendanceStatus, false)
 	}
-	return s.changeAttendance(ctx, meetID, venueID, uid, attendanceStatus, false)
+	return s.changeAttendance(ctx, meetID, venueID, uid, attendanceStatus, false, false, nil)
 }
 
 func (s *Service) ClearAttendance(ctx context.Context, meetID, venueID, uid string) error {
@@ -544,10 +560,10 @@ func (s *Service) ClearAttendance(ctx context.Context, meetID, venueID, uid stri
 	if venueID == "any" {
 		return s.changeStandingAttendance(ctx, meetID, uid, "", true)
 	}
-	return s.changeAttendance(ctx, meetID, venueID, uid, "", true)
+	return s.changeAttendance(ctx, meetID, venueID, uid, "", true, false, nil)
 }
 
-func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string, clear bool) error {
+func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string, clear bool, etaPresent bool, eta *string) error {
 	meetRef := s.client.Collection(meetCollection).Doc(meetID)
 	attendanceRef := s.client.Collection("attendance").Doc(meetID)
 	// FIXME there' a lot of work going on in this travnsaction - consider other approaches
@@ -614,8 +630,20 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 		}
 		venueData["canCome"] = canCome
 		venueData["cannotCome"] = cannotCome
-		if _, valid := attendanceETAs(venueData["eta"]); !valid {
+		etas, valid := attendanceETAs(venueData["eta"])
+		if !valid {
 			return ErrInvalidState
+		}
+		if etaPresent {
+			if eta == nil {
+				delete(etas, uid)
+			} else {
+				if !validAttendanceETA(*eta) {
+					return ErrInvalidInput
+				}
+				etas[uid] = *eta
+			}
+			venueData["eta"] = etas
 		}
 		if clear && !attendanceExists {
 			return nil
@@ -631,6 +659,13 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 			updates = append(updates, firestore.Update{
 				FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete,
 			})
+		}
+		if etaPresent && attendanceStatus != "not_attending" && !clear {
+			if eta == nil {
+				updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete})
+			} else {
+				updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: *eta})
+			}
 		}
 		return tx.Update(attendanceRef, updates)
 	})
@@ -758,6 +793,29 @@ func (s *Service) changeStandingAttendance(ctx context.Context, meetID, uid, att
 		}
 		return tx.Update(attendanceRef, updates)
 	})
+}
+
+func validAttendanceETA(eta string) bool {
+	if len(eta) != 5 || eta[2] != ':' {
+		return false
+	}
+	for index, char := range []byte(eta) {
+		if index == 2 {
+			continue
+		}
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	var hour int
+	var minute int
+	if _, err := fmt.Sscanf(eta[:2], "%d", &hour); err != nil || hour > 23 {
+		return false
+	}
+	if _, err := fmt.Sscanf(eta[3:], "%d", &minute); err != nil || minute > 59 {
+		return false
+	}
+	return true
 }
 
 func attendanceVenueAllowed(meet map[string]any, venueID string) bool {

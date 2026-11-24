@@ -296,6 +296,42 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	if !valid || etas["caller"] != nil || etas["other-member"] != "19:00" {
 		t.Fatalf("ETAs=%v, want caller cleared and other-member preserved", venue["eta"])
 	}
+	if err := service.PatchAttendance(ctx, meetRef.ID, venueID, "caller", "", true, ptrString("20:15")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = attendanceRef.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venue = snapshot.Data()[venueID].(map[string]any)
+	etas, valid = attendanceETAs(venue["eta"])
+	if !valid || etas["caller"] != nil {
+		t.Fatalf("ETA-only patch after cannot-come=%v, want caller ETA cleared", venue["eta"])
+	}
+	if err := service.PatchAttendance(ctx, meetRef.ID, venueID, "caller", "attending", true, ptrString("20:15")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = attendanceRef.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venue = snapshot.Data()[venueID].(map[string]any)
+	etas, valid = attendanceETAs(venue["eta"])
+	if !valid || etas["caller"] != "20:15" {
+		t.Fatalf("combined attending ETA=%v, want 20:15", venue["eta"])
+	}
+	if err := service.PatchAttendance(ctx, meetRef.ID, venueID, "caller", "not_attending", true, ptrString("21:15")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = attendanceRef.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venue = snapshot.Data()[venueID].(map[string]any)
+	etas, valid = attendanceETAs(venue["eta"])
+	if !valid || etas["caller"] != nil {
+		t.Fatalf("cannot-come combined ETA=%v, want caller ETA cleared", venue["eta"])
+	}
 	if venue["legacyField"] != "preserve" {
 		t.Fatalf("legacy field=%v, want preserved", venue["legacyField"])
 	}
@@ -330,6 +366,10 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	if err := service.SetAttendance(ctx, "missing-meet", venueID, "caller", "attending"); !errors.Is(err, ErrMeetNotFound) {
 		t.Fatalf("missing Meet set error=%v, want ErrMeetNotFound", err)
 	}
+}
+
+func ptrString(value string) *string {
+	return &value
 }
 
 func TestAttendanceMutationsRejectInvalidInputs(t *testing.T) {
