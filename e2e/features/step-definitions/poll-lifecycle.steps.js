@@ -31,6 +31,7 @@ async function captureVoteApi(page) {
         window.__attendanceApiRequests = [];
         window.__attendanceApiReadRequests = [];
         window.__attendanceApiResponses = "";
+        window.__attendanceStatisticsApiRequests = [];
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
             const url = input instanceof Request ? input.url : String(input);
@@ -49,6 +50,9 @@ async function captureVoteApi(page) {
                         }
                     })().catch(() => undefined);
                 }
+            }
+            if (/\/api\/attendance\/statistics(?:\?.*)?$/.test(url)) {
+                window.__attendanceStatisticsApiRequests.push({ url, method, status: response.status });
             }
             if (/\/api\/meet\/[^/]+\/attendance\/[^/?]+(?:\?.*)?$/.test(url)) {
                 window.__attendanceApiRequests.push({ url, method, body: init.body, status: response.status });
@@ -598,6 +602,25 @@ Then("{word} no longer sees the poll on Active Polls", async function (name) {
     const page = this.actors.get(name);
     assert.equal(page.url(), `${BASE_URL}/active_polls`);
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor({ state: "hidden" });
+});
+
+When("admin opens attendance statistics", async function () {
+    const page = this.actors.get("admin");
+    await captureVoteApi(page);
+    await page.goto(`${BASE_URL}/stats/attendance?limit=5&years=2`);
+    await page.getByRole("heading", { name: "Attendance Venue Stats", exact: true }).waitFor();
+});
+
+Then("admin sees the attendance statistics through the API", async function () {
+    const page = this.actors.get("admin");
+    await page.waitForFunction(() => (window.__attendanceStatisticsApiRequests ?? []).some(({ method, status }) => method === "GET" && status === 200));
+    const traffic = await page.evaluate(() => window.__attendanceStatisticsApiRequests ?? []);
+    assert.ok(traffic.some(({ url }) => {
+        const parsed = new URL(url);
+        return parsed.pathname === "/api/attendance/statistics"
+            && parsed.searchParams.has("start")
+            && parsed.searchParams.has("end");
+    }), `attendance statistics API traffic: ${JSON.stringify(traffic)}`);
 });
 
 When("{word} opens Current Meets", async function (name) {

@@ -20,6 +20,7 @@ import (
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/apicors"
 	"last_orders/internal/lastorders/components/attendancecache"
+	"last_orders/internal/lastorders/components/attendancestats"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
@@ -1374,6 +1375,13 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 			return err
 		}
 	}
+	var attendanceStatisticsService *attendancestats.Service
+	if application.firestoreClient != nil {
+		attendanceStatisticsService, err = attendancestats.NewService(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+	}
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
@@ -1384,7 +1392,8 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
 		AttendanceHub: application.venueStreamHub, AttendanceReady: application.venueCacheListener.Ready(),
-		VotingHub: application.votingStreamHub, VotingReady: application.votingStreamReady,
+		Statistics: attendanceStatisticsService,
+		VotingHub:  application.votingStreamHub, VotingReady: application.votingStreamReady,
 		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)

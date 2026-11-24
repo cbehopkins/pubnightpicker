@@ -148,6 +148,22 @@ An open Meet accepts its candidate Venues. A completed Meet accepts its selected
 Venue and restaurant. A removed Venue can be withdrawn when the caller has a
 response for it or the Meet records its removal; an unrelated Venue is rejected.
 The literal `any` is the independent standing-response target, not a Venue.
+
+## Attendance Statistics
+
+```http
+GET /api/attendance/statistics?start=YYYY-MM-DD&end=YYYY-MM-DD
+```
+
+The historical report requires a Firebase ID token and the global `admin` role.
+`start` and `end` are inclusive, validated ISO dates, and `start` must not be
+after `end`. The response is a JSON aggregate of completed Meets across every
+Group, with `counts_by_venue_id` and `last_date_by_venue_id`. A Venue is included
+for its candidate, historical, selected or restaurant references. Main Venues
+use effective can-come responses: explicit Venue exceptions override the
+separate `any` standing response. Restaurants use only explicit responses and
+never inherit `any`. Source or aggregation failures return `503`; they are never
+returned as zero attendance.
 ETA updates and other multi-Venue bulk writes remain on their legacy Firestore
 path during this migration. The backend watch keeps API and legacy writes
 visible through the same snapshot and stream. Firestore rules are unchanged.

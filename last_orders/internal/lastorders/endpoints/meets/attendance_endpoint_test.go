@@ -156,3 +156,48 @@ func TestAttendanceSnapshotUnavailableIsNotAnEmptySnapshot(t *testing.T) {
 		t.Fatalf("unavailable attendance was represented as empty: %s", response.Body)
 	}
 }
+
+type attendanceStatisticsReaderStub struct {
+	result attendanceStatisticsResult
+	err    error
+}
+
+func (r *attendanceStatisticsReaderStub) Read(context.Context, string, string) (attendanceStatisticsResult, error) {
+	return r.result, r.err
+}
+
+func TestAttendanceStatisticsRequireAdministrator(t *testing.T) {
+	reader := &attendanceStatisticsReaderStub{result: attendanceStatisticsResult{
+		Counts:    map[string]int{"venue-a": 3},
+		LastDates: map[string]string{"venue-a": "2026-04-04"},
+	}}
+	endpoint := &Endpoint{
+		Auth:       pastMeetAuthStub{},
+		Statistics: reader,
+		WriteAccess: writeAuthorizerStub(func(_ context.Context, uid, permission string) (bool, error) {
+			return uid == "verified-user" && permission == "admin", nil
+		}),
+	}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	adminRequest := httptest.NewRequest(http.MethodGet, "/api/attendance/statistics?start=2025-11-24&end=2026-11-24", nil)
+	adminRequest.Header.Set("Authorization", "Bearer valid-token")
+	adminResponse := httptest.NewRecorder()
+	mux.ServeHTTP(adminResponse, adminRequest)
+	if adminResponse.Code != http.StatusOK {
+		t.Fatalf("administrator statistics status=%d body=%s, want HTTP 200", adminResponse.Code, adminResponse.Body)
+	}
+	if !strings.Contains(adminResponse.Body.String(), `"venue-a":3`) {
+		t.Fatalf("administrator statistics did not contain aggregate: %s", adminResponse.Body)
+	}
+
+	endpoint.WriteAccess = writeAuthorizerStub(func(context.Context, string, string) (bool, error) { return false, nil })
+	deniedRequest := httptest.NewRequest(http.MethodGet, "/api/attendance/statistics?start=2025-11-24&end=2026-11-24", nil)
+	deniedRequest.Header.Set("Authorization", "Bearer valid-token")
+	deniedResponse := httptest.NewRecorder()
+	mux.ServeHTTP(deniedResponse, deniedRequest)
+	if deniedResponse.Code != http.StatusForbidden {
+		t.Fatalf("non-administrator statistics status=%d body=%s, want HTTP 403", deniedResponse.Code, deniedResponse.Body)
+	}
+}

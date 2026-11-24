@@ -81,6 +81,8 @@ Feature: Members organise and chat about a meet
     When Claire completes the poll by choosing "Journey Red Lion" with restaurant "Journey Bistro"
     Then Claire no longer sees the poll on Active Polls
     And Bob no longer sees the poll on Active Polls
+    When admin opens attendance statistics
+    Then admin sees the attendance statistics through the API
     When Claire opens Current Meets
     Then Claire sees the meet at "Journey Red Lion"
     When Bob opens Current Meets

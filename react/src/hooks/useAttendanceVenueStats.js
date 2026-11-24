@@ -1,10 +1,9 @@
 // @ts-check
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
-import { db } from "../firebase";
-import { getTodaysDate, MeetData } from "../utils/meetSorting";
+import { getTodaysDate } from "../utils/meetSorting";
 import { ATTENDANCE_GLOBAL_KEY, getEffectiveAttendanceState } from "../utils/attendanceState";
+import { requestLastOrders } from "../utils/lastOrdersApi";
 
 /** @type {Record<string, { venueType?: string }>} */
 const EMPTY_VENUE_TYPES = {};
@@ -93,19 +92,9 @@ export function aggregateVenueAttendance(meets, attendanceByMeet, venueTypesById
  *  endDate: string,
  * }}
  */
-export default function useAttendanceVenueStats(yearCount, venueTypesById = EMPTY_VENUE_TYPES) {
+export default function useAttendanceVenueStats(yearCount) {
     const endDate = getTodaysDate();
     const startDate = useMemo(() => getDateYearsAgo(yearCount), [yearCount]);
-    const statsQuery = useMemo(
-        () => query(
-            collection(db, "polls"),
-            where("completed", "==", true),
-            where("date", ">=", startDate),
-            where("date", "<=", endDate),
-            orderBy("date", "desc")
-        ),
-        [endDate, startDate]
-    );
 
     const [countsByVenueId, setCountsByVenueId] = useState({});
     const [lastDateByVenueId, setLastDateByVenueId] = useState({});
@@ -113,60 +102,39 @@ export default function useAttendanceVenueStats(yearCount, venueTypesById = EMPT
     const [errorMessage, setErrorMessage] = useState(null);
 
     useEffect(() => {
+        const controller = new AbortController();
         setIsLoading(true);
         setCountsByVenueId({});
         setLastDateByVenueId({});
         setErrorMessage(null);
 
-        const unsubscribe = onSnapshot(
-            statsQuery,
-            async (snapshot) => {
-                /** @type {Record<string, { selected?: string, restaurant?: string | null, date?: string, pubs?: Record<string, unknown> }>} */
-                const meetRecordsById = {};
-                snapshot.forEach((docSnapshot) => {
-                    meetRecordsById[docSnapshot.id] = docSnapshot.data();
-                });
-
-                const meetsById = new MeetData(meetRecordsById).meets;
-                const meetIds = Object.keys(meetsById);
-                if (meetIds.length === 0) {
-                    setCountsByVenueId({});
-                    setLastDateByVenueId({});
-                    setErrorMessage(null);
-                    setIsLoading(false);
-                    return;
-                }
-
-                const attendanceEntries = await Promise.all(
-                    meetIds.map(async (meetId) => {
-                        const attendanceSnapshot = await getDoc(doc(db, "attendance", meetId));
-                        return [meetId, /** @type {Record<string, unknown>} */ (attendanceSnapshot.data() || {})];
-                    })
-                );
-
-                const attendanceByMeet = Object.fromEntries(attendanceEntries);
-                const { countsByVenueId: counts, lastDateByVenueId: lastDates } = aggregateVenueAttendance(
-                    meetsById,
-                    attendanceByMeet,
-                    venueTypesById
-                );
-
-                setCountsByVenueId(counts);
-                setLastDateByVenueId(lastDates);
-                setErrorMessage(null);
-                setIsLoading(false);
-            },
-            (error) => {
-                console.error("Error loading attendance venue stats", error);
-                setCountsByVenueId({});
-                setLastDateByVenueId({});
-                setErrorMessage("Unable to load attendance stats right now.");
-                setIsLoading(false);
+        requestLastOrders("api/attendance/statistics", {
+            method: "GET",
+            query: { start: startDate, end: endDate },
+            signal: controller.signal,
+        }).then((value) => {
+            if (controller.signal.aborted) return;
+            const payload = /** @type {{ counts_by_venue_id?: unknown, last_date_by_venue_id?: unknown }} */ (value);
+            if (!payload || typeof payload !== "object"
+                || !payload.counts_by_venue_id || typeof payload.counts_by_venue_id !== "object"
+                || !payload.last_date_by_venue_id || typeof payload.last_date_by_venue_id !== "object") {
+                throw new Error("Invalid attendance statistics response.");
             }
-        );
+            setCountsByVenueId(/** @type {Record<string, number>} */ (payload.counts_by_venue_id));
+            setLastDateByVenueId(/** @type {Record<string, string | null>} */ (payload.last_date_by_venue_id));
+            setErrorMessage(null);
+            setIsLoading(false);
+        }).catch((error) => {
+            if (controller.signal.aborted) return;
+            console.error("Error loading attendance venue stats", error);
+            setCountsByVenueId({});
+            setLastDateByVenueId({});
+            setErrorMessage("Unable to load attendance stats right now.");
+            setIsLoading(false);
+        });
 
-        return unsubscribe;
-    }, [statsQuery, venueTypesById]);
+        return () => controller.abort();
+    }, [startDate, endDate]);
 
     return {
         countsByVenueId,

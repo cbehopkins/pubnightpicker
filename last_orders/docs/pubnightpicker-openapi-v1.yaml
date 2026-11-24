@@ -1441,6 +1441,46 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /attendance/statistics:
+    get:
+      tags: [Attendance]
+      operationId: getAttendanceStatistics
+      summary: Get historical attendance statistics across Groups
+      description: |
+        Requires the authenticated global admin role. `start` and `end` are
+        inclusive ISO dates; the service returns effective can-come counts for
+        completed Meets across all Groups, plus each Venue's latest Meet date.
+        Standing any-Venue responses apply only to main Venues. Restaurants
+        require explicit responses and never inherit any. Source failures are
+        returned as 503, never as zero attendance.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Historical attendance aggregate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceStatistics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: Attendance statistics or authoritative role verification is temporarily unavailable.
   /meet/{meet_id}/attendance:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -2206,6 +2246,24 @@ components:
         status:
           type: string
           enum: [missing]
+    AttendanceStatistics:
+      type: object
+      additionalProperties: false
+      required:
+        - counts_by_venue_id
+        - last_date_by_venue_id
+      properties:
+        counts_by_venue_id:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        last_date_by_venue_id:
+          type: object
+          additionalProperties:
+            type: string
+            format: date
+            nullable: true
     AttendanceCounts:
       type: object
       required: [attending_count, not_attending_count]

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"last_orders/internal/lastorders/components/attendancecache"
+	"last_orders/internal/lastorders/components/attendancestats"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/meetcache"
@@ -66,6 +67,12 @@ type attendanceProfileReader interface {
 	PublicProfiles(context.Context, []string) (map[string]attendancecache.Profile, error)
 }
 
+type attendanceStatisticsResult = attendancestats.Result
+
+type attendanceStatisticsReader interface {
+	Read(context.Context, string, string) (attendanceStatisticsResult, error)
+}
+
 type pastMeetsReader interface {
 	Today() string
 	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
@@ -106,6 +113,7 @@ type Endpoint struct {
 	AttendanceProfiles  attendanceProfileReader
 	AttendanceHub       *sse.Hub
 	AttendanceReady     <-chan struct{}
+	Statistics          attendanceStatisticsReader
 	VotingHub           *sse.Hub
 	VotingReady         <-chan struct{}
 	Writer              MeetWriter
@@ -245,10 +253,38 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
 	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.past)))
+	mux.Handle("GET /api/attendance/statistics", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.attendanceStatistics)))
 }
 
 type attendanceUpdateRequest struct {
 	Status string `json:"status"`
+}
+
+func (e *Endpoint) attendanceStatistics(w http.ResponseWriter, r *http.Request) {
+	if e.Statistics == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "admin")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "Administrator access is required.")
+		return
+	}
+	start := r.URL.Query().Get("start")
+	end := r.URL.Query().Get("end")
+	result, err := e.Statistics.Read(r.Context(), start, end)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (e *Endpoint) patchAttendance(w http.ResponseWriter, r *http.Request) {
