@@ -10,8 +10,10 @@ Feature: Account deletion preserves access for other users
     Then Alice is logged in
     When Bob creates an account
     Then Bob is logged in
-    When Alice deletes their own account
+    When Alice and Bob have account-deletion votes
+    And Alice deletes their own account
     Then Alice cannot log in again
+    And Alice's votes are removed and Bob's votes are preserved
     And the journey admin can log in again
     And Bob can log in again
 
@@ -21,8 +23,10 @@ Feature: Account deletion preserves access for other users
     Then Alice is logged in
     When Bob creates an account
     Then Bob is logged in
-    When the journey admin logs in through a separate browser context
+    When Alice and Bob have account-deletion votes
+    And the journey admin logs in through a separate browser context
     And the admin deletes the account for Alice
     Then Alice cannot log in again
+    And Alice's votes are removed and Bob's votes are preserved
     And the journey admin can log in again
     And Bob can log in again

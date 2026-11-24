@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
 import { When, Then } from "@cucumber/cucumber";
-import { collection, getDocsFromServer, query, where } from "firebase/firestore";
+import { collection, doc, getDocFromServer, getDocsFromServer, query, setDoc, where } from "firebase/firestore";
 import { waitForValue, withEmulatorAdmin } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const MEMBER_PASSWORD = "journey-only-user-password-2026";
+const ACCOUNT_DELETION_VOTE_DOC = "account-deletion-e2e";
 
 function memberEmail(world, name) {
     const email = world.actorEmails?.get(name);
@@ -44,6 +45,18 @@ async function registeredUid(world, name) {
     }, (snapshot) => snapshot !== null, `${name}'s profile before account deletion`));
     return user.id;
 }
+
+When("Alice and Bob have account-deletion votes", async function () {
+    const aliceUid = await registeredUid(this, "Alice");
+    const bobUid = await registeredUid(this, "Bob");
+    this.accountDeletionAliceUid = aliceUid;
+    this.accountDeletionBobUid = bobUid;
+    await withEmulatorAdmin((db) => setDoc(doc(db, "votes", ACCOUNT_DELETION_VOTE_DOC), {
+        "venue-a": [aliceUid, bobUid, aliceUid],
+        "venue-b": [aliceUid],
+        "venue-c": [bobUid],
+    }));
+});
 
 async function waitForAdminAuthDeletion(targetUid) {
     const request = await withEmulatorAdmin((db) => waitForValue(async () => {
@@ -108,4 +121,22 @@ Then("the journey admin can log in again", async function () {
 
 Then("{word} cannot log in again", async function (name) {
     await assertCannotLogInAgain(this, name);
+});
+
+Then("Alice's votes are removed and Bob's votes are preserved", async function () {
+    const aliceUid = this.accountDeletionAliceUid;
+    const bobUid = this.accountDeletionBobUid;
+    await withEmulatorAdmin((db) => waitForValue(async () => {
+        const snapshot = await getDocFromServer(doc(db, "votes", ACCOUNT_DELETION_VOTE_DOC));
+        return snapshot.data() ?? null;
+    }, (data) => data !== null
+        && Array.isArray(data["venue-a"])
+        && !data["venue-a"].includes(aliceUid)
+        && data["venue-a"].includes(bobUid)
+        && Array.isArray(data["venue-b"])
+        && data["venue-b"].length === 0
+        && Array.isArray(data["venue-c"])
+        && data["venue-c"].length === 1
+        && data["venue-c"].includes(bobUid),
+        "vote cleanup for Alice"));
 });

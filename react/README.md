@@ -156,8 +156,8 @@ from both. Complete the existing-Meet migration before relying on Group-scoped
 Meet views. New Meets created by the frontend and Last Orders Event Venue
 recurrence receive the resolved Group ID in their initial Firestore write.
 Voting and attendance reads use the authenticated Last Orders API. Raw vote
-documents remain accessible to the browser only for account deletion cleanup
-until ticket 05 moves that workflow to the backend.
+documents are backend-owned state and are cleaned up through the trusted account
+deletion workflows.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
@@ -171,9 +171,8 @@ the existing `votes/{meetId}` shape as backend-owned state. Attendance
 snapshots and live updates use authenticated Last Orders reads and a bounded
 Group stream. Per-Venue status, ETA and withdrawal actions use Last Orders and
 require true membership in the Meet's Group. Existing bulk UI actions compose
-those caller-owned endpoints. Firestore rules remain unchanged during the
-compatibility window. The Firestore rules lockdown for vote documents is
-deferred until account deletion cleanup moves to the backend in ticket 05.
+those caller-owned endpoints. Firestore rules retain the existing compatibility window for vote documents.
+The browser no longer participates in account-deletion vote cleanup.
 
 ## Attendance Compatibility Rollout
 
