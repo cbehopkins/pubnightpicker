@@ -179,7 +179,7 @@ attendance access during the backend or frontend releases: the new API and
 existing Firestore document shape must operate together while old clients
 remain in use.
 
-Keep the existing React attendance rules unchanged for one week after the
+Keep the existing Firestore attendance rules unchanged for one week after the
 frontend rollout. During that compatibility window, old clients retain their
 prior all-Venues copying and restaurant-fallback behaviour. Existing and new
 writes remain mutually visible: legacy records remain in their existing

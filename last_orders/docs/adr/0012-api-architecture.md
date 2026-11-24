@@ -404,6 +404,7 @@ Live voting updates use one stream per Group covering the Meets the client lists
 
 ```http
 PUT    /meet/{meet_id}/attendance/{venue_id}
+PATCH  /meet/{meet_id}/attendance/{venue_id}
 DELETE /meet/{meet_id}/attendance/{venue_id}
 ```
 
