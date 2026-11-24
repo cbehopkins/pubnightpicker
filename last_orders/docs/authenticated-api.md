@@ -102,6 +102,7 @@ Authenticated attendance snapshots and live updates use Last Orders:
 GET    /api/meet/{meet_id}/attendance
 GET    /api/meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
 PUT    /api/meet/{meet_id}/attendance/{venue_id}
+PATCH  /api/meet/{meet_id}/attendance/{venue_id}
 DELETE /api/meet/{meet_id}/attendance/{venue_id}
 ```
 
@@ -192,6 +193,14 @@ authorised operational change so direct browser attendance access is denied and
 the API becomes authoritative. This rollout document records the sequence only;
 there is no deployment, production data migration or rules change in application
 implementation. Backend administrative access remains separate and available.
+
+Readiness verification reuses the React hook and rules boundaries, the
+focused backend endpoint and statistics suites, and the Cucumber/Playwright
+attendance journey. The journey verifies API-backed live reads and writes for
+individual, standing, restaurant and ETA responses, while the rules boundary
+preserves the compatibility-phase Firestore permissions. The later direct-access
+rules phase remains separately gated and is not deployed or simulated as a
+production rollout.
 
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending
