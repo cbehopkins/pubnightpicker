@@ -453,9 +453,11 @@ authorization changes reset and close the view. Meet, attendance and public
 profile changes refresh it. Private profile fields are excluded.
 
 Per-Venue and Any-Venue status writes require true Group membership,
-independently of voting permission. ETA updates and other multi-Venue bulk
-attendance actions continue to use legacy Firestore writes in this intermediate
-slice; rules are not tightened here.
+independently of voting permission. The PATCH operation supports independent
+status and ETA updates, including explicit ETA removal. Existing bulk UI
+actions compose this caller-owned API rather than writing attendance
+Firestore documents directly. Firestore rules remain unchanged during the
+compatibility window.
 
 
 ## 10. Server-Sent Events

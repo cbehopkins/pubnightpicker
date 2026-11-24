@@ -169,12 +169,22 @@ Voting and attendance remain separate from Meet writes. Voting snapshots,
 mutations, live updates and current-user export use Last Orders. Firestore keeps
 the existing `votes/{meetId}` shape as backend-owned state. Attendance
 snapshots and live updates use authenticated Last Orders reads and a bounded
-Group stream. Per-Venue attendance status changes use Last Orders and require
-true membership in the Meet's Group. ETA, `any`, and existing bulk/global
-attendance actions retain their legacy Firestore writes during this
-intermediate slice, and Firestore rules are not tightened. The Firestore rules
-lockdown for vote documents is deferred until account deletion cleanup moves
-to the backend in ticket 05.
+Group stream. Per-Venue status, ETA and withdrawal actions use Last Orders and
+require true membership in the Meet's Group. Existing bulk UI actions compose
+those caller-owned endpoints. Firestore rules remain unchanged during the
+compatibility window. The Firestore rules lockdown for vote documents is
+deferred until account deletion cleanup moves to the backend in ticket 05.
+
+## Attendance Compatibility Rollout
+
+Deploy Last Orders before the React attendance frontend. Keep the existing
+Firestore attendance rules unchanged for one week after frontend rollout so
+old clients continue to work. Older clients keep their prior copying and
+restaurant-fallback behaviour during that period, and legacy records remain
+visible to and preserved for the API. After one week, tightening direct client
+rules is a separately authorised operation, not part of application code or
+this repository's normal build and test sequence. Do not perform deployments,
+production data changes or live rules changes as part of local verification.
 
 Venue attendance controls show a saving state while a write is pending. Failed
 or timed-out writes are logged and trigger a snapshot refresh; the displayed

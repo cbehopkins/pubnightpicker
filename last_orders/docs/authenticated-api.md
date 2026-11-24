@@ -164,9 +164,34 @@ use effective can-come responses: explicit Venue exceptions override the
 separate `any` standing response. Restaurants use only explicit responses and
 never inherit `any`. Source or aggregation failures return `503`; they are never
 returned as zero attendance.
-ETA updates and other multi-Venue bulk writes remain on their legacy Firestore
-path during this migration. The backend watch keeps API and legacy writes
-visible through the same snapshot and stream. Firestore rules are unchanged.
+`PATCH /api/meet/{meet_id}/attendance/{venue_id}` independently updates the
+caller's status and ETA. Omitting `eta` preserves it; `eta: null` removes it.
+The React interface uses this API for status, standing-response, ETA and
+withdrawal actions, and refreshes the authoritative snapshot after uncertain
+writes. The backend watch keeps compatible legacy writes visible through the
+same snapshot and stream. Firestore rules remain unchanged during the
+compatibility window.
+
+## Compatibility and Rollout
+
+Roll out the backend first, then the frontend. Do not restrict direct
+attendance access during the backend or frontend releases: the new API and
+existing Firestore document shape must operate together while old clients
+remain in use.
+
+Keep the existing React attendance rules unchanged for one week after the
+frontend rollout. During that compatibility window, old clients retain their
+prior all-Venues copying and restaurant-fallback behaviour. Existing and new
+writes remain mutually visible: legacy records remain in their existing
+Venue-keyed shape, copied and deliberate legacy entries cannot be distinguished
+reliably, and the backend preserves those entries rather than reconstructing
+provenance or reconfirming clients.
+
+After one week, the client rules may be tightened in a separately reviewed and
+authorised operational change so direct browser attendance access is denied and
+the API becomes authoritative. This rollout document records the sequence only;
+there is no deployment, production data migration or rules change in application
+implementation. Backend administrative access remains separate and available.
 
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending

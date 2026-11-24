@@ -82,7 +82,6 @@ export function aggregateVenueAttendance(meets, attendanceByMeet, venueTypesById
 
 /**
  * @param {number} yearCount
- * @param {Record<string, { venueType?: string }>} [venueTypesById]
  * @returns {{
  *  countsByVenueId: Record<string, number>,
  *  lastDateByVenueId: Record<string, string | null>,
