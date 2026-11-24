@@ -3,9 +3,10 @@ import { test } from "node:test";
 import { displayDate, londonDate, londonInstant, recurrenceDates, shiftDate } from "./features/support/calendar.js";
 import { advanceApplicationTime } from "./features/support/application-clock.js";
 import { waitForValue } from "./features/support/emulator.js";
-import { createPushIdentity } from "./features/support/push-fixture.js";
+import { createPushIdentity, installPushBoundary } from "./features/support/push-fixture.js";
 import { parseCompleteBackendRecords } from "./features/support/backend-evidence.js";
 import { createServer } from "node:http";
+import { chromium } from "playwright";
 
 test("London dates distinguish summer midnight from UTC midnight", () => {
     assert.equal(londonDate(new Date("2026-06-30T23:30:00Z")), "2026-07-01");
@@ -51,6 +52,62 @@ test("synthetic push identities are unique and have serialisable browser keys", 
     assert.equal(Buffer.from(first.keys.p256dh, "base64url")[0], 4);
     assert.equal(Buffer.from(first.keys.auth, "base64url").length, 16);
     assert.equal(JSON.parse(JSON.stringify(first)).endpoint, first.endpoint);
+});
+
+test("the push fixture preserves browser CORS preflight enforcement", async () => {
+    const methods = [];
+    let allowPreflight = false;
+    const frontend = createServer((_request, response) => {
+        response.setHeader("Content-Type", "text/html");
+        response.end("<!doctype html><title>CORS regression</title>");
+    });
+    const backend = createServer((request, response) => {
+        methods.push(request.method);
+        response.setHeader("Access-Control-Allow-Origin", `http://127.0.0.1:${frontend.address().port}`);
+        response.setHeader("Access-Control-Allow-Methods", "PUT");
+        response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+        response.writeHead(request.method === "OPTIONS" && !allowPreflight ? 403 : 204);
+        response.end();
+    });
+    const previousBaseURL = process.env.E2E_BASE_URL;
+    let browser;
+    try {
+        await new Promise((resolve) => frontend.listen(0, "127.0.0.1", resolve));
+        await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+        process.env.E2E_BASE_URL = `http://127.0.0.1:${frontend.address().port}`;
+        browser = await chromium.launch({ headless: true });
+        for (const permitted of [false, true]) {
+            allowPreflight = permitted;
+            methods.length = 0;
+            const context = await browser.newContext();
+            await installPushBoundary(context, "denied");
+            const page = await context.newPage();
+            await page.goto(process.env.E2E_BASE_URL);
+            assert.equal(await page.evaluate(() => typeof window.__journeyPush), "object");
+            const result = await page.evaluate(async (url) => {
+                try {
+                    const response = await fetch(url, {
+                        method: "PUT",
+                        headers: { Authorization: "Bearer synthetic-test-token", "Content-Type": "application/json" },
+                        body: "{}",
+                    });
+                    return response.status;
+                } catch {
+                    return "blocked";
+                }
+            }, `http://127.0.0.1:${backend.address().port}/api/meet/example/candidates/example`);
+            assert.equal(result, permitted ? 204 : "blocked", "the fixture must not bypass rejected preflights");
+            assert.equal(methods.join(","), permitted ? "OPTIONS,PUT" : "OPTIONS");
+            await context.close();
+        }
+    } finally {
+        if (previousBaseURL === undefined) delete process.env.E2E_BASE_URL;
+        else process.env.E2E_BASE_URL = previousBaseURL;
+        await browser?.close();
+        await Promise.all([frontend, backend].map((server) => new Promise((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+        })));
+    }
 });
 
 test("backend JSONL parsing ignores only a partial final record", () => {

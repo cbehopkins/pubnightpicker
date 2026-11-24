@@ -78,9 +78,10 @@ export async function installPushBoundary(context, response) {
     const origin = new URL(process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000").origin;
     await context.addInitScript(pushBoundaryInit, { identity, response, origin });
     const deliveryRequests = [];
-    await context.route("https://push.example.test/**", (route) => {
-        deliveryRequests.push(route.request().method());
-        return route.abort("blockedbyclient");
+    context.on("request", (request) => {
+        if (new URL(request.url()).origin === "https://push.example.test") {
+            deliveryRequests.push(request.method());
+        }
     });
     return { ...identity, deliveryRequests };
 }
