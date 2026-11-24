@@ -82,7 +82,7 @@ func ProjectionFromDocument(document Document) (Projection, error) {
 	return projection, nil
 }
 
-var ErrNotFound = errors.New("Meet ID is required")
+var ErrNotFound = errors.New("meet ID is required")
 var ErrUnavailable = errors.New("voting projection unavailable")
 var ErrRetired = errors.New("voting projection entry retired")
 var ErrStale = errors.New("stale vote source update")

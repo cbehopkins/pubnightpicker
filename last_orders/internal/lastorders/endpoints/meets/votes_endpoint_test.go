@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,37 +212,62 @@ func TestVoteSnapshotReturnsActiveOptionsAndCallerSelections(t *testing.T) {
 	}
 }
 
-func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
+type votingMeetMapStub map[string]meetcache.Projection
+
+func (reader votingMeetMapStub) Get(_ context.Context, meetID string) (meetcache.Snapshot, error) {
+	projection, ok := reader[meetID]
+	if !ok {
+		return meetcache.Snapshot{}, meetcache.ErrNotFound
+	}
+	return meetcache.Snapshot{Projection: projection}, nil
+}
+
+type votingSnapshotMapStub map[string]votecache.Snapshot
+
+func (reader votingSnapshotMapStub) Get(_ context.Context, meetID string) (votecache.Snapshot, error) {
+	return reader[meetID], nil
+}
+
+func groupVotingStreamEndpoint(t *testing.T) *Endpoint {
+	t.Helper()
 	codec, err := sse.NewCursorCodec([]byte("test-only-voting-snapshot-cursor-signing-key"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := sse.NewHub()
 	ready := make(chan struct{})
 	close(ready)
 	revision := time.Date(2026, 11, 23, 13, 40, 15, 123, time.UTC)
-	endpoint := &Endpoint{
+	return &Endpoint{
 		Auth: pastMeetAuthStub{},
-		Reader: votingMeetReaderStub{snapshot: meetcache.Snapshot{Projection: meetcache.Projection{
-			ID: "meet-a", GroupID: "public-group", CandidateVenueIDs: []string{"venue-1"},
-		}}},
+		Reader: votingMeetMapStub{
+			"meet-a":     {ID: "meet-a", GroupID: "public-group", CandidateVenueIDs: []string{"venue-1"}},
+			"meet-b":     {ID: "meet-b", GroupID: "public-group", CandidateVenueIDs: []string{"venue-2"}},
+			"other-meet": {ID: "other-meet", GroupID: "other-group"},
+		},
 		Groups: groupAuthorizerStub(func(context.Context, string, string) (bool, error) { return true, nil }),
-		Voting: votingSnapshotReaderStub{snapshot: votecache.Snapshot{
-			Votes: map[string][]string{
-				"venue-1": {"verified-user", "voter-a", "voter-a"},
-				"removed": {"verified-user"},
+		Voting: votingSnapshotMapStub{
+			"meet-a": {
+				Votes: map[string][]string{
+					"venue-1": {"verified-user", "voter-a", "voter-a"},
+					"removed": {"verified-user"},
+				},
+				Revision: &revision, Sequence: 7,
 			},
-			Revision: &revision,
-		}},
+			"meet-b": {Votes: map[string][]string{"any": {"voter-b"}}, Sequence: 4},
+		},
 		Profiles:    votingProfilesStub{"verified-user": true},
 		Cursors:     codec,
-		VotingHub:   hub,
+		VotingHub:   sse.NewHub(),
 		VotingReady: ready,
 	}
+}
+
+func TestGroupVoteStreamReturnsInitialFrameForEveryListedMeet(t *testing.T) {
+	endpoint := groupVotingStreamEndpoint(t)
 	mux := http.NewServeMux()
 	endpoint.Register(mux)
 
-	request := httptest.NewRequest(http.MethodGet, "/api/meet/meet-a/votes/stream", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/meets/public-group/votes/stream?meet_id=meet-b&meet_id=meet-a", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 	streamCtx, cancelStream := context.WithCancel(request.Context())
 	request = request.WithContext(streamCtx)
@@ -256,31 +282,28 @@ func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
 		cancelStream()
 	case <-time.After(time.Second):
 		cancelStream()
-		t.Fatal("voting snapshot stream did not flush an initial frame")
+		t.Fatal("group voting stream did not flush an initial frame")
 	}
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("voting snapshot stream did not stop after cancellation")
+		t.Fatal("group voting stream did not stop after cancellation")
 	}
 
 	if response.Code != http.StatusOK {
-		t.Fatalf("voting snapshot stream status=%d body=%s, want HTTP 200", response.Code, response.Body)
+		t.Fatalf("group voting stream status=%d body=%s, want HTTP 200", response.Code, response.Body)
 	}
 	if got := response.Header().Get("Content-Type"); got != "text/event-stream; charset=utf-8" {
 		t.Fatalf("stream content type=%q, want text/event-stream", got)
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, "event: voting_snapshot") || !strings.Contains(body, "selected_option_ids") {
-		t.Fatalf("initial voting stream frame=%q, want snapshot event", body)
+	if !strings.Contains(body, "event: voting_snapshots") {
+		t.Fatalf("initial group voting frame=%q, want voting_snapshots event", body)
 	}
-	if strings.Contains(body, "voter-a") {
-		t.Fatalf("initial voting stream leaked hidden UID: %s", body)
+	if strings.Contains(body, "voter-a") || strings.Contains(body, "voter-b") {
+		t.Fatalf("initial group voting stream leaked hidden UID: %s", body)
 	}
-	if !strings.Contains(body, `"name":"Name verified-user"`) {
-		t.Fatalf("initial voting stream omitted visible voter summary: %s", body)
-	}
-	var streamSnapshot votingSnapshotResponse
+	var streamSnapshot groupVotingSnapshotResponse
 	for _, line := range strings.Split(body, "\n") {
 		if data, ok := strings.CutPrefix(line, "data: "); ok {
 			if err := json.Unmarshal([]byte(data), &streamSnapshot); err != nil {
@@ -290,28 +313,71 @@ func TestVoteSnapshotStreamReturnsInitialFrame(t *testing.T) {
 		}
 	}
 	if streamSnapshot.Cursor == "" {
-		t.Fatal("stream snapshot omitted cursor")
+		t.Fatal("group voting snapshot omitted cursor")
 	}
-	streamSnapshot.Cursor = ""
-	httpResponse := httptest.NewRecorder()
-	mux.ServeHTTP(httpResponse, authenticatedPastRequest("/api/meet/meet-a/votes"))
-	if httpResponse.Code != http.StatusOK {
-		t.Fatalf("voting snapshot GET status=%d body=%s", httpResponse.Code, httpResponse.Body)
+	claims, err := endpoint.Cursors.Decode(streamSnapshot.Cursor)
+	if err != nil || claims.Stream != "group-voting-v1" || claims.Resource != "public-group" || claims.Sequence != 4 {
+		t.Fatalf("cursor claims=%+v err=%v, want group cursor at the oldest Meet sequence", claims, err)
 	}
-	var httpSnapshot votingSnapshotResponse
-	if err := json.Unmarshal(httpResponse.Body.Bytes(), &httpSnapshot); err != nil {
-		t.Fatal(err)
+	if len(streamSnapshot.Meets) != 2 || streamSnapshot.Meets[0].MeetID != "meet-a" || streamSnapshot.Meets[1].MeetID != "meet-b" {
+		t.Fatalf("group voting Meets=%+v, want meet-a and meet-b in order", streamSnapshot.Meets)
 	}
-	streamJSON, err := json.Marshal(streamSnapshot)
-	if err != nil {
-		t.Fatal(err)
+	for _, meet := range streamSnapshot.Meets {
+		httpResponse := httptest.NewRecorder()
+		mux.ServeHTTP(httpResponse, authenticatedPastRequest("/api/meet/"+meet.MeetID+"/votes"))
+		if httpResponse.Code != http.StatusOK {
+			t.Fatalf("voting snapshot GET status=%d body=%s", httpResponse.Code, httpResponse.Body)
+		}
+		var httpSnapshot votingSnapshotResponse
+		if err := json.Unmarshal(httpResponse.Body.Bytes(), &httpSnapshot); err != nil {
+			t.Fatal(err)
+		}
+		streamJSON, err := json.Marshal(votingSnapshotResponse{Options: meet.Options, SelectedOptionIDs: meet.SelectedOptionIDs, VoteRevision: meet.VoteRevision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		httpJSON, err := json.Marshal(httpSnapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(streamJSON) != string(httpJSON) {
+			t.Fatalf("%s stream snapshot=%s, HTTP snapshot=%s", meet.MeetID, streamJSON, httpJSON)
+		}
 	}
-	httpJSON, err := json.Marshal(httpSnapshot)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestGroupVoteStreamRejectsInvalidMeetLists(t *testing.T) {
+	endpoint := groupVotingStreamEndpoint(t)
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	tooMany := make([]string, 0, maxStreamedVotingMeets+1)
+	for index := 0; index <= maxStreamedVotingMeets; index++ {
+		tooMany = append(tooMany, "meet_id=meet-"+strconv.Itoa(index))
 	}
-	if string(streamJSON) != string(httpJSON) {
-		t.Fatalf("stream snapshot=%s, HTTP snapshot=%s", streamJSON, httpJSON)
+	for _, test := range []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{name: "missing", query: "", want: http.StatusBadRequest},
+		{name: "empty", query: "?meet_id=", want: http.StatusBadRequest},
+		{name: "duplicate", query: "?meet_id=meet-a&meet_id=meet-a", want: http.StatusBadRequest},
+		{name: "too many", query: "?" + strings.Join(tooMany, "&"), want: http.StatusBadRequest},
+		{name: "unknown Meet", query: "?meet_id=meet-a&meet_id=missing", want: http.StatusNotFound},
+		{name: "Meet in another Group", query: "?meet_id=meet-a&meet_id=other-meet", want: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/meets/public-group/votes/stream"+test.query, nil)
+			request.Header.Set("Authorization", "Bearer valid-token")
+			response := &flushableRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{})}
+			mux.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d body=%s, want HTTP %d", response.Code, response.Body, test.want)
+			}
+			if strings.Contains(response.Body.String(), "event:") {
+				t.Fatalf("rejected stream wrote an event: %s", response.Body)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useSelector } from "react-redux";
 import { LastOrdersApiError, requestLastOrders, streamLastOrders } from "../utils/lastOrdersApi";
 
 /** @typedef {{ uid: string, name?: string, photoUrl?: string }} VoterProfile */
@@ -60,8 +61,171 @@ function parseVotingSnapshot(value) {
   };
 }
 
+/**
+ * @typedef {Object} VotingListener
+ * @property {(payload: unknown) => void} onSnapshot
+ * @property {() => void} onReset
+ * @property {(message: string) => void} onError
+ */
+
+/**
+ * @typedef {Object} GroupVotingStream
+ * @property {string} key
+ * @property {string} groupId
+ * @property {Map<string, Set<VotingListener>>} listeners
+ * @property {AbortController | null} controller
+ * @property {string} connectedMeetKey
+ * @property {boolean} scheduled
+ */
+
+// One stream per Group and user: browsers allow only six HTTP/1.1 connections per origin.
+/** @type {Map<string, GroupVotingStream>} */
+const groupVotingStreams = new Map();
+const fatalStreamErrorCodes = ["signed_out", "unauthenticated", "forbidden", "not_found"];
+const invalidSnapshotMessage = "Last Orders returned an invalid voting snapshot.";
+const unavailableMessage = "Voting updates are temporarily unavailable.";
+
+/**
+ * @param {string} groupId
+ * @param {string} userId
+ * @param {string} meetId
+ * @param {VotingListener} listener
+ * @returns {() => void}
+ */
+function subscribeGroupVoting(groupId, userId, meetId, listener) {
+  const key = `${groupId}\u0000${userId}`;
+  let stream = groupVotingStreams.get(key);
+  if (!stream) {
+    stream = { key, groupId, listeners: new Map(), controller: null, connectedMeetKey: "", scheduled: false };
+    groupVotingStreams.set(key, stream);
+  }
+  const owner = stream;
+  let meetListeners = owner.listeners.get(meetId);
+  if (!meetListeners) {
+    meetListeners = new Set();
+    owner.listeners.set(meetId, meetListeners);
+  }
+  const listeners = meetListeners;
+  listeners.add(listener);
+  scheduleGroupVoting(owner);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && owner.listeners.get(meetId) === listeners) owner.listeners.delete(meetId);
+    scheduleGroupVoting(owner);
+  };
+}
+
+/** @param {GroupVotingStream} stream */
+function scheduleGroupVoting(stream) {
+  if (stream.scheduled) return;
+  stream.scheduled = true;
+  queueMicrotask(() => {
+    stream.scheduled = false;
+    const meetIds = [...stream.listeners.keys()].sort();
+    const meetKey = meetIds.join("\u0000");
+    if (stream.controller && meetKey === stream.connectedMeetKey) return;
+    stream.controller?.abort();
+    stream.controller = null;
+    stream.connectedMeetKey = "";
+    if (meetIds.length === 0) {
+      if (groupVotingStreams.get(stream.key) === stream) groupVotingStreams.delete(stream.key);
+      return;
+    }
+    startGroupVoting(stream, meetIds, meetKey);
+  });
+}
+
+/**
+ * @param {GroupVotingStream} stream
+ * @param {string[]} meetIds
+ * @param {(listener: VotingListener) => void} notify
+ */
+function notifyMeetListeners(stream, meetIds, notify) {
+  for (const meetId of meetIds) {
+    for (const listener of stream.listeners.get(meetId) ?? []) notify(listener);
+  }
+}
+
+/**
+ * @param {GroupVotingStream} stream
+ * @param {string[]} meetIds
+ * @param {string} meetKey
+ */
+function startGroupVoting(stream, meetIds, meetKey) {
+  const controller = new AbortController();
+  stream.controller = controller;
+  stream.connectedMeetKey = meetKey;
+  const isCurrent = () => stream.controller === controller && !controller.signal.aborted;
+  /** @param {string} message */
+  const fail = (message) => notifyMeetListeners(stream, meetIds, (listener) => listener.onError(message));
+  const stop = () => {
+    if (stream.controller !== controller) return;
+    stream.controller = null;
+    stream.connectedMeetKey = "";
+  };
+  try {
+    streamLastOrders(`api/meets/${encodeURIComponent(stream.groupId)}/votes/stream`, {
+      query: meetIds.map((meetId) => ["meet_id", meetId]),
+      signal: controller.signal,
+      onopen: async (response) => {
+        const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+        if (response.ok && contentType === "text/event-stream") return;
+        const code = response.status === 401 ? "unauthenticated" : response.status === 403 ? "forbidden" :
+          response.status === 404 ? "not_found" : "stream_unavailable";
+        throw new LastOrdersApiError(code, unavailableMessage, { status: response.status });
+      },
+      onmessage: (event) => {
+        if (!isCurrent()) return;
+        if (event.event === "view_reset") {
+          stop();
+          controller.abort();
+          notifyMeetListeners(stream, meetIds, (listener) => listener.onReset());
+          scheduleGroupVoting(stream);
+          return;
+        }
+        if (event.event !== "voting_snapshots") return;
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          fail(invalidSnapshotMessage);
+          return;
+        }
+        if (!payload || typeof payload.cursor !== "string" || payload.cursor.length === 0 || !Array.isArray(payload.meets)
+          || !payload.meets.every((meet) => meet && typeof meet.meet_id === "string")) {
+          fail(invalidSnapshotMessage);
+          return;
+        }
+        for (const meet of payload.meets) {
+          for (const listener of stream.listeners.get(meet.meet_id) ?? []) listener.onSnapshot(meet);
+        }
+      },
+      onclose: () => {
+        if (!controller.signal.aborted) throw new Error("Voting updates closed unexpectedly.");
+      },
+      onerror: (error) => {
+        if (!isCurrent()) return;
+        fail(error?.message || unavailableMessage);
+        if (error instanceof LastOrdersApiError && fatalStreamErrorCodes.includes(error.code)) throw error;
+        return 5000;
+      },
+    }).catch((error) => {
+      if (!isCurrent()) return;
+      stop();
+      fail(error?.message || unavailableMessage);
+    });
+  } catch (error) {
+    stop();
+    fail(error?.message || unavailableMessage);
+  }
+}
+
 /** @param {string} pollId @param {string | null} userId @param {boolean} [enabled=true] @returns {VoteState} */
 function useVotes(pollId, userId, enabled = true) {
+  const groupId = useSelector(
+    /** @param {{ group?: { groupId?: string | null } }} state */
+    (state) => state.group?.groupId ?? null
+  );
   const [optionsById, setOptionsById] = useState(/** @type {VotingOptionsMap} */({}));
   const [selectedOptionIds, setSelectedOptionIds] = useState(/** @type {string[]} */([]));
   const [pendingOptionIds, setPendingOptionIds] = useState(/** @type {string[]} */([]));
@@ -172,8 +336,6 @@ function useVotes(pollId, userId, enabled = true) {
 
     let active = true;
     const snapshotController = new AbortController();
-    /** @type {AbortController | null} */
-    let streamController = null;
     const snapshotPath = `api/meet/${encodeURIComponent(pollId)}/votes`;
 
     const loadSnapshot = async () => {
@@ -191,81 +353,36 @@ function useVotes(pollId, userId, enabled = true) {
       }
     };
 
-    const connect = () => {
-      const controller = new AbortController();
-      streamController = controller;
-      try {
-        streamLastOrders(`api/meet/${encodeURIComponent(pollId)}/votes/stream`, {
-          signal: controller.signal,
-          onopen: async (response) => {
-            const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
-            if (response.ok && contentType === "text/event-stream") return;
-            const code = response.status === 401 ? "unauthenticated" : response.status === 403 ? "forbidden" : "stream_unavailable";
-            throw new LastOrdersApiError(code, "Voting updates are temporarily unavailable.", { status: response.status });
-          },
-          onmessage: (event) => {
-            if (!active || controller.signal.aborted) return;
-            if (event.event === "view_reset") {
-              streamSequenceRef.current += 1;
-              setOptionsById({});
-              setSelection([]);
-              setIsLoading(true);
-              controller.abort();
-              void loadSnapshot();
-              queueMicrotask(() => {
-                if (active && streamController === controller) connect();
-              });
-              return;
-            }
-            if (event.event !== "voting_snapshot") return;
-            let payload;
-            try {
-              payload = JSON.parse(event.data);
-            } catch {
-              setErrorMessage("Last Orders returned an invalid voting snapshot.");
-              return;
-            }
-            if (!payload || typeof payload.cursor !== "string" || payload.cursor.length === 0) {
-              setErrorMessage("Last Orders returned an invalid voting snapshot.");
-              return;
-            }
-            const parsed = applySnapshot(payload);
-            if (!parsed) return;
-            streamSequenceRef.current += 1;
-          },
-          onclose: () => {
-            if (!controller.signal.aborted) throw new Error("Voting updates closed unexpectedly.");
-          },
-          onerror: (error) => {
-            if (!active || controller.signal.aborted) return;
-            setErrorMessage(error?.message || "Voting updates are temporarily unavailable.");
-            if (error instanceof LastOrdersApiError && ["signed_out", "unauthenticated", "forbidden", "not_found"].includes(error.code)) {
-              throw error;
-            }
-            return 5000;
-          },
-        }).catch((error) => {
-          if (active && !controller.signal.aborted && streamController === controller) {
-            setErrorMessage(error?.message || "Voting updates are temporarily unavailable.");
-            setIsLoading(false);
-          }
-        });
-      } catch (error) {
-        if (active && !controller.signal.aborted) {
-          setErrorMessage(error?.message || "Voting updates are temporarily unavailable.");
-          setIsLoading(false);
-        }
-      }
-    };
-
     void loadSnapshot();
-    connect();
+    if (!groupId) {
+      return () => {
+        active = false;
+        snapshotController.abort();
+      };
+    }
+    const unsubscribe = subscribeGroupVoting(groupId, userId, pollId, {
+      onSnapshot: (payload) => {
+        if (!active) return;
+        if (applySnapshot(payload)) streamSequenceRef.current += 1;
+      },
+      onReset: () => {
+        if (!active) return;
+        streamSequenceRef.current += 1;
+        setOptionsById({});
+        setSelection([]);
+        setIsLoading(true);
+        void loadSnapshot();
+      },
+      onError: (message) => {
+        if (active) setErrorMessage(message);
+      },
+    });
     return () => {
       active = false;
       snapshotController.abort();
-      streamController?.abort();
+      unsubscribe();
     };
-  }, [applySnapshot, changeVote, enabled, pollId, setSelection, userId]);
+  }, [applySnapshot, enabled, groupId, pollId, setSelection, userId]);
 
   return { optionsById, voterProfiles, selectedOptionIds, pendingOptionIds, retrySelections, isLoading, errorMessage, changeVote, retryVote };
 }

@@ -139,6 +139,21 @@ type votingSnapshotResponse struct {
 	Cursor            string                 `json:"cursor"`
 }
 
+type meetVotingSnapshotResponse struct {
+	MeetID            string                 `json:"meet_id"`
+	Options           []votingOptionResponse `json:"options"`
+	SelectedOptionIDs []string               `json:"selected_option_ids"`
+	VoteRevision      *string                `json:"vote_revision"`
+}
+
+type groupVotingSnapshotResponse struct {
+	Cursor string                       `json:"cursor"`
+	Meets  []meetVotingSnapshotResponse `json:"meets"`
+}
+
+// maxStreamedVotingMeets bounds the Meets one Group votes stream may follow.
+const maxStreamedVotingMeets = 50
+
 type pastMeetsResponse struct {
 	Meets      []pastMeetResponse `json:"meets"`
 	NextCursor *string            `json:"next_cursor"`
@@ -168,7 +183,7 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meet/{meet_id}/votes", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.votes)))
-	mux.Handle("GET /api/meet/{meet_id}/votes/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.voteStream)))
+	mux.Handle("GET /api/meets/{group_id}/votes/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.groupVoteStream)))
 	mux.Handle("GET /api/meets/{group_id}/current", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.current)))
 	mux.Handle("GET /api/meets/{group_id}/current/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.currentStream)))
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
@@ -921,49 +936,89 @@ func writeCurrentReadError(w http.ResponseWriter, err error) {
 	firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to read current Meets.")
 }
 
-func (e *Endpoint) voteStream(w http.ResponseWriter, r *http.Request) {
+// groupVoteStream follows the votes of several Meets in one Group so a page
+// needs one long-lived connection however many Meets it shows.
+func (e *Endpoint) groupVoteStream(w http.ResponseWriter, r *http.Request) {
 	if e.Voting == nil || e.Reader == nil || e.Groups == nil || e.Profiles == nil || e.Cursors == nil || e.VotingHub == nil || e.VotingReady == nil {
 		w.Header().Set("Retry-After", "1")
 		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Voting snapshots are temporarily unavailable.")
 		return
 	}
-	meetID := r.PathValue("meet_id")
 	principal, ok := firebaseauth.FromContext(r.Context())
 	if !ok {
 		firebaseauth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
 		return
 	}
+	groupID := r.PathValue("group_id")
+	meetIDs, ok := streamedVotingMeetIDs(r.URL.Query()["meet_id"])
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("Supply between 1 and %d distinct, non-empty meet_id values.", maxStreamedVotingMeets))
+		return
+	}
+	viewKeys := make([]string, len(meetIDs))
+	for index, meetID := range meetIDs {
+		viewKeys[index] = "voting:" + meetID
+	}
 	stream := &sse.Handler{
 		Hub: e.VotingHub, Ready: e.VotingReady,
-		ViewKey: "voting:" + meetID, AuthorizationScope: "meet:" + meetID,
-		UID: currentUID(r.Context()), EventName: "voting_snapshot",
+		ViewKeys: viewKeys, AuthorizationScope: "meet-votes-group:" + groupID,
+		UID: principal.UID, EventName: "voting_snapshots",
 		SnapshotFailureStatus: http.StatusServiceUnavailable,
 		Authorize: func(ctx context.Context) (bool, int) {
-			meetSnapshot, err := e.Reader.Get(ctx, meetID)
-			if err != nil {
-				return false, http.StatusServiceUnavailable
-			}
-			allowed, err := e.Groups.CanRead(ctx, currentUID(ctx), meetSnapshot.Projection.GroupID)
+			allowed, err := e.Groups.CanRead(ctx, currentUID(ctx), groupID)
 			if err != nil {
 				return false, http.StatusServiceUnavailable
 			}
 			if !allowed {
 				return false, http.StatusNotFound
 			}
+			for _, meetID := range meetIDs {
+				meetSnapshot, err := e.Reader.Get(ctx, meetID)
+				if errors.Is(err, meetcache.ErrNotFound) {
+					return false, http.StatusNotFound
+				}
+				if err != nil {
+					return false, http.StatusServiceUnavailable
+				}
+				if meetSnapshot.Projection.GroupID != groupID {
+					return false, http.StatusNotFound
+				}
+			}
 			return true, http.StatusNotFound
 		},
 		Snapshot: func(ctx context.Context, cursor sse.CursorInput) (sse.ViewSnapshot, error) {
-			response, sequence, err := e.votingSnapshot(ctx, meetID, principal.UID)
-			if err != nil {
-				return sse.ViewSnapshot{}, err
+			response := groupVotingSnapshotResponse{Meets: make([]meetVotingSnapshotResponse, 0, len(meetIDs))}
+			// The minimum keeps any change newer than the oldest Meet snapshot pending.
+			var sequence int64 = -1
+			for _, meetID := range meetIDs {
+				meetSnapshot, err := e.Reader.Get(ctx, meetID)
+				if err != nil {
+					return sse.ViewSnapshot{}, err
+				}
+				if meetSnapshot.Projection.GroupID != groupID {
+					return sse.ViewSnapshot{}, meetcache.ErrNotFound
+				}
+				votes, err := e.Voting.Get(ctx, meetID)
+				if err != nil {
+					return sse.ViewSnapshot{}, err
+				}
+				voting := e.votingResponse(ctx, meetSnapshot.Projection, votes, principal.UID)
+				response.Meets = append(response.Meets, meetVotingSnapshotResponse{
+					MeetID: meetID, Options: voting.Options,
+					SelectedOptionIDs: voting.SelectedOptionIDs, VoteRevision: voting.VoteRevision,
+				})
+				if sequence < 0 || votes.Sequence < sequence {
+					sequence = votes.Sequence
+				}
 			}
 			if cursor.Supplied {
 				_, _ = e.Cursors.Validate(cursor.Value, sse.CursorExpectation{
-					Stream: "voting-v1", Resource: meetID, Generation: "voting-v1", HighWater: sequence,
+					Stream: "group-voting-v1", Resource: groupID, Generation: "group-voting-v1", HighWater: sequence,
 				})
 			}
 			token, err := e.Cursors.Encode(sse.CursorClaims{
-				Stream: "voting-v1", Resource: meetID, Generation: "voting-v1", Sequence: sequence,
+				Stream: "group-voting-v1", Resource: groupID, Generation: "group-voting-v1", Sequence: sequence,
 			})
 			if err != nil {
 				return sse.ViewSnapshot{}, err
@@ -977,6 +1032,20 @@ func (e *Endpoint) voteStream(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	stream.ServeHTTP(w, r)
+}
+
+func streamedVotingMeetIDs(values []string) ([]string, bool) {
+	if len(values) == 0 || len(values) > maxStreamedVotingMeets {
+		return nil, false
+	}
+	meetIDs := append([]string(nil), values...)
+	sort.Strings(meetIDs)
+	for index, meetID := range meetIDs {
+		if meetID == "" || (index > 0 && meetIDs[index-1] == meetID) {
+			return nil, false
+		}
+	}
+	return meetIDs, true
 }
 
 func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
@@ -1017,22 +1086,6 @@ func (e *Endpoint) votes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)
-}
-
-func (e *Endpoint) votingSnapshot(ctx context.Context, meetID, uid string) (votingSnapshotResponse, int64, error) {
-	meetSnapshot, err := e.Reader.Get(ctx, meetID)
-	if err != nil {
-		return votingSnapshotResponse{}, 0, err
-	}
-	allowed, err := e.Groups.CanRead(ctx, uid, meetSnapshot.Projection.GroupID)
-	if err != nil || !allowed {
-		return votingSnapshotResponse{}, 0, meetcache.ErrNotFound
-	}
-	votes, err := e.Voting.Get(ctx, meetSnapshot.Projection.ID)
-	if err != nil {
-		return votingSnapshotResponse{}, 0, err
-	}
-	return e.votingResponse(ctx, meetSnapshot.Projection, votes, uid), votes.Sequence, nil
 }
 
 func (e *Endpoint) votingResponse(ctx context.Context, meet meetcache.Projection, votes votecache.Snapshot, uid string) votingSnapshotResponse {

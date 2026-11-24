@@ -59,7 +59,7 @@ func NewStore(base *basestore.Store) (*Store, error) {
 
 func (s *Store) Admit(ctx context.Context, meetID, owner string, validUntil time.Time) error {
 	if meetID == "" || owner == "" {
-		return fmt.Errorf("Meet ID and owner token are required")
+		return fmt.Errorf("meet ID and owner token are required")
 	}
 	_, err := s.base.DB().ExecContext(ctx, `
 		INSERT INTO vote_cache(meet_id, owner_token, valid_until)
@@ -79,7 +79,7 @@ func (s *Store) Admit(ctx context.Context, meetID, owner string, validUntil time
 
 func (s *Store) Apply(ctx context.Context, meetID, owner string, projection Projection, sourceVersion time.Time) (Snapshot, error) {
 	if meetID == "" || owner == "" || projection.Votes == nil {
-		return Snapshot{}, fmt.Errorf("Meet ID, owner token, and vote projection are required")
+		return Snapshot{}, fmt.Errorf("meet ID, owner token, and vote projection are required")
 	}
 	encoded, err := json.Marshal(projection)
 	if err != nil {

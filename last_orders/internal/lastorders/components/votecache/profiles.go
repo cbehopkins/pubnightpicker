@@ -19,7 +19,7 @@ type VoterProfile struct {
 
 func NewFirestoreProfileReader(client *firestore.Client) (*ProfileReader, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return &ProfileReader{client: client}, nil
 }

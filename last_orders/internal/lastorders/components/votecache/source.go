@@ -15,14 +15,14 @@ type firestoreSource struct {
 
 func NewFirestoreSource(client *firestore.Client) (Source, error) {
 	if client == nil {
-		return nil, fmt.Errorf("Firestore client is required")
+		return nil, fmt.Errorf("firestore client is required")
 	}
 	return &firestoreSource{client: client}, nil
 }
 
 func (s *firestoreSource) Watch(ctx context.Context, meetID string) (Stream, error) {
 	if meetID == "" {
-		return nil, fmt.Errorf("Meet ID is required")
+		return nil, fmt.Errorf("meet ID is required")
 	}
 	iterator := s.client.Collection(collection).Doc(meetID).Snapshots(ctx)
 	return &firestoreStream{iterator: iterator}, nil

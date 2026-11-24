@@ -3,6 +3,7 @@
 package sse
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -16,13 +17,13 @@ type Hub struct {
 	streams map[uint64]*Subscription
 }
 
-// Subscription receives signals for one view, authorization scope and UID.
-// Its channels are intentionally never closed; Hub owns registration and
-// signals them while holding its lock.
+// Subscription receives signals for a set of views, one authorization scope
+// and UID. Its channels are intentionally never closed; Hub owns registration
+// and signals them while holding its lock.
 type Subscription struct {
 	id              uint64
 	hub             *Hub
-	viewKey         string
+	viewKeys        []string
 	scope           string
 	uid             string
 	changed         chan struct{}
@@ -40,11 +41,16 @@ func NewHub() *Hub {
 // A hub that is already shut down returns an unregistered subscription whose
 // Done signal is already ready.
 func (h *Hub) Register(viewKey, scopeKey, uid string) *Subscription {
+	return h.RegisterViews([]string{viewKey}, scopeKey, uid)
+}
+
+// RegisterViews is Register for a subscription woken by any of viewKeys.
+func (h *Hub) RegisterViews(viewKeys []string, scopeKey, uid string) *Subscription {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.nextID++
 	s := &Subscription{
-		id: h.nextID, hub: h, viewKey: viewKey, scope: scopeKey, uid: uid,
+		id: h.nextID, hub: h, viewKeys: append([]string(nil), viewKeys...), scope: scopeKey, uid: uid,
 		changed: make(chan struct{}, 1), reset: make(chan struct{}, 1),
 	}
 	if h.closed {
@@ -78,7 +84,7 @@ func (h *Hub) PublishChanged(viewKey string, sequence int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.streams {
-		if s.viewKey == viewKey {
+		if s.watches(viewKey) {
 			s.recordChange(sequence)
 		}
 	}
@@ -91,10 +97,28 @@ func (h *Hub) PublishChangedPrefix(prefix string, sequence int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.streams {
-		if len(s.viewKey) >= len(prefix) && s.viewKey[:len(prefix)] == prefix {
+		if s.watchesPrefix(prefix) {
 			s.recordChange(sequence)
 		}
 	}
+}
+
+func (s *Subscription) watches(viewKey string) bool {
+	for _, key := range s.viewKeys {
+		if key == viewKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Subscription) watchesPrefix(prefix string) bool {
+	for _, key := range s.viewKeys {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // TakeChanged returns the greatest pending sequence and clears its wake-up.
@@ -166,7 +190,7 @@ func (h *Hub) ResetView(viewKey string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.streams {
-		if s.viewKey == viewKey {
+		if s.watches(viewKey) {
 			signal(s.reset)
 		}
 	}

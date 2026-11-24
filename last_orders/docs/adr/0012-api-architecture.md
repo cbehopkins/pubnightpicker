@@ -390,6 +390,14 @@ Voter identities use the shared minimal public user summary:
 
 `photo_url` is optional. Do not expose Firebase credentials, provider details or unrelated profile fields.
 
+### 8.5 Voting stream
+
+```http
+GET /meets/{group_id}/votes/stream?meet_id={meet_id}&meet_id={meet_id}
+```
+
+Live voting updates use one stream per Group covering the Meets the client lists, rather than one stream per Meet. Browsers allow only six concurrent HTTP/1.1 connections per origin, so a page holding one long-lived stream per Meet could exhaust them and leave ordinary API requests queued indefinitely. Each event carries a complete voting snapshot for every listed Meet. The client reconnects with a new list when the Meets it shows change. Every listed Meet must belong to the Group. The list is bounded at 50 Meets.
+
 ## 9. Attendance
 
 ### 9.1 Update and snapshot routes

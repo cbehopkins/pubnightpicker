@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useVotes from "./useVotes";
 
 const { requestLastOrdersMock, streamLastOrdersMock } = vi.hoisted(() => ({
@@ -12,6 +12,10 @@ const { requestLastOrdersMock, streamLastOrdersMock } = vi.hoisted(() => ({
 vi.mock("../utils/lastOrdersApi", () => ({
   requestLastOrders: requestLastOrdersMock,
   streamLastOrders: streamLastOrdersMock,
+}));
+
+vi.mock("react-redux", () => ({
+  useSelector: (selector) => selector({ group: { groupId: "group-a" } }),
 }));
 
 vi.mock("../firebase", () => ({ db: {} }));
@@ -33,7 +37,15 @@ const initialSnapshot = {
 
 let streamOptions;
 
+function groupSnapshot(meets) {
+  return { event: "voting_snapshots", data: JSON.stringify({ cursor: "cursor-2", meets }) };
+}
+
 describe("useVotes", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     requestLastOrdersMock.mockReset();
     streamLastOrdersMock.mockReset();
@@ -53,24 +65,23 @@ describe("useVotes", () => {
 
     expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meet/poll-1/votes", expect.objectContaining({ method: "GET" }));
     expect(result.current.optionsById).toEqual({
-      "venue-1": { total: 3, anonymousCount: 1, voterUids: ["visible-user", "current-user"], voters: [
-        { uid: "visible-user", name: "Alice", photoUrl: "https://example.test/alice.jpg" },
-        { uid: "current-user", name: undefined, photoUrl: undefined },
-      ] },
+      "venue-1": {
+        total: 3, anonymousCount: 1, voterUids: ["visible-user", "current-user"], voters: [
+          { uid: "visible-user", name: "Alice", photoUrl: "https://example.test/alice.jpg" },
+          { uid: "current-user", name: undefined, photoUrl: undefined },
+        ]
+      },
       any: { total: 1, anonymousCount: 0, voterUids: ["current-user"], voters: [{ uid: "current-user", name: undefined, photoUrl: undefined }] },
     });
     expect(result.current.voterProfiles["visible-user"]).toEqual({ uid: "visible-user", name: "Alice", photoUrl: "https://example.test/alice.jpg" });
     expect(result.current.selectedOptionIds).toEqual(["any", "removed-venue"]);
     expect(requestLastOrdersMock).toHaveBeenCalledTimes(1);
 
-    act(() => streamOptions.onmessage({
-      event: "voting_snapshot",
-      data: JSON.stringify({
-        cursor: "cursor-2",
-        options: [{ id: "venue-1", total: 2, anonymous_count: 1, voters: [{ id: "visible-user", name: "Updated Alice" }] }],
-        selected_option_ids: ["removed-venue", "venue-1"],
-      }),
-    }));
+    act(() => streamOptions.onmessage(groupSnapshot([{
+      meet_id: "poll-1",
+      options: [{ id: "venue-1", total: 2, anonymous_count: 1, voters: [{ id: "visible-user", name: "Updated Alice" }] }],
+      selected_option_ids: ["removed-venue", "venue-1"],
+    }])));
 
     await waitFor(() => expect(result.current.selectedOptionIds).toEqual(["removed-venue", "venue-1"]));
     expect(requestLastOrdersMock).toHaveBeenCalledTimes(1);
@@ -82,15 +93,13 @@ describe("useVotes", () => {
   it("retains a removed vote when its candidate returns", async () => {
     const { result } = renderHook(() => useVotes("poll-1", "current-user"));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(streamOptions).not.toBeNull());
 
-    act(() => streamOptions.onmessage({
-      event: "voting_snapshot",
-      data: JSON.stringify({
-        cursor: "cursor-2",
-        options: [{ id: "removed-venue", total: 1, anonymous_count: 0, voters: [] }],
-        selected_option_ids: ["removed-venue"],
-      }),
-    }));
+    act(() => streamOptions.onmessage(groupSnapshot([{
+      meet_id: "poll-1",
+      options: [{ id: "removed-venue", total: 1, anonymous_count: 0, voters: [] }],
+      selected_option_ids: ["removed-venue"],
+    }])));
 
     expect(result.current.selectedOptionIds).toEqual(["removed-venue"]);
     expect(result.current.optionsById["removed-venue"].total).toBe(1);
@@ -116,6 +125,35 @@ describe("useVotes", () => {
     expect(requestLastOrdersMock).not.toHaveBeenCalled();
     expect(streamLastOrdersMock).not.toHaveBeenCalled();
     expect(result.current.optionsById).toEqual({});
+  });
+
+  it("shares one Group stream across Meets and reconnects when the Meet set changes", async () => {
+    const first = renderHook(() => useVotes("poll-1", "current-user"));
+    const second = renderHook(() => useVotes("poll-2", "current-user"));
+    await waitFor(() => expect(streamLastOrdersMock).toHaveBeenCalledTimes(1));
+
+    expect(streamLastOrdersMock).toHaveBeenCalledWith("api/meets/group-a/votes/stream", expect.objectContaining({
+      query: [["meet_id", "poll-1"], ["meet_id", "poll-2"]],
+    }));
+    const sharedSignal = streamOptions.signal;
+    act(() => streamOptions.onmessage(groupSnapshot([
+      { meet_id: "poll-1", options: [{ id: "venue-1", total: 1, anonymous_count: 1, voters: [] }], selected_option_ids: [] },
+      { meet_id: "poll-2", options: [{ id: "venue-2", total: 1, anonymous_count: 0, voters: [] }], selected_option_ids: ["venue-2"] },
+    ])));
+    await waitFor(() => expect(second.result.current.selectedOptionIds).toEqual(["venue-2"]));
+    expect(first.result.current.optionsById["venue-1"].total).toBe(1);
+    expect(first.result.current.optionsById["venue-2"]).toBeUndefined();
+
+    second.unmount();
+    await waitFor(() => expect(streamLastOrdersMock).toHaveBeenCalledTimes(2));
+    expect(sharedSignal.aborted).toBe(true);
+    expect(streamLastOrdersMock).toHaveBeenLastCalledWith("api/meets/group-a/votes/stream", expect.objectContaining({
+      query: [["meet_id", "poll-1"]],
+    }));
+
+    first.unmount();
+    await waitFor(() => expect(streamOptions.signal.aborted).toBe(true));
+    expect(streamLastOrdersMock).toHaveBeenCalledTimes(2);
   });
 
   it("adds and removes votes through the authenticated API", async () => {

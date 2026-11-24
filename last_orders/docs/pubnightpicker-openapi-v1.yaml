@@ -1225,17 +1225,42 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           description: The voting projection or authoritative Meet access decision is temporarily unavailable.
-  /meet/{meet_id}/votes/stream:
+  /meets/{group_id}/votes/stream:
     parameters:
-      - $ref: '#/components/parameters/MeetId'
+      - $ref: '#/components/parameters/GroupId'
     get:
       tags: [Voting]
-      operationId: streamVoteSnapshots
-      summary: Stream privacy-safe voting snapshots
-      description: Requires authentication and Meet access. Each voting_snapshot event contains a complete VotingSnapshot and an opaque cursor, including on connection and reconnect. Vote, candidate and public profile changes trigger updates. Authorization changes may produce a view_reset event and close the stream.
+      operationId: streamGroupVoteSnapshots
+      summary: Stream privacy-safe voting snapshots for listed Meets in a Group
+      description: |
+        Requires authentication and Group access. One connection follows the
+        votes of every listed Meet, so a page showing several Meets needs only
+        one long-lived connection (browsers allow six HTTP/1.1 connections per
+        origin). Each voting_snapshots event contains, for every listed Meet,
+        its `meet_id` with the VotingSnapshot fields (without a per-Meet
+        cursor), plus one opaque cursor, including on connection and reconnect.
+        Vote, candidate and public
+        profile changes to any listed Meet trigger a replacement. Clients
+        reconnect with the new list when the Meets they show change. A listed
+        Meet that is unknown or outside the Group returns 404. Authorization
+        changes may produce a view_reset event and close the stream.
       security:
         - bearerAuth: []
       parameters:
+        - name: meet_id
+          in: query
+          required: true
+          description: Repeat once for each Meet to follow; between 1 and 50 distinct, non-empty IDs.
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 50
+            uniqueItems: true
+            items:
+              type: string
+              minLength: 1
         - name: after
           in: query
           required: false
@@ -1248,15 +1273,17 @@ paths:
             type: string
       responses:
         '200':
-          description: SSE stream of complete voting snapshots.
+          description: SSE stream of complete voting snapshots for the listed Meets.
           content:
             text/event-stream:
               schema:
                 type: string
               example: |
                 id: opaque-cursor
-                event: voting_snapshot
-                data: {"cursor":"opaque-cursor","options":[{"id":"any","total":2,"anonymous_count":1,"voters":[{"id":"user-id","name":"Display name"}]}],"selected_option_ids":[]}
+                event: voting_snapshots
+                data: {"cursor":"opaque-cursor","meets":[{"meet_id":"meet-id","options":[{"id":"any","total":2,"anonymous_count":1,"voters":[{"id":"user-id","name":"Display name"}]}],"selected_option_ids":[],"vote_revision":null}]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

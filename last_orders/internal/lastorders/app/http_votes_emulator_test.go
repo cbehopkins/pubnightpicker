@@ -426,7 +426,7 @@ func TestVotingSnapshotHTTPAgainstAuthAndFirestoreEmulators(t *testing.T) {
 
 func testVotingStreamReconnectAndRevocation(t *testing.T, ctx context.Context, client *http.Client, baseURL, idToken, callerUID string, group *firestore.DocumentRef, firestoreClient *firestore.Client) {
 	t.Helper()
-	streamURL := baseURL + "/api/meet/missing-votes-meet/votes/stream"
+	streamURL := baseURL + "/api/meets/private-group/votes/stream?meet_id=missing-votes-meet"
 	codec, err := sse.NewCursorCodec([]byte("test-only-cursor-signing-key-32-bytes"))
 	if err != nil {
 		t.Fatal(err)
@@ -451,11 +451,11 @@ func testVotingStreamReconnectAndRevocation(t *testing.T, ctx context.Context, c
 	readSnapshot := func(reader *bufio.Reader, venueHasVotes bool, expectedSelections ...string) (sse.CursorClaims, time.Time) {
 		t.Helper()
 		frame := readVenueSSEFrame(t, reader)
-		if frame.event != "voting_snapshot" || frame.id == "" {
+		if frame.event != "voting_snapshots" || frame.id == "" {
 			t.Fatalf("voting stream frame=%+v, want snapshot with cursor", frame)
 		}
-		var snapshot struct {
-			Cursor  string `json:"cursor"`
+		type meetSnapshot struct {
+			MeetID  string `json:"meet_id"`
 			Options []struct {
 				ID             string `json:"id"`
 				Total          int    `json:"total"`
@@ -468,11 +468,19 @@ func testVotingStreamReconnectAndRevocation(t *testing.T, ctx context.Context, c
 			SelectedOptionIDs []string `json:"selected_option_ids"`
 			VoteRevision      *string  `json:"vote_revision"`
 		}
-		if err := json.Unmarshal([]byte(frame.data), &snapshot); err != nil {
+		var groupSnapshot struct {
+			Cursor string         `json:"cursor"`
+			Meets  []meetSnapshot `json:"meets"`
+		}
+		if err := json.Unmarshal([]byte(frame.data), &groupSnapshot); err != nil {
 			t.Fatalf("decode voting stream snapshot: %v", err)
 		}
-		if snapshot.Cursor != frame.id || len(snapshot.Options) != 2 || snapshot.Options[0].ID != "any" || snapshot.Options[1].ID != "venue-2" {
-			t.Fatalf("incomplete voting snapshot=%+v, event ID=%q", snapshot, frame.id)
+		if groupSnapshot.Cursor != frame.id || len(groupSnapshot.Meets) != 1 || groupSnapshot.Meets[0].MeetID != "missing-votes-meet" {
+			t.Fatalf("group voting snapshot=%+v, event ID=%q, want only the listed Meet", groupSnapshot, frame.id)
+		}
+		snapshot := groupSnapshot.Meets[0]
+		if len(snapshot.Options) != 2 || snapshot.Options[0].ID != "any" || snapshot.Options[1].ID != "venue-2" {
+			t.Fatalf("incomplete voting snapshot=%+v", snapshot)
 		}
 		if len(snapshot.SelectedOptionIDs) != len(expectedSelections) {
 			t.Fatalf("selections=%v, want %v", snapshot.SelectedOptionIDs, expectedSelections)
@@ -501,7 +509,7 @@ func testVotingStreamReconnectAndRevocation(t *testing.T, ctx context.Context, c
 			t.Fatalf("voting stream leaked hidden voter: %s", frame.data)
 		}
 		claims, err := codec.Decode(frame.id)
-		if err != nil || claims.Stream != "voting-v1" || claims.Resource != "missing-votes-meet" || claims.Generation != "voting-v1" {
+		if err != nil || claims.Stream != "group-voting-v1" || claims.Resource != "private-group" || claims.Generation != "group-voting-v1" {
 			t.Fatalf("voting cursor claims=%+v err=%v", claims, err)
 		}
 		var revision time.Time

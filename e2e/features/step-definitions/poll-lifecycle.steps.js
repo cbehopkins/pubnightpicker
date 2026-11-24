@@ -33,7 +33,7 @@ async function captureVoteApi(page) {
             const url = input instanceof Request ? input.url : String(input);
             const method = String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
             const response = await nativeFetch(input, init);
-            if (/\/api\/meet\/[^/]+\/votes(?:\/[^/?]+)?(?:\?.*)?$/.test(url)) {
+            if (/\/api\/meet\/[^/]+\/votes(?:\/[^/?]+)?(?:\?.*)?$/.test(url) || /\/api\/meets\/[^/]+\/votes\/stream\?/.test(url)) {
                 window.__voteApiRequests.push({ url, method });
                 const reader = response.clone().body?.getReader();
                 if (reader) {
@@ -309,7 +309,10 @@ Then("Bob sees the vote through the API without Claire's UID", async function ()
     const claireRequests = await claire.evaluate(() => window.__voteApiRequests);
     assert.ok(claireRequests.some(({ url, method }) => url.includes(votePath) && method === "PUT"), `Claire vote requests: ${JSON.stringify(claireRequests)}`);
     assert.ok(bobTraffic.responses.includes('"anonymous_count":1'), `expected an anonymous vote in API responses: ${bobTraffic.responses}`);
-    assert.ok(bobTraffic.requests.some(({ url }) => url.endsWith(`${votePath.slice(0, -1)}/stream`)));
+    assert.ok(bobTraffic.requests.some(({ url }) => {
+        const parsed = new URL(url);
+        return parsed.pathname.endsWith("/votes/stream") && parsed.searchParams.getAll("meet_id").includes(this.pollId);
+    }), `Bob vote requests: ${JSON.stringify(bobTraffic.requests)}`);
     assert.ok(bobTraffic.requests.some(({ url, method }) => url.endsWith(votePath.slice(0, -1)) && method === "GET"));
     assert.ok(!bobTraffic.responses.includes(this.hiddenVoteUid), "the hidden voter UID must not reach Bob's browser");
 });
