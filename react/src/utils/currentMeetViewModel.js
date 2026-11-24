@@ -25,6 +25,7 @@ import { getEffectiveAttendanceState } from "./attendanceState";
  * @property {string | undefined} address
  * @property {string[]} dedupedVotes
  * @property {boolean} allowShowVoters
+ * @property {boolean} allowShowAttendance
  * @property {string[]} canCome
  * @property {string[]} cannotCome
  * @property {boolean} userCanCome
@@ -106,6 +107,7 @@ export function buildCurrentMeetViewModel({
         address: currentVenue.address,
         dedupedVotes: mainVotes,
         allowShowVoters: showVoters && (venueWasVotedFor || mainAttendance.hasAttendanceData),
+        allowShowAttendance: mainAttendance.hasAttendanceData,
         etaMap: mainEtaMap,
         ...mainAttendance,
     };
@@ -126,6 +128,7 @@ export function buildCurrentMeetViewModel({
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
             allowShowVoters: showVoters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),
+            allowShowAttendance: restaurantAttendance.hasAttendanceData,
             etaMap: restaurantEtaMap,
             ...restaurantAttendance,
         };

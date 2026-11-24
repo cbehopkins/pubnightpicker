@@ -96,13 +96,28 @@ of previous sends; setting somebody else's address cannot reveal their history.
 
 ## Venue Attendance Responses
 
-Per-Venue attendance status mutations use Last Orders; the existing Firestore
-listener remains the live read path:
+Authenticated attendance snapshots and live updates use Last Orders:
 
 ```http
+GET    /api/meet/{meet_id}/attendance
+GET    /api/meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
 PUT    /api/meet/{meet_id}/attendance/{venue_id}
 DELETE /api/meet/{meet_id}/attendance/{venue_id}
 ```
+
+Snapshot and stream reads require authentication and the same Meet/Group
+visibility checks as voting. The Group stream requires between one and 50
+distinct `meet_id` query values, all belonging to the requested Group. It sends
+an `attendance_snapshots` event containing complete replacement snapshots for
+all listed Meets. Each snapshot contains explicit `can_come` and `cannot_come`
+UID arrays and applicable ETA values per Venue, the separate `any` entry,
+public participant summaries, and a per-Meet cursor. The Group event also has a
+Group cursor. Reconnects return the latest complete view; they do not replay
+every intermediate write. Meet, attendance and public-profile changes refresh
+the view. Attendance identities are not hidden by the voting-visibility
+preference; private profile fields are never returned. Authorization changes
+send a cursorless `view_reset` event and close the stream. Unavailable reads
+return an error rather than an empty snapshot.
 
 Both operations require a Firebase ID token and a `true` membership entry for
 the Meet's Group. Public Group visibility and global administrator status do
@@ -119,10 +134,11 @@ that caller's ETA.
 An open Meet accepts its candidate Venues. A completed Meet accepts its selected
 Venue and restaurant. A removed Venue can be withdrawn when the caller has a
 response for it or the Meet records its removal; an unrelated Venue is rejected.
-The `any` sentinel is not a Venue for these routes. During this intermediate migration, ETA updates, `any`
-responses, and existing bulk/global attendance actions continue to use their
-legacy Firestore writes. Firestore rules and the current snapshot listener are
-unchanged.
+The `any` sentinel is not a Venue for these mutation routes. During this
+intermediate migration, ETA updates, `any` responses, and existing bulk/global
+attendance actions continue to use their legacy Firestore writes. The backend
+watch keeps API and legacy writes visible through the same snapshot and stream.
+Firestore rules are unchanged.
 
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending

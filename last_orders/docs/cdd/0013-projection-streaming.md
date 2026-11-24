@@ -168,8 +168,8 @@ because every reconnect receives a complete snapshot.
   cursor, discard buffered notifications at or below the high-water mark, then
   deliver later notifications.
 - **Events:** Send complete replacement views on stream connection and after
-  relevant changes. Current-Meets events replace the collection; attendance
-  events contain aggregate counts. Meet views exclude votes and attendance;
+  relevant changes. Current-Meets events replace the collection; Group
+  attendance events contain complete per-Meet attendance snapshots. Meet views exclude votes and attendance;
   relevant selected Venue changes update the composed current-Meets view. The
   opaque cursor is both the SSE event ID
   and the `cursor` field in snapshot/event JSON. `Last-Event-ID` takes
@@ -182,11 +182,10 @@ because every reconnect receives a complete snapshot.
   streams during shutdown. Bound
   subscriber buffers; close a slow client's stream on overflow so it can
   reconnect for a complete view.
-- **Public attendance:** Public Group Meet details and separate attendance
-  counts are available anonymously. Meet responses do not contain attendance.
-  Anonymous attendance responses and streams never
-  expose attendee identities; authenticated GET responses may include attendee
-  details.
+- **Attendance visibility:** Attendance snapshots and Group streams require
+  authentication and voting-style Meet/Group visibility. They include public
+  participant details independent of vote-visibility preferences, but never
+  private profile fields. Meet responses do not contain attendance.
 - **Authorization invalidation:** After a permission or membership change
   commits, non-blockingly signal each active stream registered for the affected
   UID. After a visibility change, signal every stream in the affected

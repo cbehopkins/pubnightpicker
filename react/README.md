@@ -155,9 +155,9 @@ midnight alone does not change that view. Meets without a `groupId` are excluded
 from both. Complete the existing-Meet migration before relying on Group-scoped
 Meet views. New Meets created by the frontend and Last Orders Event Venue
 recurrence receive the resolved Group ID in their initial Firestore write.
-Voting uses the authenticated Last Orders API; attendance remains a Firestore
-interface. Raw vote documents remain accessible to the browser only for account
-deletion cleanup until ticket 05 moves that workflow to the backend.
+Voting and attendance reads use the authenticated Last Orders API. Raw vote
+documents remain accessible to the browser only for account deletion cleanup
+until ticket 05 moves that workflow to the backend.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
@@ -167,13 +167,14 @@ work.
 
 Voting and attendance remain separate from Meet writes. Voting snapshots,
 mutations, live updates and current-user export use Last Orders. Firestore keeps
-the existing `votes/{meetId}` shape as backend-owned state. Per-Venue attendance
-status changes use Last Orders and require true membership in the Meet's Group;
-the Firestore listener remains the live read path. ETA, `any`, and existing
-bulk/global attendance actions retain their legacy Firestore writes during this
+the existing `votes/{meetId}` shape as backend-owned state. Attendance
+snapshots and live updates use authenticated Last Orders reads and a bounded
+Group stream. Per-Venue attendance status changes use Last Orders and require
+true membership in the Meet's Group. ETA, `any`, and existing bulk/global
+attendance actions retain their legacy Firestore writes during this
 intermediate slice, and Firestore rules are not tightened. The Firestore rules
-lockdown for vote documents is deferred until account deletion cleanup moves to
-the backend in ticket 05.
+lockdown for vote documents is deferred until account deletion cleanup moves
+to the backend in ticket 05.
 
 ## Firestore Index Drift Check
 

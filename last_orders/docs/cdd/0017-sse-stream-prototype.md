@@ -184,8 +184,9 @@ coordination; do not rely on sleeps or live Firestore. The prototype must test:
 - Readiness rejection before registration and recovery once ready.
 - A slow/disconnected reader is bounded by the selected write-deadline policy
   and does not block other subscribers or hub publishers.
-- No attendee identities in anonymous attendance output; authenticated GET
-  output may include names, while attendance SSE remains aggregate-only.
+- Attendance snapshots and Group stream events include public participant
+  summaries independent of vote-visibility preferences; private profile fields
+  are excluded.
 
 Tests should use separate stream keys to prove unrelated views do not wake one
 another. No production test hooks or reflection are introduced.
@@ -196,15 +197,15 @@ another. No production test hooks or reflection are introduced.
 request-cursor precedence helper, sequence-aware hub handover, and SSE event-ID
 framing. The Venue collection integration, including its production snapshot
 adapter, runtime cursor-secret loading, full GET snapshot, and SSE endpoint, is
-implemented. Production snapshot adapters and endpoint integrations for other
-resource streams, such as Current-Meets and attendance, remain pending.
+implemented. Current-Meets and Group attendance snapshot/stream integrations
+are implemented; incremental resume remains pending.
 
-The V1 opaque-cursor behavior described below is implemented for the Venue
-collection stream and applies to the remaining resource integrations as they
-are added. It adds cursor production to full snapshots, not incremental delta
-replay. Every connection continues to return a complete, currently authorised
-view, including when the supplied cursor is valid. This matches the existing
-stream and snapshot definitions in `docs/pubnightpicker-openapi-v1.yaml`.
+The V1 opaque-cursor behavior described below applies to the Venue collection,
+Current-Meets, attendance and Group voting streams. It adds cursor production
+to full snapshots, not incremental delta replay. Every connection continues to
+return a complete, currently authorised view, including when the supplied
+cursor is valid. This matches the stream and snapshot definitions in
+`docs/pubnightpicker-openapi-v1.yaml`.
 
 Each snapshot adapter returns its serialized view and cursor as one result. It
 reads the view and the shared sync state (`generation`, global `sequence`) in
@@ -249,10 +250,10 @@ resume for those entries needs a retention boundary or equivalent recovery. See
 The endpoint adapter owns resource-specific snapshot queries and authorization,
 and obtains the snapshot's committed generation and sequence from the same
 SQLite transaction. The cursor codec owns token encoding and validation; the
-generic handler owns SSE framing and event IDs. For example, the Current-Meets
-stream is scoped to a Group and the attendance stream to a Meet. Current
-authorization is checked on every connection; the in-memory hub continues to
-reset already-open streams after authorization changes.
+generic handler owns SSE framing and event IDs. The Current-Meets stream is
+scoped to a Group; the attendance stream follows a bounded list of Meets in a
+Group. Current authorization is checked on every connection; the in-memory hub
+continues to reset already-open streams after authorization changes.
 
 Cursor component tests cover encoding/decoding, tampering, unsupported
 versions, scope/resource mismatch, generation/date mismatch, negative/future

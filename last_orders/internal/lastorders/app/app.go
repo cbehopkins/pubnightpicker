@@ -19,6 +19,7 @@ import (
 	publicsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/apicors"
+	"last_orders/internal/lastorders/components/attendancecache"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
@@ -168,6 +169,7 @@ type Config struct {
 	VenueSource               venuecache.Source
 	GroupSource               groupcache.Source
 	VotingSource              votecache.Source
+	AttendanceSource          attendancecache.Source
 	NotificationProfileSource notificationprofile.Source
 	EventVenueSource          eventvenuelistener.Source
 	NewPollSource             newpolllistener.Source
@@ -205,6 +207,8 @@ type App struct {
 	meetCacheService            *meetcache.Service
 	votingCacheService          *votecache.Service
 	votingProfileReader         *votecache.ProfileReader
+	attendanceCacheService      *attendancecache.Service
+	attendanceProfileReader     *attendancecache.ProfileReader
 	currentMeetCacheService     *currentmeetcache.Service
 	groupCacheStore             *groupcache.Store
 	groupCacheService           *groupcache.Service
@@ -414,6 +418,8 @@ func New(cfg Config) (application *App, err error) {
 	var meetCacheService *meetcache.Service
 	var votingCacheService *votecache.Service
 	var votingProfileReader *votecache.ProfileReader
+	var attendanceCacheService *attendancecache.Service
+	var attendanceProfileReader *attendancecache.ProfileReader
 	if firestoreClient != nil && cfg.Component != "landlord" {
 		meetCacheStore, err := meetcache.NewStore(baseStore)
 		if err != nil {
@@ -423,7 +429,7 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
-		meetCacheService, err = meetcache.NewServiceWithHub(meetCacheStore, meetSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
+		meetCacheService, err = meetcache.NewServiceWithHubs(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now, votingStreamHub, venueStreamHub)
 		if err != nil {
 			return nil, err
 		}
@@ -443,6 +449,25 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		votingProfileReader, err = votecache.NewFirestoreProfileReader(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+		attendanceCacheStore, err := attendancecache.NewStore(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init attendance cache store: %w", err)
+		}
+		attendanceSource := cfg.AttendanceSource
+		if attendanceSource == nil {
+			attendanceSource, err = attendancecache.NewFirestoreSource(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
+		attendanceCacheService, err = attendancecache.NewServiceWithHub(attendanceCacheStore, attendanceSource, venueStreamHub, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		attendanceProfileReader, err = attendancecache.NewFirestoreProfileReader(firestoreClient)
 		if err != nil {
 			return nil, err
 		}
@@ -510,7 +535,7 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	notificationProfileListener, err := notificationprofilelistener.NewWithHub(notificationProfileService, notificationProfileStore, votingStreamHub, cfg.Logger)
+	notificationProfileListener, err := notificationprofilelistener.NewWithHubs(notificationProfileService, notificationProfileStore, cfg.Logger, votingStreamHub, venueStreamHub)
 	if err != nil {
 		return nil, err
 	}
@@ -527,6 +552,13 @@ func New(cfg Config) (application *App, err error) {
 		}
 		if votingCacheService != nil {
 			timer, err := registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, timer)
+		}
+		if attendanceCacheService != nil {
+			timer, err := registerAttendanceProjectionHousekeeping(cellarRuntime, attendanceCacheService, cfg.Clock, cfg.Logger)
 			if err != nil {
 				return nil, err
 			}
@@ -556,6 +588,8 @@ func New(cfg Config) (application *App, err error) {
 			meetCacheService:            meetCacheService,
 			votingCacheService:          votingCacheService,
 			votingProfileReader:         votingProfileReader,
+			attendanceCacheService:      attendanceCacheService,
+			attendanceProfileReader:     attendanceProfileReader,
 			currentMeetCacheService:     currentMeetCacheService,
 			groupCacheStore:             groupCacheStore,
 			groupCacheService:           groupCacheService,
@@ -889,6 +923,13 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 	}
+	var attendanceProjectionTimer *cellar.Timer
+	if attendanceCacheService != nil {
+		attendanceProjectionTimer, err = registerAttendanceProjectionHousekeeping(cellarRuntime, attendanceCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var currentMeetMidnightTimer *cellar.Timer
 	if currentMeetCacheService != nil {
 		currentMeetProjectionTimer, err = registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
@@ -1088,6 +1129,9 @@ func New(cfg Config) (application *App, err error) {
 	if votingProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, votingProjectionTimer)
 	}
+	if attendanceProjectionTimer != nil {
+		periodicTimers = append(periodicTimers, attendanceProjectionTimer)
+	}
 	if currentMeetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, currentMeetProjectionTimer)
 	}
@@ -1162,6 +1206,8 @@ func New(cfg Config) (application *App, err error) {
 		meetCacheService:            meetCacheService,
 		votingCacheService:          votingCacheService,
 		votingProfileReader:         votingProfileReader,
+		attendanceCacheService:      attendanceCacheService,
+		attendanceProfileReader:     attendanceProfileReader,
 		currentMeetCacheService:     currentMeetCacheService,
 		groupCacheStore:             groupCacheStore,
 		groupCacheService:           groupCacheService,
@@ -1331,11 +1377,13 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
+		AttendanceSnapshots: application.attendanceCacheService, AttendanceProfiles: application.attendanceProfileReader,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
 		Members: attendanceMemberAuthorizer(groupAuthorizer), Attendance: attendanceWriter,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
+		AttendanceHub: application.venueStreamHub, AttendanceReady: application.venueCacheListener.Ready(),
 		VotingHub: application.votingStreamHub, VotingReady: application.votingStreamReady,
 		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
@@ -1391,6 +1439,28 @@ func registerVotingProjectionHousekeeping(runtime *cellar.Cellar, service *votec
 	}, func(ctx context.Context) error {
 		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
 			logger.Error("voting projection housekeeping failed", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
+}
+
+func registerAttendanceProjectionHousekeeping(runtime *cellar.Cellar, service *attendancecache.Service, clock cellar.Clock, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewTimer("attendance-projection.housekeeping", cellar.TimerConfig{
+		Interval: time.Minute,
+		Mode:     cellar.TimerFixedRate,
+	}, func(ctx context.Context) error {
+		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
+			logger.Error("attendance projection housekeeping failed", "err", err)
 		}
 		return nil
 	})
@@ -1913,6 +1983,9 @@ func (a *App) Close() error {
 	}
 	if a.votingCacheService != nil {
 		a.votingCacheService.Close()
+	}
+	if a.attendanceCacheService != nil {
+		a.attendanceCacheService.Close()
 	}
 	if a.currentMeetCacheService != nil {
 		a.currentMeetCacheService.Close()

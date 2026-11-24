@@ -49,6 +49,21 @@ describe("currentMeetViewModel", () => {
     expect(result.restaurantVenue).toBeNull();
   });
 
+  it("keeps attendance details visible when voter identities are restricted", () => {
+    const result = buildCurrentMeetViewModel({
+      currentVenueId: "venue-1",
+      restaurantId: undefined,
+      venues: { "venue-1": { name: "The Maypole" } },
+      votes: { "venue-1": { total: 1, voterUids: ["voter-1"] } },
+      attendance: { "venue-1": { canCome: ["attendee-1"], cannotCome: [] } },
+      currUserId: "member-1",
+      showVoters: false,
+    });
+
+    expect(result.mainVenue.allowShowAttendance).toBe(true);
+    expect(result.mainVenue.allowShowVoters).toBe(false);
+  });
+
   it("builds a separate restaurant view model when restaurant is present", () => {
     const result = buildCurrentMeetViewModel({
       currentVenueId: "venue-1",

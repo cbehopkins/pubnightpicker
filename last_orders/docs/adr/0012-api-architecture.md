@@ -425,12 +425,26 @@ arrays, and clear the caller's ETA when withdrawing or setting
 for it or the Meet records its removal; unrelated Venues are rejected. The
 `any` sentinel is not a Venue on this API.
 
-### 9.2 Transitional reads and ETA writes
+### 9.2 Authenticated snapshots and Group stream
 
-The existing Firestore attendance listener remains the live read path. ETA
-updates, `any` responses, and existing bulk/global attendance actions continue
-to use legacy Firestore writes in this intermediate slice; rules are not
-tightened here.
+```http
+GET /meet/{meet_id}/attendance
+GET /meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
+```
+
+Both reads require authentication and voting-style Meet/Group visibility.
+Snapshots preserve the existing per-Venue status arrays and separate `any`
+entry, expose applicable ETAs and public participant summaries, and do not
+apply voting-visibility preferences to attendance identities. The Group stream
+follows 1-50 distinct Meets in the requested Group and sends complete
+replacement snapshots with opaque cursors. Reconnect returns current state;
+authorization changes reset and close the view. Meet, attendance and public
+profile changes refresh it. Private profile fields are excluded.
+
+Per-Venue status writes continue to require true Group membership, independently
+of voting permission. ETA updates, `any` responses, and existing bulk/global
+attendance actions continue to use legacy Firestore writes in this intermediate
+slice; rules are not tightened here.
 
 
 ## 10. Server-Sent Events
@@ -438,11 +452,13 @@ tightened here.
 ### 10.1 Routes
 
 ```http
-GET /meet/{meet_id}/attendance/stream
+GET /meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
 GET /meets/{group_id}/current/stream
 ```
 
-The first stream publishes attendance state for a particular Meet. The second publishes changes to the Group's current Meets.
+The attendance stream publishes complete snapshots for the listed Meets in one
+Group connection. The current-Meets stream publishes changes to the Group's
+current Meets.
 
 There is no past-Meets stream in V1; the past collection is static and fetched using HTTP.
 
@@ -452,7 +468,9 @@ SSE events describe resulting view state rather than low-level storage mutations
 
 The local projection implementation must be extended to record modification timestamps. These timestamps are the source for stream cursors; the exact ordering and cursor contract remain design work.
 
-Clients should be able to recover after reconnecting without assuming they observed every intermediate event.
+Clients recover the latest complete view after reconnecting without assuming
+they observed every intermediate event. The attendance and Group voting stream
+cursor envelopes and full-snapshot semantics are specified in OpenAPI.
 
 ### 10.3 Snapshot and cursor protocol
 
@@ -466,7 +484,7 @@ The intended protocol is:
 
 The snapshot and its revision must represent the same logical point in time. A concurrent update must not fall into a gap between the snapshot and stream subscription.
 
-An unknown, invalid or expired cursor returns the most up-to-date version of the requested view. For example, an unusable cursor for changes to a Meet returns the latest version of that Meet. Recovery does not require reconstructing every intermediate change. The exact event envelope and cursor encoding will be defined in the CDD and OpenAPI.
+An unknown, invalid or expired cursor returns the most up-to-date version of the requested view. For example, an unusable cursor for changes to a Meet returns the latest version of that Meet. Recovery does not require reconstructing every intermediate change. Cursor encoding and event envelopes are specified in the CDD and OpenAPI.
 
 ### 10.4 Reusable projection-stream component
 

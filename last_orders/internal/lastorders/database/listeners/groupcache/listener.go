@@ -132,6 +132,7 @@ func (l *Listener) applyBatch(ctx context.Context, changes []component.Change, b
 		for _, mutation := range mutations {
 			l.hub.InvalidateScope("current-meets-group:" + string(mutation.ID))
 			l.hub.InvalidateScope("open-meets-group:" + string(mutation.ID))
+			l.hub.InvalidateScope("attendance-group:" + string(mutation.ID))
 		}
 	}
 	return nil

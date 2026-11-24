@@ -90,3 +90,20 @@ func TestAttendanceMutationRejectsNonMemberWithoutCallingWriter(t *testing.T) {
 		t.Fatalf("non-member reached attendance writer: %v", writer.changes)
 	}
 }
+
+func TestAttendanceSnapshotUnavailableIsNotAnEmptySnapshot(t *testing.T) {
+	endpoint := &Endpoint{Auth: pastMeetAuthStub{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+	request := httptest.NewRequest(http.MethodGet, "/api/meet/meet-a/attendance", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("attendance response status=%d body=%s, want HTTP 503", response.Code, response.Body)
+	}
+	if strings.Contains(response.Body.String(), `"attendance":{}`) {
+		t.Fatalf("unavailable attendance was represented as empty: %s", response.Body)
+	}
+}

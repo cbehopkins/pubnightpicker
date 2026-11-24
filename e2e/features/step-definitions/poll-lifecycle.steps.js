@@ -29,6 +29,8 @@ async function captureVoteApi(page) {
         window.__voteApiRequests = [];
         window.__voteApiResponses = "";
         window.__attendanceApiRequests = [];
+        window.__attendanceApiReadRequests = [];
+        window.__attendanceApiResponses = "";
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
             const url = input instanceof Request ? input.url : String(input);
@@ -49,7 +51,24 @@ async function captureVoteApi(page) {
                 }
             }
             if (/\/api\/meet\/[^/]+\/attendance\/[^/?]+(?:\?.*)?$/.test(url)) {
-                window.__attendanceApiRequests.push({ url, method, body: init.body });
+                window.__attendanceApiRequests.push({ url, method, body: init.body, status: response.status });
+            }
+            if (method === "GET" && (/\/api\/meet\/[^/]+\/attendance(?:\?.*)?$/.test(url)
+                || /\/api\/meets\/[^/]+\/attendance\/stream(?:\?.*)?$/.test(url))) {
+                window.__attendanceApiReadRequests.push({ url, method, status: response.status });
+            }
+            if (/\/api\/meets\/[^/]+\/attendance\/stream(?:\?.*)?$/.test(url)) {
+                const reader = response.clone().body?.getReader();
+                if (reader) {
+                    void (async () => {
+                        const decoder = new TextDecoder();
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            window.__attendanceApiResponses += decoder.decode(value, { stream: true });
+                        }
+                    })().catch(() => undefined);
+                }
             }
             return response;
         };
@@ -74,10 +93,15 @@ function currentMeetCard(world, actor, venue) {
     });
 }
 
-async function adminAttendanceCell(world, userName, venue, status) {
-    const admin = world.actors.get("admin");
-    const card = currentMeetCard(world, "admin", venue);
-    const table = admin.getByRole("table");
+async function closeAttendanceModal(world, viewerName) {
+    const close = world.actors.get(viewerName).getByRole("button", { name: "Close", exact: true });
+    if (await close.count() > 0) await close.click();
+}
+
+async function attendanceCell(world, viewerName, userName, venue, status) {
+    const viewer = world.actors.get(viewerName);
+    const card = currentMeetCard(world, viewerName, venue);
+    const table = viewer.getByRole("table");
     if (await table.count() === 0) {
         await card.getByRole("button", { name: "Show venue attendance", exact: true }).click();
     }
@@ -85,10 +109,13 @@ async function adminAttendanceCell(world, userName, venue, status) {
     const columnIndex = headers.indexOf(status);
     if (columnIndex === -1) return null;
     const row = table.getByRole("row").filter({
-        has: admin.getByRole("cell", { name: userName, exact: true }),
+        has: viewer.getByRole("cell", { name: userName, exact: true }),
     });
-    await row.waitFor();
     return row.getByRole("cell").nth(columnIndex);
+}
+
+async function adminAttendanceCell(world, userName, venue, status) {
+    return attendanceCell(world, "admin", userName, venue, status);
 }
 
 function applicationTimeDate(dayOffset) {
@@ -465,7 +492,14 @@ When("{word} marks {string} as {string}", async function (name, venue, status) {
     const card = currentMeetCard(this, name, venue);
     await card.getByRole("button", { name: status, exact: true }).click();
     const selectedLabel = status === "Can come" ? "Can come confirmed" : "Cannot come confirmed";
-    await card.getByRole("button", { name: selectedLabel, exact: true }).waitFor();
+    try {
+        await card.getByRole("button", { name: selectedLabel, exact: true }).waitFor();
+    } catch (error) {
+        const requests = await this.actors.get(name).evaluate(() => window.__attendanceApiRequests ?? []);
+        const reads = await this.actors.get(name).evaluate(() => window.__attendanceApiReadRequests ?? []);
+        const stream = await this.actors.get(name).evaluate(() => (window.__attendanceApiResponses ?? "").slice(-2000));
+        throw new Error(`${error.message}; attendance API reads: ${JSON.stringify(reads.slice(-3))}; writes: ${JSON.stringify(requests.slice(-3))}; stream tail: ${stream}`);
+    }
 });
 
 When("{word} adds ETA {string} at {string}", async function (name, eta, venue) {
@@ -481,6 +515,7 @@ Then("the admin sees {string} can come to {string}", async function (userName, v
     const cell = await adminAttendanceCell(this, userName, venue, status);
     assert.ok(cell, `attendance table must include ${status}`);
     await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, "admin");
 });
 
 Then("the admin sees {string} cannot come to {string}", async function (userName, venue) {
@@ -488,6 +523,45 @@ Then("the admin sees {string} cannot come to {string}", async function (userName
     const cell = await adminAttendanceCell(this, userName, venue, status);
     assert.ok(cell, `attendance table must include ${status}`);
     await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, "admin");
+});
+
+Then("{word} sees {word} can come to {string}", async function (viewerName, userName, venue) {
+    const cell = await attendanceCell(this, viewerName, userName, venue, "Can Come");
+    assert.ok(cell, "attendance table must include Can Come");
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("{word} sees {word} cannot come to {string}", async function (viewerName, userName, venue) {
+    const cell = await attendanceCell(this, viewerName, userName, venue, "Cannot Come");
+    assert.ok(cell, "attendance table must include Cannot Come");
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("{word} sees {word} has no attendance response for {string}", async function (viewerName, userName, venue) {
+    const canComeCell = await attendanceCell(this, viewerName, userName, venue, "Can Come");
+    const cannotComeCell = await attendanceCell(this, viewerName, userName, venue, "Cannot Come");
+    if (canComeCell) await canComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    if (cannotComeCell) await cannotComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("Claire's browser used the attendance API to load the live view", async function () {
+    const page = this.actors.get("Claire");
+    await page.waitForFunction((meetID) => {
+        const requests = window.__attendanceApiReadRequests ?? [];
+        return requests.some(({ url }) => new URL(url).pathname === `/api/meet/${meetID}/attendance`)
+            && requests.some(({ url }) => new URL(url).pathname.endsWith("/attendance/stream"));
+    }, this.pollId);
+});
+
+When("Claire reconnects to Current Meets", async function () {
+    const page = this.actors.get("Claire");
+    await page.reload();
+    await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
+    await currentMeetCard(this, "Claire", "Journey Red Lion").waitFor();
 });
 
 Then("changing Bob's response clears only Bob's ETA", async function () {
@@ -512,6 +586,7 @@ Then("the admin sees {string} has no attendance response for {string}", async fu
     const cannotComeCell = await adminAttendanceCell(this, userName, venue, "Cannot Come");
     if (canComeCell) await canComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
     if (cannotComeCell) await cannotComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    await closeAttendanceModal(this, "admin");
 });
 
 Then("{word} still sees {string} as {string}", async function (name, venue, label) {

@@ -68,17 +68,23 @@ Feature: Members organise and chat about a meet
     When Bob opens Current Meets
     Then Bob sees the meet at "Journey Red Lion"
     When admin opens Current Meets
+    Then Claire's browser used the attendance API to load the live view
     And Bob marks "Journey Red Lion" as "Can come"
     Then the admin sees "Bob" can come to "Journey Red Lion"
+    And Claire sees Bob can come to "Journey Red Lion"
+    When Claire reconnects to Current Meets
+    Then Claire sees Bob can come to "Journey Red Lion"
     When Bob adds ETA "18:30" at "Journey Red Lion"
     And Claire marks "Journey Red Lion" as "Can come"
     And Claire adds ETA "19:00" at "Journey Red Lion"
     Then the admin sees "Claire" can come to "Journey Red Lion"
     When Bob marks "Journey Red Lion" as "Cannot come"
     Then the admin sees "Bob" cannot come to "Journey Red Lion"
+    And Claire sees Bob cannot come to "Journey Red Lion"
     And changing Bob's response clears only Bob's ETA
     When Bob withdraws attendance for "Journey Red Lion"
     Then the admin sees "Bob" has no attendance response for "Journey Red Lion"
+    And Claire sees Bob has no attendance response for "Journey Red Lion"
     And Claire still sees "Journey Red Lion" as "Can come confirmed"
     And Bob's browser used the attendance API to set and withdraw responses for "Journey Red Lion"
     When Bob opens Chat Page

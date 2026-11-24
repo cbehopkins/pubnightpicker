@@ -253,9 +253,10 @@ data or push credentials.
 	on-demand Meet entries instead require their own baseline when requested, not
 	eager admission at startup. This does not assert Firebase is globally caught up. V1 assumes one backend
 	instance and one persistent SQLite database. Active streams close at shutdown.
-- Anonymous attendance responses for public Group Meets expose counts but no
-	attendee identities. Authenticated attendance GET responses may include attendee
-	details. Meet responses do not include attendance or votes.
+- Attendance snapshots and Group streams require authentication and
+	voting-style Meet/Group visibility. They include public participant details
+	independent of vote-visibility preferences. Meet responses do not include
+	attendance or votes.
 - On an effective authorization change, publish a post-commit invalidation to
 	the in-memory stream hub for the affected UID. The hub signals all registered
 	streams without closing their channels. Each handler sends a generic

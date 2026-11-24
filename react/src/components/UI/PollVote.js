@@ -18,6 +18,9 @@ import { QuestionRender } from "./ConfirmModal";
 import Button from "./Button";
 import { normalizeArrivalTime } from "../../utils/arrivalTime";
 
+/** @type {Record<string, { uid: string, name?: string, photoUrl?: string }>} */
+const EMPTY_ATTENDANCE_PROFILES = {};
+
 /** @typedef {import("../../store").RootState} RootState */
 
 /** @typedef {{ total: number, anonymousCount: number, voterUids: string[] }} VotingOption */
@@ -59,9 +62,11 @@ import { normalizeArrivalTime } from "../../utils/arrivalTime";
  * @property {string[]} pendingOptionIds
  * @property {Record<string, boolean>} retrySelections
  * @property {Record<string, UserEntry>} voterProfiles
+ * @property {Record<string, { uid: string, name?: string, photoUrl?: string }>} attendanceProfiles
  * @property {boolean} canCastVote
  * @property {AttendanceMap} attendance
  * @property {boolean} canShowAttendance
+ * @property {boolean} canShowVoters
  * @property {(venueId: string, selected: boolean) => Promise<boolean>} changeVote
  * @property {(venueId: string) => Promise<boolean>} retryVote
  * @property {(venueId: string, userId: string, status: "canCome" | "cannotCome") => Promise<void>} setAttendanceStatus
@@ -368,6 +373,7 @@ function VotableVenue({
   retrySelections,
   attendance,
   canShowAttendance,
+  canShowVoters,
   canCastVote,
   changeVote,
   retryVote,
@@ -387,6 +393,7 @@ function VotableVenue({
   showAttendanceColumns,
   usersByUid,
   voterProfiles,
+  attendanceProfiles,
 }) {
   const rowData = useVotableRow(
     venueId,
@@ -415,7 +422,9 @@ function VotableVenue({
 
       const rowEtaMap = rowAttendance.eta || {};
 
-      const rowVoters = (votes[venueId]?.voterUids || []).filter((id) => voterProfiles[normalizeUserId(id)]?.votesVisible !== false);
+      const rowVoters = canShowVoters
+        ? (votes[venueId]?.voterUids || []).filter((id) => voterProfiles[normalizeUserId(id)]?.votesVisible !== false)
+        : [];
 
       const rowCanCome = rowAttendance.canCome || [];
 
@@ -524,8 +533,10 @@ function VotableVenue({
                 </>}
               >
                 <ShowAttendance
-                  voters={votes[venueId]?.voterUids || []}
+                  voters={canShowVoters ? votes[venueId]?.voterUids || [] : []}
                   voterProfiles={voterProfiles}
+                  attendanceProfiles={attendanceProfiles}
+                  showVoters={canShowVoters}
                   canCome={rowData.canCome}
                   cannotCome={rowData.cannotCome}
                   eta={attendance[venueId]?.eta}
@@ -537,7 +548,7 @@ function VotableVenue({
       )}
       {showAttendanceColumns && (
         <>
-          <td className={styles.attendancePeopleCell}>{votedNames.join(", ")}</td>
+          {canShowVoters && <td className={styles.attendancePeopleCell}>{votedNames.join(", ")}</td>}
           <td className={styles.attendancePeopleCell}>{canComeNames.join(", ")}</td>
           <td className={styles.attendancePeopleCell}>{cannotComeNames.join(", ")}</td>
           <td className={styles.attendancePeopleCell}>{etaNames.join(", ")}</td>
@@ -557,18 +568,20 @@ function PollVote(props) {
   });
   const allowDelete = useRole("canAddPubToPoll");
   const allowCompletePoll = useRole("canCompletePoll");
-  const canShowAttendance = useRole("canShowVoters");
+  const canShowVoters = useRole("canShowVoters");
   const canRespond = Boolean(currUserId);
+  const canShowAttendance = canRespond;
   const canVote = useRole("canVote");
   const canReadProtectedPollData = canRespond;
   const privateData = useUserPrivateData(currUserId);
   const defaultEta = normalizeArrivalTime(privateData?.defaultArrivalTime);
   const voteState = useVotes(props.poll_id, currUserId, canReadProtectedPollData);
   const { optionsById: votes, voterProfiles, selectedOptionIds, pendingOptionIds, retrySelections, errorMessage, changeVote, retryVote } = voteState;
-  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus, setEta, clearEta] = useAttendance(
+  const [attendance, setAttendanceStatus, clearAttendance, , setGlobalAttendanceStatus, setEta, clearEta, attendanceProfilesResult, attendanceLoading, attendanceError] = useAttendance(
     props.poll_id,
     canReadProtectedPollData
   );
+  const attendanceProfiles = attendanceProfilesResult || EMPTY_ATTENDANCE_PROFILES;
   const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
   const mobile = Boolean(props.mobile);
   const tableWrapRef = useRef(null);
@@ -608,8 +621,11 @@ function PollVote(props) {
         map[entryUid] = userEntry;
       }
     });
+    for (const [uid, profile] of Object.entries(attendanceProfiles)) {
+      map[uid] = { uid, name: profile.name };
+    }
     return map;
-  }, [users]);
+  }, [attendanceProfiles, users]);
 
   useLayoutEffect(() => {
     const wrap = tableWrapRef.current;
@@ -684,6 +700,8 @@ function PollVote(props) {
 
   return (
     <>
+      {attendanceLoading && <p role="status" className="small text-body-secondary mb-2">Loading attendance...</p>}
+      {attendanceError && <p role="alert" className="small text-danger mb-2">Attendance unavailable: {attendanceError}</p>}
       <div
         ref={tableWrapRef}
         className={`${styles.tableWrap} ${isTableOverflowing ? styles.tableWrapOverflow : ""}`.trim()}
@@ -696,7 +714,7 @@ function PollVote(props) {
               <th className={styles.voteCol}>Votes</th>
               {canRespond && <th className={styles.statusCol}></th>}
               {canRespond && <th className={styles.actionsCol}>Actions</th>}
-              {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Voted</th>}
+              {showAttendanceColumns && canShowVoters && <th className={styles.attendancePeopleCol}>Voted</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Can come</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>Cannot come</th>}
               {showAttendanceColumns && <th className={styles.attendancePeopleCol}>ETA</th>}
@@ -719,6 +737,7 @@ function PollVote(props) {
                   voterProfiles={voterProfiles}
                   attendance={attendance}
                   canShowAttendance={canShowAttendance}
+                  canShowVoters={canShowVoters}
                   changeVote={changeVote}
                   retryVote={retryVote}
                   setAttendanceStatus={setAttendanceStatus}
@@ -739,6 +758,7 @@ function PollVote(props) {
                   mobile={mobile}
                   showAttendanceColumns={showAttendanceColumns}
                   usersByUid={usersByUid}
+                  attendanceProfiles={attendanceProfiles}
                   defaultEta={defaultEta}
                 />
               );

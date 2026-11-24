@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useAttendance from "./useAttendance";
 
 const {
@@ -14,6 +14,7 @@ const {
     updateDocMock,
     runTransactionMock,
     requestLastOrdersMock,
+    streamLastOrdersMock,
 } = vi.hoisted(() => {
     const updateDocMock = vi.fn(async () => undefined);
     const runTransactionMock = vi.fn(async (_db, callback) => callback({
@@ -30,11 +31,17 @@ const {
         updateDocMock,
         runTransactionMock,
         requestLastOrdersMock: vi.fn(async () => undefined),
+        streamLastOrdersMock: vi.fn(),
     };
 });
 
 vi.mock("../utils/lastOrdersApi", () => ({
     requestLastOrders: requestLastOrdersMock,
+    streamLastOrders: streamLastOrdersMock,
+}));
+
+vi.mock("react-redux", () => ({
+    useSelector: (selector) => selector({ group: { groupId: "group-a" }, auth: { uid: "user-1" } }),
 }));
 
 vi.mock("../firebase", () => {
@@ -57,6 +64,8 @@ vi.mock("firebase/firestore", () => {
 });
 
 describe("useAttendance", () => {
+    afterEach(cleanup);
+
     beforeEach(() => {
         arrayRemoveMock.mockClear();
         arrayUnionMock.mockClear();
@@ -66,6 +75,18 @@ describe("useAttendance", () => {
         setDocMock.mockClear();
         updateDocMock.mockClear();
         requestLastOrdersMock.mockClear();
+        streamLastOrdersMock.mockReset();
+        requestLastOrdersMock.mockResolvedValue({
+            meet_id: "poll-1",
+            entries: {
+                "pub-1": { can_come: ["user-1"], cannot_come: [], eta: { "user-1": "19:15" } },
+            },
+            participants: { "user-1": { id: "user-1", name: "Alice", photo_url: "https://example.test/alice.jpg" } },
+            cursor: "cursor-1",
+        });
+        streamLastOrdersMock.mockImplementation((_path, options) => new Promise((resolve) => {
+            options.signal.addEventListener("abort", resolve, { once: true });
+        }));
         runTransactionMock.mockReset();
         runTransactionMock.mockImplementation(async (_db, callback) => callback({
             get: vi.fn(async () => ({ exists: () => true })),
@@ -73,37 +94,55 @@ describe("useAttendance", () => {
         }));
     });
 
-    it("subscribes to attendance and replaces state from snapshots", () => {
-        let snapshotHandler;
-        onSnapshotMock.mockImplementation((docRef, handler) => {
-            snapshotHandler = handler;
-            return () => undefined;
-        });
-
+    it("loads a complete attendance snapshot and applies Group stream replacements", async () => {
         const { result } = renderHook(() => useAttendance("poll-1"));
 
-        act(() => {
-            snapshotHandler({
-                data: () => ({
-                    "pub-1": {
-                        canCome: ["user-1"],
-                        cannotCome: [],
-                    },
-                }),
-            });
-        });
+        await waitFor(() => expect(result.current[8]).toBe(false));
+        await waitFor(() => expect(streamLastOrdersMock).toHaveBeenCalledTimes(1));
 
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance", expect.objectContaining({ method: "GET" }));
         expect(result.current[0]).toEqual({
             "pub-1": {
                 canCome: ["user-1"],
                 cannotCome: [],
+                eta: { "user-1": "19:15" },
             },
         });
+        expect(result.current[7]["user-1"]).toEqual({ uid: "user-1", name: "Alice", photoUrl: "https://example.test/alice.jpg" });
+        expect(onSnapshotMock).not.toHaveBeenCalled();
+
+        const streamOptions = streamLastOrdersMock.mock.calls[0][1];
+        act(() => streamOptions.onmessage({
+            event: "attendance_snapshots",
+            data: JSON.stringify({
+                cursor: "cursor-2",
+                meets: [{
+                    meet_id: "poll-1",
+                    cursor: "meet-cursor-2",
+                    entries: { "pub-1": { can_come: ["user-2"], cannot_come: ["user-1"], eta: {} } },
+                    participants: { "user-1": { id: "user-1", name: "Alice" }, "user-2": { id: "user-2", name: "Bob" } },
+                }],
+            }),
+        }));
+
+        await waitFor(() => expect(result.current[0]["pub-1"].cannotCome).toEqual(["user-1"]));
+        expect(result.current[0]["pub-1"].canCome).toEqual(["user-2"]);
+        expect(result.current[7]["user-2"].name).toBe("Bob");
+    });
+
+    it("shares one bounded Group stream across displayed Meets", async () => {
+        const first = renderHook(() => useAttendance("meet-b"));
+        const second = renderHook(() => useAttendance("meet-a"));
+        await waitFor(() => expect(streamLastOrdersMock).toHaveBeenCalledTimes(1));
+
+        expect(streamLastOrdersMock).toHaveBeenCalledWith("api/meets/group-a/attendance/stream", expect.objectContaining({
+            query: [["meet_id", "meet-a"], ["meet_id", "meet-b"]],
+        }));
+        first.unmount();
+        second.unmount();
     });
 
     it("sets and withdraws the caller's Venue response through Last Orders", async () => {
-        onSnapshotMock.mockImplementation(() => () => undefined);
-
         const { result } = renderHook(() => useAttendance("meet-1"));
 
         await act(async () => {
@@ -111,57 +150,21 @@ describe("useAttendance", () => {
             await result.current[2]("venue-1", "user-1");
         });
 
-        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(1, "/api/meet/meet-1/attendance/venue-1", {
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/meet-1/attendance/venue-1", {
             method: "PUT",
             body: { status: "attending" },
         });
-        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(2, "/api/meet/meet-1/attendance/venue-1", {
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/meet-1/attendance/venue-1", {
             method: "DELETE",
         });
         expect(updateDocMock).not.toHaveBeenCalled();
-    });
-
-    it("subscribes once and does not churn subscriptions after snapshot updates", () => {
-        const unsubscribeMock = vi.fn();
-        let snapshotHandler;
-
-        onSnapshotMock.mockImplementation((_, handler) => {
-            snapshotHandler = handler;
-            return unsubscribeMock;
-        });
-
-        renderHook(() => useAttendance("poll-1"));
-
-        act(() => {
-            snapshotHandler({
-                data: () => ({
-                    "pub-1": {
-                        canCome: ["user-1"],
-                        cannotCome: [],
-                    },
-                }),
-            });
-        });
-
-        act(() => {
-            snapshotHandler({
-                data: () => ({
-                    "pub-1": {
-                        canCome: ["user-1", "user-2"],
-                        cannotCome: [],
-                    },
-                }),
-            });
-        });
-
-        expect(onSnapshotMock).toHaveBeenCalledTimes(1);
-        expect(unsubscribeMock).not.toHaveBeenCalled();
     });
 
     it("does not subscribe when disabled", () => {
         const { result } = renderHook(() => useAttendance("poll-1", false));
 
         expect(onSnapshotMock).not.toHaveBeenCalled();
+        expect(streamLastOrdersMock).not.toHaveBeenCalled();
         expect(result.current[0]).toEqual({});
     });
 
@@ -281,7 +284,9 @@ describe("useAttendance", () => {
 
     it("propagates API errors when the Meet has been deleted", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
-        requestLastOrdersMock.mockRejectedValueOnce(new Error("The requested Meet was not found."));
+        requestLastOrdersMock
+            .mockResolvedValueOnce({ meet_id: "poll-1", entries: {}, participants: {}, cursor: "cursor-1" })
+            .mockRejectedValueOnce(new Error("The requested Meet was not found."));
 
         const { result } = renderHook(() => useAttendance("poll-1"));
 

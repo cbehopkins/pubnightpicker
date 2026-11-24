@@ -23,15 +23,16 @@ const (
 )
 
 type Service struct {
-	store       *Store
-	source      Source
-	logger      *slog.Logger
-	now         func() time.Time
-	diagnostics bool
-	hub         *sse.Hub
-	mu          sync.Mutex
-	entries     map[string]*entry
-	closed      bool
+	store         *Store
+	source        Source
+	logger        *slog.Logger
+	now           func() time.Time
+	diagnostics   bool
+	hub           *sse.Hub
+	attendanceHub *sse.Hub
+	mu            sync.Mutex
+	entries       map[string]*entry
+	closed        bool
 }
 
 type entry struct {
@@ -54,6 +55,10 @@ func NewService(store *Store, source Source, logger *slog.Logger, now func() tim
 }
 
 func NewServiceWithHub(store *Store, source Source, hub *sse.Hub, logger *slog.Logger, now func() time.Time) (*Service, error) {
+	return NewServiceWithHubs(store, source, logger, now, hub)
+}
+
+func NewServiceWithHubs(store *Store, source Source, logger *slog.Logger, now func() time.Time, hubs ...*sse.Hub) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("meet projection store is required")
 	}
@@ -66,15 +71,21 @@ func NewServiceWithHub(store *Store, source Source, hub *sse.Hub, logger *slog.L
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{
+	service := &Service{
 		store:       store,
 		source:      source,
 		logger:      logger,
 		now:         now,
 		diagnostics: os.Getenv("LAST_ORDERS_MEET_PROJECTION_DIAGNOSTICS") == "true",
-		hub:         hub,
 		entries:     make(map[string]*entry),
-	}, nil
+	}
+	if len(hubs) > 0 {
+		service.hub = hubs[0]
+	}
+	if len(hubs) > 1 {
+		service.attendanceHub = hubs[1]
+	}
+	return service, nil
 }
 
 func (s *Service) Get(ctx context.Context, meetID string) (Snapshot, error) {
@@ -215,8 +226,8 @@ func (s *Service) observe(current *entry) {
 				return
 			}
 			continue
-		} else if snapshot.Sequence > 0 && s.hub != nil {
-			s.hub.PublishChanged("voting:"+current.id, snapshot.Sequence)
+		} else if snapshot.Sequence > 0 {
+			s.publishChanged(current.id, snapshot.Sequence)
 		}
 		s.markAvailable(current)
 
@@ -236,8 +247,8 @@ func (s *Service) observe(current *entry) {
 			if err == nil {
 				var snapshot Snapshot
 				snapshot, err = s.apply(current, projection, document.Version)
-				if err == nil && snapshot.Sequence > 0 && s.hub != nil {
-					s.hub.PublishChanged("voting:"+current.id, 1)
+				if err == nil && snapshot.Sequence > 0 {
+					s.publishChanged(current.id, 1)
 				}
 			}
 			if err != nil {
@@ -318,6 +329,9 @@ func (s *Service) markUnavailable(current *entry, err error) {
 	if s.hub != nil {
 		s.hub.ResetView("voting:" + current.id)
 	}
+	if s.attendanceHub != nil {
+		s.attendanceHub.ResetView("attendance:" + current.id)
+	}
 	if s.diagnostics {
 		s.logger.Info("Meet projection baseline attempt failed", "meet_id", maskedMeetID(current.id), "err", err)
 	}
@@ -342,6 +356,15 @@ func (s *Service) retireMissing(current *entry) {
 	s.mu.Unlock()
 	watch.Stop()
 	_ = s.store.DeleteIfOwner(context.Background(), current.id, current.owner)
+}
+
+func (s *Service) publishChanged(meetID string, sequence int64) {
+	if s.hub != nil {
+		s.hub.PublishChanged("voting:"+meetID, sequence)
+	}
+	if s.attendanceHub != nil {
+		s.attendanceHub.PublishChanged("attendance:"+meetID, sequence)
+	}
 }
 
 func (s *Service) EvictExpired(ctx context.Context, now time.Time) error {

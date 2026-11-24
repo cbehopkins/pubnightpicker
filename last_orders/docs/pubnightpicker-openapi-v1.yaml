@@ -1200,6 +1200,24 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           description: The requested projection, required Venue data, or authoritative Meet access decision is temporarily unavailable.
+    delete:
+      tags: [Meets]
+      operationId: deleteMeet
+      summary: Delete an open or completed Meet
+      description: Requires `canCreatePoll`. Atomically deletes the Meet and existing votes, attendance and open-action documents, and creates a deletion audit. Missing child documents are safe; chat and unrelated derived records are retained.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Meet deleted and deletion audit committed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /meet/{meet_id}/votes:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -1350,27 +1368,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-  /meet/{meet_id}:
-    parameters:
-      - $ref: '#/components/parameters/MeetId'
-    delete:
-      tags: [Meets]
-      operationId: deleteMeet
-      summary: Delete an open or completed Meet
-      description: Requires `canCreatePoll`. Atomically deletes the Meet and existing votes, attendance and open-action documents, and creates a deletion audit. Missing child documents are safe; chat and unrelated derived records are retained.
-      security:
-        - bearerAuth: []
-      responses:
-        '204':
-          description: Meet deleted and deletion audit committed.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
   /meet/{meet_id}/complete:
     parameters:
       - $ref: '#/components/parameters/MeetId'
@@ -1452,12 +1449,14 @@ paths:
       operationId: getMeetAttendance
       summary: Get the detailed attendance snapshot
       description: |
-        Returns aggregate attendance counts and a cursor consistent with the
-        snapshot. Anonymous callers receive counts only and no attendee
-        identities. Authenticated callers may also receive attendee details.
+        Requires authentication and voting-style Meet/Group visibility. Returns
+        existing per-Venue status arrays, the separate any entry, applicable
+        ETAs, public participant summaries and a snapshot cursor. Attendance
+        identities are independent of vote-visibility preferences. Private
+        profile fields are not returned; unavailable data is an error, not an
+        empty snapshot.
       security:
         - bearerAuth: []
-        - {}
       responses:
         '200':
           description: Attendance snapshot.
@@ -1469,6 +1468,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: Attendance or authoritative Group access is temporarily unavailable.
         '500':
           $ref: '#/components/responses/InternalError'
   /meet/{meet_id}/attendance/{venue_id}:
@@ -1529,27 +1530,39 @@ paths:
           description: Attendance or Group membership verification is unavailable.
         '500':
           $ref: '#/components/responses/InternalError'
-  /meet/{meet_id}/attendance/stream:
+  /meets/{group_id}/attendance/stream:
     parameters:
-      - $ref: '#/components/parameters/MeetId'
+      - $ref: '#/components/parameters/GroupId'
     get:
       tags: [Attendance]
-      operationId: streamMeetAttendance
-      summary: Stream attendance summary changes
+      operationId: streamGroupAttendanceSnapshots
+      summary: Stream complete attendance snapshots for listed Meets
       description: |
-        SSE stream. `after` or Last-Event-ID is an opaque cursor; Last-Event-ID
-        takes precedence if both are supplied. Every connection receives a
-        complete current aggregate attendance summary with a fresh cursor, then
-        a complete summary after each relevant change. The stream never includes
-        attendee identities and is unavailable until backend startup readiness
-        attendee identities. After a committed authorization change, the stream
-        sends a generic `view_reset` with no ID and `data: {}`, then closes. The
-        client reconnects for a complete summary. The stream is unavailable
-        until backend startup readiness checks complete.
+        Requires authentication and Group visibility. Repeat meet_id once for
+        each displayed Meet; supply 1-50 distinct IDs and every Meet must belong
+        to the requested Group. Each attendance_snapshots event is a complete
+        replacement for all listed Meets and includes a Group cursor plus the
+        per-Meet snapshots. Reconnection returns the latest complete view, not
+        an event history. Attendance, relevant Meet and public-profile changes
+        refresh the view. A committed authorization change sends a cursorless
+        view_reset event with data {} and closes the stream.
       security:
         - bearerAuth: []
-        - {}
       parameters:
+        - name: meet_id
+          in: query
+          required: true
+          description: Repeat for each Meet to follow; all IDs must belong to this Group.
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 50
+            uniqueItems: true
+            items:
+              type: string
+              minLength: 1
         - name: after
           in: query
           required: false
@@ -1562,7 +1575,7 @@ paths:
             type: string
       responses:
         '200':
-          description: SSE stream of attendance summaries.
+          description: SSE stream of complete attendance snapshots for the listed Meets.
           headers:
             Cache-Control:
               schema:
@@ -1573,9 +1586,11 @@ paths:
               schema:
                 type: string
               example: |
-                id: eyJ2IjoxLCJzdHJlYW0iOiJtZWV0LWF0dGVuZGFuY2UtdjEifQ.signature
-                event: attendance
-                data: {"cursor":"eyJ2IjoxLCJzdHJlYW0iOiJtZWV0LWF0dGVuZGFuY2UtdjEifQ.signature","attending_count":8,"not_attending_count":2}
+                id: opaque-group-cursor
+                event: attendance_snapshots
+                data: {"cursor":"opaque-group-cursor","meets":[{"meet_id":"meet-id","entries":{"venue-id":{"can_come":["user-id"],"cannot_come":[],"eta":{"user-id":"19:15"}}},"participants":{"user-id":{"id":"user-id","name":"Display name"}},"revision":"2026-11-24T18:15:00Z","cursor":"opaque-meet-cursor"}]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1583,7 +1598,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Backend startup readiness checks have not completed. Retry after the backend is ready.
+          description: Attendance or authoritative Group access is temporarily unavailable.
           headers:
             Retry-After:
               schema:
@@ -2312,43 +2327,71 @@ components:
         eta:
           type: [string, 'null']
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
-    AttendeeSummary:
+    AttendanceParticipant:
       type: object
-      required: [user_id, display_name, status]
+      required: [id]
       properties:
-        user_id:
+        id:
           type: string
-        display_name:
+        name:
           type: string
         photo_url:
-          type: [string, 'null']
+          type: string
           format: uri
-        status:
-          $ref: '#/components/schemas/AttendanceStatus'
+      additionalProperties: false
+    AttendanceEntry:
+      type: object
+      required: [can_come, cannot_come, eta]
+      properties:
+        can_come:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        cannot_come:
+          type: array
+          items:
+            type: string
+            minLength: 1
         eta:
-          type: [string, 'null']
-          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          type: object
+          additionalProperties:
+            type: string
+            pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      additionalProperties: false
     AttendanceSnapshot:
       type: object
-      required: [cursor, attending_count, not_attending_count, attendees_visible, attending, not_attending]
+      required: [meet_id, entries, participants, revision, cursor]
+      properties:
+        meet_id:
+          type: string
+          minLength: 1
+        entries:
+          type: object
+          description: Existing per-Venue records, including the reserved any entry when present.
+          additionalProperties:
+            $ref: '#/components/schemas/AttendanceEntry'
+        participants:
+          type: object
+          description: Public profiles for participants in the attendance entries, independent of vote visibility.
+          additionalProperties:
+            $ref: '#/components/schemas/AttendanceParticipant'
+        revision:
+          type: [string, 'null']
+          format: date-time
+        cursor:
+          type: string
+          description: Opaque per-Meet cursor corresponding to this complete snapshot.
+      additionalProperties: false
+    GroupAttendanceSnapshot:
+      type: object
+      required: [cursor, meets]
       properties:
         cursor:
           type: string
-          description: Opaque attendance stream cursor corresponding to this snapshot.
-        attending_count:
-          type: integer
-          minimum: 0
-        not_attending_count:
-          type: integer
-          minimum: 0
-        attendees_visible:
-          type: boolean
-          description: False for anonymous callers; attendee arrays are empty when false.
-        attending:
+          description: Opaque cursor for the complete Group view.
+        meets:
           type: array
           items:
-            $ref: '#/components/schemas/AttendeeSummary'
-        not_attending:
-          type: array
-          items:
-            $ref: '#/components/schemas/AttendeeSummary'
+            $ref: '#/components/schemas/AttendanceSnapshot'
+      additionalProperties: false
