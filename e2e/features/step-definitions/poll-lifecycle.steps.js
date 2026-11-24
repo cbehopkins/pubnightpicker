@@ -745,6 +745,7 @@ Then("Bob's browser used the attendance API to set and withdraw responses for {s
     assert.deepEqual(venueRequests.map(({ method, body }) => [method, body]), [
         ["PUT", JSON.stringify({ status: "not_attending" })],
         ["DELETE", undefined],
+        ["PATCH", JSON.stringify({ eta: "18:30" })],
         ["PUT", JSON.stringify({ status: "not_attending" })],
         ["DELETE", undefined],
     ]);

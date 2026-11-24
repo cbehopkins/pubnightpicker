@@ -305,8 +305,13 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	}
 	venue = snapshot.Data()[venueID].(map[string]any)
 	etas, valid = attendanceETAs(venue["eta"])
-	if !valid || etas["caller"] != nil {
-		t.Fatalf("ETA-only patch after cannot-come=%v, want caller ETA cleared", venue["eta"])
+	if !valid || etas["caller"] != "20:15" {
+		t.Fatalf("ETA-only patch after cannot-come=%v, want caller ETA 20:15", venue["eta"])
+	}
+	canCome, valid = attendanceUsers(venue["canCome"])
+	cannotCome, cannotComeValid = attendanceUsers(venue["cannotCome"])
+	if !valid || !cannotComeValid || !slices.Contains(canCome, "caller") || slices.Contains(cannotCome, "caller") {
+		t.Fatalf("ETA-only patch response: canCome=%v cannotCome=%v, want caller attending", canCome, cannotCome)
 	}
 	if err := service.PatchAttendance(ctx, meetRef.ID, venueID, "caller", "attending", true, ptrString("20:15")); err != nil {
 		t.Fatal(err)
@@ -370,6 +375,116 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 
 func ptrString(value string) *string {
 	return &value
+}
+
+func TestAttendanceETATransitionsAgainstFirestoreEmulator(t *testing.T) {
+	host := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if host == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	address, err := net.ResolveTCPAddr("tcp", host)
+	if err != nil || address == nil || !address.IP.IsLoopback() {
+		t.Fatalf("refusing non-loopback Firestore host %q", host)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	client, err := firestore.NewClient(ctx, "demo-attendance-service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	service, err := New(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name          string
+		venueType     string
+		standing      bool
+		initialStatus string
+		clearResponse bool
+		clearETA      bool
+		wantStatus    string
+		wantETA       string
+	}{
+		{name: "inherited attending", standing: true, wantETA: "18:30"},
+		{name: "explicit attending", initialStatus: "attending", wantStatus: "attending", wantETA: "18:30"},
+		{name: "explicit cannot come", initialStatus: "not_attending", wantStatus: "attending", wantETA: "18:30"},
+		{name: "no response", wantStatus: "attending", wantETA: "18:30"},
+		{name: "restaurant cannot inherit", venueType: "restaurant", standing: true, wantStatus: "attending", wantETA: "18:30"},
+		{name: "clear ETA preserves inherited response", standing: true, clearETA: true},
+		{name: "clear ETA preserves explicit response", initialStatus: "attending", clearETA: true, wantStatus: "attending"},
+		{name: "clear ETA preserves cannot come", initialStatus: "not_attending", clearETA: true, wantStatus: "not_attending"},
+		{name: "withdrawal retains inherited ETA", standing: true, initialStatus: "attending", clearResponse: true, wantETA: "18:30"},
+		{name: "withdrawal clears invalid ETA", initialStatus: "attending", clearResponse: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meetRef := client.Collection("polls").NewDoc()
+			venueRef := client.Collection("pubs").NewDoc()
+			attendanceRef := client.Collection("attendance").Doc(meetRef.ID)
+			t.Cleanup(func() {
+				cleanupCtx, finish := context.WithTimeout(context.Background(), 5*time.Second)
+				defer finish()
+				_, _ = attendanceRef.Delete(cleanupCtx)
+				_, _ = meetRef.Delete(cleanupCtx)
+				_, _ = venueRef.Delete(cleanupCtx)
+			})
+			if _, err := meetRef.Set(ctx, map[string]any{"completed": true, "selected": venueRef.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := venueRef.Set(ctx, map[string]any{"venueType": test.venueType}); err != nil {
+				t.Fatal(err)
+			}
+			canCome, cannotCome := []string{"other-member"}, []string{}
+			if test.initialStatus == "attending" {
+				canCome = append(canCome, "caller")
+			} else if test.initialStatus == "not_attending" {
+				cannotCome = append(cannotCome, "caller")
+			}
+			standingCanCome := []string{}
+			if test.standing {
+				standingCanCome = append(standingCanCome, "caller")
+			}
+			etas := map[string]any{"other-member": "19:00"}
+			if test.clearResponse || test.clearETA {
+				etas["caller"] = "18:30"
+			}
+			if _, err := attendanceRef.Set(ctx, map[string]any{
+				"any":       map[string]any{"canCome": standingCanCome, "cannotCome": []string{}},
+				venueRef.ID: map[string]any{"canCome": canCome, "cannotCome": cannotCome, "eta": etas},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if test.clearResponse {
+				err = service.ClearAttendance(ctx, meetRef.ID, venueRef.ID, "caller")
+			} else {
+				eta := ptrString("18:30")
+				if test.clearETA {
+					eta = nil
+				}
+				err = service.PatchAttendance(ctx, meetRef.ID, venueRef.ID, "caller", "", true, eta)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := attendanceRef.Get(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := snapshot.Data()[venueRef.ID].(map[string]any)
+			gotCanCome, _ := attendanceUsers(entry["canCome"])
+			gotCannotCome, _ := attendanceUsers(entry["cannotCome"])
+			gotETAs, valid := attendanceETAs(entry["eta"])
+			if slices.Contains(gotCanCome, "caller") != (test.wantStatus == "attending") ||
+				slices.Contains(gotCannotCome, "caller") != (test.wantStatus == "not_attending") {
+				t.Errorf("caller response: canCome=%v cannotCome=%v, want explicit %q", gotCanCome, gotCannotCome, test.wantStatus)
+			}
+			gotETA, _ := gotETAs["caller"].(string)
+			if !valid || gotETA != test.wantETA || gotETAs["other-member"] != "19:00" || !slices.Contains(gotCanCome, "other-member") {
+				t.Errorf("ETA=%v canCome=%v, want caller ETA %q and other-member unchanged", gotETAs, gotCanCome, test.wantETA)
+			}
+		})
+	}
 }
 
 func TestAttendanceMutationsRejectInvalidInputs(t *testing.T) {

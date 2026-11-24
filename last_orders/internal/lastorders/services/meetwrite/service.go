@@ -527,7 +527,9 @@ func (s *Service) ChangeVote(ctx context.Context, meetID, venueID, voterUID stri
 }
 
 func (s *Service) PatchAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string, etaPresent bool, eta *string) error {
-	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" {
+	if !validID(meetID) || !validID(venueID) || strings.TrimSpace(uid) == "" ||
+		(attendanceStatus != "" && attendanceStatus != "attending" && attendanceStatus != "not_attending") ||
+		(attendanceStatus == "" && !etaPresent) || (etaPresent && eta != nil && !validAttendanceETA(*eta)) {
 		return ErrInvalidInput
 	}
 	if venueID == "any" {
@@ -624,9 +626,46 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 		} else if attendanceStatus == "attending" {
 			canCome = addAttendanceUser(canCome, uid)
 			cannotCome = removeAttendanceUser(cannotCome, uid)
-		} else {
+		} else if attendanceStatus == "not_attending" {
 			cannotCome = addAttendanceUser(cannotCome, uid)
 			canCome = removeAttendanceUser(canCome, uid)
+		}
+		effectiveCanCome := slices.Contains(canCome, uid) && !slices.Contains(cannotCome, uid)
+		if !slices.Contains(canCome, uid) && !slices.Contains(cannotCome, uid) && attendanceVenueAllowed(meetData, venueID) {
+			standingEntry, valid := attendanceMap(attendanceData["any"])
+			if attendanceData["any"] != nil && !valid {
+				return ErrInvalidState
+			}
+			standingCanCome, valid := attendanceUsers(standingEntry["canCome"])
+			if !valid {
+				return ErrInvalidState
+			}
+			standingCannotCome, valid := attendanceUsers(standingEntry["cannotCome"])
+			if !valid {
+				return ErrInvalidState
+			}
+			if slices.Contains(standingCanCome, uid) && !slices.Contains(standingCannotCome, uid) {
+				venueSnapshot, readErr := tx.Get(s.client.Collection("pubs").Doc(venueID))
+				if status.Code(readErr) != codes.NotFound && readErr != nil {
+					return readErr
+				}
+				venueType := "pub"
+				if readErr == nil {
+					venueType, _ = venueSnapshot.Data()["venueType"].(string)
+				}
+				effectiveCanCome = venueType != "restaurant"
+			}
+		}
+		if etaPresent && eta != nil && attendanceStatus != "not_attending" && !effectiveCanCome {
+			canCome = addAttendanceUser(canCome, uid)
+			cannotCome = removeAttendanceUser(cannotCome, uid)
+			effectiveCanCome = true
+		}
+		if canCome == nil {
+			canCome = []string{}
+		}
+		if cannotCome == nil {
+			cannotCome = []string{}
 		}
 		venueData["canCome"] = canCome
 		venueData["cannotCome"] = cannotCome
@@ -643,8 +682,11 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 				}
 				etas[uid] = *eta
 			}
-			venueData["eta"] = etas
 		}
+		if !effectiveCanCome {
+			delete(etas, uid)
+		}
+		venueData["eta"] = etas
 		if clear && !attendanceExists {
 			return nil
 		}
@@ -655,17 +697,12 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 			{FieldPath: firestore.FieldPath{venueID, "canCome"}, Value: canCome},
 			{FieldPath: firestore.FieldPath{venueID, "cannotCome"}, Value: cannotCome},
 		}
-		if clear || attendanceStatus == "not_attending" {
-			updates = append(updates, firestore.Update{
-				FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete,
-			})
-		}
-		if etaPresent && attendanceStatus != "not_attending" && !clear {
-			if eta == nil {
-				updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: firestore.Delete})
-			} else {
-				updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: *eta})
+		if etaPresent || !effectiveCanCome {
+			var value any = firestore.Delete
+			if savedETA, exists := etas[uid]; exists {
+				value = savedETA
 			}
+			updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID, "eta", uid}, Value: value})
 		}
 		return tx.Update(attendanceRef, updates)
 	})
