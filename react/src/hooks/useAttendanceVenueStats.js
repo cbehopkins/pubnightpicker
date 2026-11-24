@@ -119,8 +119,8 @@ export default function useAttendanceVenueStats(yearCount) {
                 || !payload.last_date_by_venue_id || typeof payload.last_date_by_venue_id !== "object") {
                 throw new Error("Invalid attendance statistics response.");
             }
-            setCountsByVenueId(/** @type {Record<string, number>} */ (payload.counts_by_venue_id));
-            setLastDateByVenueId(/** @type {Record<string, string | null>} */ (payload.last_date_by_venue_id));
+            setCountsByVenueId(/** @type {Record<string, number>} */(payload.counts_by_venue_id));
+            setLastDateByVenueId(/** @type {Record<string, string | null>} */(payload.last_date_by_venue_id));
             setErrorMessage(null);
             setIsLoading(false);
         }).catch((error) => {
