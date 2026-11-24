@@ -544,6 +544,7 @@ func (s *Service) ClearAttendance(ctx context.Context, meetID, venueID, uid stri
 func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, attendanceStatus string, clear bool) error {
 	meetRef := s.client.Collection(meetCollection).Doc(meetID)
 	attendanceRef := s.client.Collection("attendance").Doc(meetID)
+	// FIXME there' a lot of work going on in this travnsaction - consider other approaches
 	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		meetSnapshot, err := tx.Get(meetRef)
 		if status.Code(err) == codes.NotFound {
