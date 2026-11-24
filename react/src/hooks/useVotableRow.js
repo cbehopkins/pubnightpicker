@@ -88,13 +88,13 @@ export function useVotableRow(venueId, currUserId, votes, selectedOptionIds, pen
   /** @type {(status: AttendanceStatus) => Promise<void>} */
   const setAttendanceStatusHandler = useCallback(async (status) => {
     if (!currUserId || venueId === "any") return;
-    await runAttendanceAction(() => setAttendanceStatus(venueId, currUserId, status));
+    await setAttendanceStatus(venueId, currUserId, status);
   }, [currUserId, venueId, setAttendanceStatus]);
 
   // Clear attendance handler
   const clearAttendanceHandler = useCallback(async () => {
     if (!currUserId || venueId === "any") return;
-    await runAttendanceAction(() => clearAttendance(venueId, currUserId));
+    await clearAttendance(venueId, currUserId);
   }, [clearAttendance, currUserId, venueId]);
 
   // Delete venue from poll handler

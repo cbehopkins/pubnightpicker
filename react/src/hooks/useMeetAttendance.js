@@ -47,7 +47,7 @@ export function useMeetAttendance(
         return;
       }
 
-      await runAttendanceAction(() => setAttendanceStatus(mainVenueId, currUserId, status));
+      await setAttendanceStatus(mainVenueId, currUserId, status);
     },
     [currUserId, mainVenueId, setAttendanceStatus]
   );
@@ -58,10 +58,7 @@ export function useMeetAttendance(
         return;
       }
 
-      await runAttendanceAction(
-        () => clearAttendance(mainVenueId, currUserId),
-        "Unable to clear your attendance."
-      );
+      await clearAttendance(mainVenueId, currUserId);
     },
     [currUserId, mainVenueId, clearAttendance]
   );
@@ -74,7 +71,7 @@ export function useMeetAttendance(
         return;
       }
 
-      await runAttendanceAction(() => setAttendanceStatus(restaurantVenueId, currUserId, status));
+      await setAttendanceStatus(restaurantVenueId, currUserId, status);
     },
     [currUserId, restaurantVenueId, setAttendanceStatus]
   );
@@ -85,10 +82,7 @@ export function useMeetAttendance(
         return;
       }
 
-      await runAttendanceAction(
-        () => clearAttendance(restaurantVenueId, currUserId),
-        "Unable to clear your restaurant attendance."
-      );
+      await clearAttendance(restaurantVenueId, currUserId);
     },
     [currUserId, restaurantVenueId, clearAttendance]
   );

@@ -176,6 +176,10 @@ intermediate slice, and Firestore rules are not tightened. The Firestore rules
 lockdown for vote documents is deferred until account deletion cleanup moves
 to the backend in ticket 05.
 
+Venue attendance controls show a saving state while a write is pending. Failed
+or timed-out writes are logged and trigger a snapshot refresh; the displayed
+attendance continues to follow the API and stream.
+
 ## Firestore Index Drift Check
 
 To catch index drift before deploys, run:

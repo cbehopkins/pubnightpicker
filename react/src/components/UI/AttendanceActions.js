@@ -1,5 +1,6 @@
 // @ts-check
 
+import { useRef, useState } from "react";
 import Button from "./Button";
 
 /** @typedef {"canCome" | "cannotCome"} AttendanceStatus */
@@ -64,22 +65,27 @@ function AttendanceActions({
     cannotComeVariant = "danger",
     clearVariant = "secondary",
 }) {
-    const handleCanCome = async () => {
-        if (canComeSelected) {
-            await onClear();
-        } else {
-            await onSetStatus("canCome");
-        }
-        onAfterAction?.();
-    };
+    const [pendingAction, setPendingAction] = useState(/** @type {"canCome" | "cannotCome" | "clear" | null} */ (null));
+    const pendingRef = useRef(false);
 
-    const handleCannotCome = async () => {
-        if (cannotComeSelected) {
-            await onClear();
-        } else {
-            await onSetStatus("cannotCome");
+    /** @param {"canCome" | "cannotCome" | "clear"} action */
+    const handleAction = async (action) => {
+        if (pendingRef.current) return;
+        pendingRef.current = true;
+        setPendingAction(action);
+        try {
+            if (action === "clear" || (action === "canCome" && canComeSelected) || (action === "cannotCome" && cannotComeSelected)) {
+                await onClear();
+            } else {
+                await onSetStatus(action);
+            }
+            onAfterAction?.();
+        } catch {
+            return;
+        } finally {
+            pendingRef.current = false;
+            setPendingAction(null);
         }
-        onAfterAction?.();
     };
 
     const canComeClasses = [buttonClassName, canComeSelected && selectedClassName, canComeSelected && canComeSelectedClassName]
@@ -95,15 +101,17 @@ function AttendanceActions({
                 type="button"
                 variant={canComeVariant}
                 className={canComeClasses}
-                onClick={handleCanCome}
+                onClick={() => handleAction("canCome")}
+                disabled={pendingAction !== null}
+                aria-busy={pendingAction === "canCome"}
                 title={canComeTitle}
             >
                 <span className={desktopLabelClassName}>
-                    {canComeSelected ? canComeSelectedLabel : canComeLabel}
+                    {pendingAction === "canCome" ? "Saving..." : canComeSelected ? canComeSelectedLabel : canComeLabel}
                 </span>
                 {showMobileShortLabels && (
                     <span className={mobileLabelClassName}>
-                        {canComeShortLabel}
+                        {pendingAction === "canCome" ? "Saving..." : canComeShortLabel}
                     </span>
                 )}
             </Button>
@@ -111,15 +119,17 @@ function AttendanceActions({
                 type="button"
                 variant={cannotComeVariant}
                 className={cannotComeClasses}
-                onClick={handleCannotCome}
+                onClick={() => handleAction("cannotCome")}
+                disabled={pendingAction !== null}
+                aria-busy={pendingAction === "cannotCome"}
                 title={cannotComeTitle}
             >
                 <span className={desktopLabelClassName}>
-                    {cannotComeSelected ? cannotComeSelectedLabel : cannotComeLabel}
+                    {pendingAction === "cannotCome" ? "Saving..." : cannotComeSelected ? cannotComeSelectedLabel : cannotComeLabel}
                 </span>
                 {showMobileShortLabels && (
                     <span className={mobileLabelClassName}>
-                        {cannotComeShortLabel}
+                        {pendingAction === "cannotCome" ? "Saving..." : cannotComeShortLabel}
                     </span>
                 )}
             </Button>
@@ -128,12 +138,11 @@ function AttendanceActions({
                     type="button"
                     variant={clearVariant}
                     className={buttonClassName}
-                    onClick={async () => {
-                        await onClear();
-                        onAfterAction?.();
-                    }}
+                    onClick={() => handleAction("clear")}
+                    disabled={pendingAction !== null}
+                    aria-busy={pendingAction === "clear"}
                 >
-                    {clearLabel}
+                    {pendingAction === "clear" ? "Saving..." : clearLabel}
                 </Button>
             )}
         </div>

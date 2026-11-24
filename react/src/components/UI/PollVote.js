@@ -246,7 +246,11 @@ function RespondMenu({
   /** @type {(eta: string) => Promise<void>} */
   const setEtaAndEnsureAttending = useCallback(async (eta) => {
     if (!userCanCome) {
-      await onSetAttendanceStatus("canCome");
+      try {
+        await onSetAttendanceStatus("canCome");
+      } catch {
+        return;
+      }
     }
     await onSetEta(eta);
   }, [userCanCome, onSetAttendanceStatus, onSetEta]);

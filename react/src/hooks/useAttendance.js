@@ -11,7 +11,7 @@ import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
 /** @typedef {{ attendance: AttendanceMap, profiles: AttendanceProfiles }} ParsedAttendance */
 
-/** @typedef {{ onSnapshot: (value: unknown) => void, onReset: () => void, onError: (message: string) => void }} AttendanceListener */
+/** @typedef {{ onSnapshot: (value: unknown) => void, onReset: () => void, onError: (message: string, accessDenied?: boolean) => void }} AttendanceListener */
 
 /** @typedef {{ key: string, groupId: string, listeners: Map<string, Set<AttendanceListener>>, controller: AbortController | null, connectedMeetKey: string, scheduled: boolean }} GroupAttendanceStream */
 
@@ -117,7 +117,7 @@ function startGroupAttendance(stream, meetIds, meetKey) {
     stream.controller = controller;
     stream.connectedMeetKey = meetKey;
     const isCurrent = () => stream.controller === controller && !controller.signal.aborted;
-    const fail = (message) => notifyAttendanceListeners(stream, meetIds, (listener) => listener.onError(message));
+    const fail = (message, accessDenied = false) => notifyAttendanceListeners(stream, meetIds, (listener) => listener.onError(message, accessDenied));
     const stop = () => {
         if (stream.controller !== controller) return;
         stream.controller = null;
@@ -170,18 +170,18 @@ function startGroupAttendance(stream, meetIds, meetKey) {
             },
             onerror: (error) => {
                 if (!isCurrent()) return;
-                fail(error?.message || unavailableMessage);
+                fail(error?.message || unavailableMessage, fatalStreamErrorCodes.includes(error?.code));
                 if (error instanceof LastOrdersApiError && fatalStreamErrorCodes.includes(error.code)) throw error;
                 return 5000;
             },
         }).catch((error) => {
             if (!isCurrent()) return;
             stop();
-            fail(error?.message || unavailableMessage);
+            fail(error?.message || unavailableMessage, fatalStreamErrorCodes.includes(error?.code));
         });
     } catch (error) {
         stop();
-        fail(error?.message || unavailableMessage);
+        fail(error?.message || unavailableMessage, fatalStreamErrorCodes.includes(error?.code));
     }
 }
 
@@ -231,6 +231,7 @@ function useAttendance(meetId, enabled = true) {
     const [errorMessage, setErrorMessage] = useState("");
     const docRef = useMemo(() => doc(db, "attendance", meetId), [meetId]);
     const streamSequenceRef = useRef(0);
+    const refreshSnapshotRef = useRef(/** @type {(() => Promise<void>) | null} */ (null));
 
     const applySnapshot = useCallback((value) => {
         const parsed = parseAttendanceSnapshot(value, meetId);
@@ -261,6 +262,9 @@ function useAttendance(meetId, enabled = true) {
     useEffect(() => {
         if (!enabled) {
             setAttendance({});
+            setAttendanceProfiles({});
+            setErrorMessage("");
+            setIsLoading(false);
             return undefined;
         }
 
@@ -270,22 +274,30 @@ function useAttendance(meetId, enabled = true) {
         setIsLoading(true);
         streamSequenceRef.current = 0;
         let active = true;
+        let snapshotSequence = 0;
         const snapshotController = new AbortController();
         const loadSnapshot = async () => {
+            if (!active) return;
+            const requestSequence = ++snapshotSequence;
             const observedSequence = streamSequenceRef.current;
             try {
                 const snapshot = await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance`, {
                     method: "GET",
                     signal: snapshotController.signal,
                 });
-                if (active && streamSequenceRef.current === observedSequence) applySnapshot(snapshot);
+                if (active && requestSequence === snapshotSequence && streamSequenceRef.current === observedSequence) applySnapshot(snapshot);
             } catch (error) {
-                if (active && !snapshotController.signal.aborted) {
+                if (active && requestSequence === snapshotSequence && streamSequenceRef.current === observedSequence && !snapshotController.signal.aborted) {
+                    if (fatalStreamErrorCodes.includes(error?.code) || [401, 403, 404].includes(error?.status)) {
+                        setAttendance({});
+                        setAttendanceProfiles({});
+                    }
                     setErrorMessage(error?.message || "Attendance is temporarily unavailable.");
                     setIsLoading(false);
                 }
             }
         };
+        refreshSnapshotRef.current = loadSnapshot;
         void loadSnapshot();
         const unsubscribe = groupId && userId
             ? subscribeGroupAttendance(groupId, userId, meetId, {
@@ -300,8 +312,14 @@ function useAttendance(meetId, enabled = true) {
                     setIsLoading(true);
                     void loadSnapshot();
                 },
-                onError: (message) => {
+                onError: (message, accessDenied) => {
                     if (active) {
+                        if (accessDenied) {
+                            snapshotSequence += 1;
+                            streamSequenceRef.current += 1;
+                            setAttendance({});
+                            setAttendanceProfiles({});
+                        }
                         setErrorMessage(message);
                         setIsLoading(false);
                     }
@@ -310,27 +328,47 @@ function useAttendance(meetId, enabled = true) {
             : () => undefined;
         return () => {
             active = false;
+            if (refreshSnapshotRef.current === loadSnapshot) refreshSnapshotRef.current = null;
             snapshotController.abort();
             unsubscribe();
         };
     }, [applySnapshot, enabled, groupId, meetId, userId]);
 
+    /** @param {string} venueId @param {{ method: string, body?: { status: string } }} options */
+    const writeVenueAttendance = useCallback(async (venueId, options) => {
+        const controller = new AbortController();
+        const refreshSnapshot = refreshSnapshotRef.current;
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+            await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance/${encodeURIComponent(venueId)}`, {
+                ...options,
+                signal: controller.signal,
+            });
+        } catch (error) {
+            console.log(error);
+            void refreshSnapshot?.();
+            throw error;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }, [meetId]);
+
     /** @type {(venueId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setAttendanceStatus = useCallback(async (venueId, _userId, status) => {
         void _userId;
-        await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance/${encodeURIComponent(venueId)}`, {
+        await writeVenueAttendance(venueId, {
             method: "PUT",
             body: { status: status === "canCome" ? "attending" : "not_attending" },
         });
-    }, [meetId]);
+    }, [writeVenueAttendance]);
 
     /** @type {(venueId: string, userId: string) => Promise<void>} */
     const clearAttendance = useCallback(async (venueId, _userId) => {
         void _userId;
-        await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance/${encodeURIComponent(venueId)}`, {
+        await writeVenueAttendance(venueId, {
             method: "DELETE",
         });
-    }, [meetId]);
+    }, [writeVenueAttendance]);
 
     /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setAttendanceForMultipleVenues = useCallback(async (venueIds, userId, status) => {
