@@ -27,7 +27,7 @@ it("returns to the observed state after a rejected action", async () => {
     render(<AttendanceActions canComeSelected cannotComeSelected={false} onSetStatus={vi.fn()} onClear={onClear} clearMode="button" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Clear response" }));
-    await act(async () => {});
+    await act(async () => { });
     expect(screen.getByRole("button", { name: "Clear response" }).disabled).toBe(false);
     expect(onClear).toHaveBeenCalledOnce();
 });

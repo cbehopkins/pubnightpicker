@@ -175,7 +175,7 @@ async function waitForAttendanceMutation(world, actor, venueID, method) {
     await page.waitForFunction(({ meetID, targetVenueID, targetMethod }) => {
         return (window.__attendanceApiRequests ?? []).some(({ url, method: requestMethod, status }) =>
             new URL(url).pathname === `/api/meet/${meetID}/attendance/${targetVenueID}`
-                && requestMethod === targetMethod && status === 204);
+            && requestMethod === targetMethod && status === 204);
     }, { meetID: world.pollId, targetVenueID: venueID, targetMethod: method });
 }
 

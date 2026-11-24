@@ -231,7 +231,7 @@ function useAttendance(meetId, enabled = true) {
     const [errorMessage, setErrorMessage] = useState("");
     const docRef = useMemo(() => doc(db, "attendance", meetId), [meetId]);
     const streamSequenceRef = useRef(0);
-    const refreshSnapshotRef = useRef(/** @type {(() => Promise<void>) | null} */ (null));
+    const refreshSnapshotRef = useRef(/** @type {(() => Promise<void>) | null} */(null));
 
     const applySnapshot = useCallback((value) => {
         const parsed = parseAttendanceSnapshot(value, meetId);

@@ -20,14 +20,18 @@ vi.mock("firebase/firestore", () => ({
   doc: docMock,
   getDoc: getDocMock,
   onSnapshot: vi.fn((query, onNext) => {
-    onNext({ forEach: (visit) => visit({ id: "meet-1", data: () => ({
-      completed: true,
-      date: "2026-04-04",
-      selected: "venue-a",
-      restaurant: "venue-r",
-      pubs: { "venue-a": {}, "venue-b": {} },
-    }) }) });
-    return () => {};
+    onNext({
+      forEach: (visit) => visit({
+        id: "meet-1", data: () => ({
+          completed: true,
+          date: "2026-04-04",
+          selected: "venue-a",
+          restaurant: "venue-r",
+          pubs: { "venue-a": {}, "venue-b": {} },
+        })
+      })
+    });
+    return () => { };
   }),
 }));
 

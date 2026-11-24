@@ -65,7 +65,7 @@ function AttendanceActions({
     cannotComeVariant = "danger",
     clearVariant = "secondary",
 }) {
-    const [pendingAction, setPendingAction] = useState(/** @type {"canCome" | "cannotCome" | "clear" | null} */ (null));
+    const [pendingAction, setPendingAction] = useState(/** @type {"canCome" | "cannotCome" | "clear" | null} */(null));
     const pendingRef = useRef(false);
 
     /** @param {"canCome" | "cannotCome" | "clear"} action */

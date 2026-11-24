@@ -307,7 +307,7 @@ describe("useAttendance", () => {
 
     it("propagates API errors when the Meet has been deleted", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         requestLastOrdersMock
             .mockResolvedValueOnce({ meet_id: "poll-1", entries: {}, participants: {}, cursor: "cursor-1" })
             .mockRejectedValueOnce(new Error("The requested Meet was not found."));
@@ -324,7 +324,7 @@ describe("useAttendance", () => {
     });
 
     it("logs a failed Venue write and reloads the observed attendance", async () => {
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         const failure = new Error("connection lost");
         const { result } = renderHook(() => useAttendance("poll-1"));
         await waitFor(() => expect(result.current[8]).toBe(false));
@@ -351,7 +351,7 @@ describe("useAttendance", () => {
     });
 
     it("does not replace a newer stream update with a failed-write refresh", async () => {
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         const { result } = renderHook(() => useAttendance("poll-1"));
         await waitFor(() => expect(streamLastOrdersMock).toHaveBeenCalledTimes(1));
         let resolveRefresh;
@@ -376,7 +376,7 @@ describe("useAttendance", () => {
     });
 
     it("does not replace a newer refresh with an older snapshot request", async () => {
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         let resolveInitial;
         requestLastOrdersMock.mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }));
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -384,7 +384,7 @@ describe("useAttendance", () => {
             meet_id: "poll-1", cursor: "cursor-2", entries: { "pub-1": { can_come: [], cannot_come: ["user-1"], eta: {} } }, participants: {},
         });
 
-        await act(async () => { await result.current[1]("pub-1", "user-1", "cannotCome").catch(() => {}); });
+        await act(async () => { await result.current[1]("pub-1", "user-1", "cannotCome").catch(() => { }); });
         await act(async () => resolveInitial({
             meet_id: "poll-1", cursor: "cursor-1", entries: { "pub-1": { can_come: ["user-1"], cannot_come: [], eta: {} } }, participants: {},
         }));
@@ -393,12 +393,12 @@ describe("useAttendance", () => {
     });
 
     it("clears the last snapshot when a refresh confirms access is lost", async () => {
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         const { result } = renderHook(() => useAttendance("poll-1"));
         await waitFor(() => expect(result.current[7]["user-1"]).toBeDefined());
         requestLastOrdersMock.mockRejectedValueOnce(new Error("connection lost")).mockRejectedValueOnce({ status: 403, message: "Access denied" });
 
-        await act(async () => { await result.current[2]("pub-1", "user-1").catch(() => {}); });
+        await act(async () => { await result.current[2]("pub-1", "user-1").catch(() => { }); });
         await waitFor(() => expect(result.current[9]).toBe("Access denied"));
         expect(result.current[0]).toEqual({});
         expect(result.current[7]).toEqual({});
@@ -406,7 +406,7 @@ describe("useAttendance", () => {
     });
 
     it("times out an unanswered Venue write and refreshes attendance", async () => {
-        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => { });
         const { result } = renderHook(() => useAttendance("poll-1"));
         await waitFor(() => expect(result.current[8]).toBe(false));
         vi.useFakeTimers();
