@@ -153,6 +153,9 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := meetRef.Update(ctx, []firestore.Update{{Path: "completed", Value: false}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.SetAttendance(ctx, meetRef.ID, "any", "caller", "attending"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +181,17 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	if !valid || etas["caller"] != nil {
 		t.Fatalf("restaurant ETA after setting any to attending=%v, want caller cleared", etas)
 	}
-	if _, err := meetRef.Update(ctx, []firestore.Update{{Path: "restaurant", Value: inheritedVenueID}}); err != nil {
+	if _, err := meetRef.Update(ctx, []firestore.Update{
+		{Path: "completed", Value: true},
+		{Path: "selected", Value: venueID},
+		{Path: "restaurant", Value: restaurantVenueID},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attendanceRef.Update(ctx, []firestore.Update{{
-		FieldPath: firestore.FieldPath{inheritedVenueID, "eta", "caller"}, Value: "18:21",
-	}}); err != nil {
+	if _, err := attendanceRef.Update(ctx, []firestore.Update{
+		{FieldPath: firestore.FieldPath{inheritedVenueID, "eta", "caller"}, Value: "18:21"},
+		{FieldPath: firestore.FieldPath{restaurantVenueID, "eta", "caller"}, Value: "18:31"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.SetAttendance(ctx, meetRef.ID, "any", "caller", "attending"); err != nil {
@@ -193,10 +201,12 @@ func TestAttendanceMutationsAgainstFirestoreEmulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restaurantOnly := standingSnapshot.Data()[inheritedVenueID].(map[string]any)
-	restaurantOnlyETAs, valid := attendanceETAs(restaurantOnly["eta"])
-	if !valid || restaurantOnlyETAs["caller"] != nil {
-		t.Fatalf("unselected restaurant ETA=%v, want caller cleared after completion", restaurantOnlyETAs)
+	for _, venueID := range []string{inheritedVenueID, restaurantVenueID} {
+		unselected := standingSnapshot.Data()[venueID].(map[string]any)
+		unselectedETAs, valid := attendanceETAs(unselected["eta"])
+		if !valid || unselectedETAs["caller"] != nil {
+			t.Fatalf("unselected Venue %q ETA=%v, want caller cleared after completion", venueID, unselectedETAs)
+		}
 	}
 	if _, err := meetRef.Update(ctx, []firestore.Update{
 		{Path: "selected", Value: inheritedVenueID},
