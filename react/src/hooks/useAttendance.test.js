@@ -13,6 +13,7 @@ const {
     setDocMock,
     updateDocMock,
     runTransactionMock,
+    requestLastOrdersMock,
 } = vi.hoisted(() => {
     const updateDocMock = vi.fn(async () => undefined);
     const runTransactionMock = vi.fn(async (_db, callback) => callback({
@@ -28,8 +29,13 @@ const {
         setDocMock: vi.fn(async () => undefined),
         updateDocMock,
         runTransactionMock,
+        requestLastOrdersMock: vi.fn(async () => undefined),
     };
 });
+
+vi.mock("../utils/lastOrdersApi", () => ({
+    requestLastOrders: requestLastOrdersMock,
+}));
 
 vi.mock("../firebase", () => {
     return {
@@ -59,6 +65,12 @@ describe("useAttendance", () => {
         onSnapshotMock.mockReset();
         setDocMock.mockClear();
         updateDocMock.mockClear();
+        requestLastOrdersMock.mockClear();
+        runTransactionMock.mockReset();
+        runTransactionMock.mockImplementation(async (_db, callback) => callback({
+            get: vi.fn(async () => ({ exists: () => true })),
+            set: vi.fn(async (ref, payload) => updateDocMock(ref, payload)),
+        }));
     });
 
     it("subscribes to attendance and replaces state from snapshots", () => {
@@ -87,6 +99,26 @@ describe("useAttendance", () => {
                 cannotCome: [],
             },
         });
+    });
+
+    it("sets and withdraws the caller's Venue response through Last Orders", async () => {
+        onSnapshotMock.mockImplementation(() => () => undefined);
+
+        const { result } = renderHook(() => useAttendance("meet-1"));
+
+        await act(async () => {
+            await result.current[1]("venue-1", "user-1", "canCome");
+            await result.current[2]("venue-1", "user-1");
+        });
+
+        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(1, "/api/meet/meet-1/attendance/venue-1", {
+            method: "PUT",
+            body: { status: "attending" },
+        });
+        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(2, "/api/meet/meet-1/attendance/venue-1", {
+            method: "DELETE",
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
     it("subscribes once and does not churn subscriptions after snapshot updates", () => {
@@ -133,7 +165,7 @@ describe("useAttendance", () => {
         expect(result.current[0]).toEqual({});
     });
 
-    it("switches and clears attendance with mutually exclusive updates", async () => {
+    it("switches and clears attendance through the API", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -142,26 +174,19 @@ describe("useAttendance", () => {
             await result.current[1]("pub-1", "user-1", "canCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "attending" },
+        });
 
         await act(async () => {
             await result.current[2]("pub-1", "user-1");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { canCome: "arrayRemove:user-1", cannotCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenLastCalledWith("/api/meet/poll-1/attendance/pub-1", { method: "DELETE" });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("switching from canCome to cannotCome removes canCome in same write", async () => {
+    it("switches from canCome to cannotCome through the API", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -178,16 +203,13 @@ describe("useAttendance", () => {
             await result.current[1]("pub-1", "user-1", "cannotCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledOnce();
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { cannotCome: "arrayUnion:user-1", canCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenLastCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "not_attending" },
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("switching from cannotCome to canCome removes cannotCome in same write", async () => {
+    it("switches from cannotCome to canCome through the API", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -202,13 +224,10 @@ describe("useAttendance", () => {
             await result.current[1]("pub-1", "user-1", "canCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledOnce();
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { canCome: "arrayUnion:user-1", cannotCome: "arrayRemove:user-1" },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenLastCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "attending" },
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
     it("sets attendance for multiple pubs in one update", async () => {
@@ -260,23 +279,20 @@ describe("useAttendance", () => {
         );
     });
 
-    it("does not initialise attendance when the Meet has been deleted", async () => {
+    it("propagates API errors when the Meet has been deleted", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
-        runTransactionMock.mockImplementationOnce(async (_db, callback) => callback({
-            get: vi.fn(async () => ({ exists: () => false })),
-            set: setDocMock,
-        }));
+        requestLastOrdersMock.mockRejectedValueOnce(new Error("The requested Meet was not found."));
 
         const { result } = renderHook(() => useAttendance("poll-1"));
 
         await expect(act(async () => {
             await result.current[1]("pub-1", "user-1", "canCome");
-        })).rejects.toThrow("This Meet no longer exists.");
+        })).rejects.toThrow("The requested Meet was not found.");
         expect(setDocMock).not.toHaveBeenCalled();
         expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("clearAttendance also deletes the ETA key for the user", async () => {
+    it("withdrawal uses the API so the backend can clear the caller's ETA", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -285,15 +301,11 @@ describe("useAttendance", () => {
             await result.current[2]("pub-1", "user-1");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { canCome: "arrayRemove:user-1", cannotCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", { method: "DELETE" });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("setting cannotCome also deletes the ETA key for the user", async () => {
+    it("setting cannotCome uses the API so the backend clears the caller's ETA", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -302,15 +314,13 @@ describe("useAttendance", () => {
             await result.current[1]("pub-1", "user-1", "cannotCome");
         });
 
-        expect(updateDocMock).toHaveBeenCalledWith(
-            { id: "attendance-doc-ref" },
-            {
-                "pub-1": { cannotCome: "arrayUnion:user-1", canCome: "arrayRemove:user-1", eta: { "user-1": "deleteField" } },
-            },
-        );
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "not_attending" },
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
-    it("setting canCome does not delete the ETA key", async () => {
+    it("setting canCome leaves ETA management to the backend without a Firestore write", async () => {
         onSnapshotMock.mockImplementation(() => () => undefined);
 
         const { result } = renderHook(() => useAttendance("poll-1"));
@@ -319,8 +329,10 @@ describe("useAttendance", () => {
             await result.current[1]("pub-1", "user-1", "canCome");
         });
 
-        const payload = updateDocMock.mock.calls[0][1];
-        expect(payload["pub-1"]).not.toHaveProperty("eta");
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/meet/poll-1/attendance/pub-1", {
+            method: "PUT", body: { status: "attending" },
+        });
+        expect(updateDocMock).not.toHaveBeenCalled();
     });
 
     it("setEta writes the HH:MM string to the eta sub-map", async () => {

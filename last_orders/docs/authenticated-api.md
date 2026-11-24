@@ -94,6 +94,36 @@ poll-completion sends are created. Mailing-list sends and historical records
 without ownership are excluded. Changing an address does not change ownership
 of previous sends; setting somebody else's address cannot reveal their history.
 
+## Venue Attendance Responses
+
+Per-Venue attendance status mutations use Last Orders; the existing Firestore
+listener remains the live read path:
+
+```http
+PUT    /api/meet/{meet_id}/attendance/{venue_id}
+DELETE /api/meet/{meet_id}/attendance/{venue_id}
+```
+
+Both operations require a Firebase ID token and a `true` membership entry for
+the Meet's Group. Public Group visibility and global administrator status do
+not substitute for membership, and no voting permission is required. The
+verified token UID is the only identity used; requests cannot name another user.
+
+`PUT` accepts exactly one JSON field, `status`, with value `attending` or
+`not_attending`, and returns `204 No Content`. `DELETE` withdraws the caller's
+response and also returns `204`. Both are idempotent. The Meet and attendance
+document are read and changed transactionally. Status arrays remain mutually
+exclusive, and switching to `not_attending` or withdrawing also removes only
+that caller's ETA.
+
+An open Meet accepts its candidate Venues. A completed Meet accepts its selected
+Venue and restaurant. A removed Venue can be withdrawn when the caller has a
+response for it or the Meet records its removal; an unrelated Venue is rejected.
+The `any` sentinel is not a Venue for these routes. During this intermediate migration, ETA updates, `any`
+responses, and existing bulk/global attendance actions continue to use their
+legacy Firestore writes. Firestore rules and the current snapshot listener are
+unchanged.
+
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending
 requests; the ten-second frontend deadline includes token acquisition. States are

@@ -30,6 +30,10 @@ type GroupAuthorizer interface {
 	CanRead(context.Context, string, string) (bool, error)
 }
 
+type GroupMemberAuthorizer interface {
+	IsMember(context.Context, string, string) (bool, error)
+}
+
 type venueReader interface {
 	GetForMeet(context.Context, string) (venuecache.VenueProjection, bool, error)
 }
@@ -68,10 +72,17 @@ type MeetWriter interface {
 	ChangeVote(context.Context, string, string, string, bool) (meetwrite.VoteResult, error)
 }
 
+type AttendanceWriter interface {
+	GroupID(context.Context, string) (string, error)
+	SetAttendance(context.Context, string, string, string, string) error
+	ClearAttendance(context.Context, string, string, string) error
+}
+
 type Endpoint struct {
 	Reader       reader
 	Venues       venueReader
 	Groups       GroupAuthorizer
+	Members      GroupMemberAuthorizer
 	Auth         firebaseauth.Verifier
 	Current      currentReader
 	Open         openMeetsReader
@@ -84,6 +95,7 @@ type Endpoint struct {
 	VotingHub    *sse.Hub
 	VotingReady  <-chan struct{}
 	Writer       MeetWriter
+	Attendance   AttendanceWriter
 	WriteAccess  WriteAuthorizer
 }
 
@@ -181,6 +193,8 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.delete)))
 	mux.Handle("PUT /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.addVote)))
 	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
+	mux.Handle("PUT /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.setAttendance)))
+	mux.Handle("DELETE /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.clearAttendance)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meet/{meet_id}/votes", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.votes)))
 	mux.Handle("GET /api/meets/{group_id}/votes/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.groupVoteStream)))
@@ -189,6 +203,79 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
 	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.past)))
+}
+
+type attendanceUpdateRequest struct {
+	Status string `json:"status"`
+}
+
+func (e *Endpoint) setAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	if err := decoder.Decode(&fields); err != nil || fields == nil || len(fields) != 1 {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	statusRaw, ok := fields["status"]
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var update attendanceUpdateRequest
+	if err := json.Unmarshal(statusRaw, &update.Status); err != nil || (update.Status != "attending" && update.Status != "not_attending") {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.SetAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context()), update.Status); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) clearAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.ClearAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context())); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) authorizeAttendanceMember(w http.ResponseWriter, r *http.Request) bool {
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Attendance.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return false
+	}
+	allowed, err := e.Members.IsMember(r.Context(), currentUID(r.Context()), groupID)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Group membership could not be verified.")
+		return false
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "Only Group members can change attendance.")
+		return false
+	}
+	return true
 }
 
 func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {

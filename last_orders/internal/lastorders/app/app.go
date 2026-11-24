@@ -102,6 +102,11 @@ type applicationDateClock struct {
 	location *time.Location
 }
 
+func attendanceMemberAuthorizer(authorizer meetsendpoint.GroupAuthorizer) meetsendpoint.GroupMemberAuthorizer {
+	memberAuthorizer, _ := authorizer.(meetsendpoint.GroupMemberAuthorizer)
+	return memberAuthorizer
+}
+
 func (clock applicationDateClock) Today() time.Time {
 	return clock.clock.Now().In(clock.location)
 }
@@ -1280,6 +1285,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	venueEndpoint.Register(apiMux)
 	var groupAuthorizer meetsendpoint.GroupAuthorizer
 	var meetWriter meetsendpoint.MeetWriter
+	var attendanceWriter meetsendpoint.AttendanceWriter
 	var writeAuthorizer meetsendpoint.WriteAuthorizer
 	var pastMeetsService *pastmeets.Service
 	if application.firestoreClient != nil {
@@ -1312,10 +1318,11 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
-		meetWriter, err = meetwritesvc.New(application.firestoreClient)
+		writer, err := meetwritesvc.New(application.firestoreClient)
 		if err != nil {
 			return err
 		}
+		meetWriter, attendanceWriter = writer, writer
 		writeAuthorizer, err = meetsendpoint.NewFirestoreWriteAuthorizer(application.firestoreClient)
 		if err != nil {
 			return err
@@ -1325,6 +1332,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
+		Members: attendanceMemberAuthorizer(groupAuthorizer), Attendance: attendanceWriter,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { arrayRemove, arrayUnion, deleteField, doc, onSnapshot, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
 import { createFirestoreSnapshotErrorHandler } from "../utils/firestoreErrors";
+import { requestLastOrders } from "../utils/lastOrdersApi";
 import { ATTENDANCE_GLOBAL_KEY } from "../utils/attendanceState";
 
 /**
@@ -63,30 +64,19 @@ function useAttendance(meetId, enabled = true) {
     }, [docRef, enabled]);
 
     /** @type {(venueId: string, userId: string, status: AttendanceStatus) => Promise<void>} */
-    const setAttendanceStatus = useCallback(async (venueId, userId, status) => {
-        const oppositeStatus = status === "canCome" ? "cannotCome" : "canCome";
-        /** @type {Record<string, unknown>} */
-        const venueAttendance = {
-            [status]: arrayUnion(userId),
-            [oppositeStatus]: arrayRemove(userId),
-        };
-        // ETA only makes sense alongside canCome; clear it when switching to cannotCome
-        if (status === "cannotCome") {
-            venueAttendance.eta = { [userId]: deleteField() };
-        }
-        await updateAttendanceDoc({ [venueId]: venueAttendance });
-    }, [updateAttendanceDoc]);
+    const setAttendanceStatus = useCallback(async (venueId, _userId, status) => {
+        await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance/${encodeURIComponent(venueId)}`, {
+            method: "PUT",
+            body: { status: status === "canCome" ? "attending" : "not_attending" },
+        });
+    }, [meetId]);
 
     /** @type {(venueId: string, userId: string) => Promise<void>} */
-    const clearAttendance = useCallback(async (venueId, userId) => {
-        await updateAttendanceDoc({
-            [venueId]: {
-                canCome: arrayRemove(userId),
-                cannotCome: arrayRemove(userId),
-                eta: { [userId]: deleteField() },
-            },
+    const clearAttendance = useCallback(async (venueId, _userId) => {
+        await requestLastOrders(`/api/meet/${encodeURIComponent(meetId)}/attendance/${encodeURIComponent(venueId)}`, {
+            method: "DELETE",
         });
-    }, [updateAttendanceDoc]);
+    }, [meetId]);
 
     /** @type {(venueIds: string[] | null | undefined, userId: string, status: AttendanceStatus) => Promise<void>} */
     const setAttendanceForMultipleVenues = useCallback(async (venueIds, userId, status) => {

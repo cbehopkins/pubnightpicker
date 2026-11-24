@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { londonDate, londonInstant, shiftDate } from "../support/calendar.js";
 import { waitForBackendRecord } from "../support/backend-evidence.js";
-import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
+import { nextAvailablePollDate, waitForValue, withEmulatorAdmin, withEmulatorUser } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
@@ -28,6 +28,7 @@ async function captureVoteApi(page) {
         window.__voteApiCaptureInstalled = true;
         window.__voteApiRequests = [];
         window.__voteApiResponses = "";
+        window.__attendanceApiRequests = [];
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
             const url = input instanceof Request ? input.url : String(input);
@@ -47,6 +48,9 @@ async function captureVoteApi(page) {
                     })().catch(() => undefined);
                 }
             }
+            if (/\/api\/meet\/[^/]+\/attendance\/[^/?]+(?:\?.*)?$/.test(url)) {
+                window.__attendanceApiRequests.push({ url, method, body: init.body });
+            }
             return response;
         };
     });
@@ -61,6 +65,30 @@ function journeyPoll(world, actor, date = world.pollDate) {
 function venueRow(world, actor, venue, date = world.pollDate) {
     return journeyPoll(world, actor, date).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
+}
+
+function currentMeetCard(world, actor, venue) {
+    const page = world.actors.get(actor);
+    return page.getByRole("article").filter({
+        has: page.getByRole("heading", { name: world.journeyVenues.get(venue), exact: true }),
+    });
+}
+
+async function adminAttendanceCell(world, userName, venue, status) {
+    const admin = world.actors.get("admin");
+    const card = currentMeetCard(world, "admin", venue);
+    const table = admin.getByRole("table");
+    if (await table.count() === 0) {
+        await card.getByRole("button", { name: "Show venue attendance", exact: true }).click();
+    }
+    const headers = await table.locator("thead th").allTextContents();
+    const columnIndex = headers.indexOf(status);
+    if (columnIndex === -1) return null;
+    const row = table.getByRole("row").filter({
+        has: admin.getByRole("cell", { name: userName, exact: true }),
+    });
+    await row.waitFor();
+    return row.getByRole("cell").nth(columnIndex);
 }
 
 function applicationTimeDate(dayOffset) {
@@ -176,6 +204,37 @@ Given("the following journey venues are available:", async function (table) {
         await terminate(db);
         await deleteApp(app);
     }
+});
+
+Given("Bob and Claire become members of the default Group", async function () {
+    assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
+    assert.equal(process.env.FIRESTORE_EMULATOR_HOST, "127.0.0.1:8080");
+    const [bobUid, claireUid] = await Promise.all(["Bob", "Claire"].map((name) => withEmulatorUser(
+        this.actorEmails.get(name),
+        "journey-only-user-password-2026",
+        async (auth) => auth.currentUser.uid,
+    )));
+    const groupsResponse = await fetch("http://127.0.0.1:8081/api/groups?name=ampubnight");
+    assert.equal(groupsResponse.status, 200, "Last Orders must return the default Group");
+    const { groups } = await groupsResponse.json();
+    assert.equal(groups.length, 1, "the default Group must exist exactly once");
+    const projectID = process.env.GOOGLE_CLOUD_PROJECT;
+    const documentURL = `http://127.0.0.1:8080/v1/projects/${projectID}/databases/(default)/documents/groups/${groups[0].id}`;
+    const existingResponse = await fetch(documentURL, { headers: { Authorization: "Bearer owner" } });
+    assert.equal(existingResponse.status, 200, "the Group fixture must be readable by the emulator owner");
+    const existingGroup = await existingResponse.json();
+    const members = { ...existingGroup.fields?.members?.mapValue?.fields };
+    members[bobUid] = { booleanValue: true };
+    members[claireUid] = { booleanValue: true };
+    const updateResponse = await fetch(`${documentURL}?updateMask.fieldPaths=members`, {
+        method: "PATCH",
+        headers: { Authorization: "Bearer owner", "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { members: { mapValue: { fields: members } } } }),
+    });
+    assert.equal(updateResponse.status, 200, `emulator Group membership update failed: ${await updateResponse.text()}`);
+    this.actorUids ??= new Map();
+    this.actorUids.set("Bob", bobUid);
+    this.actorUids.set("Claire", claireUid);
 });
 
 When("the admin grants {word} the following permissions:", async function (name, table) {
@@ -388,6 +447,7 @@ Then("{word} no longer sees the poll on Active Polls", async function (name) {
 
 When("{word} opens Current Meets", async function (name) {
     const page = this.actors.get(name);
+    await captureVoteApi(page);
     await page.getByRole("link", { name: "Current Meets", exact: true }).click();
     await page.waitForURL(`${BASE_URL}/current_meets`);
     await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
@@ -399,4 +459,72 @@ Then("{word} sees the meet at {string}", async function (name, venue) {
         has: page.getByRole("heading", { name: this.journeyVenues.get(venue), exact: true }),
     });
     await event.getByText(this.pollDate, { exact: true }).waitFor();
+});
+
+When("{word} marks {string} as {string}", async function (name, venue, status) {
+    const card = currentMeetCard(this, name, venue);
+    await card.getByRole("button", { name: status, exact: true }).click();
+    const selectedLabel = status === "Can come" ? "Can come confirmed" : "Cannot come confirmed";
+    await card.getByRole("button", { name: selectedLabel, exact: true }).waitFor();
+});
+
+When("{word} adds ETA {string} at {string}", async function (name, eta, venue) {
+    const card = currentMeetCard(this, name, venue);
+    await card.getByRole("button", { name: "Add ETA", exact: true }).click();
+    await card.locator('input[type="time"]').fill(eta);
+    await card.getByRole("button", { name: "Save", exact: true }).click();
+    await card.getByText(`ETA: ${eta}`, { exact: true }).waitFor();
+});
+
+Then("the admin sees {string} can come to {string}", async function (userName, venue) {
+    const status = "Can Come";
+    const cell = await adminAttendanceCell(this, userName, venue, status);
+    assert.ok(cell, `attendance table must include ${status}`);
+    await cell.getByText("✓", { exact: true }).waitFor();
+});
+
+Then("the admin sees {string} cannot come to {string}", async function (userName, venue) {
+    const status = "Cannot Come";
+    const cell = await adminAttendanceCell(this, userName, venue, status);
+    assert.ok(cell, `attendance table must include ${status}`);
+    await cell.getByText("✓", { exact: true }).waitFor();
+});
+
+Then("changing Bob's response clears only Bob's ETA", async function () {
+    const venueID = await selectedVenueID(this, "Journey Red Lion");
+    const snapshot = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocFromServer(doc(db, "attendance", this.pollId)),
+        (value) => value.data()?.[venueID]?.cannotCome?.includes(this.actorUids.get("Bob")),
+        "Bob's cannot-come response to commit",
+    ));
+    const etas = snapshot.data()?.[venueID]?.eta ?? {};
+    assert.equal(etas[this.actorUids.get("Bob")], undefined, "Bob's ETA must be cleared");
+    assert.equal(etas[this.actorUids.get("Claire")], "19:00", "Claire's ETA must be preserved");
+});
+
+When("Bob withdraws attendance for {string}", async function (venue) {
+    await currentMeetCard(this, "Bob", venue).getByRole("button", { name: "Clear response", exact: true }).click();
+    await currentMeetCard(this, "Bob", venue).getByRole("button", { name: "Can come", exact: true }).waitFor();
+});
+
+Then("the admin sees {string} has no attendance response for {string}", async function (userName, venue) {
+    const canComeCell = await adminAttendanceCell(this, userName, venue, "Can Come");
+    const cannotComeCell = await adminAttendanceCell(this, userName, venue, "Cannot Come");
+    if (canComeCell) await canComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    if (cannotComeCell) await cannotComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+});
+
+Then("{word} still sees {string} as {string}", async function (name, venue, label) {
+    await currentMeetCard(this, name, venue).getByRole("button", { name: label, exact: true }).waitFor();
+});
+
+Then("Bob's browser used the attendance API to set and withdraw responses for {string}", async function (venue) {
+    const venueID = await selectedVenueID(this, venue);
+    const requests = await this.actors.get("Bob").evaluate(() => window.__attendanceApiRequests ?? []);
+    const venueRequests = requests.filter(({ url }) => new URL(url).pathname.endsWith(`/attendance/${venueID}`));
+    assert.deepEqual(venueRequests.map(({ method, body }) => [method, body]), [
+        ["PUT", JSON.stringify({ status: "attending" })],
+        ["PUT", JSON.stringify({ status: "not_attending" })],
+        ["DELETE", undefined],
+    ]);
 });

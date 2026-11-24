@@ -400,41 +400,38 @@ Live voting updates use one stream per Group covering the Meets the client lists
 
 ## 9. Attendance
 
-### 9.1 Update and snapshot routes
+### 9.1 Per-Venue status mutations
 
 ```http
-PATCH /meet/{meet_id}/attendance
-GET   /meet/{meet_id}/attendance
+PUT    /meet/{meet_id}/attendance/{venue_id}
+DELETE /meet/{meet_id}/attendance/{venue_id}
 ```
 
-The caller updates their own attendance. The client must not supply another user's ID as the identity of the attendance record.
+The caller must be an authenticated true member of the Meet's Group. Public
+visibility, global administrator status and voting permission do not grant this
+mutation. The verified UID identifies the caller; clients cannot name another
+user. The Meet and attendance document are checked and mutated in one Firestore
+transaction.
 
 Attendance status values:
 
 - `attending`
 - `not_attending`
 
-ETA is optional and represents an estimated clock time of arrival, not a number of minutes.
+`PUT` accepts only `status` and returns no content. `DELETE` withdraws the
+caller's response. Both operations are idempotent, maintain exclusive status
+arrays, and clear the caller's ETA when withdrawing or setting
+`not_attending`. A removed Venue can be withdrawn when the caller has a response
+for it or the Meet records its removal; unrelated Venues are rejected. The
+`any` sentinel is not a Venue on this API.
 
-### 9.2 PATCH semantics
+### 9.2 Transitional reads and ETA writes
 
-PATCH is intentionally used for partial updates.
+The existing Firestore attendance listener remains the live read path. ETA
+updates, `any` responses, and existing bulk/global attendance actions continue
+to use legacy Firestore writes in this intermediate slice; rules are not
+tightened here.
 
-- An omitted ETA preserves the existing ETA.
-- An explicitly cleared ETA removes it.
-- Setting status to `not_attending` clears ETA.
-
-The OpenAPI schema must distinguish an omitted field from an explicit clear, using a request representation that can express that difference unambiguously.
-
-### 9.3 Snapshot response
-
-The attendance snapshot returns both `attending` and `not_attending` lists. Each entry includes the shared public user summary and ETA where applicable.
-
-Counts can be derived from these lists; if counts are also returned for convenience, they must be consistent with the snapshot.
-
-ETA is visible to authenticated members of the relevant Group.
-
-The snapshot includes a revision/cursor identifying the logical state represented by the response.
 
 ## 10. Server-Sent Events
 

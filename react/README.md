@@ -167,12 +167,13 @@ work.
 
 Voting and attendance remain separate from Meet writes. Voting snapshots,
 mutations, live updates and current-user export use Last Orders. Firestore keeps
-the existing `votes/{meetId}` shape as backend-owned state. Attendance continues
-to read Firestore documents and uses transactions that verify
-`polls/{meetId}` exists before initialising missing attendance documents without
-replacing concurrent updates or creating orphan child data after Meet deletion.
-The Firestore rules lockdown for vote documents is deferred until account
-deletion cleanup moves to the backend in ticket 05.
+the existing `votes/{meetId}` shape as backend-owned state. Per-Venue attendance
+status changes use Last Orders and require true membership in the Meet's Group;
+the Firestore listener remains the live read path. ETA, `any`, and existing
+bulk/global attendance actions retain their legacy Firestore writes during this
+intermediate slice, and Firestore rules are not tightened. The Firestore rules
+lockdown for vote documents is deferred until account deletion cleanup moves to
+the backend in ticket 05.
 
 ## Firestore Index Drift Check
 

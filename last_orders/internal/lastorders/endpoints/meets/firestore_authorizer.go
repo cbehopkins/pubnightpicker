@@ -114,6 +114,17 @@ func (a *firestoreGroupAuthorizer) CanRead(ctx context.Context, uid, groupID str
 	return false, errAuthorizationChanged
 }
 
+func (a *firestoreGroupAuthorizer) IsMember(ctx context.Context, uid, groupID string) (bool, error) {
+	if uid == "" {
+		return false, nil
+	}
+	group, exists, _, err := a.group(ctx, groupID)
+	if err != nil {
+		return false, err
+	}
+	return exists && isTrue(group.Members[uid]), nil
+}
+
 func newCachedGroupAuthorizer(source groupAuthorizationSource, now func() time.Time) *firestoreGroupAuthorizer {
 	return &firestoreGroupAuthorizer{
 		source: source, now: now,
