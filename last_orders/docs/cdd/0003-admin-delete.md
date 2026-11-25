@@ -174,8 +174,9 @@ The envelope is durable transport for the typed Truth. Live idempotency uses the
 `AdminDeleteRequested.real_delete` namespace and the request ID. Dry-run sends
 the Truth directly to a preview Fanout without recording an idempotency key, so
 the same pending request can be previewed again or processed live later.
-Interrupted live idempotency and evaluation Cells are deferred in dry-run and
-resume at their existing step when live processing is enabled again.
+Interrupted live idempotency, evaluation and outcome-persistence Cells are
+deferred in dry-run and resume at their existing step when live processing is
+enabled again.
 
 ### 3.3 Service Cell Payload and Current State
 

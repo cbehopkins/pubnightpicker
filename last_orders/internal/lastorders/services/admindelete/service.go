@@ -254,9 +254,13 @@ func (e *Evaluator) persistCell(payload OutcomePayload) cellar.Result {
 type PersistenceHandler struct {
 	Repository Repository
 	Logger     *slog.Logger
+	DryRun     bool
 }
 
 func (h PersistenceHandler) Handle(ctx context.Context, payload OutcomePayload) cellar.Result {
+	if h.DryRun {
+		return retryLater(h.Logger, "defer admin-delete outcome during dry-run", nil)
+	}
 	if h.Repository == nil {
 		return cellar.ErrorResult{Message: "admin-delete repository is required"}
 	}

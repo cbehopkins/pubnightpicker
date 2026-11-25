@@ -958,6 +958,7 @@ func New(cfg Config) (application *App, err error) {
 		if err := admindeleteplugin.RegisterHandlers(cellarRuntime, adminDeleteEvaluator, admindeletesvc.PersistenceHandler{
 			Repository: adminDeleteRepository,
 			Logger:     cfg.Logger,
+			DryRun:     cfg.AdminDeleteDryRun,
 		}); err != nil {
 			return nil, fmt.Errorf("register admin-delete handlers: %w", err)
 		}

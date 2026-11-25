@@ -24,6 +24,7 @@ import (
 	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
+	admindeletesvc "last_orders/internal/lastorders/services/admindelete"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -109,6 +110,7 @@ func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
 	assertLoopbackEmulator(t, "Auth", authHost)
 	projectID := "demo-admin-delete-local"
 	requestID := fmt.Sprintf("request-%d", time.Now().UnixNano())
+	staleRequestID := requestID + "-stale"
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
@@ -129,6 +131,7 @@ func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
 	}
 	seed := map[string]map[string]any{
 		"admin_delete_requests/" + requestID:      {"schemaVersion": 1, "targetUid": uid, "targetEmail": nil, "requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete", "status": "pending", "createdAt": time.Now().UTC()},
+		"admin_delete_requests/" + staleRequestID: {"schemaVersion": 1, "targetUid": "stale-user", "targetEmail": nil, "requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete", "status": "pending", "createdAt": time.Now().UTC()},
 		"votes/" + requestID:                      {"venue": []string{uid, "other"}},
 		"attendance/" + requestID:                 {"venue": map[string]any{"canCome": []string{uid, "other"}, "eta": map[string]any{uid: "19:00"}}},
 		"messages/" + requestID:                   {"uid": uid, "name": "target", "text": "hello"},
@@ -176,6 +179,19 @@ func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := interrupted.AddCell(cell); err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := cellar.NewCellDefinition(admindeletesvc.HandlerPersistOutcome, admindeletesvc.OutcomePayload{
+		RequestID: staleRequestID, TargetUID: "stale-user", Outcome: admindeletesvc.OutcomeFailedPrecondition, At: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistenceCell, err := persistence.CellRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.AddCell(persistenceCell); err != nil {
 		t.Fatal(err)
 	}
 	if err := interrupted.Close(); err != nil {
