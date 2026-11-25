@@ -94,6 +94,15 @@ poll-completion sends are created. Mailing-list sends and historical records
 without ownership are excluded. Changing an address does not change ownership
 of previous sends; setting somebody else's address cannot reveal their history.
 
+## Account Attendance Cleanup
+
+`POST /api/account/attendance/cleanup` synchronously removes the verified
+caller's UID from attendance responses and ETAs across all Meets. It returns
+`{"updatedDocuments": <count>}` with `Cache-Control: no-store`; it does not
+accept a target UID. A failure may follow partial changes, and retrying is safe.
+The scan is not atomic across documents and does not prevent later writes.
+Admin deletion performs the same cleanup in its queued backend worker.
+
 ## Venue and Any-Venue Attendance Responses
 
 Authenticated attendance snapshots and live updates use Last Orders:

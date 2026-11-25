@@ -57,6 +57,7 @@ type Options struct {
 	Repository           Repository
 	Auth                 AuthClient
 	VoteCleaner          VoteCleaner
+	AttendanceCleaner    VoteCleaner
 	Logger               *slog.Logger
 }
 
@@ -67,6 +68,7 @@ type Evaluator struct {
 	repository           Repository
 	auth                 AuthClient
 	voteCleaner          VoteCleaner
+	attendanceCleaner    VoteCleaner
 	logger               *slog.Logger
 }
 
@@ -102,6 +104,7 @@ func New(options Options) (*Evaluator, error) {
 		repository:           options.Repository,
 		auth:                 options.Auth,
 		voteCleaner:          options.VoteCleaner,
+		attendanceCleaner:    options.AttendanceCleaner,
 		logger:               options.Logger,
 	}, nil
 }
@@ -148,6 +151,11 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 			return retryLater(e.logger, "clean Firebase votes before admin account deletion", err)
 		}
 		outcome.VotesDocsUpdated = voteResult.UpdatedDocuments
+	}
+	if e.attendanceCleaner != nil {
+		if _, err := e.attendanceCleaner.RemoveUser(ctx, snapshot.TargetUID); err != nil {
+			return retryLater(e.logger, "clean Firebase attendance before admin account deletion", err)
+		}
 	}
 	usersDocExists, publicDocExists, err := e.repository.ApplicationDataExists(ctx, snapshot.TargetUID)
 	if err != nil {

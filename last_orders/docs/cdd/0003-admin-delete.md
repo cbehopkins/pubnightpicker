@@ -274,6 +274,7 @@ AdminDeleteRequested service Cell
     |
     +-- validate immutable Truth evidence
     +-- check current request eligibility and operational gates
+    +-- remove votes and attendance
     +-- check current application-data preconditions
     +-- dry-run: determine dry_run_validated
     +-- real delete: invoke Firebase Authentication
@@ -331,15 +332,18 @@ status  = failed_precondition
 ```
 
 Firebase Authentication deletion must not be attempted. The persistence payload
-records which documents remained. The service does not scrub application data;
-that belongs to the separate user-data deletion process.
+records which documents remained. Before checking these documents, the service
+removes the target's votes and attendance; other application-data scrubbing
+remains in the separate user-data deletion process.
 
 ---
 
 ## 8. Dry-Run and Real-Delete Gates
 
-Dry-run performs validation, current application-data precondition checks, and
-durable result/audit persistence. It does not call Firebase Authentication.
+Dry-run removes votes and attendance, performs validation and current
+application-data precondition checks, and persists the result and audit. It does
+not call Firebase Authentication. The frontend also deletes other application
+data before submitting the request, so this dry-run is not read-only.
 Successful validation produces the terminal outcome:
 
 ```text
@@ -359,7 +363,7 @@ Real deletion needs both service enablement and the explicit runtime capability
 
 ```text
 service disabled                 -> no processing
-service enabled + dry-run        -> validation only
+service enabled + dry-run        -> cleanup and validation, no Auth deletion
 service enabled + real disabled  -> auth_delete_blocked
 service enabled + real enabled   -> Auth deletion permitted
 ```
@@ -569,7 +573,8 @@ persistence, force a retry, or convert success into an application failure.
 | Persist request outcome and audit transaction | Admin Delete persistence handler/repository |
 | Record metrics | Best-effort metrics publisher |
 | Authorise request creation | Firestore rules / application |
-| Scrub application data | Separate deletion/scrubbing service |
+| Scrub votes and attendance | Admin Delete service handlers |
+| Scrub other application data | Separate deletion/scrubbing service |
 
 ---
 
@@ -670,8 +675,8 @@ operation. If paused, the scan enqueues no work and exits without changing
 pending requests. Retryable failures remain pending; use the existing
 `-run-for` option or a signal to bound/cancel a test run.
 
-Dry-run defaults to enabled through `ADMIN_DELETE_DRY_RUN=true`. A destructive
-test requires both `ADMIN_DELETE_DRY_RUN=false` and
+Dry-run defaults to enabled through `ADMIN_DELETE_DRY_RUN=true`. Firebase Auth
+deletion requires both `ADMIN_DELETE_DRY_RUN=false` and
 `-enable-real-auth-delete`; using the Firebase Auth emulator additionally
 requires `-allow-auth-emulator` and a loopback `FIREBASE_AUTH_EMULATOR_HOST`.
 Use an isolated `-db-path` for one-shot testing so unrelated durable Cellar

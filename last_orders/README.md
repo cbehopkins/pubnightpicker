@@ -383,6 +383,10 @@ defaults to true; set `ADMIN_DELETE_DRY_RUN=false` and pass
 `-enable-real-auth-delete` to permit the backend to call Firebase Auth. Real
 deletion is never enabled by the one-shot evaluation option alone.
 
+Dry-run is not read-only: the frontend deletes application data before queuing
+an admin request, and the backend removes votes and attendance in dry-run too.
+Use only disposable emulator data when evaluating this flow.
+
 For a one-shot dry-run evaluation, set the enablement variables and use an
 isolated Cellar database:
 

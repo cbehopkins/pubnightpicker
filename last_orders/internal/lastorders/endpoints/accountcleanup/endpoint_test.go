@@ -47,3 +47,19 @@ func TestCleanupUsesVerifiedPrincipalAndReturnsCountOnly(t *testing.T) {
 		t.Fatalf("body=%s, want count-only response", response.Body.String())
 	}
 }
+
+func TestAttendanceCleanupUsesVerifiedPrincipal(t *testing.T) {
+	cleaner := &cleanerStub{result: Result{UpdatedDocuments: 3}}
+	endpoint := &Endpoint{AttendanceCleaner: cleaner, Auth: verifierStub{}}
+	mux := http.NewServeMux()
+	endpoint.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/account/attendance/cleanup", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || cleaner.uid != "current-user" || response.Body.String() != "{\"updatedDocuments\":3}\n" {
+		t.Fatalf("status=%d uid=%q body=%s", response.Code, cleaner.uid, response.Body.String())
+	}
+}

@@ -537,7 +537,7 @@ function ManageUserDetailPage() {
                                 requestedByEmail: currentEmail || null,
                             });
                             setDeleteProgress("Deletion request queued");
-                            notifyInfo("User app data deleted and auth deletion request queued for backend processing.");
+                            notifyInfo("User cleanup and auth deletion request queued for backend processing.");
                             navigate("/admin/users", {
                                 state: {
                                     lastDeleteSummaryLines: summaryLines,

@@ -89,6 +89,36 @@ func TestEvaluatorRetriesVoteCleanupBeforeAuthDelete(t *testing.T) {
 	}
 }
 
+func TestEvaluatorRetriesAttendanceCleanupBeforeAuthDelete(t *testing.T) {
+	repository := &fakeRepository{status: "pending", exists: true}
+	auth := &fakeAuth{}
+	cleaner := &fakeVoteCleaner{err: errors.New("Firestore unavailable")}
+	evaluator := newEvaluator(t, Options{
+		Enabled: true, DryRun: false, EnableRealAuthDelete: true,
+		Repository: repository, Auth: auth, AttendanceCleaner: cleaner,
+	})
+
+	result := evaluator.Handle(context.Background(), validTruth())
+	if _, ok := result.(cellar.RetrySequence); !ok {
+		t.Fatalf("cleanup failure result=%#v, want retry", result)
+	}
+	if cleaner.calls != 1 || cleaner.uid != validTruth().Request.TargetUID || auth.calls != 0 {
+		t.Fatalf("cleaner calls=%d uid=%q Auth calls=%d", cleaner.calls, cleaner.uid, auth.calls)
+	}
+}
+
+func TestEvaluatorCleansAttendanceDuringDryRun(t *testing.T) {
+	repository := &fakeRepository{status: "pending", exists: true}
+	cleaner := &fakeVoteCleaner{}
+	evaluator := newEvaluator(t, Options{
+		Enabled: true, DryRun: true, Repository: repository, AttendanceCleaner: cleaner,
+	})
+	payload := persistencePayload(t, evaluator.Handle(context.Background(), validTruth()))
+	if cleaner.calls != 1 || cleaner.uid != validTruth().Request.TargetUID || payload.Outcome != OutcomeDryRunValidated {
+		t.Fatalf("cleaner calls=%d uid=%q outcome=%q", cleaner.calls, cleaner.uid, payload.Outcome)
+	}
+}
+
 func TestEvaluatorValidatesRequestBeforeAuthAndPersistsDryRun(t *testing.T) {
 	repository := &fakeRepository{status: "pending", exists: true}
 	auth := &fakeAuth{}

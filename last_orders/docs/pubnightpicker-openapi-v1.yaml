@@ -1441,6 +1441,37 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /account/attendance/cleanup:
+    post:
+      tags: [Attendance]
+      operationId: cleanupMyAttendance
+      summary: Remove the caller's attendance during account deletion
+      description: Synchronously removes the verified caller's attendance and ETAs across all Meets. A failed scan can leave partial changes; retries are idempotent. Concurrent writes can reintroduce attendance.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Number of attendance documents updated by this successful attempt.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updatedDocuments]
+                properties:
+                  updatedDocuments:
+                    type: integer
+                    minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Attendance cleanup or authentication is temporarily unavailable.
   /attendance/statistics:
     get:
       tags: [Attendance]

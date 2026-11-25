@@ -69,6 +69,7 @@ import (
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 	testemailplugin "last_orders/internal/lastorders/plugins/testemail"
 	admindeletesvc "last_orders/internal/lastorders/services/admindelete"
+	"last_orders/internal/lastorders/services/attendancecleanup"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	meetwritesvc "last_orders/internal/lastorders/services/meetwrite"
@@ -821,8 +822,13 @@ func New(cfg Config) (application *App, err error) {
 			}
 		}
 		var voteCleaner admindeletesvc.VoteCleaner
+		var attendanceCleaner admindeletesvc.VoteCleaner
 		if firestoreClient != nil {
 			voteCleaner, err = votecleanup.NewFirestoreCleaner(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+			attendanceCleaner, err = attendancecleanup.NewFirestoreCleaner(firestoreClient)
 			if err != nil {
 				return nil, err
 			}
@@ -834,6 +840,7 @@ func New(cfg Config) (application *App, err error) {
 			Repository:           adminDeleteRepository,
 			Auth:                 adminDeleteAuth,
 			VoteCleaner:          voteCleaner,
+			AttendanceCleaner:    attendanceCleaner,
 			Logger:               cfg.Logger,
 		})
 		if err != nil {
@@ -1292,7 +1299,11 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
-		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
+		attendanceCleaner, err := attendancecleanup.NewFirestoreCleaner(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, AttendanceCleaner: attendanceCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
 	}
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
