@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"cloud.google.com/go/firestore"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/truths"
+
+	"cloud.google.com/go/firestore"
 )
 
 func TestDryRunCanDispatchSameEmulatorRequestTwice(t *testing.T) {

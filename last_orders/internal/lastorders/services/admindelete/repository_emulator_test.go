@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"cellar/pkg/cellar"
-	"cloud.google.com/go/firestore"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	"last_orders/internal/lastorders/services/attendancecleanup"
 	"last_orders/internal/lastorders/services/votecleanup"
+
+	"cloud.google.com/go/firestore"
 )
 
 func TestDryRunLeavesVotesAndAttendanceUnchanged(t *testing.T) {
