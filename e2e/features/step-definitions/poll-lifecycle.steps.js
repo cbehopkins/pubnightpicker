@@ -31,7 +31,6 @@ async function captureVoteApi(page) {
         window.__attendanceApiRequests = [];
         window.__attendanceApiReadRequests = [];
         window.__attendanceApiResponses = "";
-        window.__attendanceStatisticsApiRequests = [];
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
             const url = input instanceof Request ? input.url : String(input);
@@ -50,9 +49,6 @@ async function captureVoteApi(page) {
                         }
                     })().catch(() => undefined);
                 }
-            }
-            if (/\/api\/attendance\/statistics(?:\?.*)?$/.test(url)) {
-                window.__attendanceStatisticsApiRequests.push({ url, method, status: response.status });
             }
             if (/\/api\/meet\/[^/]+\/attendance\/[^/?]+(?:\?.*)?$/.test(url)) {
                 window.__attendanceApiRequests.push({ url, method, body: init.body, status: response.status });
@@ -606,21 +602,21 @@ Then("{word} no longer sees the poll on Active Polls", async function (name) {
 
 When("admin opens attendance statistics", async function () {
     const page = this.actors.get("admin");
-    await captureVoteApi(page);
+    // Observed at the Playwright level because the full navigation discards in-page fetch hooks.
+    this.attendanceStatisticsResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === "/api/attendance/statistics" && response.request().method() === "GET";
+    }, { timeout: 15000 });
+    this.attendanceStatisticsResponse.catch(() => undefined);
     await page.goto(`${BASE_URL}/stats/attendance?limit=5&years=2`);
     await page.getByRole("heading", { name: "Attendance Venue Stats", exact: true }).waitFor();
 });
 
 Then("admin sees the attendance statistics through the API", async function () {
-    const page = this.actors.get("admin");
-    await page.waitForFunction(() => (window.__attendanceStatisticsApiRequests ?? []).some(({ method, status }) => method === "GET" && status === 200));
-    const traffic = await page.evaluate(() => window.__attendanceStatisticsApiRequests ?? []);
-    assert.ok(traffic.some(({ url }) => {
-        const parsed = new URL(url);
-        return parsed.pathname === "/api/attendance/statistics"
-            && parsed.searchParams.has("start")
-            && parsed.searchParams.has("end");
-    }), `attendance statistics API traffic: ${JSON.stringify(traffic)}`);
+    const response = await this.attendanceStatisticsResponse;
+    const url = new URL(response.url());
+    assert.equal(response.status(), 200, `attendance statistics status for ${response.url()}`);
+    assert.ok(url.searchParams.has("start") && url.searchParams.has("end"), `attendance statistics URL: ${response.url()}`);
 });
 
 When("{word} opens Current Meets", async function (name) {
