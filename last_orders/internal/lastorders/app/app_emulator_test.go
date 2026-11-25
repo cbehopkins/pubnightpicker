@@ -108,14 +108,13 @@ func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
 	}
 	assertLoopbackEmulator(t, "Firestore", firestoreHost)
 	assertLoopbackEmulator(t, "Auth", authHost)
-	projectID := "demo-admin-delete-local"
+	projectID := fmt.Sprintf("demo-admin-delete-%d", time.Now().UnixNano())
 	requestID := fmt.Sprintf("request-%d", time.Now().UnixNano())
 	staleRequestID := requestID + "-stale"
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
-	_, uid := createVotingEmulatorAccount(t, authHost, projectID)
 	client, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +128,16 @@ func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	account, err := accounts.CreateUser(ctx, (&firebaseauth.UserToCreate{}).UID("target-user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid := account.UID
+	t.Cleanup(func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		_ = accounts.DeleteUser(cleanupCtx, uid)
+	})
 	seed := map[string]map[string]any{
 		"admin_delete_requests/" + requestID:      {"schemaVersion": 1, "targetUid": uid, "targetEmail": nil, "requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete", "status": "pending", "createdAt": time.Now().UTC()},
 		"admin_delete_requests/" + staleRequestID: {"schemaVersion": 1, "targetUid": "stale-user", "targetEmail": nil, "requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete", "status": "pending", "createdAt": time.Now().UTC()},
