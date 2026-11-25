@@ -104,6 +104,17 @@ func (r *FirestoreRepository) CleanApplicationData(ctx context.Context, targetUI
 			}
 		}
 	}
+	if err := visit(r.client.Collection("roles").Documents(ctx), "remove role", func(document *firestore.DocumentSnapshot) error {
+		if _, exists := document.Data()[targetUID]; !exists {
+			return nil
+		}
+		return apply(document.Ref, "remove role", func() error {
+			_, err := document.Ref.Update(ctx, []firestore.Update{{FieldPath: firestore.FieldPath{targetUID}, Value: firestore.Delete}})
+			return err
+		})
+	}); err != nil {
+		return err
+	}
 	if err := visit(r.client.Collection("messages").Where("uid", "==", targetUID).Documents(ctx), "anonymise message", func(document *firestore.DocumentSnapshot) error {
 		return apply(document.Ref, "anonymise message", func() error {
 			_, err := document.Ref.Update(ctx, []firestore.Update{
@@ -112,7 +123,7 @@ func (r *FirestoreRepository) CleanApplicationData(ctx context.Context, targetUI
 				{Path: "text", Value: "{user deleted}"},
 				{Path: "deletedUserUid", Value: targetUID},
 				{Path: "deletedAt", Value: firestore.ServerTimestamp},
-			})
+			}, firestore.LastUpdateTime(document.UpdateTime))
 			return err
 		})
 	}); err != nil {
@@ -122,17 +133,6 @@ func (r *FirestoreRepository) CleanApplicationData(ctx context.Context, targetUI
 	if err := visit(endpoints, "delete push endpoint", func(document *firestore.DocumentSnapshot) error {
 		return apply(document.Ref, "delete push endpoint", func() error {
 			_, err := document.Ref.Delete(ctx)
-			return err
-		})
-	}); err != nil {
-		return err
-	}
-	if err := visit(r.client.Collection("roles").Documents(ctx), "remove role", func(document *firestore.DocumentSnapshot) error {
-		if _, exists := document.Data()[targetUID]; !exists {
-			return nil
-		}
-		return apply(document.Ref, "remove role", func() error {
-			_, err := document.Ref.Update(ctx, []firestore.Update{{FieldPath: firestore.FieldPath{targetUID}, Value: firestore.Delete}})
 			return err
 		})
 	}); err != nil {

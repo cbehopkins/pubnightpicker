@@ -67,7 +67,7 @@ func TestDryRunCanDispatchSameEmulatorRequestTwice(t *testing.T) {
 		t.Fatalf("active dry-run cells=%d err=%v", len(cells), err)
 	}
 	for _, cell := range cells {
-		if len(cell.Steps) != 1 || cell.Steps[0].HandlerName != truths.AdminDeleteRequestedFanout {
+		if len(cell.Steps) != 1 || cell.Steps[0].HandlerName != truths.AdminDeletePreviewFanout {
 			t.Fatalf("dry-run queued idempotency work: %+v", cell.Steps)
 		}
 	}

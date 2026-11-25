@@ -20,6 +20,7 @@ import (
 
 const (
 	HandlerEvaluateRequest cellar.HandlerName = "admindelete.evaluate_request"
+	HandlerPreviewRequest  cellar.HandlerName = "admindelete.preview_request"
 	HandlerPersistOutcome  cellar.HandlerName = "admindelete.persist_outcome"
 	retryDelay                                = 5 * time.Second
 )
@@ -115,6 +116,21 @@ func New(options Options) (*Evaluator, error) {
 }
 
 func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteRequested) cellar.Result {
+	if e.dryRun {
+		return retryLater(e.logger, "defer live admin-delete work during dry-run", nil)
+	}
+	return e.handle(ctx, request, false)
+}
+
+type PreviewHandler struct {
+	Evaluator *Evaluator
+}
+
+func (h PreviewHandler) Handle(ctx context.Context, request truths.AdminDeleteRequested) cellar.Result {
+	return h.Evaluator.handle(ctx, request, true)
+}
+
+func (e *Evaluator) handle(ctx context.Context, request truths.AdminDeleteRequested, dryRun bool) cellar.Result {
 	if !e.enabled {
 		return retryLater(e.logger, "admin-delete processing disabled", nil)
 	}
@@ -125,7 +141,7 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 	if err != nil {
 		return retryLater(e.logger, "read current admin-delete request", err)
 	}
-	realDelete := !e.dryRun && e.enableRealAuthDelete
+	realDelete := !dryRun && e.enableRealAuthDelete
 	if !exists || (status != "pending" && !(realDelete && status == string(OutcomeDryRunValidated))) {
 		return cellar.Complete{}
 	}
@@ -147,14 +163,14 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 		RealDelete:     realDelete,
 	}
 	if snapshot.SchemaVersion != 1 || strings.TrimSpace(snapshot.TargetUID) == "" {
-		if e.dryRun {
+		if dryRun {
 			e.logger.Error("invalid admin-delete dry-run request", "request_id", snapshot.RequestID)
 			return cellar.Complete{}
 		}
 		outcome.Outcome = OutcomeInvalidRequest
 		return e.persistCell(outcome)
 	}
-	if e.dryRun {
+	if dryRun {
 		for _, cleaner := range []VoteCleaner{e.voteCleaner, e.attendanceCleaner} {
 			if cleaner == nil {
 				continue

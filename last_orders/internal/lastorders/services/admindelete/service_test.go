@@ -124,7 +124,7 @@ func TestEvaluatorPreviewsAttendanceDuringDryRun(t *testing.T) {
 	evaluator := newEvaluator(t, Options{
 		Enabled: true, DryRun: true, Repository: repository, AttendanceCleaner: cleaner,
 	})
-	result := evaluator.Handle(context.Background(), validTruth())
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(context.Background(), validTruth())
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 0 || cleaner.calls != 0 || cleaner.previewCalls != 1 || cleaner.uid != validTruth().Request.TargetUID {
 		t.Fatalf("result=%#v cleaner calls=%d previews=%d uid=%q", result, cleaner.calls, cleaner.previewCalls, cleaner.uid)
@@ -138,7 +138,7 @@ func TestEvaluatorPreviewsWithoutPersistingDryRun(t *testing.T) {
 		Enabled: true, DryRun: true, EnableRealAuthDelete: true,
 		Repository: repository, Auth: auth,
 	})
-	result := evaluator.Handle(context.Background(), validTruth())
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(context.Background(), validTruth())
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 0 {
 		t.Fatalf("result = %#v, want Complete without persistence", result)
@@ -169,7 +169,7 @@ func TestEvaluatorPromotesDryRunOnlyWithRealDeleteGatesAndFreshChecks(t *testing
 			evaluator := newEvaluator(t, Options{Enabled: true, DryRun: test.dryRun,
 				EnableRealAuthDelete: test.capability, Repository: repository, Auth: auth})
 			result := evaluator.Handle(context.Background(), validTruth())
-			if test.paused {
+			if test.paused || test.dryRun {
 				if _, ok := result.(cellar.RetrySequence); !ok {
 					t.Fatalf("paused result = %#v", result)
 				}

@@ -8,6 +8,7 @@ import (
 
 func Register() {
 	truths.AdminDeleteRequestedRegistry.Register(admindelete.HandlerEvaluateRequest)
+	truths.AdminDeletePreviewRegistry.Register(admindelete.HandlerPreviewRequest)
 }
 
 func RegisterHandlers(runtime *cellar.Cellar, evaluator *admindelete.Evaluator, persistence admindelete.PersistenceHandler) error {
@@ -18,6 +19,9 @@ func RegisterHandlers(runtime *cellar.Cellar, evaluator *admindelete.Evaluator, 
 		return nil
 	}
 	if err := runtime.Register(admindelete.HandlerEvaluateRequest, evaluator); err != nil {
+		return err
+	}
+	if err := runtime.Register(admindelete.HandlerPreviewRequest, admindelete.PreviewHandler{Evaluator: evaluator}); err != nil {
 		return err
 	}
 	return runtime.Register(admindelete.HandlerPersistOutcome, persistence)

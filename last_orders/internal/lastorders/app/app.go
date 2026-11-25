@@ -1039,16 +1039,16 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(testemailplugin.HandlerTestEmailAcked, testemailplugin.AckedHandler{Acks: testEmailSource}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerReleaseRemote, firebaseidempotency.ReleaseRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(idempotency.HandlerCheck, idempotency.CheckHandler{Store: localIdempotencyStore, Logger: cfg.Logger}); err != nil {
@@ -1996,7 +1996,7 @@ func (a *App) waitForAdminDeleteDryRun(ctx context.Context, requestIDs []string)
 		pending := false
 		for _, cell := range cells {
 			for _, step := range cell.Steps {
-				if step.HandlerName != truths.AdminDeleteRequestedFanout && step.HandlerName != admindeletesvc.HandlerEvaluateRequest {
+				if step.HandlerName != truths.AdminDeletePreviewFanout && step.HandlerName != admindeletesvc.HandlerPreviewRequest {
 					continue
 				}
 				var request truths.AdminDeleteRequested
@@ -2234,6 +2234,7 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.PushTestRequested](truths.PushTestRequestedRegistry),
 		registerFanout[truths.TestEmailRequested](truths.TestEmailRequestedRegistry),
 		registerFanout[truths.AdminDeleteRequested](truths.AdminDeleteRequestedRegistry),
+		registerFanout[truths.AdminDeleteRequested](truths.AdminDeletePreviewRegistry),
 	}
 	for _, registrar := range registrars {
 		if err := registrar(cellarRuntime); err != nil {
@@ -2241,6 +2242,21 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		}
 	}
 	return nil
+}
+
+type adminDeleteDryRunGate struct {
+	dryRun bool
+	clock  cellar.Clock
+	next   cellar.Handler[firebaseidempotency.StepPayload]
+}
+
+func (gate adminDeleteDryRunGate) Handle(ctx context.Context, payload firebaseidempotency.StepPayload) cellar.Result {
+	listener := string(admindeletelistener.ListenerAdminDelete)
+	if gate.dryRun && (payload.Listener == listener || payload.Listener == listener+".real_delete") {
+		notBefore := gate.clock.Now().Add(5 * time.Second)
+		return cellar.Retry{NotBefore: &notBefore}
+	}
+	return gate.next.Handle(ctx, payload)
 }
 
 func registerFanout[T any](registry *truths.Registry[T]) func(*cellar.Cellar) error {

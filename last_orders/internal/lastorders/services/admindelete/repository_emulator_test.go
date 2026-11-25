@@ -85,7 +85,7 @@ func TestDryRunLeavesVotesAndAttendanceUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluator.Handle(ctx, request)
+	PreviewHandler{Evaluator: evaluator}.Handle(ctx, request)
 	for _, collection := range []string{"votes", "attendance"} {
 		snapshot, err := client.Collection(collection).Doc(request.Request.RequestID).Get(ctx)
 		if err != nil {
@@ -113,7 +113,7 @@ func TestDryRunLeavesVotesAndAttendanceUnchanged(t *testing.T) {
 		}
 	}
 	request.Request.SchemaVersion = 2
-	result := evaluator.Handle(ctx, request)
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(ctx, request)
 	complete, ok := result.(cellar.Complete)
 	if !ok || len(complete.NewCells) != 0 {
 		t.Fatalf("invalid dry-run scheduled persistent outcome: %#v", result)

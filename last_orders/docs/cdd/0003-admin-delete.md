@@ -172,8 +172,10 @@ firebaseidempotency.NewCellRequest(
 
 The envelope is durable transport for the typed Truth. Live idempotency uses the
 `AdminDeleteRequested.real_delete` namespace and the request ID. Dry-run sends
-the Truth directly to its Fanout without recording an idempotency key, so the
-same pending request can be previewed again or processed live later.
+the Truth directly to a preview Fanout without recording an idempotency key, so
+the same pending request can be previewed again or processed live later.
+Interrupted live idempotency and evaluation Cells are deferred in dry-run and
+resume at their existing step when live processing is enabled again.
 
 ### 3.3 Service Cell Payload and Current State
 
@@ -296,14 +298,16 @@ Authentication.
 
 ## 7. Validation and Preconditions
 
-`targetUid` is required and must be a non-empty string. If it is invalid:
+`targetUid` is required and must be a non-empty string. In live mode, if it is
+invalid:
 
 ```text
 outcome = invalid_request
 status  = invalid_request
 ```
 
-No Firebase Authentication operation is attempted.
+No Firebase Authentication operation is attempted. In dry-run the invalid
+request is logged and remains pending.
 
 `schemaVersion` must be the supported integer version `1`. An integer but
 unsupported version is an `invalid_request` outcome; it must not be interpreted

@@ -216,7 +216,11 @@ func (l *Listener) enqueue(document Document) error {
 	if err != nil {
 		return err
 	}
-	envelope, err := truths.NewEnvelope(truths.AdminDeleteRequestedFanout, truth)
+	fanout := truths.AdminDeleteRequestedFanout
+	if l.dryRun {
+		fanout = truths.AdminDeletePreviewFanout
+	}
+	envelope, err := truths.NewEnvelope(fanout, truth)
 	if err != nil {
 		return fmt.Errorf("marshal admin-delete Truth: %w", err)
 	}

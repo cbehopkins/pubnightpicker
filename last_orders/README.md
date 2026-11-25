@@ -389,6 +389,8 @@ profiles and Auth account it would change. It does not change user data, write
 an outcome, or record an idempotency key. The request remains pending and can
 be evaluated repeatedly or picked up for real deletion later. Preview results
 reflect the data at the time of each run; data may change before a real run.
+Interrupted live deletion work is deferred while dry-run is enabled and
+continues when live deletion is enabled again.
 
 For a one-shot dry-run evaluation, set the enablement variables and use an
 isolated Cellar database:
