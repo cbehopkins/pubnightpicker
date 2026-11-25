@@ -43,10 +43,15 @@ type VoteCleaner interface {
 	RemoveUser(context.Context, string) (votecleanup.Result, error)
 }
 
+type previewCleaner interface {
+	PreviewUser(context.Context, string) ([]string, error)
+}
+
 type Repository interface {
 	RequestStatus(context.Context, string) (string, bool, error)
 	IsPaused(context.Context) (bool, error)
 	ApplicationDataExists(context.Context, string) (usersDocExists, publicDocExists bool, err error)
+	CleanApplicationData(context.Context, string, bool, *slog.Logger) error
 	PersistOutcome(context.Context, OutcomePayload) error
 }
 
@@ -142,7 +147,38 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 		RealDelete:     realDelete,
 	}
 	if snapshot.SchemaVersion != 1 || strings.TrimSpace(snapshot.TargetUID) == "" {
+		if e.dryRun {
+			e.logger.Error("invalid admin-delete dry-run request", "request_id", snapshot.RequestID)
+			return cellar.Complete{}
+		}
 		outcome.Outcome = OutcomeInvalidRequest
+		return e.persistCell(outcome)
+	}
+	if e.dryRun {
+		for _, cleaner := range []VoteCleaner{e.voteCleaner, e.attendanceCleaner} {
+			if cleaner == nil {
+				continue
+			}
+			preview, ok := cleaner.(previewCleaner)
+			if !ok {
+				return retryLater(e.logger, "preview admin account cleanup", fmt.Errorf("cleaner does not support preview"))
+			}
+			paths, err := preview.PreviewUser(ctx, snapshot.TargetUID)
+			if err != nil {
+				return retryLater(e.logger, "preview admin account cleanup", err)
+			}
+			for _, path := range paths {
+				e.logger.Info("admin-delete dry-run", "action", "remove user", "entity", path)
+			}
+		}
+		if err := e.repository.CleanApplicationData(ctx, snapshot.TargetUID, true, e.logger); err != nil {
+			return retryLater(e.logger, "preview admin account application data", err)
+		}
+		e.logger.Info("admin-delete dry-run", "action", "delete Auth account", "entity", snapshot.TargetUID)
+		return cellar.Complete{}
+	}
+	if !e.enableRealAuthDelete {
+		outcome.Outcome = OutcomeDeleteBlocked
 		return e.persistCell(outcome)
 	}
 	if e.voteCleaner != nil {
@@ -157,6 +193,9 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 			return retryLater(e.logger, "clean Firebase attendance before admin account deletion", err)
 		}
 	}
+	if err := e.repository.CleanApplicationData(ctx, snapshot.TargetUID, false, e.logger); err != nil {
+		return retryLater(e.logger, "clean Firebase application data before admin account deletion", err)
+	}
 	usersDocExists, publicDocExists, err := e.repository.ApplicationDataExists(ctx, snapshot.TargetUID)
 	if err != nil {
 		return retryLater(e.logger, "check admin-delete application-data preconditions", err)
@@ -165,14 +204,6 @@ func (e *Evaluator) Handle(ctx context.Context, request truths.AdminDeleteReques
 	outcome.UserPublicDocExists = publicDocExists
 	if usersDocExists || publicDocExists {
 		outcome.Outcome = OutcomeFailedPrecondition
-		return e.persistCell(outcome)
-	}
-	if e.dryRun {
-		outcome.Outcome = OutcomeDryRunValidated
-		return e.persistCell(outcome)
-	}
-	if !e.enableRealAuthDelete {
-		outcome.Outcome = OutcomeDeleteBlocked
 		return e.persistCell(outcome)
 	}
 	if err := e.auth.DeleteUser(ctx, snapshot.TargetUID); err != nil {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -229,6 +230,7 @@ type App struct {
 	testEmailListener           *testemaillistener.Listener
 	adminDeleteListener         *admindeletelistener.Listener
 	adminDeleteEvaluateOnce     bool
+	adminDeleteDryRun           bool
 	autoCompleteTimerConfig     cellar.TimerConfig
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
@@ -1172,6 +1174,7 @@ func New(cfg Config) (application *App, err error) {
 			Store:      cellarStore,
 			Enabled:    cfg.AdminDeleteEnabled,
 			RealDelete: !cfg.AdminDeleteDryRun && cfg.EnableRealAuthDelete,
+			DryRun:     cfg.AdminDeleteDryRun,
 			Logger:     cfg.Logger,
 		})
 		if err != nil {
@@ -1235,6 +1238,7 @@ func New(cfg Config) (application *App, err error) {
 		testEmailListener:           testEmailListener,
 		adminDeleteListener:         adminDeleteListener,
 		adminDeleteEvaluateOnce:     cfg.AdminDeleteEvaluateOnce,
+		adminDeleteDryRun:           cfg.AdminDeleteDryRun,
 		component:                   cfg.Component,
 		shutdownDrainTimeout:        cfg.ShutdownDrainTimeout,
 		claimGate:                   claimGate,
@@ -1955,7 +1959,12 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 		runErr <- err
 		cancel()
 	}()
-	waitErr := a.adminDeleteListener.WaitForTerminal(runCtx, requestIDs)
+	var waitErr error
+	if a.adminDeleteDryRun {
+		waitErr = a.waitForAdminDeleteDryRun(runCtx, requestIDs)
+	} else {
+		waitErr = a.adminDeleteListener.WaitForTerminal(runCtx, requestIDs)
+	}
 	cancel()
 	<-runDone
 	cellarErr := <-runErr
@@ -1970,6 +1979,44 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 		return fmt.Errorf("wait for admin-delete request outcomes: %w", waitErr)
 	}
 	return nil
+}
+
+func (a *App) waitForAdminDeleteDryRun(ctx context.Context, requestIDs []string) error {
+	requests := make(map[string]bool, len(requestIDs))
+	for _, requestID := range requestIDs {
+		requests[requestID] = true
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		cells, err := a.cellarStore.ListActive()
+		if err != nil {
+			return err
+		}
+		pending := false
+		for _, cell := range cells {
+			for _, step := range cell.Steps {
+				if step.HandlerName != truths.AdminDeleteRequestedFanout && step.HandlerName != admindeletesvc.HandlerEvaluateRequest {
+					continue
+				}
+				var request truths.AdminDeleteRequested
+				if err := json.Unmarshal(step.Payload, &request); err != nil {
+					return fmt.Errorf("decode active admin-delete request: %w", err)
+				}
+				if requests[request.Identity()] {
+					pending = true
+				}
+			}
+		}
+		if !pending {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *App) awaitGroupProjection(ctx context.Context) error {

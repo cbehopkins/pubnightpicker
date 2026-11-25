@@ -383,9 +383,12 @@ defaults to true; set `ADMIN_DELETE_DRY_RUN=false` and pass
 `-enable-real-auth-delete` to permit the backend to call Firebase Auth. Real
 deletion is never enabled by the one-shot evaluation option alone.
 
-Dry-run is not read-only: the frontend deletes application data before queuing
-an admin request, and the backend removes votes and attendance in dry-run too.
-Use only disposable emulator data when evaluating this flow.
+The frontend queues the request without deleting application data. In dry-run,
+the backend logs the votes, attendance, messages, push endpoints, roles,
+profiles and Auth account it would change. It does not change user data, write
+an outcome, or record an idempotency key. The request remains pending and can
+be evaluated repeatedly or picked up for real deletion later. Preview results
+reflect the data at the time of each run; data may change before a real run.
 
 For a one-shot dry-run evaluation, set the enablement variables and use an
 isolated Cellar database:
@@ -396,17 +399,15 @@ $env:ADMIN_DELETE_DRY_RUN = "true"
 go run ./cmd/last-orders -db-path=./admin-delete-test.db -admin-delete-evaluate-once -http-addr=
 ```
 
-The command scans pending requests once, dispatches them through normal
-idempotency and service Cells, waits for terminal outcomes to be persisted, and
-then exits. If the kill switch is paused, it enqueues nothing and exits with
-requests still pending. Use `-run-for` to bound a test run if a retryable
-dependency failure prevents requests from reaching terminal status. For a
-dry-run followed by real deletion, reuse the same request: when
-`ADMIN_DELETE_DRY_RUN=false` and `-enable-real-auth-delete` are both set,
-`dry_run_validated` requests are also selected in both one-shot and normal
-listener modes. The backend rechecks all safety preconditions, uses a separate
-real-delete idempotency phase, preserves the dry-run audit as `dryRunEvidence`,
-and waits for the real outcome rather than stopping at the prior validation.
+The command scans eligible requests once and waits for processing before
+exiting. Dry-run dispatches without idempotency and waits for its preview Cells;
+live processing uses idempotency and waits for persisted terminal outcomes. If
+the kill switch is paused, it enqueues nothing and exits with requests still
+pending. Use `-run-for` to bound a run if a retryable dependency failure
+prevents processing from completing. Once both real-delete gates are enabled,
+pending requests are eligible for deletion without another confirmation. For
+compatibility, previously persisted `dry_run_validated` requests are also
+eligible and their existing audit evidence is retained.
 For a destructive emulator test, additionally configure `FIREBASE_AUTH_EMULATOR_HOST`,
 set `ADMIN_DELETE_DRY_RUN=false`, and pass both `-allow-auth-emulator` and
 `-enable-real-auth-delete`. See

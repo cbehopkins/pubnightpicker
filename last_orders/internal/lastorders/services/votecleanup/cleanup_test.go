@@ -23,6 +23,10 @@ func (repository *cleanupRepositoryStub) RemoveUser(_ context.Context, targetUID
 	return repository.result, repository.err
 }
 
+func (repository *cleanupRepositoryStub) PreviewUser(context.Context, string) ([]string, error) {
+	return nil, repository.err
+}
+
 func TestCleanerValidatesAndDelegates(t *testing.T) {
 	want := errors.New("repository error")
 	repository := &cleanupRepositoryStub{result: Result{UpdatedDocuments: 2}, err: want}

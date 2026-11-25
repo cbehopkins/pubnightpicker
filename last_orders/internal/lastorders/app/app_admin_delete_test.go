@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -77,6 +78,10 @@ func (adminDeleteTestRepository) ApplicationDataExists(context.Context, string) 
 	return false, false, nil
 }
 
+func (adminDeleteTestRepository) CleanApplicationData(context.Context, string, bool, *slog.Logger) error {
+	return nil
+}
+
 func (r adminDeleteTestRepository) PersistOutcome(ctx context.Context, payload admindeletesvc.OutcomePayload) error {
 	return r.source.PersistOutcome(ctx, payload)
 }
@@ -85,7 +90,7 @@ func (s *adminDeleteTestSource) ApplicationDataExists(context.Context, string) (
 	return false, false, nil
 }
 
-func TestAdminDeleteOneShotWaitsForPersistedOutcome(t *testing.T) {
+func TestAdminDeleteOneShotWaitsForDryRunThenLiveOutcome(t *testing.T) {
 	source := &adminDeleteTestSource{
 		status: "pending",
 		pending: []admindeletelistener.Document{{
@@ -127,8 +132,8 @@ func TestAdminDeleteOneShotWaitsForPersistedOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != string(admindeletesvc.OutcomeDryRunValidated) {
-		t.Fatalf("request status = %q, want %q", status, admindeletesvc.OutcomeDryRunValidated)
+	if status != "pending" {
+		t.Fatalf("request status = %q, want pending", status)
 	}
 	if err := application.Close(); err != nil {
 		t.Fatal(err)

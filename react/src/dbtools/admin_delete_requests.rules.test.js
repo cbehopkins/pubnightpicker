@@ -75,6 +75,11 @@ describe("admin_delete_requests rules", () => {
         await assertSucceeds(addDoc(collection(db, "admin_delete_requests"), validRequest()));
     });
 
+    it("allows an admin to queue deletion before application data is scrubbed", async () => {
+        const db = testEnv.authenticatedContext("admin-user").firestore();
+        await assertSucceeds(addDoc(collection(db, "admin_delete_requests"), validRequest({ scrubbedAppData: false })));
+    });
+
     it("denies non-admin create", async () => {
         const db = testEnv.authenticatedContext("plain-user").firestore();
         await assertFails(addDoc(collection(db, "admin_delete_requests"), validRequest({ requestedByUid: "plain-user" })));

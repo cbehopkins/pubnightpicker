@@ -25,6 +25,27 @@ func NewFirestoreCleaner(client *firestore.Client) (*FirestoreCleaner, error) {
 	return &FirestoreCleaner{client: client}, nil
 }
 
+func (cleaner *FirestoreCleaner) PreviewUser(ctx context.Context, targetUID string) ([]string, error) {
+	if targetUID == "" {
+		return nil, fmt.Errorf("target uid is required")
+	}
+	var paths []string
+	documents := cleaner.client.Collection("attendance").Documents(ctx)
+	defer documents.Stop()
+	for {
+		document, err := documents.Next()
+		if err == iterator.Done {
+			return paths, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list attendance documents: %w", err)
+		}
+		if len(attendanceUpdates(document.Data(), targetUID)) > 0 {
+			paths = append(paths, document.Ref.Path)
+		}
+	}
+}
+
 func (cleaner *FirestoreCleaner) RemoveUser(ctx context.Context, targetUID string) (Result, error) {
 	if targetUID == "" {
 		return Result{}, fmt.Errorf("target uid is required")
@@ -61,30 +82,7 @@ func (cleaner *FirestoreCleaner) removeUserFromDocument(ctx context.Context, ref
 		if err != nil {
 			return err
 		}
-		updates := make([]firestore.Update, 0)
-		for venueID, rawEntry := range snapshot.Data() {
-			entry, ok := rawEntry.(map[string]any)
-			if !ok {
-				continue
-			}
-			changed := false
-			for _, field := range []string{"canCome", "cannotCome"} {
-				filtered, removed := removeUID(entry[field], targetUID)
-				if removed {
-					entry[field] = filtered
-					changed = true
-				}
-			}
-			if eta, ok := entry["eta"].(map[string]any); ok {
-				if _, exists := eta[targetUID]; exists {
-					delete(eta, targetUID)
-					changed = true
-				}
-			}
-			if changed {
-				updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID}, Value: entry})
-			}
-		}
+		updates := attendanceUpdates(snapshot.Data(), targetUID)
 		if len(updates) == 0 {
 			updated = false
 			return nil
@@ -96,6 +94,34 @@ func (cleaner *FirestoreCleaner) removeUserFromDocument(ctx context.Context, ref
 		return nil
 	})
 	return updated, err
+}
+
+func attendanceUpdates(data map[string]any, targetUID string) []firestore.Update {
+	updates := make([]firestore.Update, 0)
+	for venueID, rawEntry := range data {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		changed := false
+		for _, field := range []string{"canCome", "cannotCome"} {
+			filtered, removed := removeUID(entry[field], targetUID)
+			if removed {
+				entry[field] = filtered
+				changed = true
+			}
+		}
+		if eta, ok := entry["eta"].(map[string]any); ok {
+			if _, exists := eta[targetUID]; exists {
+				delete(eta, targetUID)
+				changed = true
+			}
+		}
+		if changed {
+			updates = append(updates, firestore.Update{FieldPath: firestore.FieldPath{venueID}, Value: entry})
+		}
+	}
+	return updates
 }
 
 func removeUID(value any, targetUID string) (any, bool) {

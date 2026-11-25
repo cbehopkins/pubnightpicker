@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
+import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { useSelector } from "react-redux";
 import { Alert, Form, Table } from "react-bootstrap";
 import useUsers from "../../hooks/useUsers";
@@ -15,7 +15,6 @@ import TextModal from "../UI/TextModal";
 import {
     CONSOLIDATED_PERMISSION_COLUMNS,
 } from "../../permissions";
-import { deleteUserAppData, deletionSummaryLines, summarizeDeletionResult } from "../../dbtools/userDeletion";
 import { enqueueAdminAuthDeleteRequest } from "../../dbtools/adminDeleteRequests";
 import { notifyError, notifyInfo } from "../../utils/notify";
 
@@ -332,10 +331,7 @@ function ManageUsersTable({
 
 function ManageUsers() {
     const [selectedUID, setSelectedUID] = useState(null);
-    const location = useLocation();
     const isMobileView = useIsMobileView(MANAGE_USERS_NARROW_BREAKPOINT);
-    const lastDeleteSummaryLines = location.state?.lastDeleteSummaryLines || [];
-    const lastDeleteUserLabel = location.state?.lastDeleteUserLabel || "";
     const {
         sortedUsers,
         isAdmin,
@@ -347,17 +343,6 @@ function ManageUsers() {
     return (
         <div className="py-3 text-body">
             <h1 className="h3 mb-4">Manage Users</h1>
-
-            {lastDeleteSummaryLines.length > 0 && (
-                <Alert variant="info" className="mb-3">
-                    <div className="fw-semibold mb-1">Deletion summary for {lastDeleteUserLabel || "selected user"}</div>
-                    <ul className="mb-0 small">
-                        {lastDeleteSummaryLines.map((line) => (
-                            <li key={line}>{line}</li>
-                        ))}
-                    </ul>
-                </Alert>
-            )}
 
             {sortedUsers.length === 0 ? (
                 <p className="text-muted">No users to display.</p>
@@ -495,7 +480,7 @@ function ManageUserDetailPage() {
             {showDeleteConfirm && (
                 <ConfirmModal
                     title="Delete this user?"
-                    detail="This removes app data and role assignments for this user, then queues a backend auth-delete request."
+                    detail="This queues a backend request to delete this user's app data and account."
                     confirm_text="Continue"
                     cancel_text="Cancel"
                     on_confirm={() => {
@@ -524,12 +509,8 @@ function ManageUserDetailPage() {
 
                         setShowDeleteTypedConfirm(false);
                         setIsDeletingUser(true);
-                        setDeleteProgress("Removing user app data...");
+                        setDeleteProgress("Queueing deletion request...");
                         try {
-                            const deletionResult = await deleteUserAppData(userId, { removeRoles: true });
-                            const summary = summarizeDeletionResult(deletionResult);
-                            const summaryLines = deletionSummaryLines(summary);
-                            setDeleteProgress("Queueing auth deletion request...");
                             await enqueueAdminAuthDeleteRequest({
                                 targetUid: userId,
                                 targetEmail: user?.email || null,
@@ -537,13 +518,8 @@ function ManageUserDetailPage() {
                                 requestedByEmail: currentEmail || null,
                             });
                             setDeleteProgress("Deletion request queued");
-                            notifyInfo("User cleanup and auth deletion request queued for backend processing.");
-                            navigate("/admin/users", {
-                                state: {
-                                    lastDeleteSummaryLines: summaryLines,
-                                    lastDeleteUserLabel: user?.email || userId,
-                                },
-                            });
+                            notifyInfo("User deletion request queued for backend processing.");
+                            navigate("/admin/users");
                         } catch (error) {
                             console.error(error);
                             notifyError(error?.message || "Unable to delete this user.");

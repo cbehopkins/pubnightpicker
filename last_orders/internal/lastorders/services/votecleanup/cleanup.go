@@ -17,6 +17,7 @@ type FirestoreCleaner struct {
 
 type repository interface {
 	RemoveUser(context.Context, string) (Result, error)
+	PreviewUser(context.Context, string) ([]string, error)
 }
 
 func NewFirestoreCleaner(client *firestore.Client) (*FirestoreCleaner, error) {
@@ -31,4 +32,11 @@ func (c *FirestoreCleaner) RemoveUser(ctx context.Context, targetUID string) (Re
 		return Result{}, fmt.Errorf("target uid is required")
 	}
 	return c.repository.RemoveUser(ctx, targetUID)
+}
+
+func (c *FirestoreCleaner) PreviewUser(ctx context.Context, targetUID string) ([]string, error) {
+	if targetUID == "" {
+		return nil, fmt.Errorf("target uid is required")
+	}
+	return c.repository.PreviewUser(ctx, targetUID)
 }

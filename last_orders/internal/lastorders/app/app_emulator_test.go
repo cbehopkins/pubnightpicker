@@ -1,17 +1,151 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go/v4"
+	firebaseauth "firebase.google.com/go/v4/auth"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"last_orders/internal/lastorders/app"
+	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/components/groupcache/groupcachetest"
 	emailplugin "last_orders/internal/lastorders/plugins/email"
 	pushplugin "last_orders/internal/lastorders/plugins/push"
 )
+
+func TestAdminDeleteDryRunCanRepeatThenDeleteAgainstEmulators(t *testing.T) {
+	firestoreHost := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	authHost := os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")
+	if firestoreHost == "" || authHost == "" {
+		t.Skip("Firestore and Auth emulators are required")
+	}
+	assertLoopbackEmulator(t, "Firestore", firestoreHost)
+	assertLoopbackEmulator(t, "Auth", authHost)
+	projectID := "demo-admin-delete-local"
+	requestID := fmt.Sprintf("request-%d", time.Now().UnixNano())
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	_, uid := createVotingEmulatorAccount(t, authHost, projectID)
+	client, err := firestore.NewClient(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	accountApp, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: projectID}, option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := accountApp.Auth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]map[string]any{
+		"admin_delete_requests/" + requestID:      {"schemaVersion": 1, "targetUid": uid, "targetEmail": nil, "requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete", "status": "pending", "createdAt": time.Now().UTC()},
+		"votes/" + requestID:                      {"venue": []string{uid, "other"}},
+		"attendance/" + requestID:                 {"venue": map[string]any{"canCome": []string{uid, "other"}, "eta": map[string]any{uid: "19:00"}}},
+		"messages/" + requestID:                   {"uid": uid, "name": "target", "text": "hello"},
+		"users/" + uid:                            {"name": "target"},
+		"user-public/" + uid:                      {"name": "target"},
+		"users/" + uid + "/push_endpoints/device": {"endpoint": "private"},
+		"roles/" + requestID:                      {uid: true, "other": true},
+	}
+	updateTimes := make(map[string]time.Time, len(seed))
+	for path, data := range seed {
+		result, err := client.Doc(path).Set(ctx, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		updateTimes[path] = result.UpdateTime
+	}
+	t.Cleanup(func() {
+		for path := range seed {
+			_, _ = client.Doc(path).Delete(context.Background())
+		}
+	})
+	var output bytes.Buffer
+	config := testConfig(t, filepath.Join(t.TempDir(), "admin-delete.db"), nil)
+	config.EnableFirestore = true
+	config.FirestoreProjectID = projectID
+	config.AuthProjectID = projectID
+	config.AllowAuthEmulator = true
+	config.AdminDeleteEnabled = true
+	config.AdminDeleteDryRun = true
+	config.AdminDeleteEvaluateOnce = true
+	config.Logger = slog.New(slog.NewTextHandler(&output, nil))
+	run := func() {
+		t.Helper()
+		application, err := app.New(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer application.Close()
+		runCtx, stop := context.WithTimeout(ctx, 8*time.Second)
+		defer stop()
+		if err := application.Run(runCtx); err != nil {
+			t.Fatalf("admin deletion run: %v", err)
+		}
+	}
+	for runNumber := 0; runNumber < 2; runNumber++ {
+		output.Reset()
+		run()
+		for _, path := range []string{"votes/" + requestID, "attendance/" + requestID, "messages/" + requestID, "roles/" + requestID, "users/" + uid, "user-public/" + uid, "push_endpoints/device"} {
+			if !strings.Contains(output.String(), path) {
+				t.Errorf("dry-run %d missing %q in logs: %s", runNumber, path, output.String())
+			}
+		}
+		for path, updateTime := range updateTimes {
+			snapshot, err := client.Doc(path).Get(ctx)
+			if err != nil || !snapshot.UpdateTime.Equal(updateTime) {
+				t.Fatalf("dry-run changed %s: %v", path, err)
+			}
+		}
+		if _, err := accounts.GetUser(ctx, uid); err != nil {
+			t.Fatalf("dry-run removed Auth account: %v", err)
+		}
+		remote, err := firebaseidempotency.NewFirestoreRemote(client, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists, err := remote.HasKey(ctx, "AdminDeleteRequested", requestID); err != nil || exists {
+			t.Fatalf("dry-run idempotency key exists=%t err=%v", exists, err)
+		}
+	}
+	config.AdminDeleteDryRun = false
+	config.EnableRealAuthDelete = true
+	run()
+	if _, err := accounts.GetUser(ctx, uid); !firebaseauth.IsUserNotFound(err) {
+		t.Fatalf("live Auth deletion error=%v", err)
+	}
+	for _, path := range []string{"users/" + uid, "user-public/" + uid, "users/" + uid + "/push_endpoints/device"} {
+		if _, err := client.Doc(path).Get(ctx); status.Code(err) != codes.NotFound {
+			t.Errorf("live deletion left %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{"votes/" + requestID, "attendance/" + requestID, "roles/" + requestID} {
+		snapshot, err := client.Doc(path).Get(ctx)
+		if err != nil || strings.Contains(fmt.Sprint(snapshot.Data()), uid) {
+			t.Errorf("live deletion left user in %s: snapshot=%v err=%v", path, snapshot, err)
+		}
+	}
+	message, err := client.Doc("messages/" + requestID).Get(ctx)
+	if err != nil || message.Data()["uid"] != "__deleted_user__" || message.Data()["text"] != "{user deleted}" {
+		t.Fatalf("live deletion did not anonymise message: snapshot=%v err=%v", message, err)
+	}
+}
 
 // The mocked app tests cover behaviour; this covers that the Firestore-backed
 // implementations still satisfy the interfaces app.New resolves them into.
