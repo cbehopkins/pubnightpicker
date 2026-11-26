@@ -11,6 +11,7 @@ This ensures the query -> event -> queue -> plugin flow is decoupled.
 
 from contextlib import AbstractContextManager, nullcontext
 from collections.abc import Callable
+import logging
 
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
@@ -20,6 +21,8 @@ from firebase_sub.database.poll_manager import PollManager
 from firebase_sub.event import Event, EventType
 from firebase_sub.plugins.protocols import CompletePollDbHandler, NewPollDbHandler
 from firebase_sub.runtime.job_queue import JobQueue
+
+_log = logging.getLogger(__name__)
 
 
 class EventProducer:
@@ -143,6 +146,14 @@ class EventProducer:
 
     def _new_poll_callback(self, document: DocumentSnapshot) -> None:
         """Called when a new (open) poll document is created."""
+        data = document.to_dict() or {}
+        selected = data.get("selected")
+        if selected is None:
+            selected = ""
+        if selected == "any":
+            _log.error('Poll %s has unexpected selected Venue ID "any".', document.id)
+        if not isinstance(selected, str) or selected != "":
+            return
         event = Event(
             type=EventType.NEW_POLL,
             doc=document,
@@ -151,6 +162,14 @@ class EventProducer:
 
     def _complete_poll_callback(self, document: DocumentSnapshot) -> None:
         """Called when a completed poll document is created or updated."""
+        data = document.to_dict() or {}
+        selected = data.get("selected")
+        if selected is None:
+            selected = ""
+        if selected == "any":
+            _log.error('Poll %s has unexpected selected Venue ID "any".', document.id)
+        if not isinstance(selected, str) or selected == "":
+            return
         event = Event(
             type=EventType.COMP_POLL,
             doc=document,

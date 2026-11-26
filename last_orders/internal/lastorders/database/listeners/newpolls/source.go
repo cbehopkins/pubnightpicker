@@ -55,7 +55,7 @@ func NewFirestoreSource(client *firestore.Client, pollsSince string) (*Firestore
 }
 
 func (s *FirestoreSource) Watch(ctx context.Context) (ChangeStream, error) {
-	query := s.client.Collection(pollCollection).Where("completed", "==", false).Where("date", ">=", s.pollsSince)
+	query := s.client.Collection(pollCollection).Where("selected", "==", "").Where("date", ">=", s.pollsSince)
 	return &firestoreChangeStream{iterator: query.Snapshots(ctx)}, nil
 }
 

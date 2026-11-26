@@ -3,6 +3,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useActiveMeets, useCurrentMeets, useOpenMeets, usePastMeets } from "./useMeets";
+import { MeetData } from "../utils/meetSorting";
 
 const { records, whereMock, requestLastOrdersMock, streamLastOrdersMock } = vi.hoisted(() => ({
   records: {
@@ -54,7 +55,7 @@ describe("Meet read compatibility", () => {
   it("exposes an overdue active Meet without changing the query", () => {
     const { result } = renderHook(() => ({ meets: useActiveMeets() }));
 
-    expect(whereMock).toHaveBeenCalledWith("completed", "==", false);
+    expect(whereMock).toHaveBeenCalledWith("selected", "==", "");
     expect(result.current.meets.meets).toEqual({
       "meet-1": {
         date: "2020-01-01",
@@ -68,6 +69,25 @@ describe("Meet read compatibility", () => {
     expect([...result.current.meets.sortedByDate()]).toEqual([
       ["meet-1", result.current.meets.meets["meet-1"]],
     ]);
+  });
+
+  it("derives Meet completion from selected, even when the stored flag disagrees", () => {
+    const anyError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const meets = new MeetData({
+      open: { completed: true, selected: "" },
+      complete: { completed: false, selected: "venue-1" },
+      unexpected: { selected: "any" },
+      missing: { completed: true },
+    });
+
+    expect(Object.fromEntries(Object.entries(meets.meets).map(([id, meet]) => [id, meet.votingCompleted]))).toEqual({
+      open: false,
+      complete: true,
+      unexpected: true,
+      missing: false,
+    });
+    expect(anyError).toHaveBeenCalledOnce();
+    anyError.mockRestore();
   });
 
   it("loads a Group-scoped past-Meets page with the opaque cursor and Venue summary", async () => {

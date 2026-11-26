@@ -8,6 +8,7 @@ import (
 	"last_orders/internal/lastorders/components/meetcache"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
 )
 
 type Source interface {
@@ -92,20 +93,29 @@ func NewFirestoreSource(client *firestore.Client) (Source, error) {
 func (s *firestoreSource) Query(ctx context.Context, groupID, beforeDate string, limit int, afterDate, afterID string) ([]meetcache.Document, error) {
 	query := s.client.Collection("polls").
 		Where("groupId", "==", groupID).
-		Where("completed", "==", true).
 		Where("date", "<", beforeDate).
 		OrderBy("date", firestore.Desc).
 		OrderBy(firestore.DocumentID, firestore.Asc)
 	if afterDate != "" {
 		query = query.StartAfter(afterDate, afterID)
 	}
-	documents, err := query.Limit(limit).Documents(ctx).GetAll()
-	if err != nil {
-		return nil, err
-	}
-	result := make([]meetcache.Document, 0, len(documents))
-	for _, document := range documents {
-		result = append(result, meetcache.Document{ID: document.Ref.ID, Exists: true, Data: document.Data()})
+	result := make([]meetcache.Document, 0, limit)
+	documents := query.Documents(ctx)
+	defer documents.Stop()
+	for len(result) < limit {
+		document, err := documents.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		data := document.Data()
+		selectedVenueID, _ := data["selected"].(string)
+		if selectedVenueID == "" {
+			continue
+		}
+		result = append(result, meetcache.Document{ID: document.Ref.ID, Exists: true, Data: data})
 	}
 	return result, nil
 }

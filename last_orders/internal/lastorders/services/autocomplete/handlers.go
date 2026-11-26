@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"cellar/pkg/cellar"
+	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -42,7 +43,8 @@ func (handler CandidateHandler) Handle(ctx context.Context, truth truths.PollAut
 	if err != nil {
 		return cellar.ErrorResult{Message: "load current poll", Err: err}
 	}
-	if completed, _ := poll.Data["completed"].(bool); completed {
+	selectedVenueID, _ := poll.Data["selected"].(string)
+	if meetcache.VotingComplete(truth.Poll.PollID, selectedVenueID) {
 		return cellar.Complete{}
 	}
 	venueIDs := venueIDs(poll.Data["pubs"])

@@ -471,6 +471,7 @@ def _create_event_poll_if_due(
             {
                 "date": occurrence_date.isoformat(),
                 "completed": False,
+                "selected": "",
                 "pubs": {
                     venue_doc.id: {
                         "name": event_name,

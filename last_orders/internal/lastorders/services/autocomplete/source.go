@@ -8,6 +8,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"last_orders/internal/lastorders/components/meetcache"
 )
 
 type Document struct {
@@ -58,7 +59,7 @@ func (s *FirestoreSource) ListOpenPollsThrough(ctx context.Context, observedOn s
 	if observedOn < s.pollsSince {
 		return nil, nil
 	}
-	docs, err := s.client.Collection("polls").Where("completed", "==", false).
+	docs, err := s.client.Collection("polls").Where("selected", "==", "").
 		Where("date", ">=", s.pollsSince).Where("date", "<=", observedOn).
 		Documents(ctx).GetAll()
 	if err != nil {
@@ -116,7 +117,8 @@ func (s *FirestoreSource) CompletePoll(ctx context.Context, pollID, selectedVenu
 		if err != nil {
 			return err
 		}
-		if current, _ := doc.Data()["completed"].(bool); current {
+		currentSelectedVenueID, _ := doc.Data()["selected"].(string)
+		if meetcache.VotingComplete(pollID, currentSelectedVenueID) {
 			return nil
 		}
 		if err := transaction.Set(pollRef, map[string]any{"completed": true, "selected": selectedVenueID, "completedByUid": firestore.Delete}, firestore.MergeAll); err != nil {

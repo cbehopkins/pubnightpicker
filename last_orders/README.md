@@ -33,11 +33,14 @@ Group projection and writes its opaque ID as Firestore `groupId` in the same
 transaction as the Meet and its initial vote and attendance documents. If the
 exact default Group is unavailable, recurrence fails without creating a Meet.
 Ticket 05 explicitly brings these Meet-writer changes into scope after the
-original Group API specification deferred them. Ticket 01 remains only the
-existing-Meet migration, and tickets 01-04 do not include writer changes.
+original Group API specification deferred them. In the Meet completion feature,
+ticket 01 derives completion from the selected Venue while preserving temporary
+dual-writes for older clients. The final ticket removes the stored completion
+write after the maintainer's compatibility window.
 
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
-documents.
+documents. See [docs/meet-completion-model.md](docs/meet-completion-model.md)
+for the Meet completion invariant and rollout requirements.
 
 ## Group Membership Requests
 

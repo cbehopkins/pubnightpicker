@@ -39,7 +39,6 @@ func (s *Service) Read(ctx context.Context, startDate, endDate string) (Result, 
 	}
 
 	documents, err := s.client.Collection("polls").
-		Where("completed", "==", true).
 		Where("date", ">=", startDate).
 		Where("date", "<=", endDate).
 		Documents(ctx).
@@ -51,11 +50,17 @@ func (s *Service) Read(ctx context.Context, startDate, endDate string) (Result, 
 	counts := make(map[string]int)
 	lastDates := make(map[string]string)
 	for _, document := range documents {
+		if selectedVenueID, _ := document.Data()["selected"].(string); selectedVenueID == "" {
+			continue
+		}
 		meet, err := meetcache.ProjectionFromDocument(meetcache.Document{
 			ID: document.Ref.ID, Exists: true, Data: document.Data(),
 		})
 		if err != nil {
 			return Result{}, fmt.Errorf("decode completed Meet %q: %w", document.Ref.ID, err)
+		}
+		if !meet.VotingComplete {
+			continue
 		}
 
 		attendanceDocument, err := s.client.Collection(attendanceCollection).Doc(document.Ref.ID).Get(ctx)

@@ -2,9 +2,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from firebase_sub.database import repositories
 from firebase_sub.database.repositories import (
     FirestorePollRepository,
     FirestoreUserRepository,
+    _parse_poll_document,
 )
 
 
@@ -26,17 +28,38 @@ def test_poll_repository_get_poll_returns_none_for_missing_payload():
     assert repo.get_poll("poll-1") is None
 
 
-def test_poll_repository_get_polls_by_status_builds_filter_query():
+@pytest.mark.parametrize(
+    ("selected", "stored_completed", "expected"),
+    [("", True, False), ("venue-1", False, True), ("any", False, True)],
+)
+def test_poll_parser_derives_completion_from_selected(
+    selected, stored_completed, expected, caplog
+):
+    poll = _parse_poll_document(
+        {"selected": selected, "date": "2026-11-26", "completed": stored_completed}
+    )
+
+    assert poll is not None
+    assert poll["completed"] is expected
+    if selected == "any":
+        assert 'unexpected selected Venue ID "any"' in caplog.text
+
+
+@pytest.mark.parametrize(("completed", "operator"), [(True, ">"), (False, "==")])
+def test_poll_repository_get_polls_by_status_builds_filter_query(
+    monkeypatch, completed, operator
+):
     db = MagicMock()
     query = MagicMock()
     polls_collection = MagicMock()
     polls_collection.where.return_value = query
     db.collection.return_value = polls_collection
+    monkeypatch.setattr(repositories, "FieldFilter", lambda *parts: parts)
 
     repo = FirestorePollRepository(db)
 
-    assert repo.get_polls_by_status(completed=True) is query
-    polls_collection.where.assert_called_once()
+    assert repo.get_polls_by_status(completed=completed) is query
+    polls_collection.where.assert_called_once_with(filter=("selected", operator, ""))
 
 
 def test_user_repository_invalid_preference_raises():

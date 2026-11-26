@@ -180,6 +180,7 @@ func (s *Service) CreateMeetForEventOccurrence(ctx context.Context, eventID, occ
 		if err := tx.Create(pollRef, map[string]any{
 			"date":                occurrenceDate,
 			"completed":           false,
+			"selected":            "",
 			"groupId":             string(defaultGroups[0].ID),
 			"pubs":                map[string]any{eventID: map[string]any{"name": venueName}},
 			"eventVenueId":        eventID,

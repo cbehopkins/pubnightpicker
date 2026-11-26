@@ -1,8 +1,10 @@
 export class MeetData {
   constructor(meetRecords) {
     this.meets = Object.fromEntries(Object.entries(meetRecords).map(([id, record]) => {
-      const { completed, pubs, selected, previous_pubs, restaurant, restaurant_time, ...meet } = record;
-      if (Object.hasOwn(record, "completed")) meet.votingCompleted = completed;
+      const { pubs, selected, previous_pubs, restaurant, restaurant_time, ...meet } = record;
+      delete meet.completed;
+      if (selected === "any") console.error(`Meet ${id} has unexpected selected Venue ID "any".`);
+      meet.votingCompleted = typeof selected === "string" && selected !== "";
       if (Object.hasOwn(record, "pubs")) meet.venues = pubs;
       if (Object.hasOwn(record, "selected")) meet.selectedVenueId = selected;
       if (Object.hasOwn(record, "previous_pubs")) meet.previousVenueIds = previous_pubs;

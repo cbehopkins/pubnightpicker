@@ -295,9 +295,12 @@ class DbHandler:
     ) -> Query:
         """Query polls by completion state, optionally constrained by minimum date."""
         query = self.poll_repo.get_polls_by_status(completed=completed)
+        if completed:
+            query = query.order_by("selected")
         if min_date is None:
             return query
-        return _query_where(query, field="date", op=">=", value=min_date)
+        query = _query_where(query, field="date", op=">=", value=min_date)
+        return query.order_by("date")
 
     @property
     def query_completed_true(self) -> Query:

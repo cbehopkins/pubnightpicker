@@ -405,6 +405,7 @@ def test_maintain_event_recurrence_polls_creates_due_event_poll_without_auto_com
         {
             "date": "2026-05-27",
             "completed": False,
+            "selected": "",
             "pubs": {
                 "cambridge-beer-festival": {
                     "name": "Cambridge Beer Festival",
