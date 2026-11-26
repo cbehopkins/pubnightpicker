@@ -418,6 +418,33 @@ func TestGroupAuthorizerGrantsOnlyTrueMembershipAndAdminValues(t *testing.T) {
 	}
 }
 
+func TestGroupMemberAuthorizationRequiresTrueMembership(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		group  groupAuthorizationDocument
+		exists bool
+		uid    string
+		want   bool
+	}{
+		{name: "true member", group: groupAuthorizationDocument{Members: map[string]any{"caller": true}}, exists: true, uid: "caller", want: true},
+		{name: "public visibility is not membership", group: groupAuthorizationDocument{Visibility: "public"}, exists: true, uid: "caller"},
+		{name: "false membership", group: groupAuthorizationDocument{Members: map[string]any{"caller": false}}, exists: true, uid: "caller"},
+		{name: "global administrator without membership", group: groupAuthorizationDocument{}, exists: true, uid: "administrator"},
+		{name: "anonymous caller", group: groupAuthorizationDocument{Members: map[string]any{"": true}}, exists: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authorizer := newCachedGroupAuthorizer(&groupAuthorizationSourceStub{
+				group: test.group, groupExists: test.exists,
+				admins: map[string]any{test.uid: true}, adminsExists: true,
+			}, time.Now)
+			allowed, err := authorizer.IsMember(context.Background(), test.uid, "group-a")
+			if err != nil || allowed != test.want {
+				t.Fatalf("IsMember() = (%v, %v), want (%v, nil)", allowed, err, test.want)
+			}
+		})
+	}
+}
+
 func TestGroupAuthorizerRetriesInvalidatedGlobalAdminLookup(t *testing.T) {
 	source := &groupAuthorizationSourceStub{
 		group: groupAuthorizationDocument{Visibility: "private"}, groupExists: true,

@@ -35,7 +35,7 @@ export function AttendanceVenueStatsPage() {
         errorMessage,
         startDate,
         endDate,
-    } = useAttendanceVenueStats(yearCount);
+    } = useAttendanceVenueStats(yearCount, venues);
 
     const rankedRows = useMemo(
         () => buildVenueCountRows({
@@ -94,7 +94,7 @@ export function AttendanceVenueStatsPage() {
                     Showing {venueLimit} venues per list from {startDate} through {endDate}.
                 </div>
                 <div className="mt-2 small text-body-secondary">
-                    Counts use effective can-come attendance per venue. Global "any" attendance confirmations count toward each venue in that Meet.
+                    Any-Venue responses count toward main Venue candidates, not restaurants.
                 </div>
 
                 <div className="mt-3 d-flex flex-wrap align-items-center gap-2">

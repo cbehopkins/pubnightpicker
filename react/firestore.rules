@@ -88,7 +88,6 @@ service cloud.firestore {
         && request.resource.data.reason is string
         && request.resource.data.reason.size() > 0
         && request.resource.data.scrubbedAppData is bool
-        && request.resource.data.scrubbedAppData == true
         && request.resource.data.status == "pending"
         && request.resource.data.createdAt is timestamp
         && request.resource.data.updatedAt is timestamp;

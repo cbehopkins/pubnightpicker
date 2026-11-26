@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,8 @@ import (
 	publicsqlite "cellar/pkg/sqlite"
 	"last_orders/internal/lastorders/basestore"
 	"last_orders/internal/lastorders/components/apicors"
+	"last_orders/internal/lastorders/components/attendancecache"
+	"last_orders/internal/lastorders/components/attendancestats"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
@@ -67,6 +70,7 @@ import (
 	recurrenceplugin "last_orders/internal/lastorders/plugins/recurrence"
 	testemailplugin "last_orders/internal/lastorders/plugins/testemail"
 	admindeletesvc "last_orders/internal/lastorders/services/admindelete"
+	"last_orders/internal/lastorders/services/attendancecleanup"
 	autocompletesvc "last_orders/internal/lastorders/services/autocomplete"
 	logsvc "last_orders/internal/lastorders/services/log"
 	meetwritesvc "last_orders/internal/lastorders/services/meetwrite"
@@ -100,6 +104,11 @@ func (systemApplicationClock) Now() time.Time {
 type applicationDateClock struct {
 	clock    cellar.Clock
 	location *time.Location
+}
+
+func attendanceMemberAuthorizer(authorizer meetsendpoint.GroupAuthorizer) meetsendpoint.GroupMemberAuthorizer {
+	memberAuthorizer, _ := authorizer.(meetsendpoint.GroupMemberAuthorizer)
+	return memberAuthorizer
 }
 
 func (clock applicationDateClock) Today() time.Time {
@@ -163,6 +172,7 @@ type Config struct {
 	VenueSource               venuecache.Source
 	GroupSource               groupcache.Source
 	VotingSource              votecache.Source
+	AttendanceSource          attendancecache.Source
 	NotificationProfileSource notificationprofile.Source
 	EventVenueSource          eventvenuelistener.Source
 	NewPollSource             newpolllistener.Source
@@ -200,6 +210,8 @@ type App struct {
 	meetCacheService            *meetcache.Service
 	votingCacheService          *votecache.Service
 	votingProfileReader         *votecache.ProfileReader
+	attendanceCacheService      *attendancecache.Service
+	attendanceProfileReader     *attendancecache.ProfileReader
 	currentMeetCacheService     *currentmeetcache.Service
 	groupCacheStore             *groupcache.Store
 	groupCacheService           *groupcache.Service
@@ -218,6 +230,7 @@ type App struct {
 	testEmailListener           *testemaillistener.Listener
 	adminDeleteListener         *admindeletelistener.Listener
 	adminDeleteEvaluateOnce     bool
+	adminDeleteDryRun           bool
 	autoCompleteTimerConfig     cellar.TimerConfig
 	notificationMirrorListener  *notificationmirrorlistener.Listener
 	venueCacheListener          *venuecachelistener.Listener
@@ -409,6 +422,8 @@ func New(cfg Config) (application *App, err error) {
 	var meetCacheService *meetcache.Service
 	var votingCacheService *votecache.Service
 	var votingProfileReader *votecache.ProfileReader
+	var attendanceCacheService *attendancecache.Service
+	var attendanceProfileReader *attendancecache.ProfileReader
 	if firestoreClient != nil && cfg.Component != "landlord" {
 		meetCacheStore, err := meetcache.NewStore(baseStore)
 		if err != nil {
@@ -418,7 +433,7 @@ func New(cfg Config) (application *App, err error) {
 		if err != nil {
 			return nil, err
 		}
-		meetCacheService, err = meetcache.NewServiceWithHub(meetCacheStore, meetSource, votingStreamHub, cfg.Logger, cfg.Clock.Now)
+		meetCacheService, err = meetcache.NewServiceWithHubs(meetCacheStore, meetSource, cfg.Logger, cfg.Clock.Now, votingStreamHub, venueStreamHub)
 		if err != nil {
 			return nil, err
 		}
@@ -438,6 +453,25 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 		votingProfileReader, err = votecache.NewFirestoreProfileReader(firestoreClient)
+		if err != nil {
+			return nil, err
+		}
+		attendanceCacheStore, err := attendancecache.NewStore(baseStore)
+		if err != nil {
+			return nil, fmt.Errorf("init attendance cache store: %w", err)
+		}
+		attendanceSource := cfg.AttendanceSource
+		if attendanceSource == nil {
+			attendanceSource, err = attendancecache.NewFirestoreSource(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+		}
+		attendanceCacheService, err = attendancecache.NewServiceWithHub(attendanceCacheStore, attendanceSource, venueStreamHub, cfg.Logger, cfg.Clock.Now)
+		if err != nil {
+			return nil, err
+		}
+		attendanceProfileReader, err = attendancecache.NewFirestoreProfileReader(firestoreClient)
 		if err != nil {
 			return nil, err
 		}
@@ -505,7 +539,7 @@ func New(cfg Config) (application *App, err error) {
 	if err != nil {
 		return nil, err
 	}
-	notificationProfileListener, err := notificationprofilelistener.NewWithHub(notificationProfileService, notificationProfileStore, votingStreamHub, cfg.Logger)
+	notificationProfileListener, err := notificationprofilelistener.NewWithHubs(notificationProfileService, notificationProfileStore, cfg.Logger, votingStreamHub, venueStreamHub)
 	if err != nil {
 		return nil, err
 	}
@@ -522,6 +556,13 @@ func New(cfg Config) (application *App, err error) {
 		}
 		if votingCacheService != nil {
 			timer, err := registerVotingProjectionHousekeeping(cellarRuntime, votingCacheService, cfg.Clock, cfg.Logger)
+			if err != nil {
+				return nil, err
+			}
+			periodicTimers = append(periodicTimers, timer)
+		}
+		if attendanceCacheService != nil {
+			timer, err := registerAttendanceProjectionHousekeeping(cellarRuntime, attendanceCacheService, cfg.Clock, cfg.Logger)
 			if err != nil {
 				return nil, err
 			}
@@ -551,6 +592,8 @@ func New(cfg Config) (application *App, err error) {
 			meetCacheService:            meetCacheService,
 			votingCacheService:          votingCacheService,
 			votingProfileReader:         votingProfileReader,
+			attendanceCacheService:      attendanceCacheService,
+			attendanceProfileReader:     attendanceProfileReader,
 			currentMeetCacheService:     currentMeetCacheService,
 			groupCacheStore:             groupCacheStore,
 			groupCacheService:           groupCacheService,
@@ -781,8 +824,13 @@ func New(cfg Config) (application *App, err error) {
 			}
 		}
 		var voteCleaner admindeletesvc.VoteCleaner
+		var attendanceCleaner admindeletesvc.VoteCleaner
 		if firestoreClient != nil {
 			voteCleaner, err = votecleanup.NewFirestoreCleaner(firestoreClient)
+			if err != nil {
+				return nil, err
+			}
+			attendanceCleaner, err = attendancecleanup.NewFirestoreCleaner(firestoreClient)
 			if err != nil {
 				return nil, err
 			}
@@ -794,6 +842,7 @@ func New(cfg Config) (application *App, err error) {
 			Repository:           adminDeleteRepository,
 			Auth:                 adminDeleteAuth,
 			VoteCleaner:          voteCleaner,
+			AttendanceCleaner:    attendanceCleaner,
 			Logger:               cfg.Logger,
 		})
 		if err != nil {
@@ -884,6 +933,13 @@ func New(cfg Config) (application *App, err error) {
 			return nil, err
 		}
 	}
+	var attendanceProjectionTimer *cellar.Timer
+	if attendanceCacheService != nil {
+		attendanceProjectionTimer, err = registerAttendanceProjectionHousekeeping(cellarRuntime, attendanceCacheService, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var currentMeetMidnightTimer *cellar.Timer
 	if currentMeetCacheService != nil {
 		currentMeetProjectionTimer, err = registerCurrentMeetProjectionHousekeeping(cellarRuntime, currentMeetCacheService, cfg.Clock, cfg.Logger)
@@ -902,6 +958,7 @@ func New(cfg Config) (application *App, err error) {
 		if err := admindeleteplugin.RegisterHandlers(cellarRuntime, adminDeleteEvaluator, admindeletesvc.PersistenceHandler{
 			Repository: adminDeleteRepository,
 			Logger:     cfg.Logger,
+			DryRun:     cfg.AdminDeleteDryRun,
 		}); err != nil {
 			return nil, fmt.Errorf("register admin-delete handlers: %w", err)
 		}
@@ -983,16 +1040,16 @@ func New(cfg Config) (application *App, err error) {
 	if err := cellarRuntime.Register(testemailplugin.HandlerTestEmailAcked, testemailplugin.AckedHandler{Acks: testEmailSource}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerCheck, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.CheckHandler{Store: idempotencyStore, Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerPopulateRemote, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.PopulateRemoteHandler{Remote: cfg.IdempotencyRemote, Gate: claimGate, Store: idempotencyStore, Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(firebaseidempotency.HandlerReleaseRemote, firebaseidempotency.ReleaseRemoteHandler{Remote: cfg.IdempotencyRemote, Logger: cfg.Logger}); err != nil {
 		return nil, err
 	}
-	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}); err != nil {
+	if err := cellarRuntime.Register(firebaseidempotency.HandlerEmitTruth, adminDeleteDryRunGate{dryRun: cfg.AdminDeleteDryRun, clock: cfg.Clock, next: firebaseidempotency.EmitTruthHandler{Logger: cfg.Logger}}); err != nil {
 		return nil, err
 	}
 	if err := cellarRuntime.Register(idempotency.HandlerCheck, idempotency.CheckHandler{Store: localIdempotencyStore, Logger: cfg.Logger}); err != nil {
@@ -1083,6 +1140,9 @@ func New(cfg Config) (application *App, err error) {
 	if votingProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, votingProjectionTimer)
 	}
+	if attendanceProjectionTimer != nil {
+		periodicTimers = append(periodicTimers, attendanceProjectionTimer)
+	}
 	if currentMeetProjectionTimer != nil {
 		periodicTimers = append(periodicTimers, currentMeetProjectionTimer)
 	}
@@ -1115,6 +1175,7 @@ func New(cfg Config) (application *App, err error) {
 			Store:      cellarStore,
 			Enabled:    cfg.AdminDeleteEnabled,
 			RealDelete: !cfg.AdminDeleteDryRun && cfg.EnableRealAuthDelete,
+			DryRun:     cfg.AdminDeleteDryRun,
 			Logger:     cfg.Logger,
 		})
 		if err != nil {
@@ -1157,6 +1218,8 @@ func New(cfg Config) (application *App, err error) {
 		meetCacheService:            meetCacheService,
 		votingCacheService:          votingCacheService,
 		votingProfileReader:         votingProfileReader,
+		attendanceCacheService:      attendanceCacheService,
+		attendanceProfileReader:     attendanceProfileReader,
 		currentMeetCacheService:     currentMeetCacheService,
 		groupCacheStore:             groupCacheStore,
 		groupCacheService:           groupCacheService,
@@ -1176,6 +1239,7 @@ func New(cfg Config) (application *App, err error) {
 		testEmailListener:           testEmailListener,
 		adminDeleteListener:         adminDeleteListener,
 		adminDeleteEvaluateOnce:     cfg.AdminDeleteEvaluateOnce,
+		adminDeleteDryRun:           cfg.AdminDeleteDryRun,
 		component:                   cfg.Component,
 		shutdownDrainTimeout:        cfg.ShutdownDrainTimeout,
 		claimGate:                   claimGate,
@@ -1234,13 +1298,18 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
 	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
-	(&groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}).Register(apiMux)
+	groupEndpoint := &groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}
+	groupEndpoint.Register(apiMux)
 	if application.firestoreClient != nil {
 		voteCleaner, err := votecleanup.NewFirestoreCleaner(application.firestoreClient)
 		if err != nil {
 			return err
 		}
-		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
+		attendanceCleaner, err := attendancecleanup.NewFirestoreCleaner(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+		(&accountcleanupendpoint.Endpoint{Cleaner: voteCleaner, AttendanceCleaner: attendanceCleaner, Auth: cfg.AuthVerifier}).Register(apiMux)
 	}
 	key := cfg.CursorSigningKey
 	if len(key) == 0 {
@@ -1280,6 +1349,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	venueEndpoint.Register(apiMux)
 	var groupAuthorizer meetsendpoint.GroupAuthorizer
 	var meetWriter meetsendpoint.MeetWriter
+	var attendanceWriter meetsendpoint.AttendanceWriter
 	var writeAuthorizer meetsendpoint.WriteAuthorizer
 	var pastMeetsService *pastmeets.Service
 	if application.firestoreClient != nil {
@@ -1296,6 +1366,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 			return fmt.Errorf("firestore Group authorizer does not support cache invalidation")
 		}
 		application.groupCacheListener.SetAuthorizationInvalidator(invalidator)
+		groupEndpoint.Membership = groupsendpoint.NewFirestoreMembership(application.firestoreClient, invalidator.InvalidateGroup)
 		roleSource, err := roleauthorizationlistener.NewFirestoreSource(application.firestoreClient)
 		if err != nil {
 			return err
@@ -1312,11 +1383,19 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
-		meetWriter, err = meetwritesvc.New(application.firestoreClient)
+		writer, err := meetwritesvc.New(application.firestoreClient)
 		if err != nil {
 			return err
 		}
+		meetWriter, attendanceWriter = writer, writer
 		writeAuthorizer, err = meetsendpoint.NewFirestoreWriteAuthorizer(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+	}
+	var attendanceStatisticsService *attendancestats.Service
+	if application.firestoreClient != nil {
+		attendanceStatisticsService, err = attendancestats.NewService(application.firestoreClient)
 		if err != nil {
 			return err
 		}
@@ -1324,11 +1403,15 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	(&meetsendpoint.Endpoint{
 		Reader: application.meetCacheService, Venues: application.venueCacheService,
 		Voting: application.votingCacheService, Profiles: application.votingProfileReader,
+		AttendanceSnapshots: application.attendanceCacheService, AttendanceProfiles: application.attendanceProfileReader,
 		Groups: groupAuthorizer, Auth: cfg.AuthVerifier,
+		Members: attendanceMemberAuthorizer(groupAuthorizer), Attendance: attendanceWriter,
 		Current: application.currentMeetCacheService, CurrentReady: application.venueCacheListener.Ready(),
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
-		VotingHub: application.votingStreamHub, VotingReady: application.votingStreamReady,
+		AttendanceHub: application.venueStreamHub, AttendanceReady: application.venueCacheListener.Ready(),
+		Statistics: attendanceStatisticsService,
+		VotingHub:  application.votingStreamHub, VotingReady: application.votingStreamReady,
 		Writer: meetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
@@ -1383,6 +1466,28 @@ func registerVotingProjectionHousekeeping(runtime *cellar.Cellar, service *votec
 	}, func(ctx context.Context) error {
 		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
 			logger.Error("voting projection housekeeping failed", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := timer.Register(runtime); err != nil {
+		return nil, err
+	}
+	if _, err := timer.Schedule(runtime); err != nil && !errors.Is(err, cellar.ErrTimerAlreadyExists) {
+		return nil, err
+	}
+	return timer, nil
+}
+
+func registerAttendanceProjectionHousekeeping(runtime *cellar.Cellar, service *attendancecache.Service, clock cellar.Clock, logger *slog.Logger) (*cellar.Timer, error) {
+	timer, err := cellar.NewTimer("attendance-projection.housekeeping", cellar.TimerConfig{
+		Interval: time.Minute,
+		Mode:     cellar.TimerFixedRate,
+	}, func(ctx context.Context) error {
+		if err := service.EvictExpired(ctx, clock.Now()); err != nil {
+			logger.Error("attendance projection housekeeping failed", "err", err)
 		}
 		return nil
 	})
@@ -1857,7 +1962,12 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 		runErr <- err
 		cancel()
 	}()
-	waitErr := a.adminDeleteListener.WaitForTerminal(runCtx, requestIDs)
+	var waitErr error
+	if a.adminDeleteDryRun {
+		waitErr = a.waitForAdminDeleteDryRun(runCtx, requestIDs)
+	} else {
+		waitErr = a.adminDeleteListener.WaitForTerminal(runCtx, requestIDs)
+	}
 	cancel()
 	<-runDone
 	cellarErr := <-runErr
@@ -1872,6 +1982,44 @@ func (a *App) RunAdminDeleteEvaluation(ctx context.Context) error {
 		return fmt.Errorf("wait for admin-delete request outcomes: %w", waitErr)
 	}
 	return nil
+}
+
+func (a *App) waitForAdminDeleteDryRun(ctx context.Context, requestIDs []string) error {
+	requests := make(map[string]bool, len(requestIDs))
+	for _, requestID := range requestIDs {
+		requests[requestID] = true
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		cells, err := a.cellarStore.ListActive()
+		if err != nil {
+			return err
+		}
+		pending := false
+		for _, cell := range cells {
+			for _, step := range cell.Steps {
+				if step.HandlerName != truths.AdminDeletePreviewFanout && step.HandlerName != admindeletesvc.HandlerPreviewRequest {
+					continue
+				}
+				var request truths.AdminDeleteRequested
+				if err := json.Unmarshal(step.Payload, &request); err != nil {
+					return fmt.Errorf("decode active admin-delete request: %w", err)
+				}
+				if requests[request.Identity()] {
+					pending = true
+				}
+			}
+		}
+		if !pending {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *App) awaitGroupProjection(ctx context.Context) error {
@@ -1905,6 +2053,9 @@ func (a *App) Close() error {
 	}
 	if a.votingCacheService != nil {
 		a.votingCacheService.Close()
+	}
+	if a.attendanceCacheService != nil {
+		a.attendanceCacheService.Close()
 	}
 	if a.currentMeetCacheService != nil {
 		a.currentMeetCacheService.Close()
@@ -2086,6 +2237,7 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		registerFanout[truths.PushTestRequested](truths.PushTestRequestedRegistry),
 		registerFanout[truths.TestEmailRequested](truths.TestEmailRequestedRegistry),
 		registerFanout[truths.AdminDeleteRequested](truths.AdminDeleteRequestedRegistry),
+		registerFanout[truths.AdminDeleteRequested](truths.AdminDeletePreviewRegistry),
 	}
 	for _, registrar := range registrars {
 		if err := registrar(cellarRuntime); err != nil {
@@ -2093,6 +2245,21 @@ func registerTruthFanouts(cellarRuntime *cellar.Cellar) error {
 		}
 	}
 	return nil
+}
+
+type adminDeleteDryRunGate struct {
+	dryRun bool
+	clock  cellar.Clock
+	next   cellar.Handler[firebaseidempotency.StepPayload]
+}
+
+func (gate adminDeleteDryRunGate) Handle(ctx context.Context, payload firebaseidempotency.StepPayload) cellar.Result {
+	listener := string(admindeletelistener.ListenerAdminDelete)
+	if gate.dryRun && (payload.Listener == listener || payload.Listener == listener+".real_delete") {
+		notBefore := gate.clock.Now().Add(5 * time.Second)
+		return cellar.Retry{NotBefore: &notBefore}
+	}
+	return gate.next.Handle(ctx, payload)
 }
 
 func registerFanout[T any](registry *truths.Registry[T]) func(*cellar.Cellar) error {

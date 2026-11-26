@@ -5,35 +5,44 @@ import { describe, expect, it, vi } from "vitest";
 import useAttendanceVenueStats, { aggregateVenueAttendance, getVenueIdsForMeet } from "./useAttendanceVenueStats";
 import useWinningVenueStats from "./useWinningVenueStats";
 
-const { whereMock, docMock, getDocMock } = vi.hoisted(() => ({
+const { whereMock, requestLastOrdersMock } = vi.hoisted(() => ({
   whereMock: vi.fn((...args) => args),
-  docMock: vi.fn((...args) => args),
-  getDocMock: vi.fn(),
+  requestLastOrdersMock: vi.fn(),
 }));
 
 vi.mock("../firebase", () => ({ db: {} }));
+vi.mock("../utils/lastOrdersApi", () => ({
+  requestLastOrders: requestLastOrdersMock,
+}));
 vi.mock("firebase/firestore", () => ({
   collection: vi.fn((...args) => args),
   query: vi.fn((...args) => args),
   where: whereMock,
   orderBy: vi.fn((...args) => args),
-  doc: docMock,
-  getDoc: getDocMock,
+  doc: vi.fn((...args) => args),
+  getDoc: vi.fn(),
   onSnapshot: vi.fn((query, onNext) => {
-    onNext({ forEach: (visit) => visit({ id: "meet-1", data: () => ({
-      completed: true,
-      date: "2026-04-04",
-      selected: "venue-a",
-      restaurant: "venue-r",
-      pubs: { "venue-a": {}, "venue-b": {} },
-    }) }) });
-    return () => {};
+    onNext({
+      forEach: (visit) => visit({
+        id: "meet-1", data: () => ({
+          completed: true,
+          date: "2026-04-04",
+          selected: "venue-a",
+          restaurant: "venue-r",
+          pubs: { "venue-a": {}, "venue-b": {} },
+        })
+      })
+    });
+    return () => { };
   }),
 }));
 
-describe("completed Meet statistics Firestore boundary", () => {
-  it("translates raw records and retains the completed and date filters for both statistics", async () => {
-    getDocMock.mockResolvedValue({ data: () => ({ any: { canCome: ["user-1"] } }) });
+describe("attendance statistics API boundary", () => {
+  it("loads aggregate counts from Last Orders instead of direct attendance reads", async () => {
+    requestLastOrdersMock.mockResolvedValue({
+      counts_by_venue_id: { "venue-a": 1, "venue-b": 1, "venue-r": 0 },
+      last_date_by_venue_id: { "venue-a": "2026-04-04", "venue-b": "2026-04-04", "venue-r": "2026-04-04" },
+    });
     const { result } = renderHook(() => ({
       winning: useWinningVenueStats(1),
       attendance: useAttendanceVenueStats(1),
@@ -49,10 +58,13 @@ describe("completed Meet statistics Firestore boundary", () => {
     expect(result.current.attendance.countsByVenueId).toEqual({
       "venue-a": 1,
       "venue-b": 1,
-      "venue-r": 1,
+      "venue-r": 0,
     });
     expect(result.current.attendance.lastDateByVenueId["venue-r"]).toBe("2026-04-04");
-    expect(docMock).toHaveBeenCalledWith(expect.anything(), "attendance", "meet-1");
+    expect(requestLastOrdersMock).toHaveBeenCalledWith("api/attendance/statistics", expect.objectContaining({
+      method: "GET",
+      query: expect.objectContaining({ start: expect.any(String), end: expect.any(String) }),
+    }));
     expect(whereMock).toHaveBeenCalledWith("completed", "==", true);
     expect(whereMock).toHaveBeenCalledWith("date", ">=", result.current.winning.startDate);
     expect(whereMock).toHaveBeenCalledWith("date", "<=", result.current.winning.endDate);
@@ -133,5 +145,27 @@ describe("useAttendanceVenueStats helpers", () => {
 
     expect(countsByVenueId["venue-a"]).toBe(1);
     expect(countsByVenueId["venue-b"]).toBe(2);
+  });
+
+  it("does not count standing attendance for restaurant Venues", () => {
+    const { countsByVenueId } = aggregateVenueAttendance(
+      {
+        poll1: {
+          date: "2026-05-10",
+          selectedVenueId: "venue-pub",
+          restaurantId: "venue-restaurant",
+          venues: { "venue-pub": {}, "venue-restaurant": {} },
+        },
+      },
+      {
+        poll1: {
+          any: { canCome: ["u1"], cannotCome: [] },
+        },
+      },
+      { "venue-pub": { venueType: "pub" }, "venue-restaurant": { venueType: "restaurant" } }
+    );
+
+    expect(countsByVenueId["venue-pub"]).toBe(1);
+    expect(countsByVenueId["venue-restaurant"]).toBe(0);
   });
 });

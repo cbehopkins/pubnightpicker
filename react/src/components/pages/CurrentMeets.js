@@ -93,7 +93,7 @@ function PastMeet({ value, meetId, canChat }) {
       return typeof uid === "string" && uid.length > 0 ? uid : null;
     }
   );
-  const [attendance, , , , , , clearEta] = useAttendance(meetId, Boolean(currUserId));
+  const [attendance, , , , , , clearEta, , attendanceLoading, attendanceError] = useAttendance(meetId, Boolean(currUserId));
   const [hasImageLoadError, setHasImageLoadError] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
@@ -153,6 +153,8 @@ function PastMeet({ value, meetId, canChat }) {
               </Button>
             </div>
           )}
+          {attendanceLoading && <p role="status" className="small text-body-secondary mb-2">Loading attendance...</p>}
+          {attendanceError && <p role="alert" className="small text-danger mb-2">Attendance unavailable: {attendanceError}</p>}
           <div className="d-flex align-items-center justify-content-between mt-auto pt-2">
             <p className="card-text text-body-secondary mb-0">{value.date}</p>
             {canChat && (
@@ -384,7 +386,7 @@ function CurrentMeet({
   const [isChatOpen, setIsChatOpen] = useState(false);
   const { isOnline } = useOnlineStatus();
   const { optionsById: votes, voterProfiles } = useVotes(meetId, normalizedUserId, canReadProtectedMeetData);
-  const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta] = useAttendance(
+  const [attendance, setAttendanceStatus, clearAttendance, , , setEta, clearEta, attendanceProfiles, attendanceLoading, attendanceError] = useAttendance(
     meetId,
     canReadProtectedMeetData
   );
@@ -395,6 +397,7 @@ function CurrentMeet({
       [currentVenueId]: {
         name: selectedVenueSummary.name,
         address: selectedVenueSummary.address,
+        venueType: selectedVenueSummary.venue_type || "pub",
         website: selectedVenueSummary.website_url || undefined,
         image: selectedVenueSummary.image_url || undefined,
       },
@@ -514,6 +517,9 @@ function CurrentMeet({
             />
           )}
 
+          {attendanceLoading && <p role="status" className="small text-body-secondary mb-2">Loading attendance...</p>}
+          {attendanceError && <p role="alert" className="small text-danger mb-2">Attendance unavailable: {attendanceError}</p>}
+
           {currUserId && mainVenue.userCanCome && (
             <ETAInput
               className="mb-3"
@@ -524,12 +530,14 @@ function CurrentMeet({
             />
           )}
 
-          {mainVenue.allowShowVoters && (
+          {(mainVenue.allowShowAttendance || mainVenue.allowShowVoters) && (
             <div className="mb-3">
               <QuestionRender className={styles.actionBlock} question="Show venue attendance">
                 <ShowAttendance
-                  voters={mainVenue.dedupedVotes}
+                  voters={showVoters ? mainVenue.dedupedVotes : []}
                   voterProfiles={voterProfiles}
+                  attendanceProfiles={attendanceProfiles}
+                  showVoters={showVoters}
                   canCome={mainVenue.canCome}
                   cannotCome={mainVenue.cannotCome}
                   eta={mainVenue.etaMap}
@@ -570,11 +578,13 @@ function CurrentMeet({
                 />
               )}
 
-              {restaurantVenue.allowShowVoters && (
+              {(restaurantVenue.allowShowAttendance || restaurantVenue.allowShowVoters) && (
                 <QuestionRender className={styles.actionBlock} question="Show restaurant attendance">
                   <ShowAttendance
-                    voters={restaurantVenue.dedupedVotes}
+                    voters={showVoters ? restaurantVenue.dedupedVotes : []}
                     voterProfiles={voterProfiles}
+                    attendanceProfiles={attendanceProfiles}
+                    showVoters={showVoters}
                     canCome={restaurantVenue.canCome}
                     cannotCome={restaurantVenue.cannotCome}
                     eta={restaurantVenue.etaMap}

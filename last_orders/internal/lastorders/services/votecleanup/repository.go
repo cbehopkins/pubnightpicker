@@ -12,6 +12,24 @@ type firestoreRepository struct {
 	client *firestore.Client
 }
 
+func (c *firestoreRepository) PreviewUser(ctx context.Context, targetUID string) ([]string, error) {
+	var paths []string
+	docs := c.client.Collection("votes").Documents(ctx)
+	defer docs.Stop()
+	for {
+		doc, err := docs.Next()
+		if err == googleiterator.Done {
+			return paths, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list vote documents: %w", err)
+		}
+		if len(voteUpdates(doc.Data(), targetUID)) > 0 {
+			paths = append(paths, doc.Ref.Path)
+		}
+	}
+}
+
 func (c *firestoreRepository) RemoveUser(ctx context.Context, targetUID string) (Result, error) {
 	result := Result{}
 	docs := c.client.Collection("votes").Documents(ctx)
@@ -42,13 +60,7 @@ func (c *firestoreRepository) removeUserFromDocument(ctx context.Context, ref *f
 		if err != nil {
 			return err
 		}
-		updates := make([]firestore.Update, 0)
-		for field, rawVoters := range snapshot.Data() {
-			voters, changed := removeUID(rawVoters, targetUID)
-			if changed {
-				updates = append(updates, firestore.Update{Path: field, Value: voters})
-			}
-		}
+		updates := voteUpdates(snapshot.Data(), targetUID)
 		if len(updates) == 0 {
 			updated = false
 			return nil
@@ -60,6 +72,17 @@ func (c *firestoreRepository) removeUserFromDocument(ctx context.Context, ref *f
 		return nil
 	})
 	return updated, err
+}
+
+func voteUpdates(data map[string]any, targetUID string) []firestore.Update {
+	updates := make([]firestore.Update, 0)
+	for field, rawVoters := range data {
+		voters, changed := removeUID(rawVoters, targetUID)
+		if changed {
+			updates = append(updates, firestore.Update{Path: field, Value: voters})
+		}
+	}
+	return updates
 }
 
 func removeUID(rawVoters any, targetUID string) (any, bool) {

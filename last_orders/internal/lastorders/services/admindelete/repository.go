@@ -3,8 +3,10 @@ package admindelete
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -74,6 +76,84 @@ func (r *FirestoreRepository) ApplicationDataExists(ctx context.Context, targetU
 		return false, false, fmt.Errorf("check user-public/%s: %w", targetUID, err)
 	}
 	return usersDocExists, publicDocExists, nil
+}
+
+func (r *FirestoreRepository) CleanApplicationData(ctx context.Context, targetUID string, dryRun bool, logger *slog.Logger) error {
+	apply := func(ref *firestore.DocumentRef, action string, work func() error) error {
+		if dryRun {
+			logger.Info("admin-delete dry-run", "action", action, "entity", ref.Path)
+			return nil
+		}
+		if err := work(); err != nil {
+			return fmt.Errorf("%s %q: %w", action, ref.Path, err)
+		}
+		return nil
+	}
+	visit := func(documents *firestore.DocumentIterator, action string, work func(*firestore.DocumentSnapshot) error) error {
+		defer documents.Stop()
+		for {
+			document, err := documents.Next()
+			if err == iterator.Done {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("list documents for %s: %w", action, err)
+			}
+			if err := work(document); err != nil {
+				return err
+			}
+		}
+	}
+	if err := visit(r.client.Collection("roles").Documents(ctx), "remove role", func(document *firestore.DocumentSnapshot) error {
+		if _, exists := document.Data()[targetUID]; !exists {
+			return nil
+		}
+		return apply(document.Ref, "remove role", func() error {
+			_, err := document.Ref.Update(ctx, []firestore.Update{{FieldPath: firestore.FieldPath{targetUID}, Value: firestore.Delete}})
+			return err
+		})
+	}); err != nil {
+		return err
+	}
+	if err := visit(r.client.Collection("messages").Where("uid", "==", targetUID).Documents(ctx), "anonymise message", func(document *firestore.DocumentSnapshot) error {
+		return apply(document.Ref, "anonymise message", func() error {
+			_, err := document.Ref.Update(ctx, []firestore.Update{
+				{Path: "uid", Value: "__deleted_user__"},
+				{Path: "name", Value: "Deleted User"},
+				{Path: "text", Value: "{user deleted}"},
+				{Path: "deletedUserUid", Value: targetUID},
+				{Path: "deletedAt", Value: firestore.ServerTimestamp},
+			}, firestore.LastUpdateTime(document.UpdateTime))
+			return err
+		})
+	}); err != nil {
+		return err
+	}
+	endpoints := r.client.Collection("users").Doc(targetUID).Collection("push_endpoints").Documents(ctx)
+	if err := visit(endpoints, "delete push endpoint", func(document *firestore.DocumentSnapshot) error {
+		return apply(document.Ref, "delete push endpoint", func() error {
+			_, err := document.Ref.Delete(ctx)
+			return err
+		})
+	}); err != nil {
+		return err
+	}
+	for _, collection := range []string{"users", "user-public"} {
+		ref := r.client.Collection(collection).Doc(targetUID)
+		exists, err := documentExists(ctx, ref)
+		if err != nil {
+			return fmt.Errorf("check profile %q: %w", ref.Path, err)
+		}
+		if exists {
+			if err := apply(ref, "delete profile", func() error {
+				_, err := ref.Delete(ctx)
+				return err
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *FirestoreRepository) PersistOutcome(ctx context.Context, payload OutcomePayload) error {

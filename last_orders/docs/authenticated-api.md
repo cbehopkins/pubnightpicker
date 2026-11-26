@@ -94,6 +94,123 @@ poll-completion sends are created. Mailing-list sends and historical records
 without ownership are excluded. Changing an address does not change ownership
 of previous sends; setting somebody else's address cannot reveal their history.
 
+## Account Attendance Cleanup
+
+`POST /api/account/attendance/cleanup` synchronously removes the verified
+caller's UID from attendance responses and ETAs across all Meets. It returns
+`{"updatedDocuments": <count>}` with `Cache-Control: no-store`; it does not
+accept a target UID. A failure may follow partial changes, and retrying is safe.
+The scan is not atomic across documents and does not prevent later writes.
+Admin deletion performs the same cleanup in its queued backend worker.
+
+## Venue and Any-Venue Attendance Responses
+
+Authenticated attendance snapshots and live updates use Last Orders:
+
+```http
+GET    /api/meet/{meet_id}/attendance
+GET    /api/meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
+PUT    /api/meet/{meet_id}/attendance/{venue_id}
+PATCH  /api/meet/{meet_id}/attendance/{venue_id}
+DELETE /api/meet/{meet_id}/attendance/{venue_id}
+```
+
+Snapshot and stream reads require authentication and the same Meet/Group
+visibility checks as voting. The Group stream requires between one and 50
+distinct `meet_id` query values, all belonging to the requested Group. It sends
+an `attendance_snapshots` event containing complete replacement snapshots for
+all listed Meets. Each snapshot contains explicit `can_come` and `cannot_come`
+UID arrays and applicable ETA values per Venue, the separate `any` entry,
+public participant summaries, and a per-Meet cursor. The Group event also has a
+Group cursor. Reconnects return the latest complete view; they do not replay
+every intermediate write. Meet, attendance and public-profile changes refresh
+the view. Attendance identities are not hidden by the voting-visibility
+preference; private profile fields are never returned. Authorization changes
+send a cursorless `view_reset` event and close the stream. Unavailable reads
+return an error rather than an empty snapshot.
+
+Both operations require a Firebase ID token and a `true` membership entry for
+the Meet's Group. Public Group visibility and global administrator status do
+not substitute for membership, and no voting permission is required. The
+verified token UID is the only identity used; requests cannot name another user.
+
+`PUT` accepts exactly one JSON field, `status`, with value `attending` or
+`not_attending`, and returns `204 No Content`. `DELETE` withdraws the caller's
+response and also returns `204`. Both are idempotent. The Meet and attendance
+document are read and changed transactionally. Status arrays remain mutually
+exclusive, and switching to `not_attending` or withdrawing also removes only
+that caller's ETA. The literal `any` path segment sets or withdraws an
+independent Any-Venue response in `attendance/{meet_id}.any`; it never copies
+the response into Venue entries or overwrites them. A standing response is the
+fallback for main Venue candidates only. Explicit Venue responses take
+precedence, and restaurant attendance never inherits `any`. If one Venue serves
+both roles, its single explicit Venue response is used for both.
+
+Changing or withdrawing `any` also clears, in the same transaction, ETAs that
+no longer have effective can-come attendance. ETAs for explicit Venue can-come
+responses are retained. Existing Venue entries, including legacy copies whose
+origin cannot be distinguished, are preserved and treated as explicit
+responses. Older clients may continue reading and writing the existing
+attendance document shape; those writes remain visible through the API snapshot
+and Group stream.
+
+An open Meet accepts its candidate Venues. A completed Meet accepts its selected
+Venue and restaurant. A removed Venue can be withdrawn when the caller has a
+response for it or the Meet records its removal; an unrelated Venue is rejected.
+The literal `any` is the independent standing-response target, not a Venue.
+
+## Attendance Statistics
+
+```http
+GET /api/attendance/statistics?start=YYYY-MM-DD&end=YYYY-MM-DD
+```
+
+The historical report requires a Firebase ID token and the global `admin` role.
+`start` and `end` are inclusive, validated ISO dates, and `start` must not be
+after `end`. The response is a JSON aggregate of completed Meets across every
+Group, with `counts_by_venue_id` and `last_date_by_venue_id`. A Venue is included
+for its candidate, historical, selected or restaurant references. Main Venues
+use effective can-come responses: explicit Venue exceptions override the
+separate `any` standing response. Restaurants use only explicit responses and
+never inherit `any`. Source or aggregation failures return `503`; they are never
+returned as zero attendance.
+`PATCH /api/meet/{meet_id}/attendance/{venue_id}` independently updates the
+caller's status and ETA. Omitting `eta` preserves it; `eta: null` removes it.
+The React interface uses this API for status, standing-response, ETA and
+withdrawal actions, and refreshes the authoritative snapshot after uncertain
+writes. The backend watch keeps compatible legacy writes visible through the
+same snapshot and stream. Firestore rules remain unchanged during the
+compatibility window.
+
+## Compatibility and Rollout
+
+Roll out the backend first, then the frontend. Do not restrict direct
+attendance access during the backend or frontend releases: the new API and
+existing Firestore document shape must operate together while old clients
+remain in use.
+
+Keep the existing Firestore attendance rules unchanged for one week after the
+frontend rollout. During that compatibility window, old clients retain their
+prior all-Venues copying and restaurant-fallback behaviour. Existing and new
+writes remain mutually visible: legacy records remain in their existing
+Venue-keyed shape, copied and deliberate legacy entries cannot be distinguished
+reliably, and the backend preserves those entries rather than reconstructing
+provenance or reconfirming clients.
+
+After one week, the client rules may be tightened in a separately reviewed and
+authorised operational change so direct browser attendance access is denied and
+the API becomes authoritative. This rollout document records the sequence only;
+there is no deployment, production data migration or rules change in application
+implementation. Backend administrative access remains separate and available.
+
+Readiness verification reuses the React hook and rules boundaries, the
+focused backend endpoint and statistics suites, and the Cucumber/Playwright
+attendance journey. The journey verifies API-backed live reads and writes for
+individual, standing, restaurant and ETA responses, while the rules boundary
+preserves the compatibility-phase Firestore permissions. The later direct-access
+rules phase remains separately gated and is not deployed or simulated as a
+production rollout.
+
 Preferences offers **Email Status**, with a modal showing history and a manual
 refresh command. Closing, navigation, sign-out and account changes cancel pending
 requests; the ten-second frontend deadline includes token acquisition. States are

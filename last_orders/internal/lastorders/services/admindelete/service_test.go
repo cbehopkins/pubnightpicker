@@ -38,6 +38,10 @@ func (r *fakeRepository) ApplicationDataExists(context.Context, string) (bool, b
 	return r.usersExists, r.publicExists, nil
 }
 
+func (r *fakeRepository) CleanApplicationData(context.Context, string, bool, *slog.Logger) error {
+	return nil
+}
+
 func (r *fakeRepository) PersistOutcome(_ context.Context, payload OutcomePayload) error {
 	r.persisted = append(r.persisted, payload)
 	return nil
@@ -49,15 +53,22 @@ type fakeAuth struct {
 }
 
 type fakeVoteCleaner struct {
-	calls int
-	uid   string
-	err   error
+	calls        int
+	previewCalls int
+	uid          string
+	err          error
 }
 
 func (c *fakeVoteCleaner) RemoveUser(_ context.Context, uid string) (votecleanup.Result, error) {
 	c.calls++
 	c.uid = uid
 	return votecleanup.Result{}, c.err
+}
+
+func (c *fakeVoteCleaner) PreviewUser(_ context.Context, uid string) ([]string, error) {
+	c.previewCalls++
+	c.uid = uid
+	return nil, c.err
 }
 
 func (a *fakeAuth) DeleteUser(context.Context, string) error {
@@ -89,17 +100,48 @@ func TestEvaluatorRetriesVoteCleanupBeforeAuthDelete(t *testing.T) {
 	}
 }
 
-func TestEvaluatorValidatesRequestBeforeAuthAndPersistsDryRun(t *testing.T) {
+func TestEvaluatorRetriesAttendanceCleanupBeforeAuthDelete(t *testing.T) {
+	repository := &fakeRepository{status: "pending", exists: true}
+	auth := &fakeAuth{}
+	cleaner := &fakeVoteCleaner{err: errors.New("Firestore unavailable")}
+	evaluator := newEvaluator(t, Options{
+		Enabled: true, DryRun: false, EnableRealAuthDelete: true,
+		Repository: repository, Auth: auth, AttendanceCleaner: cleaner,
+	})
+
+	result := evaluator.Handle(context.Background(), validTruth())
+	if _, ok := result.(cellar.RetrySequence); !ok {
+		t.Fatalf("cleanup failure result=%#v, want retry", result)
+	}
+	if cleaner.calls != 1 || cleaner.uid != validTruth().Request.TargetUID || auth.calls != 0 {
+		t.Fatalf("cleaner calls=%d uid=%q Auth calls=%d", cleaner.calls, cleaner.uid, auth.calls)
+	}
+}
+
+func TestEvaluatorPreviewsAttendanceDuringDryRun(t *testing.T) {
+	repository := &fakeRepository{status: "pending", exists: true}
+	cleaner := &fakeVoteCleaner{}
+	evaluator := newEvaluator(t, Options{
+		Enabled: true, DryRun: true, Repository: repository, AttendanceCleaner: cleaner,
+	})
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(context.Background(), validTruth())
+	complete, ok := result.(cellar.Complete)
+	if !ok || len(complete.NewCells) != 0 || cleaner.calls != 0 || cleaner.previewCalls != 1 || cleaner.uid != validTruth().Request.TargetUID {
+		t.Fatalf("result=%#v cleaner calls=%d previews=%d uid=%q", result, cleaner.calls, cleaner.previewCalls, cleaner.uid)
+	}
+}
+
+func TestEvaluatorPreviewsWithoutPersistingDryRun(t *testing.T) {
 	repository := &fakeRepository{status: "pending", exists: true}
 	auth := &fakeAuth{}
 	evaluator := newEvaluator(t, Options{
 		Enabled: true, DryRun: true, EnableRealAuthDelete: true,
 		Repository: repository, Auth: auth,
 	})
-	result := evaluator.Handle(context.Background(), validTruth())
-	payload := persistencePayload(t, result)
-	if payload.Outcome != OutcomeDryRunValidated {
-		t.Fatalf("outcome = %q, want %q", payload.Outcome, OutcomeDryRunValidated)
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(context.Background(), validTruth())
+	complete, ok := result.(cellar.Complete)
+	if !ok || len(complete.NewCells) != 0 {
+		t.Fatalf("result = %#v, want Complete without persistence", result)
 	}
 	if auth.calls != 0 {
 		t.Fatalf("Auth calls = %d, want 0 in dry-run", auth.calls)
@@ -127,7 +169,7 @@ func TestEvaluatorPromotesDryRunOnlyWithRealDeleteGatesAndFreshChecks(t *testing
 			evaluator := newEvaluator(t, Options{Enabled: true, DryRun: test.dryRun,
 				EnableRealAuthDelete: test.capability, Repository: repository, Auth: auth})
 			result := evaluator.Handle(context.Background(), validTruth())
-			if test.paused {
+			if test.paused || test.dryRun {
 				if _, ok := result.(cellar.RetrySequence); !ok {
 					t.Fatalf("paused result = %#v", result)
 				}
@@ -149,7 +191,7 @@ func TestEvaluatorPromotesDryRunOnlyWithRealDeleteGatesAndFreshChecks(t *testing
 func TestEvaluatorRejectsUnsupportedSchemaWithoutAuth(t *testing.T) {
 	repository := &fakeRepository{status: "pending", exists: true}
 	auth := &fakeAuth{}
-	evaluator := newEvaluator(t, Options{Enabled: true, DryRun: true, Repository: repository, Auth: auth})
+	evaluator := newEvaluator(t, Options{Enabled: true, EnableRealAuthDelete: true, Repository: repository, Auth: auth})
 	request := validTruth()
 	request.Request.SchemaVersion = 2
 	payload := persistencePayload(t, evaluator.Handle(context.Background(), request))
@@ -174,7 +216,7 @@ func TestEvaluatorDoesNotDeleteWhileApplicationDataExists(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &fakeRepository{status: "pending", exists: true, usersExists: test.usersExists, publicExists: test.publicExists}
 			auth := &fakeAuth{}
-			evaluator := newEvaluator(t, Options{Enabled: true, Repository: repository, Auth: auth})
+			evaluator := newEvaluator(t, Options{Enabled: true, EnableRealAuthDelete: true, Repository: repository, Auth: auth})
 			payload := persistencePayload(t, evaluator.Handle(context.Background(), validTruth()))
 			if payload.Outcome != OutcomeFailedPrecondition {
 				t.Fatalf("outcome = %q, want %q", payload.Outcome, OutcomeFailedPrecondition)

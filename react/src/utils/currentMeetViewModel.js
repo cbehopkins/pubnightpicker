@@ -9,6 +9,7 @@ import { getEffectiveAttendanceState } from "./attendanceState";
 /**
  * @typedef {Object} VenueEntry
  * @property {string=} name
+ * @property {string=} venueType
  * @property {string=} website
  * @property {string=} image
  * @property {string=} address
@@ -25,6 +26,7 @@ import { getEffectiveAttendanceState } from "./attendanceState";
  * @property {string | undefined} address
  * @property {string[]} dedupedVotes
  * @property {boolean} allowShowVoters
+ * @property {boolean} allowShowAttendance
  * @property {string[]} canCome
  * @property {string[]} cannotCome
  * @property {boolean} userCanCome
@@ -92,7 +94,8 @@ export function buildCurrentMeetViewModel({
         return null;
     }
 
-    const mainAttendance = getEffectiveAttendanceState(attendance, currentVenueId, currUserId);
+    const mainVenueType = currentVenue.venueType || (currentVenueId === restaurantId ? "restaurant" : "pub");
+    const mainAttendance = getEffectiveAttendanceState(attendance, currentVenueId, currUserId, mainVenueType);
     const mainVotes = getDedupedVotesForVenue(votes, currentVenueId);
     const venueWasVotedFor = currentVenueId in votes || Boolean(votes.any);
     const mainEtaMap = (attendance && attendance[currentVenueId]?.eta) || {};
@@ -106,6 +109,7 @@ export function buildCurrentMeetViewModel({
         address: currentVenue.address,
         dedupedVotes: mainVotes,
         allowShowVoters: showVoters && (venueWasVotedFor || mainAttendance.hasAttendanceData),
+        allowShowAttendance: mainAttendance.hasAttendanceData,
         etaMap: mainEtaMap,
         ...mainAttendance,
     };
@@ -114,7 +118,7 @@ export function buildCurrentMeetViewModel({
     /** @type {RestaurantVenueViewModel | null} */
     let restaurantVenue = null;
     if (restaurantSource) {
-        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurantId, currUserId);
+        const restaurantAttendance = getEffectiveAttendanceState(attendance, restaurantId, currUserId, "restaurant");
         const restaurantVotes = getDedupedVotesForVenue(votes, restaurantId);
         const restaurantEtaMap = (attendance && restaurantId && attendance[restaurantId]?.eta) || {};
         restaurantVenue = {
@@ -126,6 +130,7 @@ export function buildCurrentMeetViewModel({
             address: restaurantSource.address,
             dedupedVotes: restaurantVotes,
             allowShowVoters: showVoters && (restaurantVotes.length > 0 || restaurantAttendance.hasAttendanceData),
+            allowShowAttendance: restaurantAttendance.hasAttendanceData,
             etaMap: restaurantEtaMap,
             ...restaurantAttendance,
         };

@@ -33,6 +33,7 @@ type Listener struct {
 	failed     chan error
 	unloaded   atomic.Int32
 	hub        *sse.Hub
+	hubs       []*sse.Hub
 	lifecycle.Controller
 }
 
@@ -43,6 +44,10 @@ func New(service *notificationprofile.Service, store *notificationprofile.Store,
 }
 
 func NewWithHub(service *notificationprofile.Service, store *notificationprofile.Store, hub *sse.Hub, logger *slog.Logger) (*Listener, error) {
+	return NewWithHubs(service, store, logger, hub)
+}
+
+func NewWithHubs(service *notificationprofile.Service, store *notificationprofile.Store, logger *slog.Logger, hubs ...*sse.Hub) (*Listener, error) {
 	if service == nil {
 		return nil, errors.New("notification profile service is required")
 	}
@@ -52,7 +57,11 @@ func NewWithHub(service *notificationprofile.Service, store *notificationprofile
 	if logger == nil {
 		logger = slog.Default()
 	}
-	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1), hub: hub}
+	listener := &Listener{service: service, store: store, logger: logger, retryDelay: defaultRetryDelay, ready: make(chan struct{}), failed: make(chan error, 1)}
+	if len(hubs) > 0 {
+		listener.hub = hubs[0]
+		listener.hubs = hubs[1:]
+	}
 	listener.unloaded.Store(3)
 	return listener, nil
 }
@@ -192,8 +201,13 @@ func (l *Listener) applyPublicUsers(ctx context.Context, changes []notificationp
 	if err := l.store.ApplyPublicUsers(ctx, mutations, baseline); err != nil {
 		return fmt.Errorf("%w: %w", errPersistence, err)
 	}
-	if l.hub != nil && len(mutations) > 0 {
-		l.hub.PublishChangedPrefix("voting:", math.MaxInt64)
+	if len(mutations) > 0 {
+		for _, hub := range append([]*sse.Hub{l.hub}, l.hubs...) {
+			if hub != nil {
+				hub.PublishChangedPrefix("voting:", math.MaxInt64)
+				hub.PublishChangedPrefix("attendance:", 1)
+			}
+		}
 	}
 	return nil
 }

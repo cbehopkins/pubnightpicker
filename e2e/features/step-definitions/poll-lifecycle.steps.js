@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { londonDate, londonInstant, shiftDate } from "../support/calendar.js";
 import { waitForBackendRecord } from "../support/backend-evidence.js";
-import { nextAvailablePollDate, waitForValue, withEmulatorAdmin } from "../support/emulator.js";
+import { nextAvailablePollDate, waitForValue, withEmulatorAdmin, withEmulatorUser } from "../support/emulator.js";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
@@ -28,6 +28,9 @@ async function captureVoteApi(page) {
         window.__voteApiCaptureInstalled = true;
         window.__voteApiRequests = [];
         window.__voteApiResponses = "";
+        window.__attendanceApiRequests = [];
+        window.__attendanceApiReadRequests = [];
+        window.__attendanceApiResponses = "";
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
             const url = input instanceof Request ? input.url : String(input);
@@ -47,6 +50,26 @@ async function captureVoteApi(page) {
                     })().catch(() => undefined);
                 }
             }
+            if (/\/api\/meet\/[^/]+\/attendance\/[^/?]+(?:\?.*)?$/.test(url)) {
+                window.__attendanceApiRequests.push({ url, method, body: init.body, status: response.status });
+            }
+            if (method === "GET" && (/\/api\/meet\/[^/]+\/attendance(?:\?.*)?$/.test(url)
+                || /\/api\/meets\/[^/]+\/attendance\/stream(?:\?.*)?$/.test(url))) {
+                window.__attendanceApiReadRequests.push({ url, method, status: response.status });
+            }
+            if (/\/api\/meets\/[^/]+\/attendance\/stream(?:\?.*)?$/.test(url)) {
+                const reader = response.clone().body?.getReader();
+                if (reader) {
+                    void (async () => {
+                        const decoder = new TextDecoder();
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            window.__attendanceApiResponses += decoder.decode(value, { stream: true });
+                        }
+                    })().catch(() => undefined);
+                }
+            }
             return response;
         };
     });
@@ -61,6 +84,42 @@ function journeyPoll(world, actor, date = world.pollDate) {
 function venueRow(world, actor, venue, date = world.pollDate) {
     return journeyPoll(world, actor, date).getByRole("row")
         .filter({ hasText: world.journeyVenues.get(venue) });
+}
+
+function currentMeetCard(world, actor, venue) {
+    const page = world.actors.get(actor);
+    const venueName = world.journeyVenues.get(venue);
+    return page.getByRole("article").filter({
+        has: page.getByRole("heading").filter({ hasText: venueName }),
+    });
+}
+
+async function closeAttendanceModal(world, viewerName) {
+    const close = world.actors.get(viewerName).getByRole("button", { name: "Close", exact: true });
+    if (await close.count() > 0) await close.click();
+}
+
+async function attendanceCell(world, viewerName, userName, venue, status) {
+    const viewer = world.actors.get(viewerName);
+    const card = currentMeetCard(world, viewerName, venue);
+    const table = viewer.getByRole("table");
+    if (await table.count() === 0) {
+        const attendanceLabel = world.journeyVenueTypes.get(venue) === "restaurant"
+            ? "Show restaurant attendance"
+            : "Show venue attendance";
+        await card.getByRole("button", { name: attendanceLabel, exact: true }).click();
+    }
+    const headers = await table.locator("thead th").allTextContents();
+    const columnIndex = headers.indexOf(status);
+    if (columnIndex === -1) return null;
+    const row = table.getByRole("row").filter({
+        has: viewer.getByRole("cell", { name: userName, exact: true }),
+    });
+    return row.getByRole("cell").nth(columnIndex);
+}
+
+async function adminAttendanceCell(world, userName, venue, status) {
+    return attendanceCell(world, "admin", userName, venue, status);
 }
 
 function applicationTimeDate(dayOffset) {
@@ -111,6 +170,15 @@ async function selectedVenueID(world, venue) {
     return venueSnapshot.docs[0].id;
 }
 
+async function waitForAttendanceMutation(world, actor, venueID, method) {
+    const page = world.actors.get(actor);
+    await page.waitForFunction(({ meetID, targetVenueID, targetMethod }) => {
+        return (window.__attendanceApiRequests ?? []).some(({ url, method: requestMethod, status }) =>
+            new URL(url).pathname === `/api/meet/${meetID}/attendance/${targetVenueID}`
+            && requestMethod === targetMethod && status === 204);
+    }, { meetID: world.pollId, targetVenueID: venueID, targetMethod: method });
+}
+
 async function waitForPollCompletion(world, pollID, venue) {
     const expectedVenueID = await selectedVenueID(world, venue);
     const poll = await withEmulatorAdmin((db) => waitForValue(
@@ -159,15 +227,16 @@ Given("the following journey venues are available:", async function (table) {
     try {
         await signInWithEmailAndPassword(auth, process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD);
         const batch = writeBatch(db);
-        for (const { name, type } of table.hashes()) {
+        for (const { name, type, food } of table.hashes()) {
             assert.ok(["pub", "restaurant"].includes(type));
+            assert.ok(food === undefined || ["true", "false"].includes(food));
             const displayName = `${name} ${fixtureId.slice(0, 8)}`;
             this.journeyVenues.set(name, displayName);
             this.journeyVenueTypes.set(name, type);
             batch.set(doc(db, "pubs", randomUUID()), {
                 name: displayName,
                 venueType: type,
-                food: true,
+                food: food === undefined ? true : food === "true",
                 banned: false,
             });
         }
@@ -176,6 +245,57 @@ Given("the following journey venues are available:", async function (table) {
         await terminate(db);
         await deleteApp(app);
     }
+});
+
+Then("Bob and Claire automatically join the default Group", async function () {
+    assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
+    assert.equal(process.env.FIRESTORE_EMULATOR_HOST, "127.0.0.1:8080");
+    const [bobUid, claireUid] = await Promise.all(["Bob", "Claire"].map((name) => withEmulatorUser(
+        this.actorEmails.get(name),
+        "journey-only-user-password-2026",
+        async (auth) => auth.currentUser.uid,
+    )));
+    const groupsResponse = await fetch("http://127.0.0.1:8081/api/groups?name=ampubnight");
+    assert.equal(groupsResponse.status, 200, "Last Orders must return the default Group");
+    const { groups } = await groupsResponse.json();
+    assert.equal(groups.length, 1, "the default Group must exist exactly once");
+    const projectID = process.env.GOOGLE_CLOUD_PROJECT;
+    const documentURL = `http://127.0.0.1:8080/v1/projects/${projectID}/databases/(default)/documents/groups/${groups[0].id}`;
+    await waitForValue(async () => {
+        const response = await fetch(documentURL, { headers: { Authorization: "Bearer owner" } });
+        assert.equal(response.status, 200, "the Group fixture must be readable by the emulator owner");
+        return (await response.json()).fields?.members?.mapValue?.fields;
+    }, (members) => members?.[bobUid]?.booleanValue === true && members?.[claireUid]?.booleanValue === true,
+        "the frontend to enrol Bob and Claire without privileged membership seeding");
+    this.defaultGroupDocumentURL = documentURL;
+    this.defaultGroupID = groups[0].id;
+    this.actorUids ??= new Map();
+    this.actorUids.set("Bob", bobUid);
+    this.actorUids.set("Claire", claireUid);
+});
+
+Then("Bob's existing session repairs missing Group membership on reload", async function () {
+    assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
+    const uid = this.actorUids.get("Bob");
+    const membershipPath = "members.`" + uid + "`";
+    const response = await fetch(`${this.defaultGroupDocumentURL}?updateMask.fieldPaths=${encodeURIComponent(membershipPath)}`, {
+        method: "PATCH",
+        headers: { Authorization: "Bearer owner", "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: {} }),
+    });
+    assert.equal(response.status, 200, "the missing-membership fixture must be written");
+    const group = await response.json();
+    assert.equal(group.fields?.members?.mapValue?.fields?.[uid], undefined, "Bob must start the reload without membership");
+    assert.equal(group.fields?.members?.mapValue?.fields?.[this.actorUids.get("Claire")]?.booleanValue, true);
+    const page = this.actors.get("Bob");
+    const joined = page.waitForResponse((result) => result.request().method() === "PUT"
+        && new URL(result.url()).pathname === `/api/groups/${this.defaultGroupID}/members/${uid}`);
+    await page.reload();
+    assert.equal((await joined).status(), 204, "the returning session must rejoin through Last Orders");
+    await page.getByRole("link", { name: "My Preferences", exact: true }).waitFor();
+    const restored = await fetch(this.defaultGroupDocumentURL, { headers: { Authorization: "Bearer owner" } });
+    assert.equal(restored.status, 200);
+    assert.equal((await restored.json()).fields?.members?.mapValue?.fields?.[uid]?.booleanValue, true);
 });
 
 When("the admin grants {word} the following permissions:", async function (name, table) {
@@ -255,15 +375,16 @@ Then("the admin sees Bob as the poll creator in the audit", async function () {
     await row.getByRole("cell").getByText("Bob", { exact: true }).waitFor();
 });
 
-When("Bob filters the venue picker to Pub and adds:", async function (table) {
+When("Bob filters the venue picker to {word} and adds:", async function (typeLabel, table) {
     const bob = this.actors.get("Bob");
     const poll = journeyPoll(this, "Bob");
-    await poll.getByLabel("Filter by venue type:", { exact: true }).selectOption({ label: "Pub" });
+    const venueType = typeLabel.toLowerCase();
+    await poll.getByLabel("Filter by venue type:", { exact: true }).selectOption({ label: typeLabel });
     const picker = poll.getByRole("combobox").filter({
         has: bob.getByRole("option", { name: "Select a venue to add here", exact: true }),
     });
     for (const [name, type] of this.journeyVenueTypes) {
-        if (type !== "pub") {
+        if (type !== venueType) {
             assert.equal(await picker.getByRole("option", { name: this.journeyVenues.get(name), exact: true }).count(), 0);
         }
     }
@@ -272,6 +393,106 @@ When("Bob filters the venue picker to Pub and adds:", async function (table) {
         await poll.getByRole("button", { name: "Add Venue To Poll", exact: true }).click();
         await venueRow(this, "Bob", venue).waitFor();
     }
+});
+
+When("{word} {word} the Any-Venue response to {string}", async function (actor, action, status) {
+    assert.ok(["sets", "changes"].includes(action));
+    assert.ok(["Can come", "Cannot come"].includes(status));
+    const page = this.actors.get(actor);
+    const poll = journeyPoll(this, actor);
+    const row = poll.getByRole("row").filter({ has: page.getByText("Global", { exact: true }) });
+    await row.getByRole("button", { name: "Respond", exact: true }).click();
+    const controlName = status === "Can come" ? "I'm coming (any venue)" : "I can't come (any venue)";
+    await row.getByRole("button", { name: controlName, exact: true }).click();
+    await waitForAttendanceMutation(this, actor, "any", "PUT");
+    this.expectedStandingStatus = status;
+});
+
+When("{word} withdraws the Any-Venue response", async function (actor) {
+    const page = this.actors.get(actor);
+    const poll = journeyPoll(this, actor);
+    const row = poll.getByRole("row").filter({ has: page.getByText("Global", { exact: true }) });
+    await row.getByRole("button", { name: "Respond", exact: true }).click();
+    await row.getByRole("button", { name: "Clear response", exact: true }).click();
+    await waitForAttendanceMutation(this, actor, "any", "DELETE");
+    this.expectedStandingStatus = null;
+});
+
+Then("Bob sees the standing response on {string}", async function (venue) {
+    const row = venueRow(this, "Bob", venue);
+    await row.getByTitle("You said you can come").waitFor();
+    const venueID = await selectedVenueID(this, venue);
+    const snapshot = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "attendance", this.pollId)));
+    const bobUID = this.actorUids.get("Bob");
+    assert.ok(!snapshot.data()[venueID]?.canCome?.includes(bobUID));
+    assert.ok(!snapshot.data()[venueID]?.cannotCome?.includes(bobUID));
+});
+
+When("{word} marks {string} as {string} while voting", async function (actor, venue, status) {
+    const row = venueRow(this, actor, venue);
+    await row.getByRole("button", { name: "Respond", exact: true }).click();
+    await row.getByRole("button", { name: status, exact: true }).click();
+    await waitForAttendanceMutation(this, actor, await selectedVenueID(this, venue), "PUT");
+});
+
+Then("the Any-Venue response is stored separately from explicit Venue responses", async function () {
+    const snapshot = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "attendance", this.pollId)));
+    const attendance = snapshot.data();
+    const bobUID = this.actorUids.get("Bob");
+    const claireUID = this.actorUids.get("Claire");
+    const pubID = await selectedVenueID(this, "Journey Red Lion");
+    const restaurantID = await selectedVenueID(this, "Journey Bistro");
+    const standing = attendance.any;
+    const standingField = this.expectedStandingStatus === "Can come" ? "canCome" : "cannotCome";
+    const oppositeField = standingField === "canCome" ? "cannotCome" : "canCome";
+    assert.ok(standing[standingField].includes(bobUID));
+    assert.ok(!standing[oppositeField].includes(bobUID));
+    for (const venueID of [pubID, restaurantID]) {
+        assert.ok(!attendance[venueID]?.canCome?.includes(bobUID));
+        assert.ok(!attendance[venueID]?.cannotCome?.includes(bobUID));
+    }
+    assert.ok(attendance[pubID].cannotCome.includes(claireUID));
+    assert.ok(attendance[restaurantID].canCome.includes(claireUID));
+});
+
+Then("the withdrawal leaves explicit Venue responses untouched", async function () {
+    const snapshot = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "attendance", this.pollId)));
+    const attendance = snapshot.data();
+    const bobUID = this.actorUids.get("Bob");
+    const claireUID = this.actorUids.get("Claire");
+    const pubID = await selectedVenueID(this, "Journey Red Lion");
+    const restaurantID = await selectedVenueID(this, "Journey Bistro");
+    assert.ok(!attendance.any.canCome.includes(bobUID));
+    assert.ok(!attendance.any.cannotCome.includes(bobUID));
+    assert.ok(attendance[pubID].cannotCome.includes(claireUID));
+    assert.ok(attendance[restaurantID].canCome.includes(claireUID));
+});
+
+When("the poll stores ETAs for Bob's standing response and Claire's restaurant response", async function () {
+    const pubID = await selectedVenueID(this, "Journey Red Lion");
+    const restaurantID = await selectedVenueID(this, "Journey Bistro");
+    const bobUID = this.actorUids.get("Bob");
+    const claireUID = this.actorUids.get("Claire");
+    await withEmulatorAdmin((db) => updateDoc(doc(db, "attendance", this.pollId), {
+        [`${pubID}.eta.${bobUID}`]: "18:30",
+        [`${restaurantID}.eta.${claireUID}`]: "19:00",
+    }));
+});
+
+Then("the Any-Venue change clears Bob's invalid ETA and preserves Claire's restaurant ETA", async function () {
+    const snapshot = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "attendance", this.pollId)));
+    const attendance = snapshot.data();
+    const pubID = await selectedVenueID(this, "Journey Red Lion");
+    const restaurantID = await selectedVenueID(this, "Journey Bistro");
+    assert.equal(attendance[pubID]?.eta?.[this.actorUids.get("Bob")], undefined);
+    assert.equal(attendance[restaurantID]?.eta?.[this.actorUids.get("Claire")], "19:00");
+});
+
+Then("withdrawing Any-Venue preserves Claire's restaurant ETA", async function () {
+    const snapshot = await withEmulatorAdmin((db) => getDocFromServer(doc(db, "attendance", this.pollId)));
+    const attendance = snapshot.data();
+    const restaurantID = await selectedVenueID(this, "Journey Bistro");
+    assert.equal(attendance[restaurantID]?.eta?.[this.actorUids.get("Claire")], "19:00");
 });
 
 Then("{word} sees the following pubs in the poll:", async function (name, table) {
@@ -325,6 +546,29 @@ Then("Claire receives Bob's public voter summary through the API", async functio
     assert.ok(!responses.includes('"name":"Claire"'), "the hidden voter name must not appear in voting API responses");
 });
 
+async function completePoll(world, venue, restaurant) {
+    const claire = world.actors.get("Claire");
+    const displayName = world.journeyVenues.get(venue);
+    assert.equal(await venueRow(world, "Bob", venue).getByRole("button", { name: displayName, exact: true }).count(), 0);
+    await venueRow(world, "Claire", venue).getByRole("button", { name: displayName, exact: true }).click();
+    await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor();
+    await withEmulatorAdmin((db) => waitForValue(async () => {
+        const [request, ack] = await Promise.all([
+            getDocFromServer(doc(db, "notification_req", world.pollId)),
+            getDocFromServer(doc(db, "notification_ack", world.pollId)),
+        ]);
+        const requestedCompletion = request.data()?.complete;
+        return requestedCompletion !== undefined && requestedCompletion === ack.data()?.complete;
+    }, Boolean, "Last Orders completion acknowledgement"));
+    if (restaurant) {
+        await claire.getByLabel("Restaurant from this poll", { exact: true })
+            .selectOption({ label: world.journeyVenues.get(restaurant) });
+        await claire.getByLabel("Restaurant meetup time", { exact: true }).fill("18:30");
+    }
+    await claire.getByRole("button", { name: "Confirm", exact: true }).click();
+    await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor({ state: "hidden" });
+}
+
 When("the application clock advances to {string} London time", async function (localTime) {
     const instant = londonInstant(this.pollDate, localTime);
     const acknowledgement = await this.advanceApplicationTime(instant);
@@ -363,21 +607,11 @@ Then("Last Orders leaves the application-time poll for manual completion due to 
 });
 
 When("Claire completes the poll by choosing {string}", async function (venue) {
-    const claire = this.actors.get("Claire");
-    const displayName = this.journeyVenues.get(venue);
-    assert.equal(await venueRow(this, "Bob", venue).getByRole("button", { name: displayName, exact: true }).count(), 0);
-    await venueRow(this, "Claire", venue).getByRole("button", { name: displayName, exact: true }).click();
-    await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor();
-    await withEmulatorAdmin((db) => waitForValue(async () => {
-        const [request, ack] = await Promise.all([
-            getDocFromServer(doc(db, "notification_req", this.pollId)),
-            getDocFromServer(doc(db, "notification_ack", this.pollId)),
-        ]);
-        const requestedCompletion = request.data()?.complete;
-        return requestedCompletion !== undefined && requestedCompletion === ack.data()?.complete;
-    }, Boolean, "Last Orders completion acknowledgement"));
-    await claire.getByRole("button", { name: "Confirm", exact: true }).click();
-    await claire.getByRole("heading", { name: "Complete Poll", exact: true }).waitFor({ state: "hidden" });
+    await completePoll(this, venue, null);
+});
+
+When("Claire completes the poll by choosing {string} with restaurant {string}", async function (venue, restaurant) {
+    await completePoll(this, venue, restaurant);
 });
 
 Then("{word} no longer sees the poll on Active Polls", async function (name) {
@@ -386,8 +620,28 @@ Then("{word} no longer sees the poll on Active Polls", async function (name) {
     await page.getByRole("heading", { name: this.pollDate, exact: true }).waitFor({ state: "hidden" });
 });
 
+When("admin opens attendance statistics", async function () {
+    const page = this.actors.get("admin");
+    // Observed at the Playwright level because the full navigation discards in-page fetch hooks.
+    this.attendanceStatisticsResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === "/api/attendance/statistics" && response.request().method() === "GET";
+    }, { timeout: 15000 });
+    this.attendanceStatisticsResponse.catch(() => undefined);
+    await page.goto(`${BASE_URL}/stats/attendance?limit=5&years=2`);
+    await page.getByRole("heading", { name: "Attendance Venue Stats", exact: true }).waitFor();
+});
+
+Then("admin sees the attendance statistics through the API", async function () {
+    const response = await this.attendanceStatisticsResponse;
+    const url = new URL(response.url());
+    assert.equal(response.status(), 200, `attendance statistics status for ${response.url()}`);
+    assert.ok(url.searchParams.has("start") && url.searchParams.has("end"), `attendance statistics URL: ${response.url()}`);
+});
+
 When("{word} opens Current Meets", async function (name) {
     const page = this.actors.get(name);
+    await captureVoteApi(page);
     await page.getByRole("link", { name: "Current Meets", exact: true }).click();
     await page.waitForURL(`${BASE_URL}/current_meets`);
     await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
@@ -399,4 +653,139 @@ Then("{word} sees the meet at {string}", async function (name, venue) {
         has: page.getByRole("heading", { name: this.journeyVenues.get(venue), exact: true }),
     });
     await event.getByText(this.pollDate, { exact: true }).waitFor();
+});
+
+When("{word} marks {string} as {string}", async function (name, venue, status) {
+    const card = currentMeetCard(this, name, venue);
+    const controls = card.getByRole("button", { name: status, exact: true });
+    const action = this.journeyVenueTypes.get(venue) === "restaurant" ? controls.last() : controls.first();
+    await action.click();
+    const selectedLabel = status === "Can come" ? "Can come confirmed" : "Cannot come confirmed";
+    try {
+        await card.getByRole("button", { name: selectedLabel, exact: true }).waitFor();
+    } catch (error) {
+        const requests = await this.actors.get(name).evaluate(() => window.__attendanceApiRequests ?? []);
+        const reads = await this.actors.get(name).evaluate(() => window.__attendanceApiReadRequests ?? []);
+        const stream = await this.actors.get(name).evaluate(() => (window.__attendanceApiResponses ?? "").slice(-2000));
+        throw new Error(`${error.message}; attendance API reads: ${JSON.stringify(reads.slice(-3))}; writes: ${JSON.stringify(requests.slice(-3))}; stream tail: ${stream}`);
+    }
+});
+
+When("{word} adds ETA {string} at {string}", async function (name, eta, venue) {
+    const card = currentMeetCard(this, name, venue);
+    await card.getByRole("button", { name: "Add ETA", exact: true }).click();
+    await card.locator('input[type="time"]').fill(eta);
+    await card.getByRole("button", { name: "Save", exact: true }).click();
+    await card.getByText(`ETA: ${eta}`, { exact: true }).waitFor();
+});
+
+Then("the admin sees {string} can come to {string}", async function (userName, venue) {
+    const status = "Can Come";
+    const cell = await adminAttendanceCell(this, userName, venue, status);
+    assert.ok(cell, `attendance table must include ${status}`);
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, "admin");
+});
+
+Then("the admin sees {string} cannot come to {string}", async function (userName, venue) {
+    const status = "Cannot Come";
+    const cell = await adminAttendanceCell(this, userName, venue, status);
+    assert.ok(cell, `attendance table must include ${status}`);
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, "admin");
+});
+
+Then("{word} sees {word} can come to {string}", async function (viewerName, userName, venue) {
+    const cell = await attendanceCell(this, viewerName, userName, venue, "Can Come");
+    assert.ok(cell, "attendance table must include Can Come");
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("{word} sees {word} cannot come to {string}", async function (viewerName, userName, venue) {
+    const cell = await attendanceCell(this, viewerName, userName, venue, "Cannot Come");
+    assert.ok(cell, "attendance table must include Cannot Come");
+    await cell.getByText("✓", { exact: true }).waitFor();
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("{word} sees {word} has no attendance response for {string}", async function (viewerName, userName, venue) {
+    const canComeCell = await attendanceCell(this, viewerName, userName, venue, "Can Come");
+    const cannotComeCell = await attendanceCell(this, viewerName, userName, venue, "Cannot Come");
+    if (canComeCell) await canComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    if (cannotComeCell) await cannotComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    await closeAttendanceModal(this, viewerName);
+});
+
+Then("Bob has no attendance response at {string}", async function (venue) {
+    const canComeCell = await attendanceCell(this, "Bob", "Bob", venue, "Can Come");
+    const cannotComeCell = await attendanceCell(this, "Bob", "Bob", venue, "Cannot Come");
+    assert.equal(canComeCell ? await canComeCell.count() : 0, 0);
+    assert.equal(cannotComeCell ? await cannotComeCell.count() : 0, 0);
+    await closeAttendanceModal(this, "Bob");
+});
+
+Then("Claire's browser used the attendance API to load the live view", async function () {
+    const page = this.actors.get("Claire");
+    await page.waitForFunction((meetID) => {
+        const requests = window.__attendanceApiReadRequests ?? [];
+        return requests.some(({ url }) => new URL(url).pathname === `/api/meet/${meetID}/attendance`)
+            && requests.some(({ url }) => new URL(url).pathname.endsWith("/attendance/stream"));
+    }, this.pollId);
+});
+
+When("Claire reconnects to Current Meets", async function () {
+    const page = this.actors.get("Claire");
+    await page.reload();
+    await page.getByRole("heading", { name: "Current Meets", exact: true }).waitFor();
+    await currentMeetCard(this, "Claire", "Journey Red Lion").waitFor();
+});
+
+Then("changing Bob's response clears only Bob's ETA", async function () {
+    const venueID = await selectedVenueID(this, "Journey Red Lion");
+    const snapshot = await withEmulatorAdmin((db) => waitForValue(
+        () => getDocFromServer(doc(db, "attendance", this.pollId)),
+        (value) => value.data()?.[venueID]?.cannotCome?.includes(this.actorUids.get("Bob")),
+        "Bob's cannot-come response to commit",
+    ));
+    const etas = snapshot.data()?.[venueID]?.eta ?? {};
+    assert.equal(etas[this.actorUids.get("Bob")], undefined, "Bob's ETA must be cleared");
+    assert.equal(etas[this.actorUids.get("Claire")], "19:00", "Claire's ETA must be preserved");
+});
+
+When("Bob withdraws attendance for {string}", async function (venue) {
+    await currentMeetCard(this, "Bob", venue).getByRole("button", { name: "Clear response", exact: true }).first().click();
+    await currentMeetCard(this, "Bob", venue).getByRole("button", { name: "Can come", exact: true }).first().waitFor();
+});
+
+Then("the admin sees {string} has no attendance response for {string}", async function (userName, venue) {
+    const canComeCell = await adminAttendanceCell(this, userName, venue, "Can Come");
+    const cannotComeCell = await adminAttendanceCell(this, userName, venue, "Cannot Come");
+    if (canComeCell) await canComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    if (cannotComeCell) await cannotComeCell.getByText("✓", { exact: true }).waitFor({ state: "detached" });
+    await closeAttendanceModal(this, "admin");
+});
+
+Then("{word} still sees {string} as {string}", async function (name, venue, label) {
+    await currentMeetCard(this, name, venue).getByRole("button", { name: label, exact: true }).first().waitFor();
+});
+
+Then("Bob's browser used the attendance API to set and withdraw responses for {string}", async function (venue) {
+    const venueID = await selectedVenueID(this, venue);
+    const requests = await this.actors.get("Bob").evaluate(() => window.__attendanceApiRequests ?? []);
+    const anyRequests = requests.filter(({ url }) => new URL(url).pathname.endsWith("/attendance/any"));
+    assert.deepEqual(anyRequests.map(({ method, body }) => [method, body]), [
+        ["PUT", JSON.stringify({ status: "attending" })],
+        ["PUT", JSON.stringify({ status: "not_attending" })],
+        ["DELETE", undefined],
+        ["PUT", JSON.stringify({ status: "attending" })],
+    ]);
+    const venueRequests = requests.filter(({ url }) => new URL(url).pathname.endsWith(`/attendance/${venueID}`));
+    assert.deepEqual(venueRequests.map(({ method, body }) => [method, body]), [
+        ["PUT", JSON.stringify({ status: "not_attending" })],
+        ["DELETE", undefined],
+        ["PATCH", JSON.stringify({ eta: "18:30" })],
+        ["PUT", JSON.stringify({ status: "not_attending" })],
+        ["DELETE", undefined],
+    ]);
 });

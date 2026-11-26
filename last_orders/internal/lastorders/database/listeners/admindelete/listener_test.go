@@ -4,15 +4,75 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"os"
 	"testing"
 	"time"
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
 	"last_orders/internal/lastorders/truths"
+
+	"cloud.google.com/go/firestore"
 )
+
+func TestDryRunCanDispatchSameEmulatorRequestTwice(t *testing.T) {
+	host := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if host == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	hostname, _, err := net.SplitHostPort(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := net.ParseIP(hostname)
+	if hostname != "localhost" && (address == nil || !address.IsLoopback()) {
+		t.Fatalf("Firestore emulator host %q is not loopback", host)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	client, err := firestore.NewClient(ctx, fmt.Sprintf("demo-admin-listener-%d", time.Now().UnixNano()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.Collection("admin_delete_requests").Doc("request-1").Set(ctx, map[string]any{
+		"schemaVersion": 1, "targetUid": "target-1", "targetEmail": nil,
+		"requestedByUid": "admin-1", "requestedByEmail": nil, "reason": "admin_user_delete",
+		"status": "pending", "createdAt": time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewFirestoreSource(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := cellar.NewMemoryStore(nil)
+	listener, err := New(Config{Source: source, Store: store, Enabled: true, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for run := 0; run < 2; run++ {
+		ids, err := listener.RunOnce(ctx)
+		if err != nil || len(ids) != 1 || ids[0] != "request-1" {
+			t.Fatalf("run %d: ids=%v err=%v", run, ids, err)
+		}
+	}
+	cells, err := store.ListActive()
+	if err != nil || len(cells) != 2 {
+		t.Fatalf("active dry-run cells=%d err=%v", len(cells), err)
+	}
+	for _, cell := range cells {
+		if len(cell.Steps) != 1 || cell.Steps[0].HandlerName != truths.AdminDeletePreviewFanout {
+			t.Fatalf("dry-run queued idempotency work: %+v", cell.Steps)
+		}
+	}
+}
 
 type fakeSource struct {
 	documents []Document

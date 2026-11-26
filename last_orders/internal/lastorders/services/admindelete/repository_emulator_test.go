@@ -1,15 +1,125 @@
 package admindelete
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
-	"cloud.google.com/go/firestore"
+	"cellar/pkg/cellar"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
+	"last_orders/internal/lastorders/services/attendancecleanup"
+	"last_orders/internal/lastorders/services/votecleanup"
+
+	"cloud.google.com/go/firestore"
 )
+
+func TestDryRunLeavesVotesAndAttendanceUnchanged(t *testing.T) {
+	host := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if host == "" {
+		t.Skip("FIRESTORE_EMULATOR_HOST is not set")
+	}
+	hostname, _, err := net.SplitHostPort(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := net.ParseIP(hostname)
+	if hostname != "localhost" && (address == nil || !address.IsLoopback()) {
+		t.Fatalf("Firestore emulator host %q is not loopback", host)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	projectID := fmt.Sprintf("demo-admin-delete-%d", time.Now().UnixNano())
+	client, err := firestore.NewClient(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	request := validTruth()
+	for _, seed := range []struct {
+		collection string
+		data       map[string]any
+	}{
+		{requestCollection, map[string]any{"status": "pending"}},
+		{"votes", map[string]any{"venue": []string{request.Request.TargetUID, "other"}}},
+		{"attendance", map[string]any{"venue": map[string]any{"canCome": []string{request.Request.TargetUID, "other"}}}},
+	} {
+		if _, err := client.Collection(seed.collection).Doc(request.Request.RequestID).Set(ctx, seed.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applicationData := map[string]map[string]any{
+		"messages/message-1":                   {"uid": request.Request.TargetUID, "text": "hello"},
+		"users/target-1/push_endpoints/device": {"endpoint": "private"},
+		"roles/admin":                          {request.Request.TargetUID: true},
+		"users/target-1":                       {"name": "target"},
+		"user-public/target-1":                 {"name": "target"},
+	}
+	updateTimes := make(map[string]time.Time, len(applicationData))
+	for path, data := range applicationData {
+		result, err := client.Doc(path).Set(ctx, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		updateTimes[path] = result.UpdateTime
+	}
+	repository, err := NewFirestoreRepository(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	votes, err := votecleanup.NewFirestoreCleaner(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attendance, err := attendancecleanup.NewFirestoreCleaner(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	evaluator, err := New(Options{Enabled: true, DryRun: true, Repository: repository, VoteCleaner: votes, AttendanceCleaner: attendance, Logger: slog.New(slog.NewTextHandler(&output, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	PreviewHandler{Evaluator: evaluator}.Handle(ctx, request)
+	for _, collection := range []string{"votes", "attendance"} {
+		snapshot, err := client.Collection(collection).Doc(request.Request.RequestID).Get(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var users []any
+		if collection == "votes" {
+			users = snapshot.Data()["venue"].([]any)
+		} else {
+			users = snapshot.Data()["venue"].(map[string]any)["canCome"].([]any)
+		}
+		if len(users) != 2 || users[0] != request.Request.TargetUID || users[1] != "other" {
+			t.Fatalf("dry-run changed %s: %v", collection, snapshot.Data())
+		}
+	}
+	for path, updateTime := range updateTimes {
+		snapshot, err := client.Doc(path).Get(ctx)
+		if err != nil || !snapshot.UpdateTime.Equal(updateTime) {
+			t.Errorf("dry-run changed %s: snapshot=%v err=%v", path, snapshot, err)
+		}
+	}
+	for _, entity := range []string{"votes/request-1", "attendance/request-1", "messages/message-1", "users/target-1/push_endpoints/device", "roles/admin", "users/target-1", "user-public/target-1", "target-1"} {
+		if !strings.Contains(output.String(), entity) {
+			t.Errorf("dry-run log missing %q: %s", entity, output.String())
+		}
+	}
+	request.Request.SchemaVersion = 2
+	result := (PreviewHandler{Evaluator: evaluator}).Handle(ctx, request)
+	complete, ok := result.(cellar.Complete)
+	if !ok || len(complete.NewCells) != 0 {
+		t.Fatalf("invalid dry-run scheduled persistent outcome: %#v", result)
+	}
+}
 
 func TestFirestoreRepositoryPersistsOutcomeAndAuditAtomically(t *testing.T) {
 	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {

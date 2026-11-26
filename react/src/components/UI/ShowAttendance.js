@@ -23,6 +23,8 @@ function normalizeUserId(value) {
  * @typedef {Object} ShowAttendanceProps
  * @property {string[]=} voters
  * @property {Record<string, UserEntry>=} voterProfiles
+ * @property {Record<string, { uid: string, name?: string, photoUrl?: string }>=} attendanceProfiles
+ * @property {boolean=} showVoters
  * @property {string[]=} canCome
  * @property {string[]=} cannotCome
  * @property {Record<string, string>=} eta
@@ -88,11 +90,12 @@ function AttendanceTable({ votersSet, canComeSet, cannotComeSet, etaMap, sortedU
  */
 function ShowAttendanceContent(params) {
     const users = /** @type {Record<string, UserEntry | undefined>} */ (useUsers());
-    const voters = (params.voters || []).map(normalizeUserId).filter(Boolean);
+    const voters = (params.showVoters === false ? [] : params.voters || []).map(normalizeUserId).filter(Boolean);
     const canCome = (params.canCome || []).map(normalizeUserId).filter(Boolean);
     const cannotCome = (params.cannotCome || []).map(normalizeUserId).filter(Boolean);
     const etaMap = params.eta || {};
     const voterProfiles = params.voterProfiles;
+    const attendanceProfiles = params.attendanceProfiles || {};
 
     const usersByUid = useMemo(() => {
         /** @type {Record<string, UserEntry>} */
@@ -125,6 +128,7 @@ function ShowAttendanceContent(params) {
         .map((id) => ({
             id,
             name: (votersSet.has(id) ? voterProfiles?.[id]?.name : undefined)
+                || attendanceProfiles[id]?.name
                 || usersByUid[id]?.name
                 || "No Name Recorded",
         }))

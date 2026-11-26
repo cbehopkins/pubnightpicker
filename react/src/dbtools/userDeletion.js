@@ -1,5 +1,4 @@
 import {
-    arrayRemove,
     collection,
     deleteDoc,
     deleteField,
@@ -23,6 +22,7 @@ export const DELETED_USER_MESSAGE = "{user deleted}";
  * @property {number} votesDocsUpdated
  * @property {boolean} votesBackendPending
  * @property {number} attendanceDocsUpdated
+ * @property {boolean} attendanceBackendPending
  * @property {number} messagesAnonymized
  * @property {number} pushEndpointsDeleted
  * @property {number} roleDocsUpdated
@@ -32,7 +32,7 @@ export const DELETED_USER_MESSAGE = "{user deleted}";
 /**
  * @param {{
  *  votes?: { updatedDocs?: number, backendPending?: boolean },
- *  attendance?: { updatedDocs?: number },
+ *  attendance?: { updatedDocs?: number, backendPending?: boolean },
  *  messages?: { updatedDocs?: number },
  *  pushEndpoints?: { deletedDocs?: number },
  *  roles?: { updatedRoleDocs?: number },
@@ -45,6 +45,7 @@ export function summarizeDeletionResult(result) {
         votesDocsUpdated: Number(result?.votes?.updatedDocs || 0),
         votesBackendPending: result?.votes?.backendPending === true,
         attendanceDocsUpdated: Number(result?.attendance?.updatedDocs || 0),
+        attendanceBackendPending: result?.attendance?.backendPending === true,
         messagesAnonymized: Number(result?.messages?.updatedDocs || 0),
         pushEndpointsDeleted: Number(result?.pushEndpoints?.deletedDocs || 0),
         roleDocsUpdated: Number(result?.roles?.updatedRoleDocs || 0),
@@ -60,56 +61,14 @@ export function deletionSummaryLines(summary) {
         summary.votesBackendPending
             ? "Votes cleanup: queued for trusted backend"
             : `Votes docs updated: ${summary.votesDocsUpdated}`,
-        `Attendance docs updated: ${summary.attendanceDocsUpdated}`,
+        summary.attendanceBackendPending
+            ? "Attendance cleanup: queued for trusted backend"
+            : `Attendance docs updated: ${summary.attendanceDocsUpdated}`,
         `Messages anonymized: ${summary.messagesAnonymized}`,
         `Push endpoints deleted: ${summary.pushEndpointsDeleted}`,
         `Role docs updated: ${summary.roleDocsUpdated}`,
         `Profile docs deleted: ${summary.profileDocsDeleted}`,
     ];
-}
-
-/**
- * @param {Record<string, unknown>} attendanceDocData
- * @param {string} targetUid
- */
-function buildAttendanceUpdate(attendanceDocData, targetUid) {
-    return Object.entries(attendanceDocData || {}).reduce((payload, [venueId, entry]) => {
-        if (!entry || typeof entry !== "object") {
-            return payload;
-        }
-
-        const typedEntry = /** @type {{ canCome?: string[], cannotCome?: string[], eta?: Record<string, unknown> }} */ (entry);
-
-        if (Array.isArray(typedEntry.canCome) && typedEntry.canCome.includes(targetUid)) {
-            payload[`${venueId}.canCome`] = arrayRemove(targetUid);
-        }
-        if (Array.isArray(typedEntry.cannotCome) && typedEntry.cannotCome.includes(targetUid)) {
-            payload[`${venueId}.cannotCome`] = arrayRemove(targetUid);
-        }
-        if (typedEntry.eta && typeof typedEntry.eta === "object" && targetUid in typedEntry.eta) {
-            payload[`${venueId}.eta.${targetUid}`] = deleteField();
-        }
-        return payload;
-    }, {});
-}
-
-/**
- * @param {string} targetUid
- */
-export async function removeUserFromAttendance(targetUid) {
-    const attendanceSnapshot = await getDocs(collection(db, "attendance"));
-    let updatedDocs = 0;
-
-    for (const attendanceDoc of attendanceSnapshot.docs) {
-        const payload = buildAttendanceUpdate(attendanceDoc.data(), targetUid);
-        if (Object.keys(payload).length === 0) {
-            continue;
-        }
-        await updateDoc(attendanceDoc.ref, payload);
-        updatedDocs += 1;
-    }
-
-    return { updatedDocs };
 }
 
 /**
@@ -182,11 +141,13 @@ export async function removeUserFromRoles(targetUid) {
 export async function deleteUserAppData(targetUid, options = {}) {
     const removeRoles = options.removeRoles === true;
 
-    const [votesResult, attendance, messages, pushEndpoints] = await Promise.all([
+    const [votesResult, attendanceResult, messages, pushEndpoints] = await Promise.all([
         removeRoles
             ? Promise.resolve({ updatedDocuments: 0, backendPending: true })
             : requestLastOrders("api/account/votes/cleanup", { method: "POST" }),
-        removeUserFromAttendance(targetUid),
+        removeRoles
+            ? Promise.resolve({ updatedDocuments: 0, backendPending: true })
+            : requestLastOrders("api/account/attendance/cleanup", { method: "POST" }),
         anonymizeUserMessages(targetUid),
         deleteUserPushEndpoints(targetUid),
     ]);
@@ -194,6 +155,10 @@ export async function deleteUserAppData(targetUid, options = {}) {
     const votes = {
         updatedDocs: Number(votesResult?.updatedDocuments || 0),
         backendPending: votesResult?.backendPending === true,
+    };
+    const attendance = {
+        updatedDocs: Number(attendanceResult?.updatedDocuments || 0),
+        backendPending: attendanceResult?.backendPending === true,
     };
 
     const roles = removeRoles ? await removeUserFromRoles(targetUid) : { updatedRoleDocs: 0 };

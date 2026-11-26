@@ -30,6 +30,7 @@ import { setRoles } from "./store/authSlice";
 import { setGroupId } from "./store/groupSlice";
 import { DEFAULT_GROUP_NAME } from "./constants/groups";
 import { lastOrdersApiURL } from "./utils/lastOrdersApiURL";
+import DefaultGroupMembership from "./components/DefaultGroupMembership";
 
 const ManageVenues = lazy(() => import("./components/pages/ManageVenues"));
 const ManageUsers = lazy(() => import("./components/pages/ManageUsers"));
@@ -161,10 +162,10 @@ function App() {
     );
   }
 
-  return <ResolvedApplication />;
+  return <ResolvedApplication groupId={discovery.groupId} />;
 }
 
-function ResolvedApplication() {
+function ResolvedApplication({ groupId }) {
   const dispatch = useDispatch();
   const [user, loading] = useAuthState(auth);
   const uid = useSelector((state) => state.auth.uid);
@@ -199,7 +200,9 @@ function ResolvedApplication() {
   const router = createBrowserRouter([
     {
       path: "/",
-      element: <RootLayout database_error={databaseError} />,
+      element: <DefaultGroupMembership key={`${groupId}:${authUid}`} groupId={groupId} uid={authUid} loading={loading}>
+        <RootLayout database_error={databaseError} />
+      </DefaultGroupMembership>,
       errorElement: <ErrorPage />,
       children: [
         { index: true, element: <Homepage /> },

@@ -13,9 +13,10 @@ Firebase Authentication user in response to an administrator-created deletion
 request. The requesting administrator is not assumed to have direct Firebase
 Authentication deletion privileges.
 
-Before deleting the Firebase Authentication account, the service verifies that
-the user's application data has already been removed. The service is designed
-for safe retry and convergence, rather than exactly-once execution.
+The service removes the user's application data and verifies that the profile
+documents are absent before deleting the Firebase Authentication account. The
+service is designed for safe retry and convergence, rather than exactly-once
+execution. Dry-run logs the intended changes without applying them.
 
 ```text
 user exists
@@ -43,7 +44,7 @@ database/listeners/admindelete
 truths.AdminDeleteRequested
     | identity + serialised Fact envelope
     v
-components/firebaseidempotency
+components/firebaseidempotency (live only)
     |
     v
 plugins/admindelete
@@ -152,15 +153,14 @@ wrongly typed required field is a conversion error and must be surfaced
 according to the listener's error/retry policy rather than silently discarded.
 An integer but unsupported `schemaVersion` is preserved in the Truth so the
 service can persist an `invalid_request` outcome.
-`status` is an eligibility gate, not immutable Truth evidence. `scrubbedAppData`
-records that the frontend's app-data removal step completed, but does not
-replace the service's current-state checks that the protected user documents
-are absent.
+`status` is an eligibility gate, not immutable Truth evidence. New requests set
+`scrubbedAppData` to false because the backend now owns cleanup. Older requests
+may carry true; neither value replaces current-state checks.
 
 The listener must not delete a Firebase Authentication user. It receives the
-Firestore change, applies the listener gates in section 4, constructs
-`AdminDeleteRequested` from the observed document, and serialises that typed
-Truth into the existing generic `components/facts.Fact` envelope:
+Firestore change, applies the listener gates in section 4, and constructs an
+`AdminDeleteRequested` Truth. Live processing dispatches through the idempotency
+component:
 
 ```text
 firebaseidempotency.NewCellRequest(
@@ -170,14 +170,13 @@ firebaseidempotency.NewCellRequest(
 )
 ```
 
-The generic Fact is durable transport for the typed Truth. It is not the
-application-level observation itself. Idempotency enforces the Truth identity;
-it does not define it. A modified request may cause another observation, but the
-same `requestId` must not establish a second dispatch within the same execution
-phase. Real-delete dispatch uses the separate listener namespace
-`AdminDeleteRequested.real_delete`; validation retains `AdminDeleteRequested`.
-This allows a prior dry-run to be followed by real deletion without changing
-the request ID, including requests validated before phase separation existed.
+The envelope is durable transport for the typed Truth. Live idempotency uses the
+`AdminDeleteRequested.real_delete` namespace and the request ID. Dry-run sends
+the Truth directly to a preview Fanout without recording an idempotency key, so
+the same pending request can be previewed again or processed live later.
+Interrupted live idempotency, evaluation and outcome-persistence Cells are
+deferred in dry-run and resume at their existing step when live processing is
+enabled again.
 
 ### 3.3 Service Cell Payload and Current State
 
@@ -241,7 +240,7 @@ The request contract includes:
 | `requestedByUid` | Non-empty string equal to the authenticated administrator UID | Requester evidence |
 | `requestedByEmail` | String or `null` | Informational requester evidence |
 | `reason` | Non-empty string | Request/audit evidence |
-| `scrubbedAppData` | Boolean `true` | Frontend assertion only; not a substitute for backend precondition checks |
+| `scrubbedAppData` | Boolean `false` | Legacy field; not a substitute for backend precondition checks |
 | `status` | String `"pending"` | Initial eligibility and durable state |
 | `createdAt`, `updatedAt` | Firestore timestamps, supplied with `serverTimestamp()` | Creation/update times; `createdAt` is captured in the Truth snapshot |
 | `lastError` | Absent on create | Backend outcome detail, when applicable |
@@ -253,7 +252,7 @@ that ID, not `targetUid`, is the request identity. The fields described as
 "absent on create" are backend-managed outcome fields and must not be included
 in the frontend create. Firestore rules authorise and validate the frontend
 request shape, including `schemaVersion == 1`, timestamp types, nullable email
-types, `scrubbedAppData == true`, and `status == "pending"`. The service does
+types, a boolean `scrubbedAppData`, and `status == "pending"`. The service does
 not implement authorisation for request creation.
 
 ---
@@ -274,9 +273,10 @@ AdminDeleteRequested service Cell
     |
     +-- validate immutable Truth evidence
     +-- check current request eligibility and operational gates
-    +-- check current application-data preconditions
-    +-- dry-run: determine dry_run_validated
-    +-- real delete: invoke Firebase Authentication
+    +-- dry-run: discover and log intended changes; leave request pending
+    +-- real delete: remove application data
+                     check profile absence
+                     invoke Firebase Authentication
                      |
                      v
           outcome-specific persistence Cell
@@ -285,10 +285,11 @@ AdminDeleteRequested service Cell
        Firestore transaction: request state + audit document
 ```
 
-Invalid, precondition-failed, blocked, and dry-run outcomes create their
+In live mode, invalid, precondition-failed and blocked outcomes create their
 corresponding persistence Cell without invoking Firebase Authentication. A
 successful Auth deletion or `UserNotFound` creates the `auth_deleted`
-persistence Cell.
+persistence Cell. Dry-run writes no outcome or audit, including for an invalid
+request; it reports the result in logs.
 
 `Complete{NewCells: ...}` durably schedules the child Cell with the parent's
 Cellar progress. It is not a distributed transaction with Firestore or Firebase
@@ -298,14 +299,16 @@ Authentication.
 
 ## 7. Validation and Preconditions
 
-`targetUid` is required and must be a non-empty string. If it is invalid:
+`targetUid` is required and must be a non-empty string. In live mode, if it is
+invalid:
 
 ```text
 outcome = invalid_request
 status  = invalid_request
 ```
 
-No Firebase Authentication operation is attempted.
+No Firebase Authentication operation is attempted. In dry-run the invalid
+request is logged and remains pending.
 
 `schemaVersion` must be the supported integer version `1`. An integer but
 unsupported version is an `invalid_request` outcome; it must not be interpreted
@@ -331,37 +334,31 @@ status  = failed_precondition
 ```
 
 Firebase Authentication deletion must not be attempted. The persistence payload
-records which documents remained. The service does not scrub application data;
-that belongs to the separate user-data deletion process.
+records which documents remained. In live mode the service removes votes,
+attendance, messages, push endpoints, roles and profiles before this check.
 
 ---
 
 ## 8. Dry-Run and Real-Delete Gates
 
-Dry-run performs validation, current application-data precondition checks, and
-durable result/audit persistence. It does not call Firebase Authentication.
-Successful validation produces the terminal outcome:
+Dry-run discovers and logs the entities and actions that live deletion would
+perform. It makes no user-data or Auth changes, writes no outcome or audit, and
+records no idempotency key. The request remains pending for repeated previews
+or a later live run. Discovery is repeated on each run; it is not a guarantee
+that the same entities will still exist when deletion is enabled.
 
-```text
-pending -> dry_run_validated
-```
-
-`dry_run_validated` is a durable validation result, not transient Cell execution
-state. Both normal listening (including startup and unpause scans) and one-shot
-evaluation select it for real deletion only when `ADMIN_DELETE_DRY_RUN=false`
-and `-enable-real-auth-delete` are both set. The same request ID is retained,
-but the real-delete phase has a separate idempotency namespace. All validation,
-kill-switch, and application-data checks run again before deletion. Without
-both gates, the validated request is left unchanged.
+Previously persisted `dry_run_validated` requests remain eligible for live
+processing when both real-delete gates are enabled; their existing audit
+evidence is preserved. New dry-runs do not produce that status.
 
 Real deletion needs both service enablement and the explicit runtime capability
 `enable-real-auth-delete`:
 
 ```text
 service disabled                 -> no processing
-service enabled + dry-run        -> validation only
+service enabled + dry-run        -> log intended changes, no deletion
 service enabled + real disabled  -> auth_delete_blocked
-service enabled + real enabled   -> Auth deletion permitted
+service enabled + real enabled   -> application cleanup and Auth deletion
 ```
 
 The service-level configuration name is `ENABLE_ADMIN_DELETE_REQUESTS`.
@@ -435,15 +432,16 @@ pending
     +-- invalid request -------> invalid_request
     +-- precondition failure --> failed_precondition
     +-- real deletion blocked -> auth_delete_blocked
-    +-- dry-run success -------> dry_run_validated
+    +-- dry-run ---------------> pending (no outcome persisted)
     +-- Auth success ----------> auth_deleted
     +-- UserNotFound ----------> auth_deleted
     +-- terminal Auth failure -> auth_delete_failed
 ```
 
 All outcomes other than `pending` finish their current execution phase.
-`dry_run_validated` is eligible for a subsequent real-delete phase only with
-both real-delete gates enabled. Other outcomes are terminal and ineligible.
+The legacy `dry_run_validated` status is eligible for a subsequent real-delete
+phase only with both real-delete gates enabled. Other outcomes are terminal and
+ineligible.
 The service must conditionally enforce valid transitions so a stale
 persistence Cell cannot overwrite a terminal or superseded request.
 
@@ -569,7 +567,7 @@ persistence, force a retry, or convert success into an application failure.
 | Persist request outcome and audit transaction | Admin Delete persistence handler/repository |
 | Record metrics | Best-effort metrics publisher |
 | Authorise request creation | Firestore rules / application |
-| Scrub application data | Separate deletion/scrubbing service |
+| Scrub votes, attendance and other application data | Admin Delete service handlers and repository |
 
 ---
 
@@ -584,8 +582,8 @@ The service must be testable without live Firebase Authentication. Tests cover:
   representation;
 * rejection/surfacing of malformed or unsupported request schema versions;
 * eligible `ADDED` and `MODIFIED` requests, plus ignored terminal requests;
-* dry-run followed by real deletion using the same request and durable store,
-  including renewed precondition checks and preserved dry-run audit evidence;
+* repeated read-only dry-runs followed by real deletion using the same request
+    and durable store, including renewed precondition checks;
 * service enablement and kill-switch behaviour;
 * missing, empty, and valid target UIDs;
 * every application-data precondition combination;
@@ -623,13 +621,14 @@ The migration is complete when:
    snapshot preserves the frontend's integer schema version and timestamp
    evidence using the defined conversions, with `null` email values normalized
    to empty strings.
-2. Idempotency dispatches that Truth through the Admin Delete plugin to a
-   service Cell.
+2. Live idempotency or direct dry-run dispatch sends that Truth through the
+    Admin Delete plugin to a service Cell.
 3. The listener never performs deletion.
 4. The service processes immutable Truth evidence and only deliberately reads
    current Firestore conditions.
 5. Validation and application-data preconditions are enforced.
-6. Dry-run reaches `dry_run_validated` without calling Firebase Authentication.
+6. Dry-run logs intended changes without mutating user data, calling Firebase
+    Authentication or recording idempotency state.
 7. Real deletion requires the explicit capability gate.
 8. `UserNotFound` produces `auth_deleted`.
 9. A retry after an ambiguous successful Auth deletion converges to
@@ -639,9 +638,9 @@ The migration is complete when:
 11. Metrics remain best effort.
 12. Disabled service and the kill switch leave pending work untouched.
 13. The safety invariants are covered by automated tests.
-14. The command-line one-shot evaluation scans eligible requests, waits until
-    each discovered request reaches a terminal persisted outcome, and exits;
-    the default service mode remains long-running.
+14. The command-line one-shot evaluation waits for dry-run preview Cells or
+    live terminal outcomes and exits; the default service mode remains
+    long-running.
 
 The resulting architecture is:
 
@@ -661,17 +660,17 @@ The backend command supports:
 
 This mode requires `ENABLE_ADMIN_DELETE_REQUESTS=true`. It scans the current
 eligible requests once (`pending`, plus `dry_run_validated` when both real-delete
-gates are set), enqueues each through the phase-specific idempotent Truth
-dispatch, runs Cellar, and waits for the corresponding request documents to
-reach a terminal outcome for the selected phase before exiting. In a real run,
-`dry_run_validated` is not completion. It uses the same kill switch,
+gates are set), dispatches each through the appropriate Truth path and runs
+Cellar. Dry-run waits for preview Cells and leaves requests pending; live mode
+waits for terminal outcomes. In a real run, `dry_run_validated` is not
+completion. It uses the same kill switch,
 preconditions, dry-run mode, and real-delete capability as long-running
 operation. If paused, the scan enqueues no work and exits without changing
 pending requests. Retryable failures remain pending; use the existing
 `-run-for` option or a signal to bound/cancel a test run.
 
-Dry-run defaults to enabled through `ADMIN_DELETE_DRY_RUN=true`. A destructive
-test requires both `ADMIN_DELETE_DRY_RUN=false` and
+Dry-run defaults to enabled through `ADMIN_DELETE_DRY_RUN=true`. Firebase Auth
+deletion requires both `ADMIN_DELETE_DRY_RUN=false` and
 `-enable-real-auth-delete`; using the Firebase Auth emulator additionally
 requires `-allow-auth-emulator` and a loopback `FIREBASE_AUTH_EMULATOR_HOST`.
 Use an isolated `-db-path` for one-shot testing so unrelated durable Cellar

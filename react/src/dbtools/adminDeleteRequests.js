@@ -28,7 +28,7 @@ export async function enqueueAdminAuthDeleteRequest(payload) {
         requestedByUid,
         requestedByEmail: payload?.requestedByEmail || null,
         reason: payload?.reason || "admin_user_delete",
-        scrubbedAppData: true,
+        scrubbedAppData: false,
         status: "pending",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

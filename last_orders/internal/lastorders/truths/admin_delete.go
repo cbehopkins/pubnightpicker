@@ -7,8 +7,10 @@ import (
 )
 
 const AdminDeleteRequestedFanout cellar.HandlerName = "truths.admin_delete_requested"
+const AdminDeletePreviewFanout cellar.HandlerName = "truths.admin_delete_preview"
 
 var AdminDeleteRequestedRegistry = NewRegistry[AdminDeleteRequested](AdminDeleteRequestedFanout)
+var AdminDeletePreviewRegistry = NewRegistry[AdminDeleteRequested](AdminDeletePreviewFanout)
 
 type AdminDeleteRequestSnapshot struct {
 	RequestID        string    `json:"request_id"`

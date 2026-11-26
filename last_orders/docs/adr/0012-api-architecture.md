@@ -400,52 +400,79 @@ Live voting updates use one stream per Group covering the Meets the client lists
 
 ## 9. Attendance
 
-### 9.1 Update and snapshot routes
+### 9.1 Per-Venue and Any-Venue status mutations
 
 ```http
-PATCH /meet/{meet_id}/attendance
-GET   /meet/{meet_id}/attendance
+PUT    /meet/{meet_id}/attendance/{venue_id}
+PATCH  /meet/{meet_id}/attendance/{venue_id}
+DELETE /meet/{meet_id}/attendance/{venue_id}
 ```
 
-The caller updates their own attendance. The client must not supply another user's ID as the identity of the attendance record.
+The caller must be an authenticated true member of the Meet's Group. Public
+visibility, global administrator status and voting permission do not grant this
+mutation. The verified UID identifies the caller; clients cannot name another
+user. The Meet and attendance document are checked and mutated in one Firestore
+transaction.
 
 Attendance status values:
 
 - `attending`
 - `not_attending`
 
-ETA is optional and represents an estimated clock time of arrival, not a number of minutes.
+`PUT` accepts only `status` and returns no content. `DELETE` withdraws the
+caller's response. Both operations are idempotent, maintain exclusive status
+arrays, and clear the caller's ETA when withdrawing or setting
+`not_attending`. A removed Venue can be withdrawn when the caller has a response
+for it or the Meet records its removal; unrelated Venues are rejected. The
+literal `any` targets an independent standing response in the existing
+attendance document. It changes no Venue response. For main Venue candidates it
+is the fallback when no explicit Venue response exists; explicit responses
+override it, and restaurants never inherit it. A single explicit response
+applies when a Venue serves both roles. Existing Venue entries, including
+indistinguishable legacy copies, remain untouched and are treated as explicit
+responses. Older clients continue to interoperate through the existing
+document shape.
 
-### 9.2 PATCH semantics
+Changing or withdrawing the standing response atomically clears ETAs that no
+longer have effective can-come attendance, while retaining ETAs for explicit
+Venue can-come responses.
 
-PATCH is intentionally used for partial updates.
+### 9.2 Authenticated snapshots and Group stream
 
-- An omitted ETA preserves the existing ETA.
-- An explicitly cleared ETA removes it.
-- Setting status to `not_attending` clears ETA.
+```http
+GET /meet/{meet_id}/attendance
+GET /meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
+```
 
-The OpenAPI schema must distinguish an omitted field from an explicit clear, using a request representation that can express that difference unambiguously.
+Both reads require authentication and voting-style Meet/Group visibility.
+Snapshots preserve the existing per-Venue status arrays and separate `any`
+entry, expose applicable ETAs and public participant summaries, and do not
+apply voting-visibility preferences to attendance identities. The Group stream
+follows 1-50 distinct Meets in the requested Group and sends complete
+replacement snapshots with opaque cursors. Reconnect returns current state;
+authorization changes reset and close the view. Meet, attendance and public
+profile changes refresh it. Private profile fields are excluded.
 
-### 9.3 Snapshot response
+Per-Venue and Any-Venue status writes require true Group membership,
+independently of voting permission. The PATCH operation supports independent
+status and ETA updates, including explicit ETA removal. Existing bulk UI
+actions compose this caller-owned API rather than writing attendance
+Firestore documents directly. Firestore rules remain unchanged during the
+compatibility window.
 
-The attendance snapshot returns both `attending` and `not_attending` lists. Each entry includes the shared public user summary and ETA where applicable.
-
-Counts can be derived from these lists; if counts are also returned for convenience, they must be consistent with the snapshot.
-
-ETA is visible to authenticated members of the relevant Group.
-
-The snapshot includes a revision/cursor identifying the logical state represented by the response.
 
 ## 10. Server-Sent Events
 
 ### 10.1 Routes
 
 ```http
-GET /meet/{meet_id}/attendance/stream
+GET /meets/{group_id}/attendance/stream?meet_id={meet_id}&meet_id={meet_id}
 GET /meets/{group_id}/current/stream
 ```
 
-The first stream publishes attendance state for a particular Meet. The second publishes changes to the Group's current Meets.
+The attendance stream publishes complete snapshots for the listed Meets in one
+Group connection. The current-Meets stream publishes changes to the Group's
+current Meets.
 
 There is no past-Meets stream in V1; the past collection is static and fetched using HTTP.
 
@@ -455,7 +482,9 @@ SSE events describe resulting view state rather than low-level storage mutations
 
 The local projection implementation must be extended to record modification timestamps. These timestamps are the source for stream cursors; the exact ordering and cursor contract remain design work.
 
-Clients should be able to recover after reconnecting without assuming they observed every intermediate event.
+Clients recover the latest complete view after reconnecting without assuming
+they observed every intermediate event. The attendance and Group voting stream
+cursor envelopes and full-snapshot semantics are specified in OpenAPI.
 
 ### 10.3 Snapshot and cursor protocol
 
@@ -469,7 +498,7 @@ The intended protocol is:
 
 The snapshot and its revision must represent the same logical point in time. A concurrent update must not fall into a gap between the snapshot and stream subscription.
 
-An unknown, invalid or expired cursor returns the most up-to-date version of the requested view. For example, an unusable cursor for changes to a Meet returns the latest version of that Meet. Recovery does not require reconstructing every intermediate change. The exact event envelope and cursor encoding will be defined in the CDD and OpenAPI.
+An unknown, invalid or expired cursor returns the most up-to-date version of the requested view. For example, an unusable cursor for changes to a Meet returns the latest version of that Meet. Recovery does not require reconstructing every intermediate change. Cursor encoding and event envelopes are specified in the CDD and OpenAPI.
 
 ### 10.4 Reusable projection-stream component
 

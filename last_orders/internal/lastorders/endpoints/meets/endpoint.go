@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"last_orders/internal/lastorders/components/attendancecache"
+	"last_orders/internal/lastorders/components/attendancestats"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/meetcache"
@@ -28,6 +30,10 @@ type reader interface {
 
 type GroupAuthorizer interface {
 	CanRead(context.Context, string, string) (bool, error)
+}
+
+type GroupMemberAuthorizer interface {
+	IsMember(context.Context, string, string) (bool, error)
 }
 
 type venueReader interface {
@@ -53,6 +59,20 @@ type voterVisibilityReader interface {
 	VisibleProfiles(context.Context, []string) map[string]votecache.VoterProfile
 }
 
+type attendanceReader interface {
+	Get(context.Context, string) (attendancecache.Snapshot, error)
+}
+
+type attendanceProfileReader interface {
+	PublicProfiles(context.Context, []string) (map[string]attendancecache.Profile, error)
+}
+
+type attendanceStatisticsResult = attendancestats.Result
+
+type attendanceStatisticsReader interface {
+	Read(context.Context, string, string) (attendanceStatisticsResult, error)
+}
+
 type pastMeetsReader interface {
 	Today() string
 	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
@@ -68,23 +88,37 @@ type MeetWriter interface {
 	ChangeVote(context.Context, string, string, string, bool) (meetwrite.VoteResult, error)
 }
 
+type AttendanceWriter interface {
+	GroupID(context.Context, string) (string, error)
+	SetAttendance(context.Context, string, string, string, string) error
+	PatchAttendance(context.Context, string, string, string, string, bool, *string) error
+	ClearAttendance(context.Context, string, string, string) error
+}
+
 type Endpoint struct {
-	Reader       reader
-	Venues       venueReader
-	Groups       GroupAuthorizer
-	Auth         firebaseauth.Verifier
-	Current      currentReader
-	Open         openMeetsReader
-	CurrentReady <-chan struct{}
-	CurrentHub   *sse.Hub
-	Cursors      *sse.CursorCodec
-	Past         pastMeetsReader
-	Voting       votingReader
-	Profiles     voterVisibilityReader
-	VotingHub    *sse.Hub
-	VotingReady  <-chan struct{}
-	Writer       MeetWriter
-	WriteAccess  WriteAuthorizer
+	Reader              reader
+	Venues              venueReader
+	Groups              GroupAuthorizer
+	Members             GroupMemberAuthorizer
+	Auth                firebaseauth.Verifier
+	Current             currentReader
+	Open                openMeetsReader
+	CurrentReady        <-chan struct{}
+	CurrentHub          *sse.Hub
+	Cursors             *sse.CursorCodec
+	Past                pastMeetsReader
+	Voting              votingReader
+	Profiles            voterVisibilityReader
+	AttendanceSnapshots attendanceReader
+	AttendanceProfiles  attendanceProfileReader
+	AttendanceHub       *sse.Hub
+	AttendanceReady     <-chan struct{}
+	Statistics          attendanceStatisticsReader
+	VotingHub           *sse.Hub
+	VotingReady         <-chan struct{}
+	Writer              MeetWriter
+	Attendance          AttendanceWriter
+	WriteAccess         WriteAuthorizer
 }
 
 type venueSummary struct {
@@ -151,6 +185,31 @@ type groupVotingSnapshotResponse struct {
 	Meets  []meetVotingSnapshotResponse `json:"meets"`
 }
 
+type attendanceEntryResponse struct {
+	CanCome    []string          `json:"can_come"`
+	CannotCome []string          `json:"cannot_come"`
+	ETA        map[string]string `json:"eta"`
+}
+
+type attendanceParticipantResponse struct {
+	ID       string  `json:"id"`
+	Name     *string `json:"name,omitempty"`
+	PhotoURL *string `json:"photo_url,omitempty"`
+}
+
+type attendanceSnapshotResponse struct {
+	MeetID       string                                   `json:"meet_id"`
+	Entries      map[string]attendanceEntryResponse       `json:"entries"`
+	Participants map[string]attendanceParticipantResponse `json:"participants"`
+	Revision     *string                                  `json:"revision"`
+	Cursor       string                                   `json:"cursor"`
+}
+
+type groupAttendanceSnapshotResponse struct {
+	Cursor string                       `json:"cursor"`
+	Meets  []attendanceSnapshotResponse `json:"meets"`
+}
+
 // maxStreamedVotingMeets bounds the Meets one Group votes stream may follow.
 const maxStreamedVotingMeets = 50
 
@@ -181,6 +240,11 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.delete)))
 	mux.Handle("PUT /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.addVote)))
 	mux.Handle("DELETE /api/meet/{meet_id}/votes/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.removeVote)))
+	mux.Handle("PUT /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.setAttendance)))
+	mux.Handle("PATCH /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.patchAttendance)))
+	mux.Handle("DELETE /api/meet/{meet_id}/attendance/{venue_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.clearAttendance)))
+	mux.Handle("GET /api/meet/{meet_id}/attendance", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.attendance)))
+	mux.Handle("GET /api/meets/{group_id}/attendance/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.groupAttendanceStream)))
 	mux.Handle("GET /api/meet/{meet_id}", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.get)))
 	mux.Handle("GET /api/meet/{meet_id}/votes", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.votes)))
 	mux.Handle("GET /api/meets/{group_id}/votes/stream", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.groupVoteStream)))
@@ -189,6 +253,366 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meets/{group_id}/open", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.open)))
 	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.past)))
+	mux.Handle("GET /api/attendance/statistics", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.attendanceStatistics)))
+}
+
+type attendanceUpdateRequest struct {
+	Status string `json:"status"`
+}
+
+func (e *Endpoint) attendanceStatistics(w http.ResponseWriter, r *http.Request) {
+	if e.Statistics == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "admin")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "Administrator access is required.")
+		return
+	}
+	start := r.URL.Query().Get("start")
+	end := r.URL.Query().Get("end")
+	result, err := e.Statistics.Read(r.Context(), start, end)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_statistics_unavailable", "Attendance statistics are temporarily unavailable.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (e *Endpoint) patchAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	if err := decoder.Decode(&fields); err != nil || fields == nil || len(fields) == 0 || len(fields) > 2 {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	statusPresent, statusPointer, validStatus := decodeOptionalString(fields, "status")
+	etaPresent, etaPointer, validETA := decodeOptionalString(fields, "eta")
+	if len(fields) == 2 && (!statusPresent || !etaPresent) {
+		validStatus = false
+	}
+	if len(fields) == 1 && !statusPresent && !etaPresent {
+		validStatus = false
+	}
+	if !validStatus || (statusPresent && statusPointer != nil && *statusPointer != "attending" && *statusPointer != "not_attending") || !validETA {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	status := ""
+	if statusPresent {
+		if statusPointer == nil {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+			return
+		}
+		status = *statusPointer
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.PatchAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context()), status, etaPresent, etaPointer); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) setAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	if err := decoder.Decode(&fields); err != nil || fields == nil || len(fields) != 1 {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	statusRaw, ok := fields["status"]
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	var update attendanceUpdateRequest
+	if err := json.Unmarshal(statusRaw, &update.Status); err != nil || (update.Status != "attending" && update.Status != "not_attending") {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The attendance request is invalid.")
+		return
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.SetAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context()), update.Status); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) clearAttendance(w http.ResponseWriter, r *http.Request) {
+	if e.Attendance == nil || e.Members == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance updates are temporarily unavailable.")
+		return
+	}
+	if !e.authorizeAttendanceMember(w, r) {
+		return
+	}
+	if err := e.Attendance.ClearAttendance(r.Context(), r.PathValue("meet_id"), r.PathValue("venue_id"), currentUID(r.Context())); e.writeServiceError(w, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *Endpoint) attendance(w http.ResponseWriter, r *http.Request) {
+	principal, ok := firebaseauth.FromContext(r.Context())
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
+		return
+	}
+	if e.AttendanceSnapshots == nil || e.AttendanceProfiles == nil || e.Reader == nil || e.Groups == nil || e.Cursors == nil {
+		writeAttendanceUnavailable(w)
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	meet, err := e.Reader.Get(r.Context(), meetID)
+	if errors.Is(err, meetcache.ErrNotFound) {
+		writeAttendanceNotFound(w)
+		return
+	}
+	if err != nil {
+		writeAttendanceUnavailable(w)
+		return
+	}
+	allowed, err := e.Groups.CanRead(r.Context(), principal.UID, meet.Projection.GroupID)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		writeAttendanceNotFound(w)
+		return
+	}
+	snapshot, err := e.AttendanceSnapshots.Get(r.Context(), meetID)
+	if err != nil {
+		writeAttendanceReadError(w, err)
+		return
+	}
+	response, err := e.attendanceResponse(r.Context(), meetID, meet.Projection, snapshot)
+	if err != nil {
+		writeAttendanceUnavailable(w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (e *Endpoint) groupAttendanceStream(w http.ResponseWriter, r *http.Request) {
+	if e.AttendanceSnapshots == nil || e.AttendanceProfiles == nil || e.Reader == nil || e.Groups == nil || e.Cursors == nil || e.AttendanceHub == nil || e.AttendanceReady == nil {
+		w.Header().Set("Retry-After", "1")
+		writeAttendanceUnavailable(w)
+		return
+	}
+	principal, ok := firebaseauth.FromContext(r.Context())
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "A valid sign-in token is required.")
+		return
+	}
+	groupID := r.PathValue("group_id")
+	meetIDs, ok := streamedVotingMeetIDs(r.URL.Query()["meet_id"])
+	if !ok {
+		firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("Supply between 1 and %d distinct, non-empty meet_id values.", maxStreamedVotingMeets))
+		return
+	}
+	viewKeys := make([]string, len(meetIDs))
+	for index, meetID := range meetIDs {
+		viewKeys[index] = "attendance:" + meetID
+	}
+	stream := &sse.Handler{
+		Hub: e.AttendanceHub, Ready: e.AttendanceReady,
+		ViewKeys: viewKeys, AuthorizationScope: "attendance-group:" + groupID,
+		UID: principal.UID, EventName: "attendance_snapshots",
+		SnapshotFailureStatus: http.StatusServiceUnavailable,
+		Authorize: func(ctx context.Context) (bool, int) {
+			allowed, err := e.Groups.CanRead(ctx, currentUID(ctx), groupID)
+			if err != nil {
+				return false, http.StatusServiceUnavailable
+			}
+			if !allowed {
+				return false, http.StatusNotFound
+			}
+			for _, meetID := range meetIDs {
+				meet, err := e.Reader.Get(ctx, meetID)
+				if errors.Is(err, meetcache.ErrNotFound) {
+					return false, http.StatusNotFound
+				}
+				if err != nil {
+					return false, http.StatusServiceUnavailable
+				}
+				if meet.Projection.GroupID != groupID {
+					return false, http.StatusNotFound
+				}
+			}
+			return true, http.StatusNotFound
+		},
+		Snapshot: func(ctx context.Context, cursor sse.CursorInput) (sse.ViewSnapshot, error) {
+			response := groupAttendanceSnapshotResponse{Meets: make([]attendanceSnapshotResponse, 0, len(meetIDs))}
+			var sequence int64 = -1
+			for _, meetID := range meetIDs {
+				meet, err := e.Reader.Get(ctx, meetID)
+				if err != nil {
+					return sse.ViewSnapshot{}, err
+				}
+				if meet.Projection.GroupID != groupID {
+					return sse.ViewSnapshot{}, meetcache.ErrNotFound
+				}
+				attendance, err := e.AttendanceSnapshots.Get(ctx, meetID)
+				if err != nil {
+					return sse.ViewSnapshot{}, err
+				}
+				meetResponse, err := e.attendanceResponse(ctx, meetID, meet.Projection, attendance)
+				if err != nil {
+					return sse.ViewSnapshot{}, err
+				}
+				response.Meets = append(response.Meets, meetResponse)
+				if sequence < 0 || attendance.Sequence < sequence {
+					sequence = attendance.Sequence
+				}
+			}
+			if cursor.Supplied {
+				_, _ = e.Cursors.Validate(cursor.Value, sse.CursorExpectation{
+					Stream: "group-attendance-v1", Resource: groupID, Generation: "group-attendance-v1", HighWater: sequence,
+				})
+			}
+			token, err := e.Cursors.Encode(sse.CursorClaims{
+				Stream: "group-attendance-v1", Resource: groupID, Generation: "group-attendance-v1", Sequence: sequence,
+			})
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			response.Cursor = token
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				return sse.ViewSnapshot{}, err
+			}
+			return sse.ViewSnapshot{Data: encoded, Cursor: token, Sequence: sequence}, nil
+		},
+	}
+	stream.ServeHTTP(w, r)
+}
+
+func (e *Endpoint) attendanceResponse(ctx context.Context, meetID string, meet meetcache.Projection, snapshot attendancecache.Snapshot) (attendanceSnapshotResponse, error) {
+	userIDs := make(map[string]struct{})
+	for _, entry := range snapshot.Entries {
+		for _, uid := range entry.CanCome {
+			userIDs[uid] = struct{}{}
+		}
+		for _, uid := range entry.CannotCome {
+			userIDs[uid] = struct{}{}
+		}
+	}
+	profileIDs := make([]string, 0, len(userIDs))
+	for uid := range userIDs {
+		profileIDs = append(profileIDs, uid)
+	}
+	sort.Strings(profileIDs)
+	profiles, err := e.AttendanceProfiles.PublicProfiles(ctx, profileIDs)
+	if err != nil {
+		return attendanceSnapshotResponse{}, err
+	}
+	entries := make(map[string]attendanceEntryResponse, len(snapshot.Entries))
+	anyEntry := snapshot.Entries["any"]
+	for venueID, entry := range snapshot.Entries {
+		canCome := make(map[string]struct{}, len(entry.CanCome))
+		for _, uid := range entry.CanCome {
+			canCome[uid] = struct{}{}
+		}
+		for _, uid := range entry.CannotCome {
+			delete(canCome, uid)
+		}
+		if venueID != "any" && venueID != meet.RestaurantID && (venueID == meet.SelectedVenueID || contains(meet.CandidateVenueIDs, venueID)) {
+			for _, uid := range anyEntry.CanCome {
+				if !contains(entry.CannotCome, uid) {
+					canCome[uid] = struct{}{}
+				}
+			}
+		}
+		etas := make(map[string]string, len(entry.ETA))
+		for uid, eta := range entry.ETA {
+			if _, ok := canCome[uid]; ok {
+				etas[uid] = eta
+			}
+		}
+		entries[venueID] = attendanceEntryResponse{
+			CanCome: append([]string{}, entry.CanCome...), CannotCome: append([]string{}, entry.CannotCome...), ETA: etas,
+		}
+	}
+	participants := make(map[string]attendanceParticipantResponse, len(profiles))
+	for uid, profile := range profiles {
+		participants[uid] = attendanceParticipantResponse{ID: profile.ID, Name: profile.Name, PhotoURL: profile.PhotoURL}
+	}
+	var revision *string
+	if snapshot.Revision != nil {
+		value := snapshot.Revision.UTC().Format(time.RFC3339Nano)
+		revision = &value
+	}
+	token, err := e.Cursors.Encode(sse.CursorClaims{
+		Stream: "attendance-v1", Resource: meetID, Generation: "attendance-v1", Sequence: snapshot.Sequence,
+	})
+	if err != nil {
+		return attendanceSnapshotResponse{}, err
+	}
+	return attendanceSnapshotResponse{MeetID: meetID, Entries: entries, Participants: participants, Revision: revision, Cursor: token}, nil
+}
+
+func contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Endpoint) authorizeAttendanceMember(w http.ResponseWriter, r *http.Request) bool {
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Attendance.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return false
+	}
+	allowed, err := e.Members.IsMember(r.Context(), currentUID(r.Context()), groupID)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Group membership could not be verified.")
+		return false
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "Only Group members can change attendance.")
+		return false
+	}
+	return true
 }
 
 func (e *Endpoint) delete(w http.ResponseWriter, r *http.Request) {
@@ -914,6 +1338,26 @@ func currentUID(ctx context.Context) string {
 
 func writeCurrentUnavailable(w http.ResponseWriter) {
 	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "projection_unavailable", "Current Meets are temporarily unavailable.")
+}
+
+func writeAttendanceUnavailable(w http.ResponseWriter) {
+	firebaseauth.WriteError(w, http.StatusServiceUnavailable, "attendance_unavailable", "Attendance is temporarily unavailable.")
+}
+
+func writeAttendanceNotFound(w http.ResponseWriter) {
+	firebaseauth.WriteError(w, http.StatusNotFound, "not_found", "The requested Meet was not found.")
+}
+
+func writeAttendanceReadError(w http.ResponseWriter, err error) {
+	if errors.Is(err, attendancecache.ErrNotFound) {
+		writeAttendanceNotFound(w)
+		return
+	}
+	if errors.Is(err, attendancecache.ErrUnavailable) || errors.Is(err, attendancecache.ErrRetired) {
+		writeAttendanceUnavailable(w)
+		return
+	}
+	firebaseauth.WriteError(w, http.StatusInternalServerError, "internal_error", "Unable to read attendance.")
 }
 
 func writeOpenUnavailable(w http.ResponseWriter) {

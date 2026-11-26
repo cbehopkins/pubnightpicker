@@ -147,6 +147,20 @@ the existing application. Missing or duplicate results and backend request
 failures block entry and show a retry option. The resolved opaque Group ID is
 kept in memory only, so a fresh load discovers it again.
 
+After authentication resolves, the frontend ensures the signed-in user belongs
+to that discovered Group through the authenticated, idempotent
+`PUT /api/groups/{group_id}/members/{user_id}` endpoint. This also runs for
+restored sessions and account changes. Anonymous browsing remains available;
+signed-in routes wait for membership enrolment before becoming available.
+Failed or timed-out enrolment shows a retry option rather than allowing Group
+actions to fail later. Automatic enrolment applies only to the discovered
+default Group, not to all public Groups.
+
+Deploy the Last Orders self-join endpoint before deploying this frontend.
+Existing users acquire membership on their next authenticated application
+load; no bulk membership migration is required. Self-join grants membership
+only and does not change existing role or permission grants.
+
 For local development, use Last Orders with a demo-project emulator and seed the
 default Group before opening the frontend. Current Meets reads the resolved
 Group's completed Meets dated today or later in Europe/London. Active Polls
@@ -155,9 +169,9 @@ midnight alone does not change that view. Meets without a `groupId` are excluded
 from both. Complete the existing-Meet migration before relying on Group-scoped
 Meet views. New Meets created by the frontend and Last Orders Event Venue
 recurrence receive the resolved Group ID in their initial Firestore write.
-Voting uses the authenticated Last Orders API; attendance remains a Firestore
-interface. Raw vote documents remain accessible to the browser only for account
-deletion cleanup until ticket 05 moves that workflow to the backend.
+Voting and attendance reads use the authenticated Last Orders API. Raw vote
+documents are backend-owned state and are cleaned up through the trusted account
+deletion workflows.
 
 For rollout, complete the one-off migration of existing Meets and deploy both
 writer changes before allowing Meet creation to resume. This implementation
@@ -167,12 +181,27 @@ work.
 
 Voting and attendance remain separate from Meet writes. Voting snapshots,
 mutations, live updates and current-user export use Last Orders. Firestore keeps
-the existing `votes/{meetId}` shape as backend-owned state. Attendance continues
-to read Firestore documents and uses transactions that verify
-`polls/{meetId}` exists before initialising missing attendance documents without
-replacing concurrent updates or creating orphan child data after Meet deletion.
-The Firestore rules lockdown for vote documents is deferred until account
-deletion cleanup moves to the backend in ticket 05.
+the existing `votes/{meetId}` shape as backend-owned state. Attendance
+snapshots and live updates use authenticated Last Orders reads and a bounded
+Group stream. Per-Venue status, ETA and withdrawal actions use Last Orders and
+require true membership in the Meet's Group. Existing bulk UI actions compose
+those caller-owned endpoints. Firestore rules retain the existing compatibility window for vote documents.
+The browser no longer participates in account-deletion vote cleanup.
+
+## Attendance Compatibility Rollout
+
+Deploy Last Orders before the React attendance frontend. Keep the existing
+Firestore attendance rules unchanged for one week after frontend rollout so
+old clients continue to work. Older clients keep their prior copying and
+restaurant-fallback behaviour during that period, and legacy records remain
+visible to and preserved for the API. After one week, tightening direct client
+rules is a separately authorised operation, not part of application code or
+this repository's normal build and test sequence. Do not perform deployments,
+production data changes or live rules changes as part of local verification.
+
+Venue attendance controls show a saving state while a write is pending. Failed
+or timed-out writes are logged and trigger a snapshot refresh; the displayed
+attendance continues to follow the API and stream.
 
 ## Firestore Index Drift Check
 
@@ -209,7 +238,7 @@ Two routes are currently available:
    - Shows the most and least often selected winning venues from completed polls.
 2. Attendance Venue Stats (`/stats/attendance`)
    - Shows the highest and lowest attendance confirmation totals by venue.
-   - Global attendance marked against `any` is counted toward each venue in that poll.
+   - Any-Venue attendance is counted toward eligible main Venue candidates, never restaurants.
 
 Both pages use the same page-level controls:
 

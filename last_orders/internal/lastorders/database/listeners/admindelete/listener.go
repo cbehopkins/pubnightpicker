@@ -27,6 +27,7 @@ type Config struct {
 	Store      cellar.Store
 	Enabled    bool
 	RealDelete bool
+	DryRun     bool
 	Logger     *slog.Logger
 }
 
@@ -35,6 +36,7 @@ type Listener struct {
 	store      cellar.Store
 	enabled    bool
 	realDelete bool
+	dryRun     bool
 	logger     *slog.Logger
 	lifecycle.Controller
 }
@@ -49,7 +51,7 @@ func New(cfg Config) (*Listener, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Listener{source: cfg.Source, store: cfg.Store, enabled: cfg.Enabled, realDelete: cfg.RealDelete, logger: cfg.Logger}, nil
+	return &Listener{source: cfg.Source, store: cfg.Store, enabled: cfg.Enabled, realDelete: cfg.RealDelete, dryRun: cfg.DryRun, logger: cfg.Logger}, nil
 }
 
 func (l *Listener) Start(ctx context.Context) error {
@@ -214,20 +216,29 @@ func (l *Listener) enqueue(document Document) error {
 	if err != nil {
 		return err
 	}
-	envelope, err := truths.NewEnvelope(truths.AdminDeleteRequestedFanout, truth)
+	fanout := truths.AdminDeleteRequestedFanout
+	if l.dryRun {
+		fanout = truths.AdminDeletePreviewFanout
+	}
+	envelope, err := truths.NewEnvelope(fanout, truth)
 	if err != nil {
 		return fmt.Errorf("marshal admin-delete Truth: %w", err)
 	}
-	listenerName := string(ListenerAdminDelete)
-	if l.realDelete {
-		listenerName += ".real_delete"
+	var request cellar.CellRequest
+	if l.dryRun {
+		request, err = envelope.CellRequest()
+	} else {
+		listenerName := string(ListenerAdminDelete)
+		if l.realDelete {
+			listenerName += ".real_delete"
+		}
+		request, err = firebaseidempotency.NewCellRequest(listenerName, truth.Identity(), envelope)
 	}
-	request, err := firebaseidempotency.NewCellRequest(listenerName, truth.Identity(), envelope)
 	if err != nil {
-		return fmt.Errorf("build admin-delete idempotency Cell: %w", err)
+		return fmt.Errorf("build admin-delete dispatch Cell: %w", err)
 	}
 	if _, err := l.store.Add([]cellar.CellRequest{request}); err != nil {
-		return fmt.Errorf("add admin-delete idempotency Cell: %w", err)
+		return fmt.Errorf("add admin-delete dispatch Cell: %w", err)
 	}
 	l.logger.Info("admin-delete request Truth observed", "request_id", truth.Identity(), "target_uid", truth.Request.TargetUID)
 	return nil
