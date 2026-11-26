@@ -147,6 +147,20 @@ the existing application. Missing or duplicate results and backend request
 failures block entry and show a retry option. The resolved opaque Group ID is
 kept in memory only, so a fresh load discovers it again.
 
+After authentication resolves, the frontend ensures the signed-in user belongs
+to that discovered Group through the authenticated, idempotent
+`PUT /api/groups/{group_id}/members/{user_id}` endpoint. This also runs for
+restored sessions and account changes. Anonymous browsing remains available;
+signed-in routes wait for membership enrolment before becoming available.
+Failed or timed-out enrolment shows a retry option rather than allowing Group
+actions to fail later. Automatic enrolment applies only to the discovered
+default Group, not to all public Groups.
+
+Deploy the Last Orders self-join endpoint before deploying this frontend.
+Existing users acquire membership on their next authenticated application
+load; no bulk membership migration is required. Self-join grants membership
+only and does not change existing role or permission grants.
+
 For local development, use Last Orders with a demo-project emulator and seed the
 default Group before opening the frontend. Current Meets reads the resolved
 Group's completed Meets dated today or later in Europe/London. Active Polls
