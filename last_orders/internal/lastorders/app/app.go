@@ -1298,7 +1298,8 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	apiMux.Handle("POST /api/ping", authenticated(&pingendpoint.Endpoint{Logger: cfg.Logger}))
 	apiMux.Handle("POST /api/email-history", authenticated(&emailhistoryendpoint.Endpoint{Store: history, Logger: cfg.Logger}))
 	apiMux.Handle("GET /api/version", versionendpoint.Endpoint{})
-	(&groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}).Register(apiMux)
+	groupEndpoint := &groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}
+	groupEndpoint.Register(apiMux)
 	if application.firestoreClient != nil {
 		voteCleaner, err := votecleanup.NewFirestoreCleaner(application.firestoreClient)
 		if err != nil {
@@ -1365,6 +1366,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 			return fmt.Errorf("firestore Group authorizer does not support cache invalidation")
 		}
 		application.groupCacheListener.SetAuthorizationInvalidator(invalidator)
+		groupEndpoint.Membership = groupsendpoint.NewFirestoreMembership(application.firestoreClient, invalidator.InvalidateGroup)
 		roleSource, err := roleauthorizationlistener.NewFirestoreSource(application.firestoreClient)
 		if err != nil {
 			return err

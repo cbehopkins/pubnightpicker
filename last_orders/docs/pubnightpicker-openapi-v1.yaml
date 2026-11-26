@@ -229,7 +229,15 @@ paths:
       tags: [Group members]
       operationId: addGroupMember
       summary: Add a group member
-      description: Requires group-admin permission. Idempotently ensures the user is a member.
+      description: |
+        Authenticated callers may idempotently ensure their own membership of
+        an existing Group when its public visibility grants permission to join
+        or the caller has site-administrator authority. Site-administrator
+        authority requires a true boolean grant in roles/admin and is checked
+        within the membership transaction. The target user must be the verified
+        caller; adding other users is forbidden. Joining does not grant
+        additional permissions. Administrator-managed additions are
+        a future extension of this route, not part of the current implementation.
       responses:
         '204':
           description: User is now a member.

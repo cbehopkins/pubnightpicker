@@ -247,7 +247,7 @@ Given("the following journey venues are available:", async function (table) {
     }
 });
 
-Given("Bob and Claire become members of the default Group", async function () {
+Then("Bob and Claire automatically join the default Group", async function () {
     assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
     assert.equal(process.env.FIRESTORE_EMULATOR_HOST, "127.0.0.1:8080");
     const [bobUid, claireUid] = await Promise.all(["Bob", "Claire"].map((name) => withEmulatorUser(
@@ -261,21 +261,41 @@ Given("Bob and Claire become members of the default Group", async function () {
     assert.equal(groups.length, 1, "the default Group must exist exactly once");
     const projectID = process.env.GOOGLE_CLOUD_PROJECT;
     const documentURL = `http://127.0.0.1:8080/v1/projects/${projectID}/databases/(default)/documents/groups/${groups[0].id}`;
-    const existingResponse = await fetch(documentURL, { headers: { Authorization: "Bearer owner" } });
-    assert.equal(existingResponse.status, 200, "the Group fixture must be readable by the emulator owner");
-    const existingGroup = await existingResponse.json();
-    const members = { ...existingGroup.fields?.members?.mapValue?.fields };
-    members[bobUid] = { booleanValue: true };
-    members[claireUid] = { booleanValue: true };
-    const updateResponse = await fetch(`${documentURL}?updateMask.fieldPaths=members`, {
-        method: "PATCH",
-        headers: { Authorization: "Bearer owner", "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { members: { mapValue: { fields: members } } } }),
-    });
-    assert.equal(updateResponse.status, 200, `emulator Group membership update failed: ${await updateResponse.text()}`);
+    await waitForValue(async () => {
+        const response = await fetch(documentURL, { headers: { Authorization: "Bearer owner" } });
+        assert.equal(response.status, 200, "the Group fixture must be readable by the emulator owner");
+        return (await response.json()).fields?.members?.mapValue?.fields;
+    }, (members) => members?.[bobUid]?.booleanValue === true && members?.[claireUid]?.booleanValue === true,
+        "the frontend to enrol Bob and Claire without privileged membership seeding");
+    this.defaultGroupDocumentURL = documentURL;
+    this.defaultGroupID = groups[0].id;
     this.actorUids ??= new Map();
     this.actorUids.set("Bob", bobUid);
     this.actorUids.set("Claire", claireUid);
+});
+
+Then("Bob's existing session repairs missing Group membership on reload", async function () {
+    assert.equal(process.env.GOOGLE_CLOUD_PROJECT, "demo-pubnightpicker-journey");
+    const uid = this.actorUids.get("Bob");
+    const membershipPath = "members.`" + uid + "`";
+    const response = await fetch(`${this.defaultGroupDocumentURL}?updateMask.fieldPaths=${encodeURIComponent(membershipPath)}`, {
+        method: "PATCH",
+        headers: { Authorization: "Bearer owner", "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: {} }),
+    });
+    assert.equal(response.status, 200, "the missing-membership fixture must be written");
+    const group = await response.json();
+    assert.equal(group.fields?.members?.mapValue?.fields?.[uid], undefined, "Bob must start the reload without membership");
+    assert.equal(group.fields?.members?.mapValue?.fields?.[this.actorUids.get("Claire")]?.booleanValue, true);
+    const page = this.actors.get("Bob");
+    const joined = page.waitForResponse((result) => result.request().method() === "PUT"
+        && new URL(result.url()).pathname === `/api/groups/${this.defaultGroupID}/members/${uid}`);
+    await page.reload();
+    assert.equal((await joined).status(), 204, "the returning session must rejoin through Last Orders");
+    await page.getByRole("link", { name: "My Preferences", exact: true }).waitFor();
+    const restored = await fetch(this.defaultGroupDocumentURL, { headers: { Authorization: "Bearer owner" } });
+    assert.equal(restored.status, 200);
+    assert.equal((await restored.json()).fields?.members?.mapValue?.fields?.[uid]?.booleanValue, true);
 });
 
 When("the admin grants {word} the following permissions:", async function (name, table) {

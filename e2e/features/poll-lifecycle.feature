@@ -15,7 +15,8 @@ Feature: Members organise and chat about a meet
     Then Bob is logged in
     When Claire creates an account
     Then Claire is logged in
-    And Bob and Claire become members of the default Group
+    And Bob and Claire automatically join the default Group
+    And Bob's existing session repairs missing Group membership on reload
     When the journey admin logs in through a separate browser context
     And the admin grants Bob the following permissions:
       | permission               |

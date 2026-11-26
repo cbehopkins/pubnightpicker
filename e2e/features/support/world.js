@@ -30,6 +30,9 @@ class BrowserWorld extends World {
       await context.route("http://127.0.0.1:8081/api/groups?name=ampubnight", (route) => route.fulfill({
         json: { groups: this.defaultGroups },
       }));
+      await context.route("http://127.0.0.1:8081/api/groups/frontend-journey-group/members/*", (route) => route.fulfill({
+        status: route.request().method() === "PUT" ? 204 : 405,
+      }));
     }
     this.pushIdentities ??= new Map();
     this.pushIdentities.set(name, await installPushBoundary(context, this.pushPermissionResponses?.get(name) ?? "denied"));

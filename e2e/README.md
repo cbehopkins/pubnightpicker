@@ -76,9 +76,16 @@ run and is not included in the default command:
 
 Frontend-only scenarios fulfil the default Group discovery request at the
 browser boundary with a synthetic public `ampubnight` Group. This fixture is
-installed for every actor context and does not intercept other API requests.
+installed for every actor context and also fulfils the synthetic Group's
+self-join `PUT` requests. It does not intercept other API requests.
 Backend-dependent scenarios use the real Group API and the Group created by
 the emulator bootstrap; their discovery requests are never intercepted.
+
+The poll-lifecycle journey asserts that Bob and Claire acquire membership
+through the frontend without privileged membership seeding. It also removes
+only Bob's membership as a missing-membership fixture, reloads his existing
+signed-in browser, and verifies that the frontend rejoins through Last Orders
+before continuing to voting and attendance.
 
 Both standard groups must discover scenarios. A build, startup, scenario or cleanup
 failure fails the command rather than skipping a group. Select

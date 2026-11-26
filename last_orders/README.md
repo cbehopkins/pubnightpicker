@@ -39,6 +39,35 @@ existing-Meet migration, and tickets 01-04 do not include writer changes.
 See `docs/adr/` for architecture decisions and `docs/cdd/` for component design
 documents.
 
+## Group Membership Requests
+
+`PUT /api/groups/{group_id}/members/{user_id}` requests membership of an
+existing Group. The backend authenticates the caller and authorises the
+request before idempotently ensuring the target user's membership. Joining
+does not itself grant any additional permissions.
+
+Permission to join is not inherently restricted to public Groups. Public
+visibility permits authenticated users to join, while site-administrator
+authority also permits joining a private Group. A site-administrator grant
+requires the caller's entry in `roles/admin` to be the boolean value `true`;
+the backend reads this authority within the membership transaction.
+Future Group-access grants may provide additional ways to authorise joining.
+Site and Group administrators should also be able to add other users through
+this endpoint in the future.
+
+The current implementation supports callers joining as themselves only.
+Administrator-managed additions and other Group-access grants are not yet
+implemented.
+
+The membership transaction preserves other members and Group fields, performs
+no write for an existing true membership, and invalidates the serving instance's
+Group-authorisation cache before returning `204`. Other instances continue to
+use the listener invalidation and TTL policy in ADR-0014.
+
+Deploy this endpoint before the frontend's automatic default-Group enrolment.
+The frontend joins only the discovered public `ampubnight` Group after sign-in,
+including restored sessions, before rendering authenticated routes.
+
 ## Application time
 
 `app.Config.Clock` optionally supplies the current application instant. The app
