@@ -954,14 +954,22 @@ func removeAttendanceUser(users []string, uid string) []string {
 }
 
 func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID string, add bool) (Meet, error) {
+	meet, _, err := s.ChangeCandidateDetailed(ctx, meetID, venueID, actorUID, add)
+	return meet, err
+}
+
+// ChangeCandidateDetailed returns whether this call committed a candidate change.
+func (s *Service) ChangeCandidateDetailed(ctx context.Context, meetID, venueID, actorUID string, add bool) (Meet, bool, error) {
 	if !validID(meetID) || !validID(venueID) || venueID == "any" || strings.TrimSpace(actorUID) == "" {
-		return Meet{}, ErrInvalidInput
+		return Meet{}, false, ErrInvalidInput
 	}
 	meetRef := s.client.Collection(meetCollection).Doc(meetID)
 	venueRef := s.client.Collection("pubs").Doc(venueID)
 	auditRef := s.client.Collection(auditCollection).NewDoc()
 	result := Meet{}
+	changed := false
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		changed = false
 		doc, err := tx.Get(meetRef)
 		if status.Code(err) == codes.NotFound {
 			return ErrMeetNotFound
@@ -1038,12 +1046,13 @@ func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID
 		}
 		updated["pubs"] = candidates
 		result = meetFromData(meetID, updated)
+		changed = true
 		return nil
 	})
 	if err != nil {
-		return Meet{}, err
+		return Meet{}, false, err
 	}
-	return result, nil
+	return result, changed, nil
 }
 
 func meetFromData(meetID string, data map[string]any) Meet {

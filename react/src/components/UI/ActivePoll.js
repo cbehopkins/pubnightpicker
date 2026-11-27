@@ -9,7 +9,6 @@ import AutopopulateButton from "./AutopopulateButton";
 import styles from "./ActivePoll.module.css";
 import useRole from "../../hooks/useRole";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
 import useAutopopulateAction from "../../hooks/useAutopopulateAction";
 import { addVenueToMeet, deleteMeet } from "../../dbtools/polls";
 import { NOTIFICATION_PING_TIMEOUT_MS } from "../../constants/notificationPing";
@@ -112,14 +111,6 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
     const { isOnline } = useOnlineStatus();
     const [isChatOpen, setIsChatOpen] = useState(false);
 
-    // Load autopopulate venue suggestions
-    const {
-        mostVisited,
-        leastVisited,
-        random: randomVenues,
-        isLoading: isAutopopulateLoading,
-    } = useAutopopulateVenueSelector(poll_id, poll_data.venues);
-    const isAutopopulateEnabled = mostVisited.length > 0 || leastVisited.length > 0 || randomVenues.length > 0;
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
     const [venueFilters, setVenueFilters] = useState({});
     /** @type {[FilterMap, import("react").Dispatch<import("react").SetStateAction<FilterMap>>]} */
@@ -159,13 +150,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
         [selectedVenue, poll_id, venues]
     );
 
-    const { handleAutopopulate } = useAutopopulateAction({
-        pollId: poll_id,
-        pollVenues: poll_data.venues,
-        mostVisited,
-        leastVisited,
-        randomVenues,
-    });
+    const { handleAutopopulate, isLoading: isAutopopulateLoading } = useAutopopulateAction(poll_id);
 
     /** @type {(event: import("react").MouseEvent<HTMLButtonElement>) => Promise<void>} */
     const deletePollHandler = useCallback(
@@ -266,7 +251,7 @@ function ActivePoll({ poll_id, venues, poll_data, on_complete, mobile }) {
                             )}
                             <AutopopulateButton
                                 isLoading={isAutopopulateLoading}
-                                isEnabled={isAutopopulateEnabled}
+                                isEnabled={true}
                                 onAutopopulate={handleAutopopulate}
                             />
                         </>

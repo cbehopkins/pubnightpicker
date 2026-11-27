@@ -26,12 +26,11 @@ const {
 }));
 
 const {
-    useActiveMeetsMock,
-    useAutopopulateVenueSelectorMock,
+    useOpenMeetsMock,
 } = vi.hoisted(() => ({
-    useActiveMeetsMock: vi.fn(),
-    useAutopopulateVenueSelectorMock: vi.fn(),
+    useOpenMeetsMock: vi.fn(),
 }));
+const { previewCandidatePoolsMock } = vi.hoisted(() => ({ previewCandidatePoolsMock: vi.fn() }));
 
 vi.mock("firebase/firestore", () => ({
     Timestamp: {
@@ -52,7 +51,7 @@ vi.mock("../../firebase", () => ({
 }));
 
 vi.mock("react-redux", () => ({
-    useSelector: (select) => select({ auth: { uid: null } }),
+    useSelector: (select) => select({ auth: { uid: null }, group: { groupId: "group-1" } }),
 }));
 
 vi.mock("../ProtectedRoute", () => ({
@@ -64,11 +63,11 @@ vi.mock("../UI/BackendPingPanel", () => ({
 }));
 
 vi.mock("../../hooks/useMeets", () => ({
-    useActiveMeets: useActiveMeetsMock,
+    useOpenMeets: useOpenMeetsMock,
 }));
 
-vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
-    default: useAutopopulateVenueSelectorMock,
+vi.mock("../../dbtools/polls", () => ({
+    previewMeetCandidatePools: previewCandidatePoolsMock,
 }));
 
 const { watchSilenceMock, setSilenceMock } = vi.hoisted(() => ({ watchSilenceMock: vi.fn(() => () => { }), setSilenceMock: vi.fn() }));
@@ -275,51 +274,16 @@ it("keeps the poll action audit on Logs", () => {
 
 describe("AutopopulateCandidateListsPanel", () => {
     beforeEach(() => {
-        useActiveMeetsMock.mockReturnValue({
+        useOpenMeetsMock.mockReturnValue({
+            isLoading: false, isStale: false, errorMessage: null,
             sortedByDate: () => [
                 ["meet-1", { date: "2026-06-10", venues: { "venue-1": true } }],
             ],
         });
-
-        useAutopopulateVenueSelectorMock.mockImplementation((meetId) => {
-            if (meetId !== "meet-1") {
-                return {
-                    mostVisited: [],
-                    leastVisited: [],
-                    random: [],
-                    isLoading: false,
-                    error: null,
-                };
-            }
-
-            return {
-                mostVisited: [
-                    {
-                        id: "venue-2",
-                        label: "The Oak",
-                        count: 4,
-                        lastWonDate: "2026-05-01",
-                    },
-                ],
-                leastVisited: [
-                    {
-                        id: "venue-3",
-                        label: "The Crown",
-                        count: 1,
-                        lastWonDate: "2026-02-14",
-                    },
-                ],
-                random: [
-                    {
-                        id: "venue-4",
-                        label: "The Bell",
-                        count: 2,
-                        lastWonDate: null,
-                    },
-                ],
-                isLoading: false,
-                error: null,
-            };
+        previewCandidatePoolsMock.mockResolvedValue({
+            most_visited: [{ id: "venue-2", name: "The Oak", count: 4, last_won_date: "2026-05-01" }],
+            least_visited: [{ id: "venue-3", name: "The Crown", count: 1, last_won_date: "2026-02-14" }],
+            general: [{ id: "venue-4", name: "The Bell", count: 2 }],
         });
     });
 
@@ -327,23 +291,23 @@ describe("AutopopulateCandidateListsPanel", () => {
         cleanup();
     });
 
-    it("loads on demand and can be hidden again", () => {
+    it("loads on demand and can be hidden again", async () => {
         render(<AutopopulateCandidateListsPanel />);
 
         expect(screen.getByText("Autopopulate Candidate Lists")).toBeTruthy();
         expect(screen.getByRole("button", { name: "Load Candidate Lists" })).toBeTruthy();
-        expect(useActiveMeetsMock).not.toHaveBeenCalled();
-        expect(useAutopopulateVenueSelectorMock).not.toHaveBeenCalled();
+        expect(useOpenMeetsMock).not.toHaveBeenCalled();
+        expect(previewCandidatePoolsMock).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole("button", { name: "Load Candidate Lists" }));
 
-        expect(screen.getByText("Most visited")).toBeTruthy();
+        await waitFor(() => expect(previewCandidatePoolsMock).toHaveBeenCalledWith("meet-1"));
+        expect(await screen.findByText("Most visited")).toBeTruthy();
         expect(screen.getByText("Least visited")).toBeTruthy();
         expect(screen.getByText("Random viable")).toBeTruthy();
         expect(screen.getByText(/The Oak/)).toBeTruthy();
         expect(screen.getByText(/The Crown/)).toBeTruthy();
         expect(screen.getByText(/The Bell/)).toBeTruthy();
-        expect(useAutopopulateVenueSelectorMock).toHaveBeenCalledWith("meet-1", { "venue-1": true });
 
         fireEvent.click(screen.getByRole("button", { name: "Hide Candidate Lists" }));
 
@@ -357,16 +321,6 @@ describe("AutopopulateCandidateListsPanel", () => {
 describe("PollActionAuditPanel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        useActiveMeetsMock.mockReturnValue({
-            sortedByDate: () => [],
-        });
-        useAutopopulateVenueSelectorMock.mockReturnValue({
-            mostVisited: [],
-            leastVisited: [],
-            random: [],
-            isLoading: false,
-            error: null,
-        });
         getDocMock.mockImplementation(async (path) => {
             if (path === "user-public/user-a") {
                 return {

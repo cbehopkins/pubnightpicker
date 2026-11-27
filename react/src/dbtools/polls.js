@@ -29,6 +29,15 @@ export async function addVenueToMeet(selectedVenueId, meetId) {
     });
 }
 
+export async function autopopulateMeet(meetId) {
+    assertCurrentUserPermission(PERMISSIONS.canAddPubToPoll, "autopopulating a poll");
+    return requestLastOrders(`api/meet/${encodeURIComponent(meetId)}/autopopulate`, { method: "POST" });
+}
+
+export async function previewMeetCandidatePools(meetId) {
+    return requestLastOrders(`api/meet/${encodeURIComponent(meetId)}/candidate-pool-preview`, { method: "GET" });
+}
+
 export async function removeVenueFromMeet(meetId, venueId) {
     assertCurrentUserPermission(PERMISSIONS.canAddPubToPoll, "deleting a venue from a poll");
     await requestLastOrders(`api/meet/${encodeURIComponent(meetId)}/candidates/${encodeURIComponent(venueId)}`, {

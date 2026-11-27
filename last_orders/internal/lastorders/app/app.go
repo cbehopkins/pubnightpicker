@@ -22,6 +22,7 @@ import (
 	"last_orders/internal/lastorders/components/apicors"
 	"last_orders/internal/lastorders/components/attendancecache"
 	"last_orders/internal/lastorders/components/attendancestats"
+	"last_orders/internal/lastorders/components/autopopulate"
 	"last_orders/internal/lastorders/components/completionactions"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/diagnosticsconfig"
@@ -39,6 +40,7 @@ import (
 	"last_orders/internal/lastorders/components/sse"
 	venuecache "last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/components/votecache"
+	"last_orders/internal/lastorders/components/winningstats"
 	admindeletelistener "last_orders/internal/lastorders/database/listeners/admindelete"
 	autocompletelistener "last_orders/internal/lastorders/database/listeners/autocomplete"
 	chatmessagelistener "last_orders/internal/lastorders/database/listeners/chatmessages"
@@ -1351,6 +1353,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	venueEndpoint.Register(apiMux)
 	var groupAuthorizer meetsendpoint.GroupAuthorizer
 	var meetWriter meetsendpoint.MeetWriter
+	var detailedMeetWriter *meetwritesvc.Service
 	var attendanceWriter meetsendpoint.AttendanceWriter
 	var writeAuthorizer meetsendpoint.WriteAuthorizer
 	var pastMeetsService *pastmeets.Service
@@ -1389,7 +1392,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		if err != nil {
 			return err
 		}
-		meetWriter, attendanceWriter = writer, writer
+		meetWriter, attendanceWriter, detailedMeetWriter = writer, writer, writer
 		writeAuthorizer, err = meetsendpoint.NewFirestoreWriteAuthorizer(application.firestoreClient)
 		if err != nil {
 			return err
@@ -1398,6 +1401,20 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	var attendanceStatisticsService *attendancestats.Service
 	if application.firestoreClient != nil {
 		attendanceStatisticsService, err = attendancestats.NewService(application.firestoreClient)
+		if err != nil {
+			return err
+		}
+	}
+	var winningStatisticsService *winningstats.Service
+	if application.firestoreClient != nil {
+		winningStatisticsService, err = winningstats.New(application.firestoreClient, cfg.Clock.Now)
+		if err != nil {
+			return err
+		}
+	}
+	var autopopulateService *autopopulate.Service
+	if application.firestoreClient != nil {
+		autopopulateService, err = autopopulate.New(application.firestoreClient, winningStatisticsService, cfg.Clock.Now)
 		if err != nil {
 			return err
 		}
@@ -1412,9 +1429,11 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 		Open:       application.currentMeetCacheService,
 		CurrentHub: application.venueStreamHub, Cursors: application.venueCursorCodec, Past: pastMeetsService,
 		AttendanceHub: application.venueStreamHub, AttendanceReady: application.venueCacheListener.Ready(),
-		Statistics: attendanceStatisticsService,
-		VotingHub:  application.votingStreamHub, VotingReady: application.votingStreamReady,
-		Writer: meetWriter, WriteAccess: writeAuthorizer,
+		Statistics:        attendanceStatisticsService,
+		WinningStatistics: winningStatisticsService,
+		Autopopulate:      autopopulateService,
+		VotingHub:         application.votingStreamHub, VotingReady: application.votingStreamReady,
+		Writer: meetWriter, DetailedWriter: detailedMeetWriter, WriteAccess: writeAuthorizer,
 	}).Register(apiMux)
 	apiHandler, err := apicors.Wrap(cfg.AllowedAPIOrigins, apiMux, cfg.AllowedAPIPreviewSites...)
 	if err != nil {

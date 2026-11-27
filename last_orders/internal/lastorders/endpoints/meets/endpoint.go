@@ -13,14 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"last_orders/internal/lastorders/components/attendancecache"
 	"last_orders/internal/lastorders/components/attendancestats"
+	"last_orders/internal/lastorders/components/autopopulate"
 	"last_orders/internal/lastorders/components/currentmeetcache"
 	"last_orders/internal/lastorders/components/firebaseauth"
 	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/components/sse"
 	"last_orders/internal/lastorders/components/venuecache"
 	"last_orders/internal/lastorders/components/votecache"
+	"last_orders/internal/lastorders/components/winningstats"
 	"last_orders/internal/lastorders/services/meetwrite"
 )
 
@@ -73,6 +78,18 @@ type attendanceStatisticsReader interface {
 	Read(context.Context, string, string) (attendanceStatisticsResult, error)
 }
 
+type winningStatisticsReader interface {
+	Read(context.Context, string, int) (winningstats.Result, error)
+}
+
+type autopopulateReader interface {
+	Preview(context.Context, string) (string, autopopulate.Pools, error)
+}
+
+type detailedCandidateWriter interface {
+	ChangeCandidateDetailed(context.Context, string, string, string, bool) (meetwrite.Meet, bool, error)
+}
+
 type pastMeetsReader interface {
 	Today() string
 	List(context.Context, string, string, int, string, string) ([]meetcache.Projection, bool, error)
@@ -114,9 +131,12 @@ type Endpoint struct {
 	AttendanceHub       *sse.Hub
 	AttendanceReady     <-chan struct{}
 	Statistics          attendanceStatisticsReader
+	WinningStatistics   winningStatisticsReader
+	Autopopulate        autopopulateReader
 	VotingHub           *sse.Hub
 	VotingReady         <-chan struct{}
 	Writer              MeetWriter
+	DetailedWriter      detailedCandidateWriter
 	Attendance          AttendanceWriter
 	WriteAccess         WriteAuthorizer
 }
@@ -254,6 +274,178 @@ func (e *Endpoint) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/meets/{group_id}/open/stream", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.openStream)))
 	mux.Handle("GET /api/meets/{group_id}/past", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.past)))
 	mux.Handle("GET /api/attendance/statistics", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.attendanceStatistics)))
+	mux.Handle("GET /api/groups/{group_id}/winning-statistics", firebaseauth.OptionalMiddleware(e.Auth, http.HandlerFunc(e.winningStatistics)))
+	mux.Handle("GET /api/meet/{meet_id}/candidate-pool-preview", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.candidatePoolPreview)))
+	mux.Handle("POST /api/meet/{meet_id}/autopopulate", firebaseauth.Middleware(e.Auth, http.HandlerFunc(e.autopopulate)))
+}
+
+type autopopulateResult struct {
+	Additions  []autopopulate.Candidate `json:"additions"`
+	Outcome    string                   `json:"outcome"`
+	Exhausted  bool                     `json:"exhausted"`
+	StopReason string                   `json:"stop_reason,omitempty"`
+	Uncertain  bool                     `json:"uncertain,omitempty"`
+}
+
+func (e *Endpoint) candidatePoolPreview(w http.ResponseWriter, r *http.Request) {
+	if e.Autopopulate == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "candidate_preview_unavailable", "Candidate preview is temporarily unavailable.")
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "admin")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Preview access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "Administrator access is required.")
+		return
+	}
+	_, pools, err := e.Autopopulate.Preview(r.Context(), r.PathValue("meet_id"))
+	if err != nil {
+		if errors.Is(err, autopopulate.ErrMeetNotFound) {
+			firebaseauth.WriteError(w, http.StatusNotFound, "not_found", "The requested Meet was not found.")
+			return
+		}
+		if errors.Is(err, autopopulate.ErrMeetClosed) {
+			firebaseauth.WriteError(w, http.StatusConflict, "meet_closed", "Candidate preview is only available while voting is open.")
+			return
+		}
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "candidate_preview_unavailable", "Candidate preview is temporarily unavailable.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(pools)
+}
+
+func (e *Endpoint) autopopulate(w http.ResponseWriter, r *http.Request) {
+	if e.Autopopulate == nil || e.Groups == nil || e.Writer == nil || e.DetailedWriter == nil || e.WriteAccess == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "autopopulate_unavailable", "Autopopulate is temporarily unavailable.")
+		return
+	}
+	meetID := r.PathValue("meet_id")
+	groupID, err := e.Writer.GroupID(r.Context(), meetID)
+	if e.writeServiceError(w, err) {
+		return
+	}
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	allowed, err := e.WriteAccess.CanWrite(r.Context(), currentUID(r.Context()), "canAddPubToPoll")
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "authorization_unavailable", "Meet access could not be verified.")
+		return
+	}
+	if !allowed {
+		firebaseauth.WriteError(w, http.StatusForbidden, "forbidden", "You are not allowed to change Meet candidates.")
+		return
+	}
+	_, pools, err := e.Autopopulate.Preview(r.Context(), meetID)
+	if err != nil {
+		if errors.Is(err, autopopulate.ErrMeetNotFound) {
+			firebaseauth.WriteError(w, http.StatusNotFound, "not_found", "The requested Meet was not found.")
+			return
+		}
+		if errors.Is(err, autopopulate.ErrMeetClosed) {
+			firebaseauth.WriteError(w, http.StatusConflict, "meet_closed", "Autopopulate is only available while voting is open.")
+			return
+		}
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "autopopulate_unavailable", "Autopopulate data is temporarily unavailable.")
+		return
+	}
+	result := autopopulateResult{Additions: []autopopulate.Candidate{}}
+	attempted := map[string]bool{}
+	attempt := func(candidate autopopulate.Candidate) (bool, error) {
+		if attempted[candidate.ID] {
+			return false, nil
+		}
+		attempted[candidate.ID] = true
+		_, added, writeErr := e.DetailedWriter.ChangeCandidateDetailed(r.Context(), meetID, candidate.ID, currentUID(r.Context()), true)
+		if errors.Is(writeErr, meetwrite.ErrVenueNotFound) {
+			return false, nil
+		}
+		if writeErr != nil {
+			return false, writeErr
+		}
+		if added {
+			result.Additions = append(result.Additions, candidate)
+		}
+		return added, nil
+	}
+	for groupIndex, candidates := range pools.SelectionGroups() {
+		for _, candidate := range candidates {
+			if len(result.Additions) == 3 {
+				break
+			}
+			added, writeErr := attempt(candidate)
+			if writeErr != nil {
+				result.Outcome = "aborted"
+				result.StopReason = "candidate_add_failed"
+				if errors.Is(writeErr, meetwrite.ErrInvalidState) {
+					result.StopReason = "meet_closed"
+				}
+				code := status.Code(writeErr)
+				result.Uncertain = code == codes.Unavailable || code == codes.DeadlineExceeded || code == codes.Unknown || code == codes.Internal || code == codes.Canceled
+				if result.Uncertain {
+					result.Outcome = "uncertain"
+				} else if len(result.Additions) > 0 {
+					result.Outcome = "partial"
+				} else {
+					result.Outcome = "aborted"
+				}
+				result.Exhausted = false
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				_ = json.NewEncoder(w).Encode(result)
+				return
+			}
+			if added && groupIndex < 3 {
+				break
+			}
+		}
+	}
+	result.Exhausted = len(result.Additions) < 3
+	if result.Exhausted {
+		result.Outcome = "exhausted"
+	} else {
+		result.Outcome = "complete"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (e *Endpoint) winningStatistics(w http.ResponseWriter, r *http.Request) {
+	if e.WinningStatistics == nil || e.Groups == nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "winning_statistics_unavailable", "Winning statistics are temporarily unavailable.")
+		return
+	}
+	groupID := r.PathValue("group_id")
+	if !e.authorizeGroupRead(w, r, groupID) {
+		return
+	}
+	years := 1
+	if values, ok := r.URL.Query()["years"]; ok {
+		if len(values) != 1 {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The statistics window is invalid.")
+			return
+		}
+		parsed, err := strconv.Atoi(values[0])
+		if err != nil || parsed < 1 || parsed > 100 {
+			firebaseauth.WriteError(w, http.StatusBadRequest, "invalid_request", "The statistics window is invalid.")
+			return
+		}
+		years = parsed
+	}
+	result, err := e.WinningStatistics.Read(r.Context(), groupID, years)
+	if err != nil {
+		firebaseauth.WriteError(w, http.StatusServiceUnavailable, "winning_statistics_unavailable", "Winning statistics are temporarily unavailable.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 type attendanceUpdateRequest struct {
