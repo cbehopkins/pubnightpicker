@@ -78,7 +78,9 @@ When("the admin opens winning venue statistics", async function () {
             && response.request().method() === "GET";
     });
     this.winningStatsResponse.catch(() => undefined);
-    await admin.goto(`${BASE_URL}/stats/winning_venues?limit=5&years=1`);
+    // A wide configured limit keeps fixtures visible in both ranked lists even
+    // when earlier scenarios have added other Venues to the shared emulator.
+    await admin.goto(`${BASE_URL}/stats/winning_venues?limit=100&years=1`);
     await admin.getByRole("heading", { name: "Winning Venue Stats", exact: true }).waitFor();
 });
 
@@ -109,8 +111,8 @@ Then("the admin sees accurate Group-scoped winning statistics", async function (
         const matchingRows = admin.getByRole("listitem").filter({
             has: admin.getByText(displayName, { exact: true }),
         });
-        const rowTexts = await matchingRows.allTextContents();
-        assert.equal(rowTexts.length, 2, `${displayName} must be shown in both ranking lists`);
+        assert.equal(await matchingRows.count(), 2,
+            `${displayName} must be shown in both ranking lists with the configured wide limit`);
         for (const row of await matchingRows.all()) {
             assert.equal((await row.locator(".text-end .fw-semibold").textContent())?.trim(), count,
                 `${displayName} must show exactly ${count} win(s)`);
