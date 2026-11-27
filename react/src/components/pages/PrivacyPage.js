@@ -68,7 +68,7 @@ function PrivacyExportPanel() {
             <Card.Body>
                 <h2 className="h5 mb-2">Export Your Data</h2>
                 <p className="mb-3 text-body-secondary">
-                    Download a JSON copy of your account preferences, voting data, attendance records, and chat messages. The export includes both raw records and an expanded view with event details.
+                    Download a JSON copy of retained application data we can reliably link to your account, including profile and access information, participation, chat, and attributable notification or administrative activity. Secrets, email delivery history, provider logs, backups, and records we cannot reliably attribute are excluded. Meet and Venue details may be unavailable for older records.
                 </p>
                 <Button type="button" onClick={handleExport} disabled={isExporting}>
                     {isExporting ? "Preparing export..." : "Download My Data (JSON)"}
