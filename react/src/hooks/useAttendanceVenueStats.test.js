@@ -3,77 +3,33 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import useAttendanceVenueStats, { aggregateVenueAttendance, getVenueIdsForMeet } from "./useAttendanceVenueStats";
-import useWinningVenueStats from "./useWinningVenueStats";
 
-const { whereMock, requestLastOrdersMock } = vi.hoisted(() => ({
-  whereMock: vi.fn((...args) => args),
-  requestLastOrdersMock: vi.fn(),
-}));
+const { requestLastOrdersMock } = vi.hoisted(() => ({ requestLastOrdersMock: vi.fn() }));
 
-vi.mock("../firebase", () => ({ db: {} }));
 vi.mock("../utils/lastOrdersApi", () => ({
   requestLastOrders: requestLastOrdersMock,
-}));
-vi.mock("firebase/firestore", () => ({
-  collection: vi.fn((...args) => args),
-  query: vi.fn((...args) => args),
-  where: whereMock,
-  orderBy: vi.fn((...args) => args),
-  doc: vi.fn((...args) => args),
-  getDoc: vi.fn(),
-  onSnapshot: vi.fn((query, onNext) => {
-    onNext({
-      forEach: (visit) => [
-        { id: "meet-1", data: () => ({ completed: true, date: "2026-04-04", selected: "venue-a", restaurant: "venue-r", pubs: { "venue-a": {}, "venue-b": {} } }) },
-        { id: "open", data: () => ({ completed: true, date: "2026-04-04", selected: "" }) },
-        { id: "derived-complete", data: () => ({ completed: false, date: "2026-04-04", selected: "venue-b" }) },
-        { id: "unexpected-any", data: () => ({ completed: false, date: "2026-04-04", selected: "any" }) },
-      ].forEach(visit),
-    });
-    return () => { };
-  }),
 }));
 
 describe("attendance statistics API boundary", () => {
   it("loads aggregate counts from Last Orders instead of direct attendance reads", async () => {
-    const anyError = vi.spyOn(console, "error").mockImplementation(() => {});
     requestLastOrdersMock.mockResolvedValue({
       counts_by_venue_id: { "venue-a": 1, "venue-b": 1, "venue-r": 0 },
       last_date_by_venue_id: { "venue-a": "2026-04-04", "venue-b": "2026-04-04", "venue-r": "2026-04-04" },
     });
-    const { result } = renderHook(() => ({
-      winning: useWinningVenueStats(1),
-      attendance: useAttendanceVenueStats(1),
-    }));
+    const { result } = renderHook(() => useAttendanceVenueStats(1));
 
-    await waitFor(() => expect(result.current.attendance.isLoading).toBe(false));
-    expect(result.current.winning.meets["meet-1"]).toMatchObject({
-      votingCompleted: true,
-      selectedVenueId: "venue-a",
-      restaurantId: "venue-r",
-      venues: { "venue-a": {}, "venue-b": {} },
-    });
-    expect(result.current.winning.meets).not.toHaveProperty("open");
-    expect(result.current.winning.meets["derived-complete"]).toMatchObject({
-      votingCompleted: true,
-      selectedVenueId: "venue-b",
-    });
-    expect(result.current.winning.meets["unexpected-any"].votingCompleted).toBe(true);
-    expect(result.current.attendance.countsByVenueId).toEqual({
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.countsByVenueId).toEqual({
       "venue-a": 1,
       "venue-b": 1,
       "venue-r": 0,
     });
-    expect(result.current.attendance.lastDateByVenueId["venue-r"]).toBe("2026-04-04");
+    expect(result.current.lastDateByVenueId["venue-r"]).toBe("2026-04-04");
     expect(requestLastOrdersMock).toHaveBeenCalledWith("api/attendance/statistics", expect.objectContaining({
       method: "GET",
       query: expect.objectContaining({ start: expect.any(String), end: expect.any(String) }),
     }));
-    expect(whereMock).not.toHaveBeenCalledWith("completed", "==", true);
-    expect(whereMock).toHaveBeenCalledWith("date", ">=", result.current.winning.startDate);
-    expect(whereMock).toHaveBeenCalledWith("date", "<=", result.current.winning.endDate);
-    expect(anyError).toHaveBeenCalled();
-    anyError.mockRestore();
+    expect(requestLastOrdersMock).toHaveBeenCalledTimes(1);
   });
 });
 

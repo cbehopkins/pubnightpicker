@@ -30,8 +30,8 @@ import {
 } from "../../dbtools/pollActionAudit";
 import { db } from "../../firebase";
 import { formatLocalDateTime } from "../../utils/dateTimeFormatting";
-import { useActiveMeets } from "../../hooks/useMeets";
-import useAutopopulateVenueSelector from "../../hooks/useAutopopulateVenueSelector";
+import { useOpenMeets } from "../../hooks/useMeets";
+import { previewMeetCandidatePools } from "../../dbtools/polls";
 import { DEFAULT_NOTIFICATION_SETTINGS, setAdminDeletePaused, setNotificationSetting, watchAdminDeletePaused, watchNotificationSettings } from "../../dbtools/diagnosticsConfig";
 
 const AUDIT_ACTION_FILTER_ALL = "all";
@@ -81,10 +81,10 @@ function AutopopulateCandidateBucket({ title, rows, emptyText }) {
                 <ul className="small mb-0 ps-3">
                     {rows.map((row) => (
                         <li key={`${title}-${row.id}`}>
-                            <strong>{row.label || row.id}</strong>
+                            <strong>{row.label || row.name || row.id}</strong>
                             {` (${row.id})`}
                             {typeof row.count === "number" ? `, wins=${row.count}` : ""}
-                            {row.lastWonDate ? `, lastWon=${row.lastWonDate}` : ""}
+                            {(row.lastWonDate || row.last_won_date) ? `, lastWon=${row.lastWonDate || row.last_won_date}` : ""}
                         </li>
                     ))}
                 </ul>
@@ -94,13 +94,27 @@ function AutopopulateCandidateBucket({ title, rows, emptyText }) {
 }
 
 function AutopopulateCandidateMeetCard({ meetId, meet }) {
-    const {
-        mostVisited,
-        leastVisited,
-        random,
-        isLoading,
-        error,
-    } = useAutopopulateVenueSelector(meetId, meet?.venues);
+    const [pools, setPools] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState("");
+    useEffect(() => {
+        let cancelled = false;
+        setIsLoading(true);
+        setError("");
+        setPools(null);
+        previewMeetCandidatePools(meetId).then((value) => {
+            if (!cancelled) {
+                setPools(value);
+                setIsLoading(false);
+            }
+        }).catch(() => {
+            if (!cancelled) {
+                setError("Unable to load candidate preview. Please try again.");
+                setIsLoading(false);
+            }
+        });
+        return () => { cancelled = true; };
+    }, [meetId]);
 
     return (
         <article className="card mb-3">
@@ -114,23 +128,26 @@ function AutopopulateCandidateMeetCard({ meetId, meet }) {
                     <p className="small text-danger mb-0">{error}</p>
                 )}
                 {!isLoading && !error && (
-                    <div className="row g-3">
-                        <AutopopulateCandidateBucket
-                            title="Most visited"
-                            rows={mostVisited}
-                            emptyText="No most-visited candidates available."
-                        />
-                        <AutopopulateCandidateBucket
-                            title="Least visited"
-                            rows={leastVisited}
-                            emptyText="No least-visited candidates available."
-                        />
-                        <AutopopulateCandidateBucket
-                            title="Random viable"
-                            rows={random}
-                            emptyText="No random viable candidates available."
-                        />
-                    </div>
+                    <>
+                        {pools?.empty_history && <p className="small text-body-secondary">No completed history in the past year; candidate pools are empty.</p>}
+                        <div className="row g-3">
+                            <AutopopulateCandidateBucket
+                                title="Most visited"
+                                rows={pools?.most_visited || []}
+                                emptyText="No most-visited candidates available."
+                            />
+                            <AutopopulateCandidateBucket
+                                title="Least visited"
+                                rows={pools?.least_visited || []}
+                                emptyText="No least-visited candidates available."
+                            />
+                            <AutopopulateCandidateBucket
+                                title="Random viable"
+                                rows={pools?.general || []}
+                                emptyText="No random viable candidates available."
+                            />
+                        </div>
+                    </>
                 )}
             </div>
         </article>
@@ -179,14 +196,19 @@ export function AutopopulateCandidateListsPanel() {
 }
 
 function AutopopulateCandidateListsContent() {
-    const meetData = useActiveMeets();
+    const groupId = useSelector((state) => state.group.groupId);
+    const uid = useSelector((state) => state.auth.uid);
+    const meetData = useOpenMeets(groupId, uid);
     const activeMeets = [...meetData.sortedByDate()];
 
     return (
         <>
-            {activeMeets.length === 0 ? (
+            {meetData.isLoading && <p className="small text-body-secondary">Loading open Meets...</p>}
+            {meetData.isStale && <p className="small text-warning">Showing the last available open Meet list.</p>}
+            {meetData.errorMessage && <p role="alert" className="small text-danger">Open Meets are unavailable: {meetData.errorMessage}</p>}
+            {!meetData.isLoading && !meetData.errorMessage && activeMeets.length === 0 ? (
                 <p className="small text-body-secondary mb-0">No active polls found.</p>
-            ) : (
+            ) : !meetData.errorMessage && (
                 activeMeets.map(([meetId, meet]) => (
                     <AutopopulateCandidateMeetCard key={meetId} meetId={meetId} meet={meet} />
                 ))

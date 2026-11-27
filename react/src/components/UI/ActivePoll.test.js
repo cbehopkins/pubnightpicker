@@ -5,10 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActivePoll from "./ActivePoll";
 import { addVenueToMeet } from "../../dbtools/polls";
 
-const { useRoleMock, useOnlineStatusMock, useAutoPopulateMock, autopopulateActionMock, pollVotePropsMock } = vi.hoisted(() => ({
+const { useRoleMock, useOnlineStatusMock, autopopulateActionMock, pollVotePropsMock } = vi.hoisted(() => ({
     useRoleMock: vi.fn(),
     useOnlineStatusMock: vi.fn(),
-    useAutoPopulateMock: vi.fn(),
     autopopulateActionMock: vi.fn(async () => undefined),
     pollVotePropsMock: vi.fn(),
 }));
@@ -26,13 +25,10 @@ vi.mock("../../hooks/useOnlineStatus", () => ({
     default: useOnlineStatusMock,
 }));
 
-vi.mock("../../hooks/useAutopopulateVenueSelector", () => ({
-    default: useAutoPopulateMock,
-}));
-
 vi.mock("../../hooks/useAutopopulateAction", () => ({
     default: () => ({
         handleAutopopulate: autopopulateActionMock,
+        isLoading: false,
     }),
 }));
 
@@ -92,13 +88,6 @@ describe("ActivePoll autopopulate", () => {
 
         useOnlineStatusMock.mockReturnValue({ isOnline: true });
 
-        useAutoPopulateMock.mockReturnValue({
-            mostVisited: [{ id: "v1", label: "Venue 1", count: 10, lastWonDate: "2026-04-10" }],
-            leastVisited: [{ id: "v2", label: "Venue 2", count: 1, lastWonDate: "2026-04-09" }],
-            random: [{ id: "v3", label: "Venue 3", count: 0, lastWonDate: null }],
-            isLoading: false,
-            error: null,
-        });
     });
 
     afterEach(() => {
@@ -110,7 +99,7 @@ describe("ActivePoll autopopulate", () => {
         expect(screen.getByRole("button", { name: /autopopulate/i })).toBeTruthy();
     });
 
-    it("passes Meet venues to voting and autopopulate", () => {
+    it("passes the Meet to the on-demand action hook", () => {
         const venues = { v1: { name: "Venue 1" } };
         renderComponent({ currentVenues: venues });
 
@@ -118,7 +107,7 @@ describe("ActivePoll autopopulate", () => {
             poll_id: "poll-1",
             poll_data: { date: "2026-05-11", venues },
         }));
-        expect(useAutoPopulateMock).toHaveBeenLastCalledWith("poll-1", venues);
+        expect(screen.getByRole("button", { name: /autopopulate/i }).hasAttribute("disabled")).toBe(false);
     });
 
     it("adds up to three distinct venues when autopopulate is clicked", async () => {
@@ -131,36 +120,9 @@ describe("ActivePoll autopopulate", () => {
         });
     });
 
-    it("passes through click for overlapping categories", async () => {
-        useAutoPopulateMock.mockReturnValue({
-            mostVisited: [{ id: "v1", label: "Venue 1", count: 10, lastWonDate: "2026-04-10" }],
-            leastVisited: [{ id: "v1", label: "Venue 1", count: 10, lastWonDate: "2026-04-10" }],
-            random: [{ id: "v1", label: "Venue 1", count: 10, lastWonDate: "2026-04-10" }],
-            isLoading: false,
-            error: null,
-        });
-
+    it("keeps the action available when the previous result was empty", () => {
         renderComponent();
-
-        fireEvent.click(screen.getByRole("button", { name: /autopopulate/i }));
-
-        await waitFor(() => {
-            expect(autopopulateActionMock).toHaveBeenCalledTimes(1);
-        });
-    });
-
-    it("disables autopopulate button when no viable venues exist", () => {
-        useAutoPopulateMock.mockReturnValue({
-            mostVisited: [],
-            leastVisited: [],
-            random: [],
-            isLoading: false,
-            error: null,
-        });
-
-        renderComponent();
-
-        expect(screen.getByRole("button", { name: /autopopulate/i }).hasAttribute("disabled")).toBe(true);
+        expect(screen.getByRole("button", { name: /autopopulate/i }).hasAttribute("disabled")).toBe(false);
     });
 
     it("adds banned venue manually and shows warning", async () => {

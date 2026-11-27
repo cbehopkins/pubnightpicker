@@ -1,62 +1,41 @@
 // @ts-check
 
-import { useCallback } from "react";
-import { addVenueToMeet } from "../dbtools/polls";
+import { useCallback, useRef, useState } from "react";
+import { autopopulateMeet } from "../dbtools/polls";
 import { getUserFacingErrorMessage } from "../permissions";
 import { notifyError, notifyInfo } from "../utils/notify";
-import { chooseAutopopulateVenueIds } from "../utils/autopoplateFiltering";
 
-/**
- * @param {{
- *  pollId: string,
- *  pollVenues: Record<string, unknown> | undefined,
- *  mostVisited: { id: string }[],
- *  leastVisited: { id: string }[],
- *  randomVenues: { id: string }[],
- * }} params
- */
-export default function useAutopopulateAction({
-    pollId,
-    pollVenues,
-    mostVisited,
-    leastVisited,
-    randomVenues,
-}) {
+/** @param {string} pollId */
+export default function useAutopopulateAction(pollId) {
+    const [isLoading, setIsLoading] = useState(false);
+    const pending = useRef(false);
     const handleAutopopulate = useCallback(async () => {
+        if (pending.current) return;
+        pending.current = true;
+        setIsLoading(true);
         try {
-            const venuesToAdd = chooseAutopopulateVenueIds(
-                mostVisited,
-                leastVisited,
-                randomVenues,
-                pollVenues
-            );
-
-            if (venuesToAdd.length === 0) {
-                notifyInfo("No viable venues were available to auto-add.");
-                return;
-            }
-
-            let successCount = 0;
-            for (const venueId of venuesToAdd) {
-                try {
-                    await addVenueToMeet(venueId, pollId);
-                    successCount++;
-                } catch (err) {
-                    console.error(`Failed to add venue ${venueId}:`, err);
-                }
-            }
-
-            if (successCount > 0) {
-                notifyInfo(`Added ${successCount} venue${successCount !== 1 ? "s" : ""} to poll`);
-            }
-
-            if (successCount < venuesToAdd.length) {
-                notifyError(`Only ${successCount} of ${venuesToAdd.length} venues were added. Please try again.`);
+            const result = await autopopulateMeet(pollId);
+            const additions = Array.isArray(result?.additions) ? result.additions : [];
+            if (["aborted", "partial", "uncertain"].includes(result?.outcome)) {
+                const count = additions.length;
+                const names = additions.map((addition) => addition?.name || addition?.id).filter(Boolean).join(", ");
+                const confirmed = names ? `Confirmed: ${names}.` : "No additions were confirmed.";
+                const message = result.uncertain
+                    ? `The result is uncertain. ${confirmed} No later candidate was attempted.`
+                    : `Autopopulate stopped after ${count} confirmed addition${count === 1 ? "" : "s"}. ${confirmed}`;
+                notifyError(message);
+            } else if (additions.length === 0) {
+                notifyInfo("No candidates were available to add.");
+            } else {
+                notifyInfo(`Added ${additions.length} venue${additions.length === 1 ? "" : "s"} to the poll${result?.exhausted ? "; no more candidates were available." : "."}`);
             }
         } catch (error) {
             notifyError(getUserFacingErrorMessage(error, "Unable to autopopulate venues."));
+        } finally {
+            pending.current = false;
+            setIsLoading(false);
         }
-    }, [leastVisited, mostVisited, pollId, pollVenues, randomVenues]);
+    }, [pollId]);
 
-    return { handleAutopopulate };
+    return { handleAutopopulate, isLoading };
 }

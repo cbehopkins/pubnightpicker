@@ -1,42 +1,34 @@
 # Autopopulate Contract
 
-## Goal
+Last Orders owns candidate-pool calculation and candidate writes. Rendering an
+Active Poll button performs no history or candidate-pool request. A deliberate
+press sends one `POST /api/meet/{meet_id}/autopopulate`; each press is a new
+request and the backend recalculates from current state.
 
-When an admin clicks Autopopulate on an active poll, the system should add exactly 3 unique venues whenever at least 3 viable venues exist.
+The backend preserves the established one-year history, four-week inclusive
+recent-win cutoff, pub-only eligibility, banned and existing-candidate
+exclusions, ranking windows, category fallbacks, and weighted fallback pool.
+An action attempts up to three distinct additions even when the Meet already
+has candidates. No completed history produces empty candidate pools.
 
-If fewer than 3 viable venues exist, the system should add all remaining viable venues and stop.
+Each addition is written and audited independently. Concurrent candidates that
+are already present do not count as additions. A definite Venue-specific
+failure allows another eligible Venue to be tried. Permission or systemic
+failures stop the action; uncertain writes also stop it to avoid accidental
+extra additions. Confirmed additions are retained and returned with an abort
+result when the response is delivered. The action has no automatic retry or
+rollback.
 
-## Viable venue rules
+The action response distinguishes `complete`, `exhausted`, and `aborted`
+outcomes and reports confirmed additions. A lost response can leave the caller
+uncertain about the result. The Active Polls button remains available after an
+empty or exhausted result and prevents overlapping submissions while pending.
 
-A venue is viable only if all conditions are true:
+Administrators can inspect a read-only observation through
+`GET /api/meet/{meet_id}/candidate-pool-preview`. It does not reserve or add
+candidates, and its result may differ from a later action. Diagnostics loads
+previews only when the candidate-list panel is opened and obtains its open Meets
+from the Group-scoped Last Orders API.
 
-- Not already present on the current poll.
-- Not marked banned.
-- Not visited within the recent exclusion window (currently 4 weeks).
-- Venue type is pub.
-
-## Candidate pools
-
-Autopopulate computes candidates from three buckets:
-
-- Most visited
-- Least visited
-- Random viable venues
-
-The ranking sample window for most/least starts small and increases incrementally (in steps of 5 rows) until the top/bottom buckets expose at least 3 unique viable venues, or the ranked dataset is exhausted.
-
-## Selection behavior
-
-Selection is uniqueness-first:
-
-1. Pick one unique venue from most visited.
-2. Pick one unique venue from least visited.
-3. Pick one unique venue from random.
-4. If fewer than 3 unique venues were picked due to overlap, keep backfilling from remaining unique candidates across the pools.
-5. Stop when 3 are selected, or when no additional unique viable venues remain.
-
-## UX messaging
-
-- Button tooltip should communicate "3 unique venues when possible".
-- Success toast should report the actual count added.
-- If zero venues are viable, show a no-viable-venues informational message.
+The public schemas, access rules and response behavior are documented in
+[`Last Orders API contract`](../../last_orders/docs/pubnightpicker-openapi-v1.yaml).

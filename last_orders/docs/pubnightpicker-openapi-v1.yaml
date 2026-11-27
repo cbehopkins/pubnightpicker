@@ -1532,6 +1532,103 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           description: Attendance cleanup or authentication is temporarily unavailable.
+  /groups/{group_id}/winning-statistics:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [Meets]
+      operationId: getWinningVenueStatistics
+      summary: Get Group-scoped winning Venue totals
+      description: |
+        Reads authoritative completed Meet history for this Group on demand.
+        `years` defaults to 1 and is a calendar-year window ending today in
+        Europe/London; both endpoints are inclusive. Public Groups allow
+        anonymous reads. Private Groups require membership or global-admin
+        authority. Supplied bearer credentials are always validated. Missing
+        selected Venues remain in the aggregate by ID. Empty history is a valid
+        report; malformed completed Meets and source failures return 503.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: years
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 1 }
+      responses:
+        '200':
+          description: Per-Venue counts and latest selected date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group_id, start_date, end_date, counts_by_venue_id, last_date_by_venue_id]
+                properties:
+                  group_id: { type: string }
+                  start_date: { type: string, format: date }
+                  end_date: { type: string, format: date }
+                  counts_by_venue_id: { type: object, additionalProperties: { type: integer, minimum: 1 } }
+                  last_date_by_venue_id: { type: object, additionalProperties: { type: string, format: date } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: History or Group authorization is temporarily unavailable or malformed. }
+  /meet/{meet_id}/candidate-pool-preview:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    get:
+      tags: [Meets]
+      operationId: previewMeetCandidatePools
+      summary: Preview autopopulate candidate pools
+      description: Authenticated global administrators only. This read-only observation can differ from a later action.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current candidate pools.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group_id, most_visited, least_visited, general]
+                properties:
+                  group_id: { type: string }
+                  most_visited: { type: array, items: { $ref: '#/components/schemas/AutopopulateCandidate' } }
+                  least_visited: { type: array, items: { $ref: '#/components/schemas/AutopopulateCandidate' } }
+                  general: { type: array, items: { $ref: '#/components/schemas/AutopopulateCandidate' } }
+                  empty_history: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Meet history or venue data is temporarily unavailable. }
+  /meet/{meet_id}/autopopulate:
+    parameters:
+      - $ref: '#/components/parameters/MeetId'
+    post:
+      tags: [Meets]
+      operationId: autopopulateMeetCandidates
+      summary: Add up to three eligible candidates
+      description: Requires Group read access and `canAddPubToPoll`. Each confirmed addition is independently committed and audited. A 200 result may be partial or aborted; uncertain writes stop further attempts.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Completed, exhausted or aborted result, including confirmed additions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [additions, outcome, exhausted]
+                properties:
+                  additions: { type: array, items: { $ref: '#/components/schemas/AutopopulateCandidate' } }
+                  outcome: { type: string, enum: [complete, exhausted, partial, aborted, uncertain] }
+                  exhausted: { type: boolean }
+                  stop_reason: { type: string }
+                  uncertain: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Authorization, Meet or candidate-pool source is temporarily unavailable. }
   /attendance/statistics:
     get:
       tags: [Attendance]
@@ -2337,6 +2434,14 @@ components:
         status:
           type: string
           enum: [missing]
+    AutopopulateCandidate:
+      type: object
+      required: [id, name, count]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        count: { type: integer, minimum: 0 }
+        last_won_date: { type: string, format: date }
     AttendanceStatistics:
       type: object
       additionalProperties: false
