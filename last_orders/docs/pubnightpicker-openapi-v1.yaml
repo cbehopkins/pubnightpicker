@@ -34,9 +34,61 @@ tags:
   - name: Meets
   - name: Voting
   - name: Attendance
+  - name: Account
 security:
   - bearerAuth: []
 paths:
+  /account/export:
+    get:
+      tags: [Account]
+      operationId: exportAccountData
+      summary: Export the authenticated user's application data
+      description: |
+        Builds a complete JSON export for the Firebase principal authenticated
+        by the bearer token. The request has no target-user parameter; identity
+        is never selected by client input. Unattributable records are omitted.
+        Authentication secrets, push endpoint credentials, email delivery
+        history, provider and infrastructure logs, and backups are excluded.
+        Chat messages are included only when their sender UID matches the
+        authenticated caller.
+        The export is assembled from reads that may observe different points in
+        time and is not a cross-source atomic snapshot. Required source failures
+        return an error rather than a partial export.
+      responses:
+        '200':
+          description: Complete application data export.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exported_at, user_id, notice, account, roles, groups, votes, attendance_responses, chat_messages, administrative_activity, notification_activity, notification_subscriptions]
+                properties:
+                  exported_at: { type: string, format: date-time }
+                  user_id: { type: string }
+                  notice: { type: object, description: Export scope, attribution limitations, and omissions. }
+                  account: { type: object, description: Whitelisted caller profile and preference fields. }
+                  roles: { type: array, items: { type: string } }
+                  groups: { type: array, items: { type: object } }
+                  votes: { type: array, items: { type: object } }
+                  attendance_responses: { type: array, items: { type: object } }
+                  chat_messages: { type: array, items: { type: object } }
+                  administrative_activity: { type: array, items: { type: object } }
+                  notification_activity: { type: array, items: { type: object } }
+                  notification_subscriptions: { type: array, items: { type: object } }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Authentication or a required export source is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /groups:
     get:
       tags: [Groups]

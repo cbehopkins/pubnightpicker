@@ -55,6 +55,7 @@ login email takes effect.
 
 ### Operational and support data
 - notification request and acknowledgement records
+- administrative and application audit records, such as Meet actions and account-deletion requests
 - security, access, and diagnostic logs produced by Firebase, Google Cloud, or hosting infrastructure
 
 ## 4. Why We Use Personal Data
@@ -107,7 +108,7 @@ Any email delivery service used for notifications may also process data outside 
 | Venue votes and attendance records | Up to 12 months after the event date |
 | Chat messages | Up to 12 months after posting |
 | Notification request and acknowledgement records | Up to 30 days |
-| Application activity logs | Not retained in the database; any logs exist only locally in the browser session |
+| Administrative and application audit records | Retained in the application database; export includes attributable records where available |
 | Backups | Minimum period required for recovery |
 
 
@@ -136,6 +137,17 @@ You can contact us using the details above to request:
 - withdrawal of optional email notification consent
 
 We may need to verify your identity before fulfilling a request.
+
+The in-app JSON export contains retained application data that can be reliably
+linked to the signed-in account, including account and access information,
+participation, chat, and attributable notification and administrative activity.
+Records that cannot be reliably attributed are excluded. Shared records are
+filtered to avoid disclosing other users' personal data. Authentication
+credentials and push subscription secrets, email delivery history, provider or
+infrastructure logs, and backups are not included. Related event and venue
+details may be unavailable when those records have been deleted or cannot be
+accessed. Chat messages are included when their sender UID matches the signed-in
+account. Notification records without reliable account attribution are excluded.
 
 ## 11. Automated Decision-Making
 

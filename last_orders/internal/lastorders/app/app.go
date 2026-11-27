@@ -53,6 +53,7 @@ import (
 	testemaillistener "last_orders/internal/lastorders/database/listeners/testemail"
 	venuecachelistener "last_orders/internal/lastorders/database/listeners/venuecache"
 	accountcleanupendpoint "last_orders/internal/lastorders/endpoints/accountcleanup"
+	accountdataendpoint "last_orders/internal/lastorders/endpoints/accountdata"
 	emailhistoryendpoint "last_orders/internal/lastorders/endpoints/emailhistory"
 	groupsendpoint "last_orders/internal/lastorders/endpoints/groups"
 	landlordinternal "last_orders/internal/lastorders/endpoints/landlordinternal"
@@ -1301,6 +1302,7 @@ func configurePublicHTTP(application *App, cfg Config, history emailhistoryendpo
 	groupEndpoint := &groupsendpoint.Endpoint{Reader: application.groupCacheService, Auth: cfg.AuthVerifier}
 	groupEndpoint.Register(apiMux)
 	if application.firestoreClient != nil {
+		(&accountdataendpoint.Endpoint{Client: application.firestoreClient}).RegisterWithAuth(apiMux, cfg.AuthVerifier)
 		voteCleaner, err := votecleanup.NewFirestoreCleaner(application.firestoreClient)
 		if err != nil {
 			return err

@@ -6,25 +6,11 @@ import PrivacyPage from "./PrivacyPage";
 
 const {
     useSelectorMock,
-    getUserDocMock,
-    getDocMock,
-    getDocsMock,
-    collectionMock,
-    docMock,
-    queryMock,
-    whereMock,
     requestLastOrdersMock,
     notifyErrorMock,
 } = vi.hoisted(() => {
     return {
         useSelectorMock: vi.fn(),
-        getUserDocMock: vi.fn(),
-        getDocMock: vi.fn(),
-        getDocsMock: vi.fn(),
-        collectionMock: vi.fn((dbArg, name) => ({ kind: "collection", name })),
-        docMock: vi.fn((dbArg, name, id) => ({ kind: "doc", name, id })),
-        queryMock: vi.fn((base, ...clauses) => ({ kind: "query", base, clauses })),
-        whereMock: vi.fn((field, op, value) => ({ field, op, value })),
         requestLastOrdersMock: vi.fn(),
         notifyErrorMock: vi.fn(),
     };
@@ -33,29 +19,6 @@ const {
 vi.mock("react-redux", () => {
     return {
         useSelector: useSelectorMock,
-    };
-});
-
-vi.mock("firebase/firestore", () => {
-    return {
-        collection: collectionMock,
-        doc: docMock,
-        getDoc: getDocMock,
-        getDocs: getDocsMock,
-        query: queryMock,
-        where: whereMock,
-    };
-});
-
-vi.mock("../../firebase", () => {
-    return {
-        db: { name: "mock-db" },
-    };
-});
-
-vi.mock("../../dbtools/getUserDoc", () => {
-    return {
-        default: getUserDocMock,
     };
 });
 
@@ -77,19 +40,6 @@ vi.mock("../../../docs/privacy-notice.md?raw", () => {
     };
 });
 
-function createSnapshot(docs) {
-    return {
-        docs,
-    };
-}
-
-function createDocSnapshot(id, data) {
-    return {
-        id,
-        data: () => data,
-    };
-}
-
 describe("PrivacyPage", () => {
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;
@@ -107,15 +57,8 @@ describe("PrivacyPage", () => {
         downloadedJsonText = null;
 
         useSelectorMock.mockReset();
-        getUserDocMock.mockReset();
-        getDocMock.mockReset();
-        getDocsMock.mockReset();
         requestLastOrdersMock.mockReset();
         notifyErrorMock.mockReset();
-        collectionMock.mockClear();
-        docMock.mockClear();
-        queryMock.mockClear();
-        whereMock.mockClear();
 
         useSelectorMock.mockImplementation((selector) => selector({
             auth: {
@@ -125,99 +68,6 @@ describe("PrivacyPage", () => {
         }));
 
         console.error = vi.fn();
-
-        getUserDocMock.mockResolvedValue({
-            data: () => ({
-                uid: "user-123",
-                name: "Legacy private name",
-                email: "user@example.com",
-                notificationEmailEnabled: true,
-                votesVisible: true,
-            }),
-        });
-
-        getDocMock.mockResolvedValue({
-            exists: () => true,
-            data: () => ({
-                uid: "user-123",
-                name: "Preferred User",
-                votesVisible: false,
-            }),
-        });
-
-        requestLastOrdersMock.mockImplementation(async (path, options) => {
-            if (path === "api/venues" && options.query.cursor === undefined) {
-                return {
-                    venues: [{ id: "venueA", name: "Venue A", address: "1 Main St" }],
-                    next_cursor: "next-page",
-                };
-            }
-            if (path === "api/venues") {
-                return {
-                    venues: [{ id: "venueB", name: "Venue B", address: "2 High St" }],
-                    next_cursor: null,
-                };
-            }
-            if (path === "api/meet/poll-1/votes") {
-                return { options: [], selected_option_ids: ["any", "venueA"] };
-            }
-            throw new Error(`Unexpected Last Orders request: ${path}`);
-        });
-
-        getDocsMock.mockImplementation(async (target) => {
-            if (target.kind === "collection" && target.name === "votes") {
-                return createSnapshot([
-                    createDocSnapshot("poll-1", {
-                        venueA: ["user-123"],
-                        any: ["user-123"],
-                        venueB: ["someone-else"],
-                    }),
-                ]);
-            }
-
-            if (target.kind === "collection" && target.name === "attendance") {
-                return createSnapshot([
-                    createDocSnapshot("poll-1", {
-                        venueA: { canCome: ["user-123"], cannotCome: [] },
-                        venueB: { canCome: [], cannotCome: ["user-123"] },
-                        any: { canCome: ["user-123"], cannotCome: [] },
-                    }),
-                ]);
-            }
-
-            if (target.kind === "collection" && target.name === "polls") {
-                return createSnapshot([
-                    createDocSnapshot("poll-1", {
-                        date: "2026-04-04",
-                        completed: true,
-                        selected: "venueA",
-                        previous_pubs: ["deletedVenue"],
-                        restaurant: "venueB",
-                        restaurant_time: "18:30",
-                        pubs: {
-                            venueA: { name: "Venue A" },
-                            venueB: { name: "Venue B" },
-                            deletedVenue: { notes: "Historical venue" },
-                        },
-                    }),
-                ]);
-            }
-
-            if (target.kind === "query" && target.base?.name === "messages") {
-                return createSnapshot([
-                    createDocSnapshot("message-1", {
-                        uid: "user-123",
-                        text: "Hello world",
-                        name: "Preferred User",
-                        createdAt: {
-                            toDate: () => new Date("2026-04-13T14:00:00.000Z"),
-                        },
-                    }),
-                ]);
-            }
-
-            return createSnapshot([]);
-        });
 
         URL.createObjectURL = vi.fn((blob) => {
             blob.text().then((text) => {
@@ -289,7 +139,23 @@ describe("PrivacyPage", () => {
         expect(screen.queryByText("Download My Data (JSON)")).toBeNull();
     });
 
-    it("downloads a JSON export with raw, expanded, lookup, and messages data", async () => {
+    it("downloads the complete account export returned by Last Orders", async () => {
+        const exportPayload = {
+            exported_at: "2026-04-13T14:00:00.000Z",
+            user_id: "user-123",
+            notice: { scope: "Account data" },
+            account: { name: "Preferred User" },
+            roles: [],
+            groups: [],
+            votes: [{ meet_id: "meet-1", venue_id: "venueA" }],
+            attendance_responses: [],
+            chat_messages: [{ text: "Hello world" }],
+            administrative_activity: [],
+            notification_activity: [],
+            notification_subscriptions: [],
+        };
+        requestLastOrdersMock.mockResolvedValueOnce(exportPayload);
+
         render(<PrivacyPage />);
 
         fireEvent.click(screen.getByText("Download My Data (JSON)"));
@@ -303,77 +169,24 @@ describe("PrivacyPage", () => {
             expect(downloadedJsonText).toBeTruthy();
         });
 
-        const payload = JSON.parse(downloadedJsonText);
-
-        expect(payload.userId).toBe("user-123");
-        expect(payload.raw.profile.private.email).toBe("user@example.com");
-        expect(payload.raw.votes["poll-1"]).toEqual({ venueA: true, any: true });
-        expect(payload.raw.attendance["poll-1"].venueA).toEqual({ canCome: true, cannotCome: false });
-        expect(payload.raw.messages).toHaveLength(1);
-        expect(payload.raw.messages[0].text).toBe("Hello world");
-
-        expect(payload.lookup.polls["poll-1"].rawPoll).toEqual({
-            date: "2026-04-04",
-            completed: true,
-            selected: "venueA",
-            previous_pubs: ["deletedVenue"],
-            restaurant: "venueB",
-            restaurant_time: "18:30",
-            pubs: {
-                venueA: { name: "Venue A" },
-                venueB: { name: "Venue B" },
-                deletedVenue: { notes: "Historical venue" },
-            },
-        });
-        expect(payload.lookup.venues.venueA.name).toBe("Venue A");
-        expect(payload.lookup.venues.venueA.venueRecord.address).toBe("1 Main St");
-        expect(payload.lookup.venues.venueB.venueRecord.address).toBe("2 High St");
-        expect(payload.lookup.venues.any.name).toBe("Any venue");
-        expect(payload.lookup.venues.deletedVenue).toEqual({
-            venueId: "deletedVenue",
-            name: null,
-            venueRecord: null,
-        });
-
-        expect(payload.expanded.profile.preferredName).toBe("Preferred User");
-        expect(payload.expanded.profile.notificationPreferences.votesVisible).toBe(false);
-        expect(payload.expanded.votes["poll-1"].event.pollId).toBe("poll-1");
-        expect(payload.expanded.votes["poll-1"].event.completed).toBe(true);
-        expect(payload.expanded.votes["poll-1"].event.rawPoll).toEqual(payload.lookup.polls["poll-1"].rawPoll);
-        expect(payload.expanded.votes["poll-1"].votes.find((vote) => vote.venue.venueId === "venueA").venue.name).toBe("Venue A");
-        expect(payload.expanded.attendance["poll-1"].attendance[1].venue.name).toBe("Venue B");
-        expect(payload.expanded.messages[0].sentAt).toBe("2026-04-13T14:00:00.000Z");
-
-        expect(anchorRecord?.download).toBe("pub-night-picker-data-user-123.json");
+        expect(JSON.parse(downloadedJsonText)).toEqual(exportPayload);
+        expect(anchorRecord?.download).toBe("pub-night-picker-data.json");
         expect(anchorRecord?.href).toBe("blob:privacy-export");
-        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(1, "api/venues", {
-            method: "GET",
-            query: { limit: "100" },
-        });
-        expect(requestLastOrdersMock).toHaveBeenNthCalledWith(2, "api/venues", {
-            method: "GET",
-            query: { limit: "100", cursor: "next-page" },
-        });
-        expect(requestLastOrdersMock).toHaveBeenCalledWith("api/meet/poll-1/votes", { method: "GET" });
-        expect(collectionMock.mock.calls.some(([, name]) => name === "votes")).toBe(false);
-        expect(collectionMock.mock.calls.some(([, name]) => name === "pubs")).toBe(false);
+        expect(anchorRecord?.remove).toHaveBeenCalled();
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:privacy-export");
+        expect(requestLastOrdersMock).toHaveBeenCalledOnce();
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/account/export", { method: "GET" });
     });
 
-    it("does not download a partial export when a venue page fails", async () => {
-        requestLastOrdersMock.mockReset();
-        requestLastOrdersMock
-            .mockResolvedValueOnce({
-                venues: [{ id: "venueA", name: "Venue A" }],
-                next_cursor: "stale-cursor",
-            })
-            .mockRejectedValueOnce(new Error("The venue list cursor is no longer usable."));
+    it("does not download an invalid account export", async () => {
+        requestLastOrdersMock.mockResolvedValueOnce({ votes: [] });
 
         render(<PrivacyPage />);
 
         fireEvent.click(screen.getByText("Download My Data (JSON)"));
 
         await waitFor(() => {
-            expect(notifyErrorMock).toHaveBeenCalledWith("The venue list cursor is no longer usable.");
+            expect(notifyErrorMock).toHaveBeenCalledWith("Last Orders returned an unexpected account export.");
         });
 
         expect(URL.createObjectURL).not.toHaveBeenCalled();
@@ -381,7 +194,7 @@ describe("PrivacyPage", () => {
     });
 
     it("reports export failures via notifyError", async () => {
-        getDocsMock.mockRejectedValueOnce(new Error("votes unavailable"));
+        requestLastOrdersMock.mockRejectedValueOnce(new Error("votes unavailable"));
 
         render(<PrivacyPage />);
 
@@ -390,5 +203,8 @@ describe("PrivacyPage", () => {
         await waitFor(() => {
             expect(notifyErrorMock).toHaveBeenCalledWith("votes unavailable");
         });
+        expect(URL.createObjectURL).not.toHaveBeenCalled();
+        expect(anchorRecord?.click).toBeUndefined();
+        expect(requestLastOrdersMock).toHaveBeenCalledWith("/api/account/export", { method: "GET" });
     });
 });
