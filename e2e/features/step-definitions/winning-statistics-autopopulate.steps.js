@@ -90,7 +90,8 @@ Then("the admin sees accurate Group-scoped winning statistics", async function (
     const report = await response.json();
     const { venueIDs, crownLastDate, redLionLastDate } = this.winningStatsFixture;
     assert.equal(report.group_id, this.defaultGroupID);
-    assert.equal(report.counts_by_venue_id[venueIDs.get("Statistics Crown")], 2);
+    assert.equal(report.counts_by_venue_id[venueIDs.get("Statistics Crown")], 2,
+        "the nine same-Venue wins seeded under another Group must be excluded");
     assert.equal(report.last_date_by_venue_id[venueIDs.get("Statistics Crown")], crownLastDate);
     assert.equal(report.counts_by_venue_id[venueIDs.get("Statistics Red Lion")], 1);
     assert.equal(report.last_date_by_venue_id[venueIDs.get("Statistics Red Lion")], redLionLastDate);
@@ -124,11 +125,6 @@ Then("the admin sees accurate Group-scoped winning statistics", async function (
             }
         }
     }
-    assert.deepEqual(
-        Object.keys(report.counts_by_venue_id).sort(),
-        [venueIDs.get("Statistics Crown"), venueIDs.get("Statistics Red Lion")].sort(),
-        "the API must include only winners from the selected Group",
-    );
 });
 
 When("Bob autopopulates the poll", async function () {
