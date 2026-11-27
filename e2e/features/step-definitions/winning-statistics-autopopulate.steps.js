@@ -132,18 +132,34 @@ When("Bob autopopulates the poll", async function () {
     const poll = bob.getByRole("heading", { name: this.pollDate, exact: true }).locator("../..");
     const button = poll.getByRole("button", { name: "Autopopulate", exact: true });
     await button.waitFor();
+    const actionResponse = bob.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return response.request().method() === "POST"
+            && url.pathname === `/api/meet/${this.pollId}/autopopulate`;
+    });
     await button.click();
-    for (const key of ["Statistics Crown", "Statistics Red Lion", "Statistics Zero Winner"]) {
-        await poll.getByRole("row").filter({ hasText: this.journeyVenues.get(key) }).waitFor();
+    const response = await actionResponse;
+    assert.equal(response.status(), 200, "the autopopulate request must succeed");
+    const result = await response.json();
+    assert.equal(result.outcome, "complete");
+    assert.equal(result.additions.length, 3, "autopopulate must report the three candidates it added");
+    for (const candidate of result.additions) {
+        await poll.getByRole("row").filter({ hasText: candidate.name }).waitFor();
     }
     const audits = await withEmulatorAdmin((db) => getDocsFromServer(query(
         collection(db, "poll_action_audit"),
         where("pollId", "==", this.pollId),
     )));
-    const additions = audits.docs.map((snapshot) => snapshot.data())
+    const auditAdditions = audits.docs.map((snapshot) => snapshot.data())
         .filter((entry) => entry.actionType === "addVenue");
-    assert.equal(additions.length, 3, "each of the three actual additions must have one audit row");
-    assert.ok(additions.every((entry) => entry.actorUid === this.actorUids.get("Bob")));
+    assert.equal(auditAdditions.length, result.additions.length,
+        "each actual addition must have exactly one audit row");
+    assert.deepEqual(
+        auditAdditions.map((entry) => entry.selectedVenueId).sort(),
+        result.additions.map((candidate) => candidate.id).sort(),
+        "the audit rows must correspond to the additions reported to Bob",
+    );
+    assert.ok(auditAdditions.every((entry) => entry.actorUid === this.actorUids.get("Bob")));
 });
 
 Then("another admin sees the autopopulate audit attributed to Bob", async function () {
