@@ -212,6 +212,14 @@ check persistence. Meet Chat retains the persisted `scopeType: "event"` value.
 Vote totals are checked without granting Can Show Voters or administrator
 access to either member.
 
+The `@last_orders` winning-statistics and autopopulate journey seeds completed
+history for the default Group plus a separate-Group control, then checks the
+winning-statistics page's visible counts and latest dates against that history.
+Bob receives candidate-add permission and triggers autopopulate from Active
+Polls. The journey checks the backend audit records carry Bob's authenticated
+UID, then a separately signed-in admin opens Logs and verifies all three add
+rows show Bob as the actor.
+
 Only the venue catalogue is seeded directly: one foodless main pub, one
 food-serving pub and a restaurant,
 using the Firebase Web SDK authenticated as the bootstrapped admin against the
