@@ -136,9 +136,10 @@ function buildVenueDetails(venueId, pollVenueData, pubsById) {
  * @param {Record<string, Record<string, unknown>>} pubsById
  */
 function buildPollDetails(pollId, pollsById, pubsById) {
-    const pollData = /** @type {{ date?: string, completed?: boolean, selected?: string, restaurant?: string, restaurant_time?: string, pubs?: Record<string, Record<string, unknown>> } | null} */ (pollsById[pollId] || null);
+    const pollData = /** @type {{ date?: string, selected?: string, restaurant?: string, restaurant_time?: string, pubs?: Record<string, Record<string, unknown>> } | null} */ (pollsById[pollId] || null);
     const pollPubs = /** @type {Record<string, Record<string, unknown>>} */ (pollData?.pubs || {});
     const selectedVenueId = typeof pollData?.selected === "string" ? pollData.selected : "";
+    if (selectedVenueId === "any") console.error(`Poll ${pollId} has unexpected selected Venue ID "any".`);
     const restaurantVenueId = typeof pollData?.restaurant === "string" ? pollData.restaurant : "";
     const venueEntries = Object.entries(pollPubs)
         .filter(([venueId]) => venueId !== "any")
@@ -147,7 +148,7 @@ function buildPollDetails(pollId, pollsById, pubsById) {
     return {
         pollId,
         date: pollData?.date || null,
-        completed: Boolean(pollData?.completed),
+        completed: typeof pollData?.selected === "string" && pollData.selected !== "",
         selectedVenue: buildVenueDetails(selectedVenueId || null, pollPubs[selectedVenueId], pubsById),
         restaurantVenue: buildVenueDetails(restaurantVenueId || null, pollPubs[restaurantVenueId], pubsById),
         restaurantTime: pollData?.restaurant_time || null,

@@ -100,6 +100,6 @@ func TestListRejectsIncompleteOrOutOfScopeQueries(t *testing.T) {
 
 func pastMeetDocument(id, groupID, date string) meetcache.Document {
 	return meetcache.Document{
-		ID: id, Exists: true, Data: map[string]any{"groupId": groupID, "date": date, "completed": true},
+		ID: id, Exists: true, Data: map[string]any{"groupId": groupID, "date": date, "completed": true, "selected": "venue-1"},
 	}
 }

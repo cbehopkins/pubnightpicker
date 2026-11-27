@@ -3,6 +3,7 @@ package meetcache
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"time"
@@ -63,14 +64,11 @@ func ProjectionFromDocument(document Document) (Projection, error) {
 	if err != nil {
 		return Projection{}, fmt.Errorf("meet %q field %q: %w", document.ID, "date", err)
 	}
-	completed, ok := document.Data["completed"].(bool)
-	if !ok {
-		return Projection{}, fmt.Errorf("meet %q field %q must be a boolean", document.ID, "completed")
-	}
 	selectedVenueID, err := optionalString(document.Data, "selected")
 	if err != nil {
 		return Projection{}, err
 	}
+	votingComplete := VotingComplete(document.ID, selectedVenueID)
 	restaurantID, err := optionalString(document.Data, "restaurant")
 	if err != nil {
 		return Projection{}, err
@@ -95,13 +93,21 @@ func ProjectionFromDocument(document Document) (Projection, error) {
 		ID:                document.ID,
 		GroupID:           groupID,
 		Date:              date,
-		VotingComplete:    completed,
+		VotingComplete:    votingComplete,
 		SelectedVenueID:   selectedVenueID,
 		CandidateVenueIDs: candidateVenueIDs,
 		RestaurantID:      restaurantID,
 		RestaurantTime:    restaurantTime,
 		PreviousVenueIDs:  previousVenueIDs,
 	}, nil
+}
+
+// VotingComplete derives the voting state from its selected Venue ID.
+func VotingComplete(meetID, selectedVenueID string) bool {
+	if selectedVenueID == "any" {
+		slog.Default().Error("Meet has unexpected selected Venue ID", "meet_id", meetID, "selected_venue_id", selectedVenueID)
+	}
+	return selectedVenueID != ""
 }
 
 func meetDate(value any) (string, error) {

@@ -11,6 +11,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"last_orders/internal/lastorders/components/meetcache"
 )
 
 var (
@@ -100,6 +101,7 @@ func (s *Service) Create(ctx context.Context, groupID, date, actorUID string) (M
 		if err := tx.Create(meetRef, map[string]any{
 			"date":      date,
 			"completed": false,
+			"selected":  "",
 			"groupId":   groupID,
 		}); err != nil {
 			return err
@@ -169,7 +171,8 @@ func (s *Service) Complete(ctx context.Context, meetID, selectedVenueID, restaur
 			return err
 		}
 		data := doc.Data()
-		if completed, _ := data["completed"].(bool); completed {
+		currentSelectedVenueID, _ := data["selected"].(string)
+		if meetcache.VotingComplete(meetID, currentSelectedVenueID) {
 			return ErrInvalidState
 		}
 		groupID, _ := data["groupId"].(string)
@@ -314,7 +317,8 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 			return err
 		}
 		data := doc.Data()
-		if completed, _ := data["completed"].(bool); !completed {
+		selectedVenueID, _ := data["selected"].(string)
+		if !meetcache.VotingComplete(meetID, selectedVenueID) {
 			return ErrInvalidState
 		}
 		groupID, _ := data["groupId"].(string)
@@ -357,6 +361,12 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 			return err
 		}
 		if !venueChanged && !restaurantChanged {
+			if completed, _ := data["completed"].(bool); !completed {
+				if err := tx.Update(meetRef, []firestore.Update{{Path: "completed", Value: true}}); err != nil {
+					return err
+				}
+				data["completed"] = true
+			}
 			result = meetFromData(meetID, data)
 			setSelectedVenue(&result, selectedVenue, missingVenue)
 			return nil
@@ -368,11 +378,15 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 				return err
 			}
 		}
-		updates := []firestore.Update{{Path: "completedByUid", Value: firestore.Delete}}
+		updates := []firestore.Update{
+			{Path: "completed", Value: true},
+			{Path: "completedByUid", Value: firestore.Delete},
+		}
 		updated := make(map[string]any, len(data)+3)
 		for key, value := range data {
 			updated[key] = value
 		}
+		updated["completed"] = true
 		if venueChanged {
 			history, ok := readStringSlice(data["previous_pubs"])
 			if !ok {
@@ -604,7 +618,7 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 			return ErrInvalidState
 		}
 		hasOwnResponse := slices.Contains(canCome, uid) || slices.Contains(cannotCome, uid)
-		venueAllowed := attendanceVenueAllowed(meetData, venueID)
+		venueAllowed := attendanceVenueAllowed(meetID, meetData, venueID)
 		if !venueAllowed && clear {
 			venueAllowed = hasOwnResponse
 			if !venueAllowed {
@@ -631,7 +645,7 @@ func (s *Service) changeAttendance(ctx context.Context, meetID, venueID, uid, at
 			canCome = removeAttendanceUser(canCome, uid)
 		}
 		effectiveCanCome := slices.Contains(canCome, uid) && !slices.Contains(cannotCome, uid)
-		if !slices.Contains(canCome, uid) && !slices.Contains(cannotCome, uid) && attendanceVenueAllowed(meetData, venueID) {
+		if !slices.Contains(canCome, uid) && !slices.Contains(cannotCome, uid) && attendanceVenueAllowed(meetID, meetData, venueID) {
 			standingEntry, valid := attendanceMap(attendanceData["any"])
 			if attendanceData["any"] != nil && !valid {
 				return ErrInvalidState
@@ -774,7 +788,7 @@ func (s *Service) changeStandingAttendance(ctx context.Context, meetID, uid, att
 		standingCanCome := !clear && attendanceStatus == "attending"
 		candidates, _ := meetData["pubs"].(map[string]any)
 		selectedVenueID, _ := meetData["selected"].(string)
-		completed, _ := meetData["completed"].(bool)
+		completed := meetcache.VotingComplete(meetID, selectedVenueID)
 		updates := []firestore.Update{
 			{FieldPath: firestore.FieldPath{"any", "canCome"}, Value: canCome},
 			{FieldPath: firestore.FieldPath{"any", "cannotCome"}, Value: cannotCome},
@@ -855,8 +869,9 @@ func validAttendanceETA(eta string) bool {
 	return true
 }
 
-func attendanceVenueAllowed(meet map[string]any, venueID string) bool {
-	if completed, _ := meet["completed"].(bool); !completed {
+func attendanceVenueAllowed(meetID string, meet map[string]any, venueID string) bool {
+	selectedVenueID, _ := meet["selected"].(string)
+	if !meetcache.VotingComplete(meetID, selectedVenueID) {
 		if candidates, ok := meet["pubs"].(map[string]any); ok {
 			if _, exists := candidates[venueID]; exists {
 				return true
@@ -955,7 +970,8 @@ func (s *Service) ChangeCandidate(ctx context.Context, meetID, venueID, actorUID
 			return err
 		}
 		data := doc.Data()
-		if completed, _ := data["completed"].(bool); completed {
+		selectedVenueID, _ := data["selected"].(string)
+		if meetcache.VotingComplete(meetID, selectedVenueID) {
 			return ErrInvalidState
 		}
 		groupID, _ := data["groupId"].(string)
@@ -1034,8 +1050,8 @@ func meetFromData(meetID string, data map[string]any) Meet {
 	meet := Meet{ID: meetID}
 	meet.GroupID, _ = data["groupId"].(string)
 	meet.Date, _ = data["date"].(string)
-	meet.VotingComplete, _ = data["completed"].(bool)
 	meet.SelectedVenueID, _ = data["selected"].(string)
+	meet.VotingComplete = meetcache.VotingComplete(meetID, meet.SelectedVenueID)
 	meet.RestaurantID, _ = data["restaurant"].(string)
 	meet.RestaurantTime, _ = data["restaurant_time"].(string)
 	meet.PreviousVenueIDs, _ = readStringSlice(data["previous_pubs"])

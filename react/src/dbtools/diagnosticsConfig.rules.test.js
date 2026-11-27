@@ -166,6 +166,16 @@ describe("poll notification actor rules", () => {
         await assertFails(updateDoc(ref, { completedByUid: "actor-user" }));
     });
 
+    it("uses the selected Venue rather than completed to bind completion", async () => {
+        const ref = doc(testEnv.authenticatedContext("actor-user").firestore(), "polls", "derived-actor-poll");
+        await setDoc(ref, { date: "2026-10-10", completed: true, selected: "" });
+        await assertSucceeds(updateDoc(ref, {
+            completed: false,
+            selected: "pub-a",
+            completedByUid: "actor-user",
+        }));
+    });
+
     it("preserves legacy writes without granting creator attribution later", async () => {
         const ref = doc(testEnv.authenticatedContext("actor-user").firestore(), "polls", "legacy-poll");
         await assertSucceeds(setDoc(ref, { date: "2026-10-10", completed: false }));

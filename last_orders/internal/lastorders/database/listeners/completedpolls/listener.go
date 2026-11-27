@@ -9,6 +9,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/firebaseidempotency"
+	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/database/listeners/lifecycle"
 	"last_orders/internal/lastorders/truths"
 
@@ -83,6 +84,10 @@ func (l *Listener) watchOnce(ctx context.Context) error {
 
 		for _, change := range changes {
 			if change.Kind != ChangeAdded && change.Kind != ChangeModified {
+				continue
+			}
+			selectedVenueID, _ := change.Doc.Data["selected"].(string)
+			if !meetcache.VotingComplete(change.Doc.ID, selectedVenueID) {
 				continue
 			}
 			l.createTruth(completedPayload(change))

@@ -208,12 +208,17 @@ service cloud.firestore {
         && !('completedByUid' in request.resource.data);
     }
 
+    function hasSelectedVenue(data) {
+      let selected = data.get('selected', '');
+      return selected is string && selected.size() > 0;
+    }
+
     function isValidPollActorUpdate() {
       let before = resource.data;
       let after = request.resource.data;
       let changed = after.diff(before).affectedKeys();
-      let completing = before.get('completed', false) == false && after.get('completed', false) == true;
-      let rescheduling = before.get('completed', false) == true
+      let completing = !hasSelectedVenue(before) && hasSelectedVenue(after);
+      let rescheduling = hasSelectedVenue(before)
         && changed.hasAny(['selected', 'restaurant', 'restaurant_time']);
       return !changed.hasAny(['createdByUid'])
         && (!changed.hasAny(['completedByUid'])
@@ -222,7 +227,7 @@ service cloud.firestore {
               || (completing && after.completedByUid == request.auth.uid))))
         && (!completing || !('completedByUid' in after) || after.completedByUid == request.auth.uid)
         && (!rescheduling || !('completedByUid' in after))
-        && (after.get('completed', false) == true || !('completedByUid' in after));
+        && (hasSelectedVenue(after) || !('completedByUid' in after));
     }
 
     match /config/diagnostics {

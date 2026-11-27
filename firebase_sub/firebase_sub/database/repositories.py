@@ -115,10 +115,9 @@ class FirestorePollRepository:
         return poll_data
 
     def get_polls_by_status(self, completed: bool) -> Query:
-        """Return query for polls filtered by completion status."""
-        return self.polls_collection.where(
-            filter=FieldFilter("completed", "==", completed)
-        )
+        """Return query for polls filtered by selected-Venue completion status."""
+        operator = ">" if completed else "=="
+        return self.polls_collection.where(filter=FieldFilter("selected", operator, ""))
 
     def get_all_polls(self) -> CollectionReference:
         """Return query for all polls."""
@@ -182,6 +181,8 @@ def _parse_poll_document(raw: object) -> PollDocument | None:
         return None
 
     selected = raw.get("selected")
+    if selected is None:
+        selected = ""
     poll_date = raw.get("date")
     if not isinstance(selected, str) or not isinstance(poll_date, str):
         return None
@@ -191,9 +192,9 @@ def _parse_poll_document(raw: object) -> PollDocument | None:
         "date": poll_date,
     }
 
-    completed = raw.get("completed")
-    if isinstance(completed, bool):
-        parsed["completed"] = completed
+    if selected == "any":
+        _log.error('Poll has unexpected selected Venue ID "any".')
+    parsed["completed"] = selected != ""
 
     restaurant = raw.get("restaurant")
     if isinstance(restaurant, str):

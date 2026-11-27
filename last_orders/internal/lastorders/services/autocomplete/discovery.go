@@ -7,6 +7,7 @@ import (
 
 	"cellar/pkg/cellar"
 	"last_orders/internal/lastorders/components/idempotency"
+	"last_orders/internal/lastorders/components/meetcache"
 	"last_orders/internal/lastorders/truths"
 )
 
@@ -60,9 +61,10 @@ func discoveredTruth(doc Document, observedOn string) (truths.PollAutoCompletion
 	if !ok || date == "" {
 		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q date is invalid", doc.ID)
 	}
-	completed, ok := doc.Data["completed"].(bool)
-	if !ok || completed {
-		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q completed is not false", doc.ID)
+	selectedVenueID, _ := doc.Data["selected"].(string)
+	completed := meetcache.VotingComplete(doc.ID, selectedVenueID)
+	if completed {
+		return truths.PollAutoCompletionDue{}, fmt.Errorf("poll %q is already complete", doc.ID)
 	}
 	return truths.PollAutoCompletionDue{Poll: truths.PollAutoCompletionSnapshot{
 		PollID: doc.ID, PollDate: date, Completed: completed, VenueIDs: venueIDs(doc.Data["pubs"]), ObservedOn: observedOn,

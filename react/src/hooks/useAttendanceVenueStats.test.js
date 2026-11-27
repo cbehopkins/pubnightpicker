@@ -23,15 +23,12 @@ vi.mock("firebase/firestore", () => ({
   getDoc: vi.fn(),
   onSnapshot: vi.fn((query, onNext) => {
     onNext({
-      forEach: (visit) => visit({
-        id: "meet-1", data: () => ({
-          completed: true,
-          date: "2026-04-04",
-          selected: "venue-a",
-          restaurant: "venue-r",
-          pubs: { "venue-a": {}, "venue-b": {} },
-        })
-      })
+      forEach: (visit) => [
+        { id: "meet-1", data: () => ({ completed: true, date: "2026-04-04", selected: "venue-a", restaurant: "venue-r", pubs: { "venue-a": {}, "venue-b": {} } }) },
+        { id: "open", data: () => ({ completed: true, date: "2026-04-04", selected: "" }) },
+        { id: "derived-complete", data: () => ({ completed: false, date: "2026-04-04", selected: "venue-b" }) },
+        { id: "unexpected-any", data: () => ({ completed: false, date: "2026-04-04", selected: "any" }) },
+      ].forEach(visit),
     });
     return () => { };
   }),
@@ -39,6 +36,7 @@ vi.mock("firebase/firestore", () => ({
 
 describe("attendance statistics API boundary", () => {
   it("loads aggregate counts from Last Orders instead of direct attendance reads", async () => {
+    const anyError = vi.spyOn(console, "error").mockImplementation(() => {});
     requestLastOrdersMock.mockResolvedValue({
       counts_by_venue_id: { "venue-a": 1, "venue-b": 1, "venue-r": 0 },
       last_date_by_venue_id: { "venue-a": "2026-04-04", "venue-b": "2026-04-04", "venue-r": "2026-04-04" },
@@ -55,6 +53,12 @@ describe("attendance statistics API boundary", () => {
       restaurantId: "venue-r",
       venues: { "venue-a": {}, "venue-b": {} },
     });
+    expect(result.current.winning.meets).not.toHaveProperty("open");
+    expect(result.current.winning.meets["derived-complete"]).toMatchObject({
+      votingCompleted: true,
+      selectedVenueId: "venue-b",
+    });
+    expect(result.current.winning.meets["unexpected-any"].votingCompleted).toBe(true);
     expect(result.current.attendance.countsByVenueId).toEqual({
       "venue-a": 1,
       "venue-b": 1,
@@ -65,9 +69,11 @@ describe("attendance statistics API boundary", () => {
       method: "GET",
       query: expect.objectContaining({ start: expect.any(String), end: expect.any(String) }),
     }));
-    expect(whereMock).toHaveBeenCalledWith("completed", "==", true);
+    expect(whereMock).not.toHaveBeenCalledWith("completed", "==", true);
     expect(whereMock).toHaveBeenCalledWith("date", ">=", result.current.winning.startDate);
     expect(whereMock).toHaveBeenCalledWith("date", "<=", result.current.winning.endDate);
+    expect(anyError).toHaveBeenCalled();
+    anyError.mockRestore();
   });
 });
 

@@ -22,7 +22,6 @@ export default function useWinningVenueStats(yearCount) {
     const statsQuery = useMemo(
         () => query(
             collection(db, "polls"),
-            where("completed", "==", true),
             where("date", ">=", startDate),
             where("date", "<=", endDate),
             orderBy("date", "desc")
@@ -45,7 +44,13 @@ export default function useWinningVenueStats(yearCount) {
                 /** @type {Record<string, { selected?: string, date?: string }>} */
                 const meetRecords = {};
                 snapshot.forEach((docSnapshot) => {
-                    meetRecords[docSnapshot.id] = docSnapshot.data();
+                    const data = docSnapshot.data();
+                    if (data.selected === "any") {
+                        console.error(`Meet ${docSnapshot.id} has unexpected selected Venue ID "any".`);
+                    }
+                    if (typeof data.selected === "string" && data.selected !== "") {
+                        meetRecords[docSnapshot.id] = data;
+                    }
                 });
                 setMeets(new MeetData(meetRecords).meets);
                 setErrorMessage(null);

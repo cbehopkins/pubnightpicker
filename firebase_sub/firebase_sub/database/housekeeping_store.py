@@ -157,7 +157,7 @@ class HousekeepingRepository:
         poll_query: Any = self._db.collection(self._polls_collection)
         poll_stream = cast(
             Iterable[DocumentSnapshot],
-            poll_query.where(filter=FieldFilter("completed", "==", False))
+            poll_query.where(filter=FieldFilter("selected", "==", ""))
             .where(filter=FieldFilter("date", "==", target_date))
             .stream(),
         )

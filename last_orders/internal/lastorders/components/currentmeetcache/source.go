@@ -25,11 +25,13 @@ func (s *firestoreSource) Watch(ctx context.Context, groupID string, view ViewQu
 		(view.Kind == OpenView && view.Date != "") || (view.Kind != CurrentView && view.Kind != OpenView) {
 		return nil, fmt.Errorf("valid Group Meet view query is required")
 	}
-	query := s.client.Collection("polls").
-		Where("groupId", "==", groupID).
-		Where("completed", "==", view.Kind == CurrentView)
+	query := s.client.Collection("polls").Where("groupId", "==", groupID)
 	if view.Kind == CurrentView {
+		query = query.Where("selected", ">", "")
 		query = query.Where("date", ">=", view.Date)
+		query = query.OrderBy("selected", firestore.Asc)
+	} else {
+		query = query.Where("selected", "==", "")
 	}
 	query = query.
 		OrderBy("date", firestore.Asc).

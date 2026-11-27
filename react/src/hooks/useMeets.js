@@ -282,7 +282,7 @@ function pastMeetData(payload) {
     };
     records[meet.id] = {
       date: meet.date,
-      completed: true,
+      completed: Boolean(selectedVenueSummary?.id),
       selected: selectedVenueSummary?.id ?? "",
       pubs: selectedVenueSummary ? { [selectedVenueSummary.id]: true } : {},
       selectedVenueSummary,
@@ -364,7 +364,7 @@ export function usePastMeets(groupId, pageSize = 5, cursor = null) {
 
 export function useActiveMeets() {
   const q = useMemo(
-    () => query(collection(db, "polls"), where("completed", "==", false)),
+    () => query(collection(db, "polls"), where("selected", "==", "")),
     []
   );
   const meetRecords = useQueryDb(q);

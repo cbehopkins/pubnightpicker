@@ -55,7 +55,7 @@ func (source *recoverySource) Watch(ctx context.Context, _ string, query ViewQue
 	return &scriptedStream{ctx: ctx, results: []queryResult{
 		{snapshot: QuerySnapshot{Documents: []meetcache.Document{{
 			ID: "meet-a", Exists: true, Version: time.Now(), Data: map[string]any{
-				"groupId": "group-a", "date": "2026-11-20", "completed": true,
+				"groupId": "group-a", "date": "2026-11-20", "completed": true, "selected": "venue-1",
 			},
 		}}, ReadTime: time.Now()}},
 	}}, nil
@@ -104,6 +104,9 @@ func TestServiceRecoversAfterQueryWatchFailure(t *testing.T) {
 	}
 	venues, err := venuecache.New(base)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := venues.Put(context.Background(), venuecache.VenueProjection{ID: "venue-1", Name: "Test Venue", VenueType: "pub"}); err != nil {
 		t.Fatal(err)
 	}
 	hub := sse.NewHub()
@@ -172,6 +175,9 @@ func TestOpenAndCurrentViewsUseIndependentSharedGroupWatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := venues.Put(context.Background(), venuecache.VenueProjection{ID: "venue-1", Name: "Test Venue", VenueType: "pub"}); err != nil {
+		t.Fatal(err)
+	}
 	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	source := &viewWatchSource{
 		calls: make(chan viewWatchCall, 2),
@@ -183,7 +189,7 @@ func TestOpenAndCurrentViewsUseIndependentSharedGroupWatches(t *testing.T) {
 			}}, ReadTime: clock},
 			CurrentView: {Documents: []meetcache.Document{{
 				ID: "future-complete", Exists: true, Version: clock, Data: map[string]any{
-					"groupId": "group-a", "date": "2026-11-21", "completed": true,
+					"groupId": "group-a", "date": "2026-11-21", "completed": true, "selected": "venue-1",
 				},
 			}}, ReadTime: clock},
 		},
@@ -367,6 +373,9 @@ func TestNewDateAdmissionRacesRetirementAndCannotUseStaleWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := venues.Put(context.Background(), venuecache.VenueProjection{ID: "venue-1", Name: "Test Venue", VenueType: "pub"}); err != nil {
+		t.Fatal(err)
+	}
 	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	source := &trackedViewWatchSource{
 		calls:   make(chan trackedViewWatchCall, 4),
@@ -380,7 +389,7 @@ func TestNewDateAdmissionRacesRetirementAndCannotUseStaleWatch(t *testing.T) {
 			}
 			return QuerySnapshot{Documents: []meetcache.Document{{
 				ID: meetID, Exists: true, Version: clock, Data: map[string]any{
-					"groupId": "group-a", "date": date, "completed": true,
+					"groupId": "group-a", "date": date, "completed": true, "selected": "venue-1",
 				},
 			}}, ReadTime: clock}
 		},
@@ -440,6 +449,7 @@ func TestRetireBeforeRetiresOnlyStaleCurrentMeetsAndStopsWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	base, err := basestore.New(db)
 	if err != nil {
@@ -453,6 +463,9 @@ func TestRetireBeforeRetiresOnlyStaleCurrentMeetsAndStopsWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := venues.Put(context.Background(), venuecache.VenueProjection{ID: "venue-1", Name: "Test Venue", VenueType: "pub"}); err != nil {
+		t.Fatal(err)
+	}
 	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	source := &trackedViewWatchSource{
 		calls:   make(chan trackedViewWatchCall, 2),
@@ -460,7 +473,7 @@ func TestRetireBeforeRetiresOnlyStaleCurrentMeetsAndStopsWatch(t *testing.T) {
 		snapshots: map[ViewKind]QuerySnapshot{
 			CurrentView: {Documents: []meetcache.Document{{
 				ID: "meet-a", Exists: true, Version: clock, Data: map[string]any{
-					"groupId": "group-a", "date": "2026-11-20", "completed": true,
+					"groupId": "group-a", "date": "2026-11-20", "completed": true, "selected": "venue-1",
 				},
 			}}, ReadTime: clock},
 			OpenView: {Documents: []meetcache.Document{{
