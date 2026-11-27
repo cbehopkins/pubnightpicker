@@ -449,6 +449,7 @@ func TestRetireBeforeRetiresOnlyStaleCurrentMeetsAndStopsWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	base, err := basestore.New(db)
 	if err != nil {
