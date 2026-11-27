@@ -510,13 +510,20 @@ There is no decision to use a separate in-memory event history as the stream's s
 
 ## 11. Locations
 
+The accepted lifecycle, authorization and uniqueness decisions are captured in
+[CDD-0024](../cdd/0024-locations-and-venue-selection.md).
+
 Location is a first-class resource with:
 
 - `id`
 - `name`
-- `notes`
+- optional `map_url`
 
-Legacy `out_of_town` classification is replaced by Location.
+Location names are unique after trimming surrounding whitespace and applying
+Unicode case folding. The normalized name `all` is reserved and is rejected.
+Locations are managed by callers with the global `canEditLocations` permission
+or the global `admin` role. The backend enforces this permission; frontend
+visibility is not an authorization boundary.
 
 Routes:
 
@@ -525,11 +532,13 @@ GET    /locations
 GET    /locations/{location_id}
 POST   /locations
 PATCH  /locations/{location_id}
+DELETE /locations/{location_id}
 ```
 
-Anonymous callers may read public Location information. Writes require global-administrator authority in V1.
-
-Location deletion is not supported. There is no Location deletion endpoint or deletion-conflict contract in the current scope.
+Location reads are public. Deletion is a tombstone operation. Normal discovery
+and selection omit tombstoned Locations, while historical Venue and Group
+references continue to resolve to the retained Location details and deletion
+status. A tombstoned Location cannot be newly assigned to a Venue or Group.
 
 The API should use `default_location_id` for a Group's default rather than duplicating Location names in Group configuration.
 
@@ -556,6 +565,12 @@ DELETE /venues/{venue_id}
 ```
 
 Creating, editing and deleting Venues require the caller's `canManagePubs` permission or global `admin` role. The server must enforce this permission for all three operations; frontend route guards are not an authorization boundary. This matches the current frontend implementation in `react/src/components/pages/EditPub.js` and `react/src/dbtools/pubs.js`.
+
+Each Venue has a `location_id` reference to an active Location. Active Venue
+names are unique within a Location after trimming surrounding whitespace and
+applying Unicode case folding. The normalized name `all` is reserved. Reusing a
+Venue name in a different Location is allowed. Tombstoned Venues do not prevent
+reuse of their names.
 
 ### 12.1 Public discovery
 
@@ -584,7 +599,8 @@ Global administrators can always see and edit every Venue. A caller with `canMan
 
 ### 12.3 Soft deletion
 
-Venue deletion is soft deletion using `deleted_on`. Location deletion is not supported.
+Venue deletion is soft deletion using `deleted_on`; Location deletion is
+tombstoning with retained identity and details.
 
 Normal discovery and ordinary operational queries exclude deleted records.
 Meet views retain references to soft-deleted Venues and display their retained
@@ -633,7 +649,7 @@ The API should use consistent names rather than reproducing legacy naming errors
 | `pubImage` | `image_url` |
 | `dog_friend` | `dog_friendly` |
 | `beer_gerden` | `beer_garden` |
-| `out_of_town` | Location reference |
+| `out_of_town` | Legacy classification, removed after Venue Location backfill |
 | `visiblegroups` | `visible_group_ids` |
 | `previous_pubs` | `previous_venue_ids` |
 | `restaurant` | `restaurant_id`, if it is an ID |

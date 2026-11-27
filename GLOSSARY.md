@@ -27,5 +27,8 @@ One user's indication of whether they can come to a Meet regardless of which mai
 **Venue**:
 A place or event that can be a choice for a Meet, including a pub or restaurant.
 
+**Location**:
+A named area that groups Venues for discovery and selection, such as Cambridge, Histon or London.
+
 **Event venue**:
 A Venue representing an event, distinct from the Meet that may take place there.

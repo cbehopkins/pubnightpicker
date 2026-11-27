@@ -208,6 +208,9 @@ The full legacy permission inventory and mapping must be verified against the ex
 
 ## 7. Group configuration
 
+Location defaults and the Group property editing scope are detailed in
+[CDD-0024](../cdd/0024-locations-and-venue-selection.md).
+
 V1 supports exactly four Group configuration settings:
 
 1. `default_location_id`
@@ -232,11 +235,15 @@ The schedule fields are placeholders until their exact schema has been checked a
 
 V1 uses `Europe/London` as the Meet date boundary. Per-Group timezone configuration is explicitly deferred to V3 or a similarly distant future iteration.
 
-The API must validate `default_location_id` against an existing, non-deleted Location.
+The API must validate `default_location_id` against an existing, non-tombstoned
+Location. A Group's default Location is a preference for Venue discovery and
+selection; it does not restrict the Group's available Venues.
 
 ## 8. Group deletion and renaming
 
-V1 has no Group deletion endpoint and no Group rename endpoint.
+V1 has no Group deletion endpoint. Site administrators may rename a Group
+through an admin-only API operation. A rename preserves the Group ID and updates
+the Group name and its uniqueness constraint atomically.
 
 Soft deletion is a high-priority V2 feature. It should preserve historical Meets and other records that refer to the Group while hiding the deleted Group from ordinary discovery and operational workflows.
 
@@ -275,7 +282,7 @@ The following items must be resolved before or during implementation:
 4. **Membership concurrency:** Transaction and retry strategy for enforcing the last-administrator invariant under concurrent changes.
 5. **Group pagination:** Whether Group discovery needs pagination in V1 and, if so, the standard cursor contract.
 6. **Group soft deletion:** Detailed V2 behaviour, including how existing Meets and permissions are treated.
-7. **Rename policy:** Whether and how a future Group rename affects lookup by name, notification addresses or external integrations.
+7. **Rename integrations:** Whether Group renaming affects notification addresses or external integrations.
 
 ## 12. Consequences
 
