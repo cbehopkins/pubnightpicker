@@ -361,6 +361,12 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 			return err
 		}
 		if !venueChanged && !restaurantChanged {
+			if completed, _ := data["completed"].(bool); !completed {
+				if err := tx.Update(meetRef, []firestore.Update{{Path: "completed", Value: true}}); err != nil {
+					return err
+				}
+				data["completed"] = true
+			}
 			result = meetFromData(meetID, data)
 			setSelectedVenue(&result, selectedVenue, missingVenue)
 			return nil
@@ -372,11 +378,15 @@ func (s *Service) Reschedule(ctx context.Context, meetID string, input Reschedul
 				return err
 			}
 		}
-		updates := []firestore.Update{{Path: "completedByUid", Value: firestore.Delete}}
+		updates := []firestore.Update{
+			{Path: "completed", Value: true},
+			{Path: "completedByUid", Value: firestore.Delete},
+		}
 		updated := make(map[string]any, len(data)+3)
 		for key, value := range data {
 			updated[key] = value
 		}
+		updated["completed"] = true
 		if venueChanged {
 			history, ok := readStringSlice(data["previous_pubs"])
 			if !ok {

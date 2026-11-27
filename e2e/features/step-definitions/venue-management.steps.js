@@ -67,6 +67,7 @@ Given("a venue is available to open, current and past meets", async function () 
                 date: today,
                 completed: false,
                 groupId,
+                selected: "",
                 pubs: { [this.publicVenueId]: true },
             }),
             setDoc(doc(db, "polls", `public-current-${fixtureId}`), {

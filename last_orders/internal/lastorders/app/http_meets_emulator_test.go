@@ -148,7 +148,7 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 		Voting bool   `json:"voting_complete"`
 	}
 	if err := json.Unmarshal([]byte(createdBody), &result); err != nil {
-		t.Fatal(err)
+		t.Fatalf("decode created Meet response %q: %v", createdBody, err)
 	}
 	wantCreatedBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":false,"venue":null,"candidate_venue_ids":[],"restaurant_id":null,"restaurant_time":null,"previous_venue_ids":[]}`
 	if createdBody != wantCreatedBody {
@@ -291,10 +291,20 @@ func TestMeetCreateHTTPAgainstFirestoreEmulator(t *testing.T) {
 		return readVenueResponseBody(t, response)
 	}
 	reschedule(`{"date":"2026-11-19"}`, http.StatusBadRequest)
+	if _, err := firestoreClient.Collection("polls").Doc(result.ID).Update(ctx, []firestore.Update{{Path: "completed", Value: false}}); err != nil {
+		t.Fatalf("make legacy completion flag inconsistent: %v", err)
+	}
 	venueChangedBody := reschedule(`{"venue_id":"venue-other","restaurant_id":"restaurant-1","restaurant_time":"18:30"}`, http.StatusOK)
 	wantVenueChangedBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-other","status":"active","name":"Other Venue","address":"","website_url":null,"image_url":null,"venue_type":"pub"},"candidate_venue_ids":[],"restaurant_id":"restaurant-1","restaurant_time":"18:30","previous_venue_ids":["venue-add"]}`
 	if venueChangedBody != wantVenueChangedBody {
 		t.Fatalf("Venue-changing reschedule body=%s, want %s", venueChangedBody, wantVenueChangedBody)
+	}
+	rescheduledAfterMismatch, err := firestoreClient.Collection("polls").Doc(result.ID).Get(ctx)
+	if err != nil {
+		t.Fatalf("read Meet after rescheduling inconsistent completion: %v", err)
+	}
+	if rescheduledAfterMismatch.Data()["completed"] != true {
+		t.Fatalf("reschedule did not restore legacy completed flag: %v", rescheduledAfterMismatch.Data())
 	}
 	restaurantOnlyBody := reschedule(`{"restaurant_time":"19:15"}`, http.StatusOK)
 	wantRestaurantOnlyBody := `{"id":"` + result.ID + `","group_id":"public-group","date":"2026-11-18","voting_complete":true,"venue":{"id":"venue-other","status":"active","name":"Other Venue","address":"","website_url":null,"image_url":null,"venue_type":"pub"},"candidate_venue_ids":[],"restaurant_id":"restaurant-1","restaurant_time":"19:15","previous_venue_ids":["venue-add"]}`

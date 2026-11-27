@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -481,11 +481,11 @@ func doVenueDeleteRequest(t *testing.T, client *http.Client, url, authorization,
 func readVenueResponseBody(t *testing.T, response *http.Response) string {
 	t.Helper()
 	defer response.Body.Close()
-	var body strings.Builder
-	if _, err := fmt.Fscan(response.Body, &body); err != nil {
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
 		return "<could not read response body>"
 	}
-	return body.String()
+	return strings.TrimSpace(string(body))
 }
 
 func waitForVenueHTTP(t *testing.T, ctx context.Context, client *http.Client, baseURL string) {

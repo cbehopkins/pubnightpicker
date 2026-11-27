@@ -61,13 +61,13 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	}
 	meets := map[string]map[string]any{
 		"meet-a":             {"date": "2026-03-29", "completed": true, "groupId": "group-a", "selected": "deleted-venue", "pubs": map[string]any{"deleted-venue": true}, "previous_pubs": []string{"old-venue"}},
-		"meet-b":             {"date": "2026-03-29", "completed": true, "groupId": "group-a", "selected": "missing-venue", "pubs": map[string]any{"missing-venue": true}},
+		"meet-b":             {"date": "2026-03-29", "completed": false, "groupId": "group-a", "selected": "missing-venue", "pubs": map[string]any{"missing-venue": true}},
 		"meet-z":             {"date": "2026-03-30", "completed": true, "groupId": "group-a", "selected": "deleted-venue", "pubs": map[string]any{"deleted-venue": true}},
 		"incomplete":         {"date": "2026-03-29", "completed": false, "groupId": "group-a"},
-		"overdue-open":       {"date": "2020-01-01", "completed": false, "groupId": "group-a", "pubs": map[string]any{"deleted-venue": true}},
+		"overdue-open":       {"date": "2020-01-01", "completed": true, "groupId": "group-a", "selected": "", "pubs": map[string]any{"deleted-venue": true}},
 		"past":               {"date": "2026-03-28", "completed": true, "groupId": "group-a"},
 		"other-group-meet":   {"date": "2026-03-29", "completed": true, "groupId": "group-b"},
-		"other-group-open":   {"date": "2020-01-01", "completed": false, "groupId": "group-b"},
+		"other-group-open":   {"date": "2020-01-01", "completed": false, "groupId": "group-b", "selected": ""},
 		"private-group-meet": {"date": "2026-03-29", "completed": true, "groupId": "private-group"},
 	}
 	for meetID, data := range meets {
@@ -527,7 +527,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	}
 	lateOpenMeet := firestoreClient.Collection("polls").Doc("late-open-meet")
 	if _, err := lateOpenMeet.Set(ctx, map[string]any{
-		"date": "2019-12-31", "completed": false, "groupId": "group-a", "pubs": map[string]any{"venue-1": true},
+		"date": "2019-12-31", "completed": false, "groupId": "group-a", "selected": "", "pubs": map[string]any{"venue-1": true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestCurrentMeetsGetAndStreamAgainstFirestoreEmulator(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("creating a past-dated open Meet did not update the complete view")
 	}
-	if _, err := lateOpenMeet.Update(ctx, []firestore.Update{{Path: "completed", Value: true}}); err != nil {
+	if _, err := lateOpenMeet.Update(ctx, []firestore.Update{{Path: "selected", Value: "venue-1"}}); err != nil {
 		t.Fatal(err)
 	}
 	completedFrames := make(chan string, 1)
